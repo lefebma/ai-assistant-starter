@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
 import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, PRIMARY_CHAT_ID } from './config.js'
 import { runAgent } from './agent.js'
-import { sendTelegramMessage } from './bot.js'
+import { sendPlatformMessage } from './bot.js'
 import { logger } from './logger.js'
 import https from 'node:https'
 import { getUsageSnapshot, getActivitySeries } from './cockpit/usage.js'
@@ -170,8 +170,8 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
     if (handedOffToTelegram) {
       // Voice already closed — push the real answer to Telegram.
       if (PRIMARY_CHAT_ID && text) {
-        await sendTelegramMessage(PRIMARY_CHAT_ID, text).catch((err) =>
-          logger.warn({ err }, 'voice→telegram fallback failed'),
+        await sendPlatformMessage(PRIMARY_CHAT_ID, text).catch((e: unknown) =>
+          logger.warn({ err: e }, 'voice fallback failed'),
         )
       }
       return
