@@ -1,0 +1,8 @@
+{
+  "id": "gmail",
+  "name": "Gmail & Google Calendar",
+  "description": "Gmail search/read/trash and Google Calendar via gog CLI",
+  "enabled": true,
+  "triggers": ["gmail", "email", "inbox", "calendar", "schedule", "meeting", "appointment"],
+  "priority": 60
+}

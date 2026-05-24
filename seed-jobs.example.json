@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Morning Briefing",
+    "schedule": "0 7 * * *",
+    "deliveryMode": "announce",
+    "prompt": "Generate a morning briefing. Check: 1) Weather for my city (use the weather skill). 2) Today's calendar events. 3) Unread emails needing attention (skip newsletters/promos). 4) Any project updates from STATE.md files. Format as a concise daily brief with sections: Weather, Schedule, Emails, Projects. Start with the date."
+  },
+  {
+    "name": "Evening Debrief",
+    "schedule": "0 18 * * 1-5",
+    "deliveryMode": "announce",
+    "prompt": "End of day check-in. 1) What was on the calendar today? 2) Any unread emails that need attention before tomorrow? 3) Ask: 'Anything you want to capture before wrapping up?' Keep it conversational and short."
+  },
+  {
+    "name": "Gmail Promo Cleanup",
+    "schedule": "0 6 * * *",
+    "deliveryMode": "silent",
+    "prompt": "Clean up old promotional emails. Search for promotions older than 6 months and trash up to 50 per run. When done, respond with exactly: HEARTBEAT_OK"
+  }
+]

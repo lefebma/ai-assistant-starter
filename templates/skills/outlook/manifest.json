@@ -1,0 +1,8 @@
+{
+  "id": "outlook",
+  "name": "Outlook Email & Calendar",
+  "description": "Microsoft 365 email and calendar via Microsoft Graph API",
+  "enabled": false,
+  "triggers": ["outlook", "email", "inbox", "calendar", "teams", "meeting"],
+  "priority": 60
+}

@@ -1,0 +1,6 @@
+export { ContextEngine, createDefaultEngine } from './engine.js'
+export type { ContextProvider, ContextFragment } from './providers/base.js'
+export { EpisodicProvider } from './providers/episodic.js'
+export { SemanticProvider } from './providers/semantic.js'
+export { ProjectProvider } from './providers/project.js'
+export { CalendarProvider } from './providers/calendar.js'
