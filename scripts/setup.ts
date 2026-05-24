@@ -102,7 +102,16 @@ ${BOLD}${CYAN} ╚═════╝╚══════╝╚═╝  ╚═╝
 
   const envValues: Record<string, string> = {}
 
+  // Personalization
+  const userName = await ask('Your name:')
+  const assistantName = await ask('Name for your assistant (e.g. Aria, Max, Kai):')
+  const city = await ask('Your city (e.g. Toronto):')
+  const timezone = await ask('Your timezone (e.g. America/Toronto):')
+  const aboutYou = await ask('Brief description of what you do:')
+  const vibe = await ask('Personality vibe (e.g. "Direct and witty", "Warm and professional"):')
+
   // Telegram bot token
+  console.log()
   console.log('  Create a bot via @BotFather on Telegram:')
   console.log('  1. Open Telegram, search for @BotFather')
   console.log('  2. Send /newbot and follow the prompts')
@@ -116,7 +125,7 @@ ${BOLD}${CYAN} ╚═════╝╚══════╝╚═╝  ╚═╝
 
   // ElevenLabs TTS
   console.log()
-  console.log('  ElevenLabs gives your bot a voice. Get a free API key at:')
+  console.log('  ElevenLabs gives your bot a voice (optional). Get a free API key at:')
   console.log('  https://elevenlabs.io')
   const elevenKey = await ask('ElevenLabs API key (or Enter to skip):')
   if (elevenKey) {
@@ -127,7 +136,7 @@ ${BOLD}${CYAN} ╚═════╝╚══════╝╚═╝  ╚═╝
 
   // Gemini for video
   console.log()
-  console.log('  Google Gemini API for video analysis. Free tier at:')
+  console.log('  Google Gemini API for video/image analysis (optional). Free tier at:')
   console.log('  https://aistudio.google.com')
   const googleKey = await ask('Google API key (or Enter to skip):')
   if (googleKey) {
@@ -137,7 +146,7 @@ ${BOLD}${CYAN} ╚═════╝╚══════╝╚═╝  ╚═╝
   // Write .env
   header('Writing configuration...')
   const envLines = [
-    '# ClaudeClaw Configuration',
+    '# AI Assistant Configuration',
     `TELEGRAM_BOT_TOKEN="${envValues['TELEGRAM_BOT_TOKEN'] ?? ''}"`,
     '# Send /chatid to the bot to get this, then fill it in',
     'ALLOWED_CHAT_ID=""',
@@ -156,19 +165,21 @@ ${BOLD}${CYAN} ╚═════╝╚══════╝╚═╝  ╚═╝
   mkdirSync(resolve(PROJECT_ROOT, 'workspace', 'uploads'), { recursive: true })
   ok('Directories created')
 
-  // Open CLAUDE.md for editing
-  header('Personalizing CLAUDE.md')
-  console.log('  Opening CLAUDE.md in your editor. Replace the [YOUR NAME] and')
-  console.log('  [YOUR ASSISTANT NAME] placeholders with your details.')
-  console.log()
-
-  const editor = process.env.EDITOR ?? 'nano'
-  try {
-    spawnSync(editor, [resolve(PROJECT_ROOT, 'CLAUDE.md')], { stdio: 'inherit' })
-    ok('CLAUDE.md updated')
-  } catch {
-    warn(`Could not open editor (${editor}). Edit CLAUDE.md manually.`)
-  }
+  // Personalize CLAUDE.md from template
+  header('Personalizing CLAUDE.md...')
+  const claudeMdPath = resolve(PROJECT_ROOT, 'CLAUDE.md')
+  let claudeContent = readFileSync(claudeMdPath, 'utf-8')
+  claudeContent = claudeContent
+    .replace(/\[ASSISTANT_NAME\]/g, assistantName || 'Assistant')
+    .replace(/\[YOUR_NAME\]/g, userName || 'User')
+    .replace(/\[PLATFORM\]/g, 'Telegram')
+    .replace(/\[CITY\]/g, city || 'your city')
+    .replace(/\[TIMEZONE\]/g, timezone || 'America/New_York')
+    .replace(/\[PROJECT_PATH\]/g, PROJECT_ROOT)
+    .replace(/\[Brief description:.*?\]/, aboutYou || 'Personal and professional tasks')
+    .replace(/\[Describe the personality.*?\]/, vibe || 'Helpful, direct, and competent')
+  writeFileSync(claudeMdPath, claudeContent)
+  ok('CLAUDE.md personalized')
 
   // Install launchd service
   header('Background service')

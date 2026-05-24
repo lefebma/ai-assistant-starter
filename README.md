@@ -18,57 +18,46 @@ Built and maintained by [ELS Partners](https://www.els-partners.com).
 
 ### Prerequisites
 
-- macOS with [Homebrew](https://brew.sh)
-- Node.js 20+ (`brew install node`)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
+- macOS (Intel or Apple Silicon)
+- Node.js 20+ (download the .pkg installer from [nodejs.org](https://nodejs.org), or `brew install node` if you have Homebrew)
+- Git (included with macOS; if missing, run `xcode-select --install` in Terminal)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code): `npm install -g @anthropic-ai/claude-code`
 
 ### 1. Clone and set up
 
 ```bash
 git clone https://github.com/lefebma/ai-assistant-starter.git my-assistant
 cd my-assistant
-./setup.sh
+npm install
+npm run setup
 ```
 
-The setup wizard asks your name, preferred platform, personality style, email provider, and timezone. It generates your `CLAUDE.md` config and `.env` template.
+The setup wizard checks requirements, builds the project, walks you through Telegram bot creation, and optionally installs a launchd service so your assistant starts on login.
 
 ### 2. Create your bot
 
 **Telegram** (recommended for solo use):
 1. Message [@BotFather](https://t.me/BotFather) on Telegram
 2. Send `/newbot`, pick a name
-3. Copy the token into `.env` as `TELEGRAM_BOT_TOKEN`
-4. Message your bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID
+3. Copy the token when prompted by the setup wizard (or add to `.env` as `TELEGRAM_BOT_TOKEN`)
+4. Message your bot, then send `/chatid` to get your chat ID
 5. Add it to `.env` as `ALLOWED_CHAT_ID`
 
 See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md) for Slack, Discord, and Teams instructions.
 
 ### 3. Connect email (optional)
 
-**Gmail:**
-```bash
-brew install gogcli
-gog auth add you@gmail.com --services gmail,calendar
-```
+See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md) for Gmail and Outlook setup.
 
-**Outlook:** See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md#outlook--microsoft-365-via-cli-or-mcp).
+### 4. Run
 
-### 4. Build and run
+If you skipped the launchd service during setup:
 
 ```bash
-npm install
-npm run build
-node dist/src/index.js
+npm start
 ```
 
 Message your bot. If it replies, you're live.
-
-### 5. Make it persistent
-
-```bash
-# macOS: create a launchd service so it runs on boot
-# See docs/SETUP-GUIDE.md Step 6 for the plist template
-```
 
 ## First Things to Try
 
