@@ -22,3 +22,5 @@ logs/
 key_pair.txt
 key_pair.txt.pub
 ~$*
+docs/CLIENT-ONBOARDING.md
+docs/EXTRACTION-PLAN.md
