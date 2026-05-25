@@ -16,48 +16,77 @@ Built and maintained by [ELS Partners](https://www.els-partners.com).
 
 ## Quick Start
 
-### Prerequisites
+Open **Terminal** (search for it in Spotlight) and run each step below.
 
-- macOS (Intel or Apple Silicon)
-- Node.js 20+ (download the .pkg installer from [nodejs.org](https://nodejs.org), or `brew install node` if you have Homebrew)
-- Git (included with macOS; if missing, run `xcode-select --install` in Terminal)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code): `npm install -g @anthropic-ai/claude-code`
+### Step 1: Install Homebrew (if you don't have it)
 
-### 1. Clone and set up
+Homebrew is a package manager for macOS. Most Macs don't have it pre-installed.
 
 ```bash
-git clone https://github.com/lefebma/ai-assistant-starter.git my-assistant
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Follow the on-screen instructions. When it finishes, it may tell you to run two commands to add brew to your PATH. **Run those commands.** Then close and reopen Terminal.
+
+Verify it worked:
+```bash
+brew --version
+```
+
+### Step 2: Install Node.js and Claude Code
+
+```bash
+brew install node
+npm install -g @anthropic-ai/claude-code
+```
+
+Verify:
+```bash
+node --version    # should show v20 or higher
+claude --version  # should show the Claude CLI version
+```
+
+### Step 3: Download and set up
+
+Download the project from GitHub (no account needed):
+
+```bash
+curl -L https://github.com/lefebma/ai-assistant-starter/archive/refs/heads/main.zip -o assistant.zip
+unzip assistant.zip
+mv ai-assistant-starter-main my-assistant
 cd my-assistant
 npm install
 npm run setup
 ```
 
-The setup wizard checks requirements, builds the project, walks you through Telegram bot creation, and optionally installs a launchd service so your assistant starts on login.
+The setup wizard asks your name, assistant personality, walks you through Telegram bot creation, and optionally installs a background service.
 
-### 2. Create your bot
+### Step 4: Create your Telegram bot
 
-**Telegram** (recommended for solo use):
-1. Message [@BotFather](https://t.me/BotFather) on Telegram
-2. Send `/newbot`, pick a name
-3. Copy the token when prompted by the setup wizard (or add to `.env` as `TELEGRAM_BOT_TOKEN`)
-4. Message your bot, then send `/chatid` to get your chat ID
-5. Add it to `.env` as `ALLOWED_CHAT_ID`
+1. Open Telegram on your phone, search for **@BotFather**
+2. Send `/newbot` and follow the prompts to name your bot
+3. Copy the token it gives you (the setup wizard will ask for it)
+4. After setup, message your bot and send `/chatid`
+5. Open `.env` in any text editor and paste your chat ID into `ALLOWED_CHAT_ID=""`
 
-See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md) for Slack, Discord, and Teams instructions.
+To edit `.env` from Terminal:
+```bash
+open -a TextEdit .env
+```
 
-### 3. Connect email (optional)
+### Step 5: Run
 
-See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md) for Gmail and Outlook setup.
-
-### 4. Run
-
-If you skipped the launchd service during setup:
+If you skipped the background service during setup:
 
 ```bash
 npm start
 ```
 
-Message your bot. If it replies, you're live.
+Message your bot on Telegram. If it replies, you're live.
+
+### Optional: Connect email
+
+See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md) for Gmail and Outlook setup.
 
 ## First Things to Try
 
