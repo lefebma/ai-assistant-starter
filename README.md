@@ -122,6 +122,24 @@ skills/my-skill/
 
 Tell your bot `/skill reload` to pick it up.
 
+## Updating
+
+Your assistant checks for updates automatically and includes the status in morning briefings.
+
+To check manually:
+```
+/update
+```
+
+To apply an available update:
+```
+/update apply
+```
+
+Updates replace the engine code (`src/`, `package.json`, etc.) while preserving your files (`.env`, `CLAUDE.md`, `skills/`, `projects/`, `store/`). The service needs a restart after updating.
+
+You can also check your current version with `/version`.
+
 ## Support
 
 Setup assistance and custom skill development available from ELS Partners.

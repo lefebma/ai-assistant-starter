@@ -5,6 +5,7 @@ import { ProjectProvider } from './providers/project.js'
 import { CalendarProvider } from './providers/calendar.js'
 import { skillsProvider } from './providers/skills.js'
 import { AutoMemoryProvider } from './providers/automemory.js'
+import { UpdateProvider } from './providers/update.js'
 import { loadSkills } from '../skills/index.js'
 import { logger } from '../logger.js'
 
@@ -183,6 +184,7 @@ export function createDefaultEngine(): ContextEngine {
   engine.register(new SemanticProvider())    // priority 60
   engine.register(new EpisodicProvider())    // priority 50
   engine.register(new ProjectProvider())     // priority 40
+  engine.register(new UpdateProvider())      // priority 30
 
   return engine
 }

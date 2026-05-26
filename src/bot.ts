@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY } from './config.js'
 import { getSession, setSession, clearSession, getMemoriesForChat } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
@@ -24,6 +24,7 @@ import { logger } from './logger.js'
 import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
 import { getSkills, setSkillEnabled, reloadSkills } from './skills/index.js'
+import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog } from './updater.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
 
 // Non-abort text patterns (OpenClaw v2026.5.18 -- /btw non-abort behavior).
@@ -38,6 +39,9 @@ const NON_ABORT_PATTERNS = [
   /^\/skill$/i,
   /^\/browser\s*status$/i,
   /^\/browser$/i,
+  /^\/update\s*check$/i,
+  /^\/update$/i,
+  /^\/version$/i,
 ]
 
 function isNonAbortMessage(text: string): boolean {
@@ -180,7 +184,8 @@ async function handleMessage(
     if (willVoice) {
       try {
         const audioBuffer = await synthesizeSpeech(response)
-        const audioPath = resolve(UPLOADS_DIR, `tts_${Date.now()}.mp3`)
+        const ext = OPENAI_API_KEY ? 'mp3' : 'm4a'
+        const audioPath = resolve(UPLOADS_DIR, `tts_${Date.now()}.${ext}`)
         writeFileSync(audioPath, audioBuffer)
         await adapter.sendFile(chatId, audioPath, 'voice')
       } catch (err) {
@@ -433,6 +438,66 @@ async function handleAuthorizeCommand(adapter: PlatformAdapter, chatId: string, 
   await adapter.sendMessage(chatId, 'Usage: /authorize [add|remove|list]')
 }
 
+// Track pending update confirmations
+const pendingUpdateConfirm = new Set<string>()
+
+async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
+  const parts = text.trim().split(/\s+/)
+  const subcmd = parts[1]?.toLowerCase()
+
+  if (!subcmd || subcmd === 'check') {
+    const status = await checkForUpdate(false)
+    if (status.error) {
+      await adapter.sendMessage(chatId, `Update check failed: ${status.error}`)
+      return
+    }
+    if (status.updateAvailable && status.latestVersion) {
+      const changelog = await getChangelog()
+      let msg = `Update available: v${status.currentVersion} -> v${status.latestVersion}`
+      if (changelog) {
+        msg += `\n\n${changelog.slice(0, 800)}`
+      }
+      msg += '\n\nRun /update apply to install.'
+      await adapter.sendMessage(chatId, msg)
+    } else {
+      await adapter.sendMessage(chatId, `You're on the latest version (v${status.currentVersion}).`)
+    }
+    return
+  }
+
+  if (subcmd === 'apply') {
+    // Require confirmation for the primary chat, auto-allow for direct re-confirm
+    if (!pendingUpdateConfirm.has(chatId)) {
+      pendingUpdateConfirm.add(chatId)
+      const status = await checkForUpdate(true)
+      if (!status.updateAvailable) {
+        pendingUpdateConfirm.delete(chatId)
+        await adapter.sendMessage(chatId, `Already on latest version (v${status.currentVersion}).`)
+        return
+      }
+      await adapter.sendMessage(
+        chatId,
+        `This will update the engine from v${status.currentVersion} to v${status.latestVersion}.\n` +
+        'Your .env, CLAUDE.md, skills, and data are preserved.\n' +
+        'The service will need a restart after.\n\n' +
+        'Run /update apply again to confirm.'
+      )
+      // Auto-expire confirmation after 2 minutes
+      setTimeout(() => pendingUpdateConfirm.delete(chatId), 120_000)
+      return
+    }
+
+    pendingUpdateConfirm.delete(chatId)
+    await adapter.sendMessage(chatId, 'Downloading and applying update... this may take a minute.')
+
+    const result = await applyUpdate()
+    await adapter.sendMessage(chatId, result.message)
+    return
+  }
+
+  await adapter.sendMessage(chatId, 'Usage: /update [check|apply]')
+}
+
 // --- Bot creation ---
 
 export interface BotCore {
@@ -605,6 +670,14 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await handleAuthorizeCommand(adapter, chatId, trimmed)
       return
     }
+    if (trimmed === '/version') {
+      await adapter.sendMessage(chatId, `AI Assistant v${getCurrentVersion()}`)
+      return
+    }
+    if (trimmed.startsWith('/update')) {
+      await handleUpdateCommand(adapter, chatId, trimmed)
+      return
+    }
     if (trimmed === '/help') {
       await adapter.sendMessage(chatId, [
         'Commands:',
@@ -617,6 +690,8 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/steer - Inject mid-run steering message',
         '/skill - Manage skills (list/enable/disable/reload)',
         '/authorize - Manage multi-chat access (add/remove/list)',
+        '/update - Check for and apply updates (check/apply)',
+        '/version - Show current version',
         '/chatid - Show your chat ID',
         '/help - This message',
       ].join('\n'))
@@ -640,6 +715,8 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'steer', description: 'Inject mid-run steering message' },
           { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
           { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
+          { command: 'update', description: 'Check for and apply updates' },
+          { command: 'version', description: 'Show current version' },
           { command: 'chatid', description: 'Show your chat ID' },
           { command: 'help', description: 'Show help' },
         ])
