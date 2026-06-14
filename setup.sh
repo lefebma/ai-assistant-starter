@@ -112,7 +112,7 @@ read -p "> " OWNER_BIO
 echo ""
 prompt_choice EMAIL_PROVIDER "Email provider?" "Gmail" "Outlook/Microsoft 365" "Both" "Skip for now"
 
-INSTALLED_SKILLS="weather"
+INSTALLED_SKILLS="weather, decision-log"
 GMAIL_ADDRESS_2=""
 OUTLOOK_ADDRESS_2=""
 
@@ -322,6 +322,25 @@ sed -i '' \
 
 echo -e "  ${GREEN}Created${NC} skills/weather/"
 
+# Decision log skill (always on — no external deps)
+cp -r "${TEMPLATE_DIR}/skills/decision-log" skills/
+sed -i '' \
+  -e "s|{{OWNER_NAME}}|${OWNER_NAME}|g" \
+  -e "s|{{PROJECT_PATH}}|${PROJECT_PATH}|g" \
+  skills/decision-log/SKILL.md 2>/dev/null || true
+sed -i '' \
+  -e "s|{{OWNER_NAME}}|${OWNER_NAME}|g" \
+  -e "s|{{PROJECT_PATH}}|${PROJECT_PATH}|g" \
+  skills/decision-log/manifest.json 2>/dev/null || true
+mkdir -p decisions
+if [ ! -f decisions/log.md ]; then
+  sed "s|{{OWNER_NAME}}|${OWNER_NAME}|g" "${TEMPLATE_DIR}/decisions/log.md" > decisions/log.md
+  echo -e "  ${GREEN}Created${NC} decisions/log.md"
+else
+  echo -e "  ${YELLOW}Skip:${NC} decisions/log.md already exists"
+fi
+echo -e "  ${GREEN}Created${NC} skills/decision-log/"
+
 # Gmail skill (primary)
 if [[ ", $INSTALLED_SKILLS, " == *", gmail, "* ]]; then
   cp -r "${TEMPLATE_DIR}/skills/gmail" skills/
@@ -405,6 +424,7 @@ if [ "${ENABLE_WORDSMITH:-false}" = true ]; then
   cp -r "${TEMPLATE_DIR}/skills/wordsmith" skills/
   sed -i '' -e "s|{{PROJECT_PATH}}|${PROJECT_PATH}|g" -e "s|{{OWNER_NAME}}|${OWNER_NAME}|g" skills/wordsmith/SKILL.md 2>/dev/null || true
   sed -i '' -e "s|{{PROJECT_PATH}}|${PROJECT_PATH}|g" skills/wordsmith/manifest.json 2>/dev/null || true
+  sed -i '' -e "s|{{OWNER_NAME}}|${OWNER_NAME}|g" skills/wordsmith/voice-samples/README.md 2>/dev/null || true
   chmod +x skills/wordsmith/wordsmith.sh
   if [ -n "$GOOGLE_API_KEY" ]; then
     # Append to project .env (created later); also remember for now
@@ -565,14 +585,21 @@ if [[ ", $INSTALLED_SKILLS, " == *", outlook, "* ]]; then
   echo ""
 fi
 
-echo "  3. Install and build:"
+if [ "${ENABLE_WORDSMITH:-false}" = true ]; then
+  echo "  3. Optional: drop a few real writing samples into skills/wordsmith/voice-samples/"
+  echo "     (Recent emails, Slack messages, LinkedIn posts — anything in your voice)"
+  echo "     Wordsmith reads them automatically. See voice-samples/README.md for what makes a good sample."
+  echo ""
+fi
+
+echo "  4. Install and build:"
 echo "     npm install && npm run build"
 echo ""
-echo "  4. Test locally:"
+echo "  5. Test locally:"
 echo "     node dist/src/index.js"
 echo ""
-echo "  5. Set up as a persistent service:"
+echo "  6. Set up as a persistent service:"
 echo "     (See SETUP-GUIDE.md > Step 6)"
 echo ""
-echo "  6. Message your bot and say hello!"
+echo "  7. Message your bot and say hello!"
 echo ""

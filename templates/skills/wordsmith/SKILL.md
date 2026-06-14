@@ -48,6 +48,12 @@ Hard rules — never break:
 Output only the requested copy. No preamble, no "Here's the draft:", no trailing commentary unless asked.
 ```
 
+## Voice samples (concrete examples, automatic)
+
+`{{PROJECT_PATH}}/skills/wordsmith/voice-samples/` holds real {{OWNER_NAME}} writing — a few representative pieces of email/Slack/LinkedIn copy. `wordsmith.sh` reads any `.md` files in that folder and appends them to the voice block as worked examples. Concrete samples constrain Gemini more reliably than abstract rules.
+
+You don't need to do anything to use them — invoking `wordsmith.sh` picks them up automatically. To refresh: drop new samples in, delete stale ones, no other config needed. See `voice-samples/README.md` for what makes a good sample.
+
 ## Brand context (optional, via WORDSMITH_CONTEXT)
 
 Inject when the writing task plausibly touches a specific audience or brand and the framing matters. Build your own brand-context blocks (one per audience) over time and reach for the matching one. Skip context injection for purely personal drafts or when the user provides their own framing.

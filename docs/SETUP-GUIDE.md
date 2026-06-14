@@ -120,6 +120,7 @@ All optional except `weather`. Setup prompts you per skill.
 | Skill | What it does | What you need |
 |-------|-------------|---------------|
 | `weather` | Current weather + short forecast | Coordinates (Open-Meteo, no key) |
+| `decision-log` | Append-only record of decisions with Why / Alternatives / What-would-change-my-mind | Nothing (always on) |
 | `gmail` | Gmail + Google Calendar via `gog` CLI | Gmail address(es) |
 | `outlook` | M365 email + calendar via Graph | Azure app registration |
 | `web-research` | Three-tier Perplexity research | [Perplexity API key](https://www.perplexity.ai/settings/api) |
@@ -132,9 +133,11 @@ All optional except `weather`. Setup prompts you per skill.
 
 ### Per-skill setup notes
 
+**decision-log** — Always installed, no key. Setup creates `decisions/log.md` at the project root. To use it in chat: say "log a decision" or "we decided X" and the assistant drafts an entry, asks one quick question to capture the *why*, and appends to the top of the file. Ask "what did I decide about Y" later to search the history.
+
 **apollo** — Setup writes your key to `~/.apollo-api-key` (chmod 600). Test with `bash skills/apollo/apollo-lookup.sh company "Acme Inc"`.
 
-**wordsmith** — Setup adds `GOOGLE_API_KEY=` to your project `.env`. Customize the voice block in `skills/wordsmith/SKILL.md` to match your tone.
+**wordsmith** — Setup adds `GOOGLE_API_KEY=` to your project `.env`. For best results, drop 2-5 real writing samples (recent emails, Slack messages, LinkedIn posts) into `skills/wordsmith/voice-samples/` as plain `.md` files. `wordsmith.sh` reads them automatically and appends them to the voice block as concrete examples — Gemini mirrors real samples far better than abstract style rules. See `skills/wordsmith/voice-samples/README.md` for what makes a good sample.
 
 **antilibrary** — Setup records your vault path in the skill. Open the vault in Obsidian and ask the assistant to "set up the vault" — it will scaffold `wiki/`, `sources/`, and `CLAUDE.md` inside it.
 

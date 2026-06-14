@@ -1,0 +1,22 @@
+{
+  "id": "decision-log",
+  "name": "Decision Log",
+  "description": "Append-only record of decisions {{OWNER_NAME}} makes. Captures why and what would change the call later.",
+  "enabled": true,
+  "triggers": [
+    "log a decision",
+    "log decision",
+    "decision:",
+    "we decided",
+    "i decided",
+    "going with",
+    "we're going with",
+    "we are going with",
+    "what did i decide",
+    "decision log",
+    "decision history",
+    "why did we"
+  ],
+  "priority": 60,
+  "context": "Decision log lives at {{PROJECT_PATH}}/decisions/log.md (append-only, reverse-chronological). Every entry captures: Decision, Why, Alternatives considered, Owner, What would change my mind. See SKILL.md for the format and when to invoke."
+}

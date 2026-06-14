@@ -45,6 +45,23 @@ if [[ -z "${GOOGLE_API_KEY:-}" ]]; then
   exit 1
 fi
 
+# Auto-load voice samples (real writing examples), if any, and append to voice block.
+# README.md inside the folder is documentation, not a sample — skip it.
+SAMPLES_DIR="$SCRIPT_DIR/voice-samples"
+if [[ -d "$SAMPLES_DIR" ]]; then
+  SAMPLES_BLOCK=""
+  for f in "$SAMPLES_DIR"/*.md; do
+    [[ -e "$f" ]] || continue
+    base=$(basename "$f")
+    [[ "$base" == "README.md" ]] && continue
+    SAMPLES_BLOCK+=$'\n\n--- Voice sample: '"$base"$' ---\n'
+    SAMPLES_BLOCK+=$(cat "$f")
+  done
+  if [[ -n "$SAMPLES_BLOCK" ]]; then
+    WORDSMITH_VOICE="${WORDSMITH_VOICE:-}"$'\n\nConcrete voice samples (real writing in this person\'s voice — mirror these patterns, vocabulary, sentence rhythm, and stance):'"$SAMPLES_BLOCK"
+  fi
+fi
+
 # Read piped stdin if present (treat as source text to operate on)
 SOURCE=""
 if [[ ! -t 0 ]]; then
