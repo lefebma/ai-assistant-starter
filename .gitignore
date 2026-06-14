@@ -3,6 +3,7 @@ dist/
 .env
 store/
 workspace/
+docs/.obsidian/
 *.log
 *.pid
 .claude/

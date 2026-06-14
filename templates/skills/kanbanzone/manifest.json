@@ -1,0 +1,22 @@
+{
+  "id": "kanbanzone",
+  "name": "Kanban Zone",
+  "description": "Generic Kanban Zone CLI. Works against any board the API key can see. Read board state, create/move/update cards, add comments.",
+  "enabled": true,
+  "triggers": [
+    "kanban zone",
+    "kanbanzone",
+    "list my boards",
+    "what boards",
+    "project board",
+    "kanban card",
+    "card on the board",
+    "move card",
+    "add a card to",
+    "comment on card",
+    "what's on the",
+    "what's in the backlog"
+  ],
+  "priority": 50,
+  "context": "Kanban Zone generic CLI. Helper: python3 {{PROJECT_PATH}}/skills/kanbanzone/scripts/kz.py <verb> [--board ID] [...]. API key: ~/.config/kanbanzone/config.json (api_key + optional default_board_id) or KZ_API_KEY env. Verbs: list-boards, verify, refresh-cache, list-cards, find, create-card, bulk-create, move-card, update-card, comment, dump, diagnose. Every verb except list-boards/diagnose accepts --board ID; falls back to default_board_id. Card numbers (#N) are board-local. Don't delete cards — archive instead. Full docs at skills/kanbanzone/SKILL.md and skills/kanbanzone/references/."
+}

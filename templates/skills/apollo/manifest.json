@@ -1,0 +1,9 @@
+{
+  "id": "apollo",
+  "name": "Apollo.io Sales Intelligence",
+  "description": "Company/person/domain lookup and active sequence reports via the Apollo.io API",
+  "enabled": true,
+  "triggers": ["apollo", "lookup company", "lookup person", "sales research", "lead", "prospect", "sequence report"],
+  "priority": 50,
+  "context": "Apollo API key: stored at ~/.apollo-api-key (one-line file, chmod 600). All scripts read it from there.\nLookup: bash {{PROJECT_PATH}}/skills/apollo/apollo-lookup.sh company \"Name\" | person \"Name\" | domain \"example.com\"\nActive sequences report: APOLLO_API_KEY=$(cat ~/.apollo-api-key) node {{PROJECT_PATH}}/skills/apollo/apollo-active-sequences-report.js [output_dir]\nDefault report output dir: ~/apollo-reports/ (override by passing a path as the first arg)."
+}

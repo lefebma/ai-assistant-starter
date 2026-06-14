@@ -67,12 +67,18 @@ This guide walks you through setting up your personal AI assistant powered by Cl
 
 ## Step 2: Connect Email
 
+Setup supports up to **two accounts per provider**. Pick "Both" if you have Gmail + Outlook; pick the same provider twice via the "Add a second … account?" prompt if you have two of the same kind.
+
 ### Gmail (via gog CLI)
 1. Install: `brew install gogcli`
-2. Authenticate: `gog auth add your.email@gmail.com --services gmail,calendar`
+2. Authenticate each account:
+   ```
+   gog auth add primary@gmail.com --services gmail,calendar
+   gog auth add secondary@gmail.com --services gmail,calendar
+   ```
 3. Grant permissions in the browser when prompted
-4. Test: `gog gmail search "newer_than:1d" --account your.email@gmail.com`
-5. The skill at `skills/gmail/` is pre-configured; update `SKILL.md` with your email address
+4. Test: `gog gmail search "newer_than:1d" --account primary@gmail.com`
+5. The skill at `skills/gmail/` is pre-configured for the primary address. If you opted into a second account, `skills/gmail-secondary/` is wired to it independently.
 
 ### Outlook / Microsoft 365 (via CLI or MCP)
 1. Register an app in [Azure AD App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps)
@@ -85,6 +91,7 @@ This guide walks you through setting up your personal AI assistant powered by Cl
    MS_TENANT_ID=your_tenant_id
    ```
 5. Run the auth flow: `node scripts/ms-auth.js`
+6. If you opted into a second Outlook account, `skills/outlook-secondary/` is wired to it. Same Azure app + tenant; the auth flow handles both addresses.
 
 ### Apple Mail / Other
 For non-API email providers, the assistant can use browser automation (Playwright) to read and draft emails through webmail. Slower but works with anything.
@@ -106,24 +113,36 @@ Claude Code also supports Google Calendar and Outlook Calendar via MCP servers. 
 
 Skills are drop-in folders under `skills/`. Each has a `manifest.json` (triggers, priority) and `SKILL.md` (instructions for the AI).
 
-### Included Starter Skills
+### Ships in the box
 
-| Skill | What it does |
-|-------|-------------|
-| `gmail` | Search, read, trash Gmail messages; Google Calendar |
-| `outlook` | Microsoft 365 email and calendar |
-| `weather` | Current weather via Open-Meteo API (free, no key needed) |
-| `web-research` | Web search and page fetching for research tasks |
+All optional except `weather`. Setup prompts you per skill.
 
-### Optional Skills (enable as needed)
+| Skill | What it does | What you need |
+|-------|-------------|---------------|
+| `weather` | Current weather + short forecast | Coordinates (Open-Meteo, no key) |
+| `gmail` | Gmail + Google Calendar via `gog` CLI | Gmail address(es) |
+| `outlook` | M365 email + calendar via Graph | Azure app registration |
+| `web-research` | Three-tier Perplexity research | [Perplexity API key](https://www.perplexity.ai/settings/api) |
+| `apollo` | Apollo.io company/person/sequence intel | [Apollo API key](https://app.apollo.io/#/settings/integrations/api) |
+| `wordsmith` | Delegate prose drafting to Gemini 2.5 | [Google AI Studio key](https://aistudio.google.com/app/apikey) |
+| `antilibrary` | LLM-maintained Obsidian knowledge base | Obsidian vault path |
+| `notion` | Pages, databases, search via Notion API | [Notion integration token](https://www.notion.so/profile/integrations) |
+| `kanbanzone` | Generic Kanban Zone board CLI | Kanban Zone API key (Settings → API) |
+| `wordpress` | Drafts-only REST helper (no publish) | Site URL + WP Application Password |
 
-| Skill | What it does | Requires |
-|-------|-------------|----------|
-| `notion` | Read/write Notion databases and pages | Notion API key |
-| `apollo` | Sales intelligence, contact lookup | Apollo.io API key |
-| `kanban` | Board management (Kanban Zone, Trello, etc.) | Board API key |
-| `crm` | CRM integration (HubSpot, Pipedrive) | CRM API key |
-| `project-management` | Asana, ClickUp, Linear integration | PM tool API key |
+### Per-skill setup notes
+
+**apollo** — Setup writes your key to `~/.apollo-api-key` (chmod 600). Test with `bash skills/apollo/apollo-lookup.sh company "Acme Inc"`.
+
+**wordsmith** — Setup adds `GOOGLE_API_KEY=` to your project `.env`. Customize the voice block in `skills/wordsmith/SKILL.md` to match your tone.
+
+**antilibrary** — Setup records your vault path in the skill. Open the vault in Obsidian and ask the assistant to "set up the vault" — it will scaffold `wiki/`, `sources/`, and `CLAUDE.md` inside it.
+
+**notion** — Setup writes the integration token to `~/.config/notion/api_key` (chmod 600). After install, share the Notion pages and databases you want the assistant to see with the integration (in Notion: `...` → `Connect to` → pick your integration).
+
+**kanbanzone** — Setup writes API key (and optional default board ID) to `~/.config/kanbanzone/config.json` (chmod 600). Run `python3 skills/kanbanzone/scripts/kz.py list-boards` to discover board IDs.
+
+**wordpress** — Setup writes your Application Password to `~/.config/wordpress/app_password` (chmod 600). Generate one at `<your-site>/wp-admin/profile.php` under "Application Passwords". Skill is drafts-only and refuses to publish.
 
 ### Creating Custom Skills
 ```

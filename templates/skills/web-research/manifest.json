@@ -1,0 +1,19 @@
+{
+  "id": "web-research",
+  "name": "Web Research",
+  "description": "Perplexity-backed web research with three depth tiers (fast / medium / deep)",
+  "enabled": true,
+  "triggers": [
+    "research",
+    "look into",
+    "dig into",
+    "investigate",
+    "deep dive",
+    "deep research",
+    "quick take",
+    "what's the latest on",
+    "what is the latest on"
+  ],
+  "priority": 60,
+  "context": "Perplexity API key: ~/.perplexity-api-key\nScript: {{PROJECT_PATH}}/skills/web-research/research.sh\nDeep research folder: {{PROJECT_PATH}}/research/\nSee SKILL.md for model selection and output format."
+}

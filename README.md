@@ -7,12 +7,31 @@ Built and maintained by [ELS Partners](https://www.els-partners.com).
 ## What You Get
 
 - A persistent AI assistant on your phone (via Telegram or other platform)
-- Email and calendar awareness (Gmail, Outlook, or both)
+- Email and calendar awareness (Gmail, Outlook, or both — up to 2 of each)
 - Scheduled tasks (morning briefing, reminders, monitoring)
-- Drop-in skills system (weather, CRM, project management, custom)
+- Drop-in skills system — see the matrix below
 - Voice message support (send voice notes, get voice replies)
 - Memory that persists across conversations
 - Browser automation for web tasks
+
+### Skill matrix
+
+Ships with these skills (all opt-in at setup time except weather, which is always on):
+
+| Skill | What it does | What you need |
+|---|---|---|
+| **weather** | Current conditions + short forecast | Coordinates (setup asks) |
+| **gmail** | Read inbox, search, calendar via `gog` CLI | Gmail address (up to 2 accounts) |
+| **outlook** | M365 email + calendar via Microsoft Graph | Azure app registration (up to 2 accounts) |
+| **web-research** | Three-tier Perplexity research with citations | Perplexity API key |
+| **apollo** | Apollo.io lookups + sequence reports | Apollo API key |
+| **wordsmith** | Delegate prose drafting to Gemini 2.5 | Google AI Studio API key |
+| **antilibrary** | LLM-maintained Obsidian knowledge base | Obsidian vault path |
+| **notion** | Read/search/create pages and databases | Notion integration token |
+| **kanbanzone** | Generic Kanban Zone board CLI | Kanban Zone API key |
+| **wordpress** | Drafts-only WP REST helper (no publish) | Site URL + Application Password |
+
+Adding more is one folder away — see [Adding Skills](#adding-skills).
 
 ## Quick Start
 

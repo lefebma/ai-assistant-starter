@@ -1,0 +1,21 @@
+{
+  "id": "antilibrary",
+  "name": "Anti-Library",
+  "description": "LLM-maintained knowledge base using Karpathy's anti-library pattern. Ingest sources, build wiki, query and synthesize across Obsidian vaults.",
+  "enabled": true,
+  "triggers": [
+    "antilibrary",
+    "anti-library",
+    "knowledge base",
+    "ingest source",
+    "ingest this",
+    "add to vault",
+    "wiki ingest",
+    "wiki query",
+    "wiki lint",
+    "vault setup",
+    "obsidian vault"
+  ],
+  "priority": 55,
+  "context": "See SKILL.md for vault registry, workflows, and conventions."
+}

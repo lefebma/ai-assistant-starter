@@ -1,0 +1,26 @@
+{
+  "id": "wordsmith",
+  "name": "Wordsmith",
+  "description": "Delegate prose generation to Gemini 2.5 (emails, newsletters, marketing copy, rewrites). You orchestrate, Gemini writes.",
+  "enabled": true,
+  "triggers": [
+    "draft",
+    "write",
+    "compose",
+    "rewrite",
+    "polish",
+    "tighten",
+    "humanize",
+    "newsletter",
+    "reply to",
+    "email draft",
+    "landing page copy",
+    "announcement",
+    "make this sound",
+    "shorter version",
+    "longer version",
+    "rephrase"
+  ],
+  "priority": 70,
+  "context": "Gemini API key: GOOGLE_API_KEY in .env (or set in env).\nScript: {{PROJECT_PATH}}/skills/wordsmith/wordsmith.sh\nSee SKILL.md for when to invoke, model selection, voice rules, and post-processing protocol."
+}
