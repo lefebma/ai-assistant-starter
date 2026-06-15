@@ -8,7 +8,7 @@
 Authorization: Basic {base64(api_key)}
 ```
 
-The raw API key (as shown in the Kanban Zone integrations UI) is *not* what goes on the wire — it must be base64-encoded first. The helper script (`scripts/sway.py`) does this automatically; set `KZ_KEY_PREENCODED=1` if your stored key is already encoded.
+The raw API key (as shown in the Kanban Zone integrations UI) is *not* what goes on the wire — it must be base64-encoded first. The helper script (`scripts/kz.py`) does this automatically; set `KZ_KEY_PREENCODED=1` if your stored key is already encoded.
 
 The query-parameter form (`?api_token=...`) is also accepted by the server with the same encoded value, but the skill uses the header form.
 

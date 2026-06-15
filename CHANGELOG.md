@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1 - 2026-06-15
+
+- Fix stale references in the kanbanzone skill template: removed a pointer to a nonexistent `kanbanzone-sway-crm` sibling skill, and corrected the helper script name from `sway.py` to `kz.py`.
+
 ## 1.1.0 - 2026-06-14
 
 - Always-on skill catalog: `buildSkillIndex()` injects an `<available-skills>` block every turn so the assistant is aware of its full toolbox and can route to a skill even when the message lacks a literal trigger word. Full SKILL.md still loads lazily on trigger.

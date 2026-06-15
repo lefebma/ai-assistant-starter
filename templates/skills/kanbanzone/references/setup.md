@@ -29,7 +29,7 @@ The script uses only the Python standard library plus `certifi`. No `requests`, 
 
 > **Note:** API access may require an Enterprise-tier plan. If you don't see the API Key option, your plan may not include it.
 
-> **Same key works for both `kanbanzone` and `kanbanzone-sway-crm`** — they use separate config directories so the credential never has to be duplicated; you can symlink or just paste the same key in both spots.
+> **Tip:** One API key covers every board it can see. If you add other Kanban Zone skills later, they can share this key — point each at the same `api_key` (separate config files, or symlink them).
 
 ## 2. (Optional) Pick a default board
 
