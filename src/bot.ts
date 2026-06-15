@@ -23,7 +23,7 @@ import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
 import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
-import { getSkills, setSkillEnabled, reloadSkills } from './skills/index.js'
+import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
 import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog } from './updater.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
 
@@ -90,9 +90,17 @@ async function handleMessage(
   rawText: string,
   forceVoiceReply = false
 ): Promise<void> {
+  // Always-on skill catalog so the assistant knows its full toolbox and can route
+  // to a skill even when the message lacks a literal trigger word. Kept as its
+  // own block (not via ContextEngine) so it bypasses the "prior conversation
+  // history" framing and the engine's token-budget truncation.
+  const skillIndex = buildSkillIndex()
+
   // Build memory context via ContextEngine
   const memoryContext = await contextEngine.buildContext(chatId, rawText)
-  const fullMessage = memoryContext ? `${memoryContext}\n\n${rawText}` : rawText
+  const fullMessage = [skillIndex, memoryContext, rawText]
+    .filter(Boolean)
+    .join('\n\n')
 
   // Get existing session
   const sessionId = getSession(chatId) ?? undefined

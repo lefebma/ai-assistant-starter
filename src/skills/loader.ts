@@ -82,6 +82,35 @@ export function matchSkills(message: string): LoadedSkill[] {
 }
 
 /**
+ * Build an always-on catalog of available skills so the assistant knows its full
+ * toolbox without every SKILL.md being loaded. Unlike buildSkillContext (which
+ * only fires on a keyword match), this lists every enabled skill as a one-liner
+ * so the model can discover and route to a skill even when the user's wording
+ * doesn't contain a literal trigger. Full instructions still load lazily via the
+ * existing trigger path when a trigger word appears.
+ *
+ * Returns '' when no skills are enabled.
+ */
+export function buildSkillIndex(): string {
+  const enabled = loadedSkills.filter(s => s.manifest.enabled)
+  if (enabled.length === 0) return ''
+
+  const lines = enabled
+    .sort((a, b) => a.manifest.id.localeCompare(b.manifest.id))
+    .map(s => {
+      const triggers = s.manifest.triggers.join(', ')
+      return `- ${s.manifest.id}: ${s.manifest.description} (triggers: ${triggers})`
+    })
+
+  return [
+    '<available-skills>',
+    'These are integrations you can use. Mentioning a topic below pulls in that skill\'s full instructions and credentials automatically. If one is relevant to the request, use it even if the user did not name it exactly.',
+    ...lines,
+    '</available-skills>',
+  ].join('\n')
+}
+
+/**
  * Build context string from matched skills.
  * Combines manifest.context and SKILL.md instructions.
  */

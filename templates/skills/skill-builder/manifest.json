@@ -1,0 +1,9 @@
+{
+  "id": "skill-builder",
+  "name": "Skill Builder",
+  "description": "Create a new skill, optimize an existing one, or audit skill quality. Guides skill development for this assistant's manifest.json + triggers model.",
+  "enabled": true,
+  "triggers": ["skill builder", "build a skill", "create a skill", "new skill", "make a skill", "audit skill", "audit my skills", "optimize skill", "skill quality", "author a skill"],
+  "priority": 55,
+  "context": "Skill authoring guide. Skills live in skills/<id>/ with a manifest.json (canonical: id, name, description, enabled, triggers[], optional context, optional priority) and an optional SKILL.md (free-text, injected on trigger). Full workflow + manifest schema in skills/skill-builder/SKILL.md and skills/skill-builder/reference.md."
+}

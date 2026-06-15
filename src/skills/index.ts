@@ -4,6 +4,7 @@ export {
   getSkills,
   matchSkills,
   buildSkillContext,
+  buildSkillIndex,
   setSkillEnabled,
   reloadSkills,
 } from './loader.js'

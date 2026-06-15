@@ -112,7 +112,7 @@ read -p "> " OWNER_BIO
 echo ""
 prompt_choice EMAIL_PROVIDER "Email provider?" "Gmail" "Outlook/Microsoft 365" "Both" "Skip for now"
 
-INSTALLED_SKILLS="weather, decision-log"
+INSTALLED_SKILLS="weather, decision-log, skill-builder"
 GMAIL_ADDRESS_2=""
 OUTLOOK_ADDRESS_2=""
 
@@ -340,6 +340,10 @@ else
   echo -e "  ${YELLOW}Skip:${NC} decisions/log.md already exists"
 fi
 echo -e "  ${GREEN}Created${NC} skills/decision-log/"
+
+# Skill-builder (always on — no external deps; helps author/audit future skills)
+cp -r "${TEMPLATE_DIR}/skills/skill-builder" skills/
+echo -e "  ${GREEN}Created${NC} skills/skill-builder/"
 
 # Gmail skill (primary)
 if [[ ", $INSTALLED_SKILLS, " == *", gmail, "* ]]; then
