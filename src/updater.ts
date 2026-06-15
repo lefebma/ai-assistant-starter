@@ -13,6 +13,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { logger } from './logger.js'
+import { syncAlwaysOnSkills } from './skills/sync.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = resolve(__dirname, '..', '..')
@@ -31,12 +32,15 @@ const PRESERVED_PATHS = [
   'seed-jobs.json',
 ]
 
-// Files that get replaced during update (engine + config)
+// Files that get replaced during update (engine + config + bundled templates).
+// `templates/` ships new always-on skills and updated optional-skill templates;
+// existing user skills under `skills/` are preserved (PRESERVED_PATHS above).
 const ENGINE_PATHS = [
   'src',
   'scripts',
   'package.json',
   'tsconfig.json',
+  'templates',
   'VERSION',
 ]
 
@@ -224,6 +228,20 @@ export async function applyUpdate(): Promise<UpdateResult> {
       if (existsSync(src)) {
         cpSync(src, resolve(PROJECT_ROOT, f))
       }
+    }
+
+    // 6b. Install any new always-on skills bundled in templates/
+    // (existing user skills are never overwritten)
+    try {
+      const syncResult = syncAlwaysOnSkills()
+      if (syncResult.installed.length > 0) {
+        logger.info({ installed: syncResult.installed }, 'Installed new always-on skills')
+      }
+      if (syncResult.errors.length > 0) {
+        logger.warn({ errors: syncResult.errors }, 'Some always-on skills failed to install')
+      }
+    } catch (syncErr) {
+      logger.warn({ syncErr }, 'Always-on skill sync failed; continuing update')
     }
 
     // 7. Install dependencies (package.json may have changed)

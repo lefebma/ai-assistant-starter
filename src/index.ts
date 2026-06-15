@@ -10,6 +10,7 @@ import { startHttpServer, stopHttpServer } from './http-server.js'
 import { stopChrome, isCdpAvailable } from './browser.js'
 import { runBestEffortCleanup, withTimeout } from './infra/cleanup.js'
 import { createAdapter, detectPlatform } from './platform/index.js'
+import { syncAlwaysOnSkills } from './skills/sync.js'
 import { logger } from './logger.js'
 
 const PID_FILE = resolve(STORE_DIR, 'assistant.pid')
@@ -72,6 +73,17 @@ async function main(): Promise<void> {
 
   // Cleanup old uploads
   cleanupOldUploads()
+
+  // Sync always-on skills from templates/ (idempotent — only installs missing ones).
+  // Catches clients who upgraded from a version that didn't auto-install them.
+  try {
+    const syncResult = syncAlwaysOnSkills()
+    if (syncResult.installed.length > 0) {
+      logger.info({ installed: syncResult.installed }, 'Installed missing always-on skills')
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Always-on skill sync at boot failed; continuing')
+  }
 
   // Create platform adapter
   const adapter = await createAdapter()
