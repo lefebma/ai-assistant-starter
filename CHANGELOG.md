@@ -1,9 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.2.1 - 2026-06-23
 
-- Telegram formatter: markdown tables now render as aligned monospace `<pre>` blocks, and markdown blockquotes (`> ...`) render as `<blockquote>` (auto-expandable past 5 lines) with inline bold/italic/link preserved inside the quote.
-- Agent reply reconciliation: if a turn dies before the model emits a `result:success` event but text was already streamed, the partial is surfaced (tagged as cut short) instead of returning `(no response)`.
+- **Nicer-looking replies on Telegram.** Tables in your assistant's answers now show up as cleanly aligned columns instead of raw `| pipes |`. Quoted text (lines that start with `>`) shows up as a proper indented quote — long quotes get a "tap to expand" preview so they don't take over the whole screen.
+- **No more silent "(no response)" answers.** If your assistant gets cut off mid-reply (network blip, hit a limit, etc.) it now sends what it had written so far, marked as a partial reply, instead of acting like it had nothing to say.
 
 ## 1.2.0 - 2026-06-15
 
