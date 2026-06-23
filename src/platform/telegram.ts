@@ -283,6 +283,35 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
 }
 
+// Render markdown tables as aligned monospace <pre> blocks (Telegram has no native table tag).
+const EXPANDABLE_QUOTE_LINES = 5
+
+function renderMarkdownTable(block: string): string | null {
+  const lines = block.split('\n').filter((l) => l.trim().length > 0)
+  if (lines.length < 2) return null
+  if (!/^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[1])) return null
+
+  const parseRow = (row: string): string[] =>
+    row.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((c) => c.trim())
+
+  const header = parseRow(lines[0])
+  const body = lines.slice(2).map(parseRow)
+  if (body.length === 0) return null
+
+  const colCount = header.length
+  const widths = new Array(colCount).fill(0)
+  for (const row of [header, ...body]) {
+    for (let i = 0; i < colCount; i++) {
+      widths[i] = Math.max(widths[i], (row[i] ?? '').length)
+    }
+  }
+  const fmtRow = (cells: string[]): string =>
+    cells.map((c, i) => (c ?? '').padEnd(widths[i])).join('  ').trimEnd()
+  const sep = widths.map((w) => '-'.repeat(w)).join('  ')
+  const rendered = [fmtRow(header), sep, ...body.map(fmtRow)].join('\n')
+  return `<pre>${escapeHtml(rendered)}</pre>`
+}
+
 function formatForTelegram(text: string): string {
   const codeBlocks: string[] = []
   let result = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
@@ -298,6 +327,33 @@ function formatForTelegram(text: string): string {
   result = result.replace(/`([^`]+)`/g, (_match, code) => {
     inlineCode.push(`<code>${escapeHtml(code)}</code>`)
     return `\x00INLINE${inlineCode.length - 1}\x00`
+  })
+
+  // Detect and render markdown tables (before HTML escape eats the pipes).
+  const protectedBlocks: string[] = []
+  result = result.replace(
+    /(^|\n)((?:\|?[^\n]+\|[^\n]+\n){1}(?:\|?\s*:?-+:?\s*\|[^\n]*\n)(?:\|?[^\n]+\|[^\n]*(?:\n|$))+)/g,
+    (_match, lead, block) => {
+      const rendered = renderMarkdownTable(block)
+      if (!rendered) return _match
+      protectedBlocks.push(rendered)
+      return `${lead}\x00BLOCK${protectedBlocks.length - 1}\x00`
+    }
+  )
+
+  // Detect markdown blockquotes (contiguous lines starting with `> `).
+  result = result.replace(/(^|\n)((?:> ?[^\n]*(?:\n|$))+)/g, (_match, lead, block) => {
+    const lines = block.replace(/\n$/, '').split('\n').map((l: string) => l.replace(/^> ?/, ''))
+    const escaped = lines.map((l: string) => escapeHtml(l)).join('\n')
+    const inlined = escaped
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<i>$1</i>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    const tag = lines.length >= EXPANDABLE_QUOTE_LINES
+      ? `<blockquote expandable>${inlined}</blockquote>`
+      : `<blockquote>${inlined}</blockquote>`
+    protectedBlocks.push(tag)
+    return `${lead}\x00BLOCK${protectedBlocks.length - 1}\x00`
   })
 
   result = result.replace(/[&<>]/g, (ch) => {
@@ -318,6 +374,7 @@ function formatForTelegram(text: string): string {
   result = result.replace(/^---+$/gm, '')
   result = result.replace(/^\*\*\*+$/gm, '')
 
+  result = result.replace(/\x00BLOCK(\d+)\x00/g, (_match, i) => protectedBlocks[Number(i)])
   result = result.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, i) => codeBlocks[Number(i)])
   result = result.replace(/\x00INLINE(\d+)\x00/g, (_match, i) => inlineCode[Number(i)])
 

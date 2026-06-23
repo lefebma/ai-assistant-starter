@@ -168,6 +168,14 @@ export async function runAgent(
       }
       pendingSteer = null
 
+      // Reply reconciliation: if no success result arrived but the model streamed
+      // text before the turn died, surface the partial instead of "(no response)".
+      // The user sees what the agent had, tagged so they know it was cut short.
+      if (!responseText && streamedText.trim().length > 0) {
+        logger.warn({ partialLength: streamedText.length }, 'Reconciling partial stream as response')
+        responseText = `${streamedText.trim()}\n\n_(partial reply, turn ended without a final result)_`
+      }
+
       // Success, return the result
       return { text: responseText, newSessionId }
     } catch (err) {

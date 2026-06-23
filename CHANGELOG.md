@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Telegram formatter: markdown tables now render as aligned monospace `<pre>` blocks, and markdown blockquotes (`> ...`) render as `<blockquote>` (auto-expandable past 5 lines) with inline bold/italic/link preserved inside the quote.
+- Agent reply reconciliation: if a turn dies before the model emits a `result:success` event but text was already streamed, the partial is surfaced (tagged as cut short) instead of returning `(no response)`.
+
 ## 1.2.0 - 2026-06-15
 
 - Expanded the starter skill pack: `apollo`, `wordsmith`, `antilibrary`, `notion`, `kanbanzone`, `wordpress`, all opt-in via setup.sh.
