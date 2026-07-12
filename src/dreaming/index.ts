@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync, existsSync, mkdirSync, appendFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { getAgentRuntime } from '../runtime/index.js'
 import { PROJECT_ROOT } from '../config.js'
 import { logger } from '../logger.js'
 
@@ -155,21 +155,7 @@ RULES:
 }
 
 async function runDreamingAgent(prompt: string): Promise<string> {
-  let fullText = ''
-  const conversation = query({
-    prompt,
-    options: {
-      cwd: PROJECT_ROOT,
-      permissionMode: 'bypassPermissions',
-      settingSources: ['project', 'user'],
-    },
-  })
-  for await (const event of conversation) {
-    if (event.type === 'result' && event.subtype === 'success') {
-      fullText = event.result ?? ''
-    }
-  }
-  return fullText.trim()
+  return getAgentRuntime().runOnce(prompt)
 }
 
 function appendDream(body: string): void {
