@@ -1,9 +1,8 @@
 /**
  * Agent facade.
  *
- * Phase 1 of the LLM-agnostic plan (docs/llm-agnostic-architecture.md): the
- * Claude Agent SDK now lives entirely behind the AgentRuntime interface
- * (src/runtime/). This module keeps the historical positional runAgent()
+ * Phase 1 of the LLM-agnostic roadmap: the Claude Agent SDK now lives
+ * entirely behind the AgentRuntime interface (src/runtime/). This module keeps the historical positional runAgent()
  * signature and the per-chat lane tracking, so bot/scheduler/cockpit/
  * http-server callers are unchanged. Lane tracking stays here (not in the
  * runtime) because it is provider-neutral chat concurrency, not a property

@@ -1,7 +1,7 @@
 /**
  * Provider-agnostic agent runtime contract.
  *
- * Phase 1 of the LLM-agnostic plan (see docs/llm-agnostic-architecture.md).
+ * Phase 1 of the LLM-agnostic roadmap.
  * The runtime owns one agent turn: prompt in, final text out, with streaming
  * and tool-progress callbacks along the way. Everything above this interface
  * (Telegram bot, scheduler, cockpit, lane tracking) is provider-neutral;

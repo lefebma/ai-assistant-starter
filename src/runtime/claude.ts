@@ -1,9 +1,9 @@
 /**
  * ClaudeAgentRuntime -- the Claude Agent SDK behind the AgentRuntime interface.
  *
- * Moved verbatim from src/agent.ts in Phase 1 of the LLM-agnostic plan
- * (docs/llm-agnostic-architecture.md). This is the only file in the codebase
- * that may import @anthropic-ai/claude-agent-sdk.
+ * Moved verbatim from src/agent.ts in Phase 1 of the LLM-agnostic roadmap.
+ * This is the only file in the codebase that may import
+ * @anthropic-ai/claude-agent-sdk.
  */
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { PROJECT_ROOT } from '../config.js'

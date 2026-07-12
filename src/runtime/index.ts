@@ -3,8 +3,8 @@
  *
  * Selects the AgentRuntime implementation from AGENT_RUNTIME in .env
  * (falling back to process.env, then 'claude'). Phase 2 of the LLM-agnostic
- * plan (docs/llm-agnostic-architecture.md) adds provider-agnostic runtimes
- * here; nothing above this module knows which provider is running.
+ * roadmap adds provider-agnostic runtimes here; nothing above this
+ * module knows which provider is running.
  */
 import { readEnvFile } from '../env.js'
 import { logger } from '../logger.js'

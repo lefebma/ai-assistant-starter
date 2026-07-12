@@ -3,7 +3,6 @@
 ## 1.3.0 - 2026-07-12
 
 - **Groundwork for choosing your own AI model.** The Claude engine now sits behind a pluggable runtime interface (`src/runtime/`) instead of being wired directly into the assistant. Nothing changes in day-to-day use: Claude is still the engine and behaves exactly as before. This is step one of the LLM-agnostic roadmap; future releases will let you point the assistant at OpenAI, Gemini, Azure, or your own self-hosted models by setting `AGENT_RUNTIME` in `.env`.
-- **New design doc** at `docs/llm-agnostic-architecture.md` laying out the full plan: provider abstraction via the Vercel AI SDK, bring-your-own-key or bring-your-own-endpoint, model certification tiers, and a cross-platform (macOS + Windows) installer.
 - **First automated tests.** The repo now has a vitest suite covering the new runtime seam (`npm test`).
 - Fixed the `VERSION` file, which was left at 1.2.0 when 1.2.1 was released.
 
