@@ -7,6 +7,7 @@
  */
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { PROJECT_ROOT } from '../config.js'
+import { readEnvFile } from '../env.js'
 import { logger } from '../logger.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime } from './types.js'
 
@@ -20,6 +21,25 @@ const BASE_DELAY_MS = 5000 // 5s, 10s, 20s backoff
  * overflow and aborts to prevent infinite loops in long-running dispatches.
  */
 const LOOP_THRESHOLD = 3 // consecutive identical events
+
+/**
+ * The assistant pins its own model instead of inheriting the `model` key that
+ * `settingSources: ['user']` would pull from ~/.claude/settings.json. That key
+ * follows whatever you last picked in Claude Code interactively, and the Claude
+ * binary vendored with the SDK only understands models it shipped knowing about.
+ * Picking a newer one there would otherwise take every scheduled task down.
+ *
+ * Deliberately a bare alias, not a dated id like `claude-opus-4-6`: aliases keep
+ * resolving to the current model in that tier as the pinned SDK moves, so this
+ * default does not rot. Override with AGENT_MODEL in .env.
+ */
+const DEFAULT_MODEL = 'sonnet'
+
+function resolveModel(): string {
+  return readEnvFile().AGENT_MODEL?.trim()
+    || process.env.AGENT_MODEL?.trim()
+    || DEFAULT_MODEL
+}
 
 function isRetryableError(err: unknown): boolean {
   const msg = String(err)
@@ -58,6 +78,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     const conversation = query({
       prompt,
       options: {
+        model: resolveModel(),
         cwd: options.workingDirectory ?? PROJECT_ROOT,
         permissionMode: 'bypassPermissions',
         settingSources: ['project', 'user'],
@@ -110,6 +131,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         const conversation = query({
           prompt: options.message,
           options: {
+            model: resolveModel(),
             cwd,
             permissionMode: 'bypassPermissions',
             settingSources: ['project', 'user'],
