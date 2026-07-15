@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 - 2026-07-15
+
+- **Fixed: changing your model in Claude Code no longer breaks your assistant.** Until now the assistant quietly borrowed whatever model you last picked in Claude Code (the `model` setting in `~/.claude/settings.json`). That sounds harmless, but the two don't update in lockstep: the assistant runs its own bundled copy of the Claude engine, which only understands the models it shipped knowing about. So picking a brand-new model in Claude Code could leave the assistant asking its older engine for a model that engine had never heard of. Everything still worked while you chatted, and then every scheduled task failed overnight with "There's an issue with the selected model" — until someone noticed in the morning. Your assistant now chooses its own model and ignores that setting entirely, so the two can't drift apart.
+- **New: you can pick the model your assistant runs on.** Set `AGENT_MODEL` in `.env` to `sonnet` (the new default), `opus`, or `haiku`. Opus is the most capable and the most expensive; haiku is the fastest and cheapest. Use these short names rather than a specific version like `claude-opus-4-6` — the short names keep working when the engine updates. Changing it takes effect on the next restart.
+- **Heads up:** if you had deliberately set your assistant to Opus via Claude Code's model setting, it now runs on Sonnet instead. Put `AGENT_MODEL=opus` in your `.env` to get it back. If you never touched that setting, this changes nothing for you.
+- **More automated tests.** The suite now covers the model pin, so a future change can't silently drop it and reintroduce this bug (`npm test`).
+
 ## 1.3.0 - 2026-07-12
 
 - **Groundwork for choosing your own AI model.** The Claude engine now sits behind a pluggable runtime interface (`src/runtime/`) instead of being wired directly into the assistant. Nothing changes in day-to-day use: Claude is still the engine and behaves exactly as before. This is step one of the LLM-agnostic roadmap; future releases will let you point the assistant at OpenAI, Gemini, Azure, or your own self-hosted models by setting `AGENT_RUNTIME` in `.env`.
