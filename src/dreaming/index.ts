@@ -155,7 +155,9 @@ RULES:
 }
 
 async function runDreamingAgent(prompt: string): Promise<string> {
-  return getAgentRuntime().runOnce(prompt)
+  // Unattended/batch work: route to the cron lane so it can run on a different
+  // engine than live chat (see AGENT_RUNTIME_CRON).
+  return getAgentRuntime('cron').runOnce(prompt)
 }
 
 function appendDream(body: string): void {

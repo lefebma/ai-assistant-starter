@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0 - 2026-07-20
+
+- **New: run your assistant on OpenAI or Gemini, not just Claude.** This is the payoff of the LLM-agnostic roadmap started in 1.3.0. Set `AGENT_RUNTIME=ai-sdk` in `.env`, then pick a provider and model with `AI_PROVIDER` (`anthropic`, `openai`, or `google`) and `AI_MODEL`. The assistant keeps all its skills, tools, memory, and scheduled tasks — only the engine underneath changes. Claude on your subscription is still the default; nothing changes unless you opt in.
+- **Self-hosted and OpenAI-compatible models too.** With `AI_PROVIDER=openai` you can set `AI_BASE_URL` to point at any OpenAI-compatible endpoint — Ollama, vLLM, LM Studio, or a gateway — so a local model runs the assistant with no code changes.
+- **Different engines for chat vs. scheduled work.** `AGENT_RUNTIME_CRON` lets unattended jobs (like the nightly reflection) run on a different engine than your live chat — for example, keep costly overnight work on your subscription while chat talks to an API.
+- **Subscription overflow.** On the Claude runtime, if your subscription usage window runs out mid-conversation and you've set `ANTHROPIC_API_KEY`, the assistant finishes the reply on API billing instead of stalling, and tells you it switched. Leave the key unset to keep it off.
+- **Cost control for the API runtime.** `AI_HISTORY_MAX_BYTES` caps how much conversation history is re-sent each turn, trimming the oldest turns when a chat gets long.
+- **A cross-provider test harness.** `scripts/ab-eval.ts --providers=anthropic,openai,google` runs a golden-task suite against each engine so you can see which models handle the assistant's workload. Many more automated tests too (`npm test`).
+- **Under the hood:** a new runtime (built on the Vercel AI SDK) owns the tool loop, session persistence, MCP tools, and system-prompt assembly, all behind the same runtime interface introduced in 1.3.0.
+
 ## 1.4.0 - 2026-07-15
 
 - **Fixed: changing your model in Claude Code no longer breaks your assistant.** Until now the assistant quietly borrowed whatever model you last picked in Claude Code (the `model` setting in `~/.claude/settings.json`). That sounds harmless, but the two don't update in lockstep: the assistant runs its own bundled copy of the Claude engine, which only understands the models it shipped knowing about. So picking a brand-new model in Claude Code could leave the assistant asking its older engine for a model that engine had never heard of. Everything still worked while you chatted, and then every scheduled task failed overnight with "There's an issue with the selected model" — until someone noticed in the morning. Your assistant now chooses its own model and ignores that setting entirely, so the two can't drift apart.
