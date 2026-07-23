@@ -3,7 +3,10 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROJECT_ROOT = resolve(__dirname, '..', '..')
+/** Exported so leaf modules (e.g. the vault) can resolve paths without importing
+ * config.ts, which would form an import cycle once config resolves its secrets
+ * through the vault. env.ts imports nothing from config/vault, so it's cycle-safe. */
+export const PROJECT_ROOT = resolve(__dirname, '..', '..')
 
 export function readEnvFile(keys?: string[]): Record<string, string> {
   const envPath = resolve(PROJECT_ROOT, '.env')

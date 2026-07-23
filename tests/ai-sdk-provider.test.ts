@@ -27,6 +27,10 @@ const { mockReadEnvFile } = vi.hoisted(() => ({
 vi.mock('../src/env.js', () => ({ readEnvFile: mockReadEnvFile }))
 
 import { resolveModel, buildModel } from '../src/runtime/ai-sdk/provider.js'
+import { SecretVault } from '../src/vault/store.js'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const PROVIDER_ENV_KEYS = [
   'AI_PROVIDER',
@@ -183,5 +187,30 @@ describe('buildModel() explicit construction (shared by resolveModel + eval/prob
     expect(() => buildModel('cohere', 'command-r', { apiKey: 'k' })).toThrow(
       /Available: anthropic, openai, google/
     )
+  })
+})
+
+describe('resolveModel() BYOK vault-backed key', () => {
+  it('accepts a provider API key stored in the vault (absent from .env/process.env)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prov-vault-'))
+    new SecretVault({ dir }).set('OPENAI_API_KEY', 'sk-from-vault')
+    const prev = process.env.AGENT_VAULT_DIR
+    process.env.AGENT_VAULT_DIR = dir
+    // env provides provider + model but NO key; it must come from the vault
+    mockReadEnvFile.mockReturnValue({ AI_PROVIDER: 'openai', AI_MODEL: 'gpt-5' })
+    try {
+      const r = resolveModel()
+      expect(r.provider).toBe('openai')
+      expect(r.model).toBeTruthy()
+    } finally {
+      if (prev === undefined) delete process.env.AGENT_VAULT_DIR
+      else process.env.AGENT_VAULT_DIR = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('still throws when the key is in neither the vault, .env, nor process.env', () => {
+    mockReadEnvFile.mockReturnValue({ AI_PROVIDER: 'openai', AI_MODEL: 'gpt-5' })
+    expect(() => resolveModel()).toThrow(/OPENAI_API_KEY/)
   })
 })

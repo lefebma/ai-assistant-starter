@@ -2,6 +2,9 @@ node_modules/
 dist/
 .env
 store/
+# BYOK vault: never commit the encrypted secrets blob or its key, anywhere
+**/vault.key
+**/secrets.json
 workspace/
 docs/.obsidian/
 *.log

@@ -8,6 +8,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { PROJECT_ROOT } from '../config.js'
 import { readEnvFile } from '../env.js'
+import { getSecret } from '../vault/index.js'
 import { logger } from '../logger.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime } from './types.js'
 
@@ -170,8 +171,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
    * NOT called for warnings, transient retries, or the normal subscription path.
    */
   async run(options: AgentRunOptions): Promise<AgentRunResult> {
-    const env = readEnvFile()
-    const overflowKey = env.ANTHROPIC_API_KEY?.trim() || undefined
+    // BYOK: the overflow key resolves through the vault, then .env, then env.
+    const overflowKey = getSecret('ANTHROPIC_API_KEY')
     const cwd = options.workingDirectory ?? PROJECT_ROOT
 
     const primary = await this.runOnLane(options, options.sessionId, cwd, undefined)
