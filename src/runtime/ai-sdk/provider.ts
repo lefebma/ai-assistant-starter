@@ -23,6 +23,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { LanguageModel } from 'ai'
 import { readEnvFile } from '../../env.js'
+import { getSecret } from '../../vault/index.js'
 
 const DEFAULT_PROVIDER = 'anthropic'
 /** Only anthropic gets a default model; other providers must set AI_MODEL. */
@@ -86,10 +87,13 @@ export function resolveModel(): ResolvedModel {
       `Unknown AI_PROVIDER '${provider}'. Available: anthropic, openai, google. (Azure/Bedrock land in a later slice.)`
     )
   }
-  const apiKey = read(keyEnv)
+  // BYOK: the key resolves through the vault first (encrypted at rest), then
+  // .env, then process.env. Non-breaking — falls through to .env when nothing
+  // is vaulted. Only the key goes through the vault; provider/model are config.
+  const apiKey = getSecret(keyEnv)
   if (!apiKey) {
     throw new Error(
-      `AI SDK runtime: provider '${provider}' needs ${keyEnv} in .env (the 'ai-sdk' runtime bills the API directly).`
+      `AI SDK runtime: provider '${provider}' needs ${keyEnv} in the vault or .env (the 'ai-sdk' runtime bills the API directly).`
     )
   }
 
