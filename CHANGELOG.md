@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0 - 2026-07-23
+
+- **New: certify which models can actually run your assistant.** A golden-set test suite (`scripts/ab-eval.ts`) runs a batch of real tasks — shell commands, file edits, multi-step work, remembering things across turns, following exact instructions — against whichever provider you point it at, and grades each one automatically. Run it against Claude, OpenAI, and Gemini side by side to see which models handle your workload before you commit to one. `--tier=smoke` is a quick 8-task check; `--tier=full` is the whole 35-task grid.
+- **Lock in a baseline and catch regressions.** Once you're happy with a run, `--update-baseline` saves it as your certified bar (a committed `certification/baseline.json`). Later runs with `--baseline` compare against it and exit non-zero if anything that used to pass now fails, or if a provider you certified didn't run this time, so you can wire it into CI. `--save` keeps a history of individual runs for before/after comparison.
+- **Testing the harness costs nothing.** The 28 automated tests for the suite run against a stand-in engine, so `npm test` stays free; only a real certification run against live providers spends tokens.
+- **Under the hood:** the eval logic moved into a `src/eval/` module (task catalog, runner, regression diff, persistence) behind a thin CLI, so it is unit-tested and easy to extend with your own tasks. This repo ships without a baseline; you seed your own from your own providers (see `certification/README.md`).
+
 ## 1.5.0 - 2026-07-20
 
 - **New: run your assistant on OpenAI or Gemini, not just Claude.** This is the payoff of the LLM-agnostic roadmap started in 1.3.0. Set `AGENT_RUNTIME=ai-sdk` in `.env`, then pick a provider and model with `AI_PROVIDER` (`anthropic`, `openai`, or `google`) and `AI_MODEL`. The assistant keeps all its skills, tools, memory, and scheduled tasks — only the engine underneath changes. Claude on your subscription is still the default; nothing changes unless you opt in.
