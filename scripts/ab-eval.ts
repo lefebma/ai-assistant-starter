@@ -1,18 +1,22 @@
 /**
- * Golden-task eval harness (Phase 2/3 of the LLM-agnostic plan).
+ * Golden-task certification CLI (Phase 2/3/4 of the LLM-agnostic plan).
  *
- * Runs a set of golden tasks drawn from real usage through an agent runtime
- * and checks the results programmatically. Started as the parity gate between
- * the claude runtime (Claude Code harness) and the ai-sdk runtime; now also
- * the cross-provider certification grid (the seed of Phase 4 certification).
+ * Thin CLI over src/eval/*: it builds the lanes, runs the selected tasks, and
+ * (optionally) persists the run and diffs it against the committed baseline.
+ * All harness logic lives in src/eval/ and is unit-tested without a runtime;
+ * this file only does argument parsing, lane construction, and presentation.
  *
  * Usage (run compiled, with the service's pinned node):
- *   node dist/scripts/ab-eval.js                        # ai-sdk runtime only (reads .env)
- *   node dist/scripts/ab-eval.js --runtime=claude
+ *   node dist/scripts/ab-eval.js                        # ai-sdk runtime, smoke tier (reads .env)
+ *   node dist/scripts/ab-eval.js --tier=full            # the full certification grid
  *   node dist/scripts/ab-eval.js --runtime=both         # claude vs ai-sdk (harness A/B)
- *   node dist/scripts/ab-eval.js --providers=anthropic,openai,google   # three-way grid
+ *   node dist/scripts/ab-eval.js --providers=anthropic,openai,google --tier=full   # cert grid
  *   node dist/scripts/ab-eval.js --providers=openai --openai-model=gpt-5.4
- *   node dist/scripts/ab-eval.js --task=identity        # filter by task name
+ *   node dist/scripts/ab-eval.js --task=identity        # one task by name
+ *   node dist/scripts/ab-eval.js --category=shell       # one capability bucket
+ *   node dist/scripts/ab-eval.js --tier=full --baseline # compare to certification/baseline.json
+ *   node dist/scripts/ab-eval.js --tier=full --save     # also write a run to certification/runs/
+ *   node dist/scripts/ab-eval.js --tier=full --update-baseline  # promote this run to the bar
  *   node dist/scripts/ab-eval.js --mcp                  # leave MCP servers on (off by default)
  *
  * --providers runs one ai-sdk lane per provider with the model injected via the
@@ -20,27 +24,16 @@
  * service. Default models: anthropic=claude-sonnet-5, openai=gpt-5.4,
  * google=gemini-2.5-pro; override with --<provider>-model=. Costs real tokens.
  */
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { PROJECT_ROOT } from '../src/config.js'
 import { readEnvFile } from '../src/env.js'
 import type { AgentRuntime } from '../src/runtime/types.js'
 import { AiSdkAgentRuntime } from '../src/runtime/ai-sdk/index.js'
 import { ClaudeAgentRuntime } from '../src/runtime/claude.js'
 import { buildModel } from '../src/runtime/ai-sdk/provider.js'
-
-type TaskContext = { dir: string }
-type Task = {
-  name: string
-  /** Two-turn tasks return a second message to send on the same session. */
-  message: (ctx: TaskContext) => string
-  followUp?: (ctx: TaskContext) => string
-  /** Return true for pass, or a string describing the failure. */
-  check: (finalText: string, ctx: TaskContext) => true | string
-}
-type TaskResult = { task: string; pass: boolean; detail: string; ms: number }
-type LaneResult = { name: string; results: TaskResult[] }
+import { selectTasks } from '../src/eval/tasks.js'
+import { runLane } from '../src/eval/runner.js'
+import { diffRuns } from '../src/eval/regression.js'
+import { loadBaseline, writeBaseline, writeRun } from '../src/eval/store.js'
+import type { CertDiff, LaneResult, RunArtifact, Task, Tier } from '../src/eval/types.js'
 
 const DEFAULT_PROVIDER_MODEL: Record<string, string> = {
   anthropic: 'claude-sonnet-5',
@@ -51,116 +44,6 @@ const KEY_ENV: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
   google: 'GOOGLE_API_KEY',
-}
-
-function torontoToday(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' }) // YYYY-MM-DD
-}
-
-function countTsFiles(dir: string): number {
-  let count = 0
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) count += countTsFiles(join(dir, entry.name))
-    else if (entry.name.endsWith('.ts')) count++
-  }
-  return count
-}
-
-const TASKS: Task[] = [
-  {
-    name: 'identity',
-    message: () => 'What is your name? Reply with one word only.',
-    // The assistant's name varies per install (set in CLAUDE.md), so this checks
-    // instruction-following (a single short token) rather than a specific name.
-    check: text => {
-      const t = text.trim()
-      return t.length > 0 && t.split(/\s+/).length <= 2
-        ? true
-        : `expected a one-word name, got: ${t.slice(0, 80)}`
-    },
-  },
-  {
-    name: 'date-awareness',
-    message: () => 'What is today\'s date? Reply with only the date in YYYY-MM-DD format, nothing else.',
-    check: text => (text.includes(torontoToday()) ? true : `expected ${torontoToday()}, got: ${text.slice(0, 80)}`),
-  },
-  {
-    name: 'bash-arithmetic',
-    message: () => 'Run the shell command `echo $((6*7))` and reply with only the number it prints.',
-    check: text => (/\b42\b/.test(text) ? true : `expected 42, got: ${text.slice(0, 80)}`),
-  },
-  {
-    name: 'read-file',
-    message: () => `Read ${resolve(PROJECT_ROOT, 'package.json')} and reply with only the value of its "name" field.`,
-    check: text => (/claudeclaw/i.test(text) ? true : `expected claudeclaw, got: ${text.slice(0, 80)}`),
-  },
-  {
-    name: 'write-file',
-    message: ctx => `Create a file at ${join(ctx.dir, 'out.txt')} containing exactly the text "hello-eval" (no trailing newline needed). Reply "done" when finished.`,
-    check: (_text, ctx) => {
-      try {
-        const content = readFileSync(join(ctx.dir, 'out.txt'), 'utf-8').trim()
-        return content === 'hello-eval' ? true : `file content was: ${content.slice(0, 80)}`
-      } catch {
-        return 'file was not created'
-      }
-    },
-  },
-  {
-    name: 'edit-file',
-    message: ctx => {
-      writeFileSync(join(ctx.dir, 'seed.txt'), 'alpha beta gamma')
-      return `In the file ${join(ctx.dir, 'seed.txt')}, replace the word "beta" with "delta". Reply "done" when finished.`
-    },
-    check: (_text, ctx) => {
-      const content = readFileSync(join(ctx.dir, 'seed.txt'), 'utf-8').trim()
-      return content === 'alpha delta gamma' ? true : `file content was: ${content.slice(0, 80)}`
-    },
-  },
-  {
-    name: 'multi-step-count',
-    message: () => `Count how many .ts files exist under ${resolve(PROJECT_ROOT, 'src/runtime')} (recursively, including subdirectories). Reply with only the number.`,
-    check: text => {
-      const expected = countTsFiles(resolve(PROJECT_ROOT, 'src/runtime'))
-      return new RegExp(`\\b${expected}\\b`).test(text) ? true : `expected ${expected}, got: ${text.slice(0, 80)}`
-    },
-  },
-  {
-    name: 'session-resume',
-    message: () => 'Remember this: the launch code is "osprey-9". Just acknowledge briefly.',
-    followUp: () => 'What is the launch code I told you? Reply with just the code.',
-    check: text => (/osprey-9/i.test(text) ? true : `expected osprey-9, got: ${text.slice(0, 80)}`),
-  },
-]
-
-async function runTask(runtime: AgentRuntime, task: Task): Promise<TaskResult> {
-  const ctx: TaskContext = { dir: mkdtempSync(join(tmpdir(), `ab-eval-${task.name}-`)) }
-  const start = Date.now()
-  try {
-    const first = await runtime.run({ message: task.message(ctx) })
-    let finalText = first.text ?? ''
-    if (task.followUp) {
-      const second = await runtime.run({ message: task.followUp(ctx), sessionId: first.newSessionId })
-      finalText = second.text ?? ''
-    }
-    const verdict = task.check(finalText, ctx)
-    return { task: task.name, pass: verdict === true, detail: verdict === true ? 'ok' : verdict, ms: Date.now() - start }
-  } catch (err) {
-    return { task: task.name, pass: false, detail: `threw: ${String((err as Error)?.message ?? err).slice(0, 120)}`, ms: Date.now() - start }
-  } finally {
-    rmSync(ctx.dir, { recursive: true, force: true })
-  }
-}
-
-async function evalRuntime(name: string, runtime: AgentRuntime, tasks: Task[]): Promise<LaneResult> {
-  console.log(`\n=== Lane: ${name} ===`)
-  const results: TaskResult[] = []
-  for (const task of tasks) {
-    const r = await runTask(runtime, task)
-    results.push(r)
-    console.log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${task.name.padEnd(18)} ${String(r.ms).padStart(6)}ms  ${r.pass ? '' : r.detail}`)
-  }
-  return { name, results }
 }
 
 /** Print a task × lane grid so cross-provider differences are legible at a glance. */
@@ -181,6 +64,23 @@ function printMatrix(tasks: Task[], lanes: LaneResult[]): void {
     .join('')
   console.log('-'.repeat(header.length))
   console.log('TOTAL'.padEnd(taskCol) + '  ' + totals)
+}
+
+/** Print the regression comparison against the committed baseline. */
+function printRegression(diff: CertDiff): void {
+  console.log('\n=== Regression vs baseline ===')
+  for (const l of diff.lanes) {
+    const delta = l.currentPass - l.baselinePass
+    const sign = delta > 0 ? `+${delta}` : String(delta)
+    console.log(`  ${l.lane}: ${l.currentPass}/${l.total} (${sign} vs baseline)`)
+    if (l.regressions.length) console.log(`    REGRESSED: ${l.regressions.join(', ')}`)
+    if (l.fixes.length) console.log(`    fixed:     ${l.fixes.join(', ')}`)
+    if (l.added.length) console.log(`    added:     ${l.added.join(', ')}`)
+    if (l.removed.length) console.log(`    removed:   ${l.removed.join(', ')}`)
+  }
+  if (diff.missingLanes.length) console.log(`  MISSING LANES (certified but not run this time): ${diff.missingLanes.join(', ')}`)
+  const bad = diff.hasRegression || diff.missingLanes.length > 0
+  console.log(bad ? '  RESULT: FAIL (regressions or missing certified lanes)' : '  RESULT: no regressions')
 }
 
 function buildProviderLanes(providersArg: string, args: string[]): Array<[string, AgentRuntime]> {
@@ -205,16 +105,19 @@ async function main() {
   const runtimeArg = args.find(a => a.startsWith('--runtime='))?.split('=')[1] ?? 'ai-sdk'
   const providersArg = args.find(a => a.startsWith('--providers='))?.split('=')[1]
   const taskFilter = args.find(a => a.startsWith('--task='))?.split('=')[1]
+  const categoryFilter = args.find(a => a.startsWith('--category='))?.split('=')[1] as Task['category'] | undefined
+  const tierArg = (args.find(a => a.startsWith('--tier='))?.split('=')[1] ?? 'smoke') as Tier
+  if (tierArg !== 'smoke' && tierArg !== 'full') throw new Error(`Unknown --tier='${tierArg}' (smoke | full)`)
+
   if (!args.includes('--mcp')) process.env.AI_MCP = 'off' // keep eval runs lean by default
   // The claude lane spawns the Claude Code CLI, which refuses to launch nested
   // inside another Claude Code session (CLAUDECODE env marker). From a normal
-  // terminal that marker is absent and the lane just works. If you really need
-  // to run the claude lane from inside a Claude Code session, pass
-  // --allow-nested to apply the CLI's own documented bypass (unset CLAUDECODE).
+  // terminal that marker is absent and the lane just works. Pass --allow-nested
+  // to apply the CLI's own documented bypass (unset CLAUDECODE).
   if (args.includes('--allow-nested')) delete process.env.CLAUDECODE
 
-  const tasks = taskFilter ? TASKS.filter(t => t.name === taskFilter) : TASKS
-  if (tasks.length === 0) throw new Error(`No task named '${taskFilter}'. Tasks: ${TASKS.map(t => t.name).join(', ')}`)
+  const tasks = selectTasks({ tier: tierArg, name: taskFilter, category: categoryFilter })
+  if (tasks.length === 0) throw new Error(`No tasks matched (task='${taskFilter ?? ''}' category='${categoryFilter ?? ''}' tier='${tierArg}')`)
 
   // --providers runs a cross-provider grid on the ai-sdk runtime (injected
   // models, .env untouched). Otherwise fall back to the harness A/B lanes.
@@ -229,14 +132,44 @@ async function main() {
 
   const laneResults: LaneResult[] = []
   for (const [name, runtime] of lanes) {
-    laneResults.push(await evalRuntime(name, runtime, tasks))
+    console.log(`\n=== Lane: ${name} ===`)
+    const lane = await runLane(name, runtime, tasks, r =>
+      console.log(`  ${r.pass ? 'PASS' : 'FAIL'}  ${r.task.padEnd(22)} ${String(r.ms).padStart(6)}ms  ${r.pass ? '' : r.detail}`),
+    )
+    laneResults.push(lane)
   }
 
   if (laneResults.length > 1) printMatrix(tasks, laneResults)
 
+  const artifact: RunArtifact = { version: 1, createdAt: new Date().toISOString(), tier: tierArg, lanes: laneResults }
+
+  if (args.includes('--save')) {
+    const path = writeRun(artifact)
+    console.log(`\nSaved run to ${path}`)
+  }
+
+  if (args.includes('--update-baseline')) {
+    const path = writeBaseline(artifact)
+    console.log(`\nBaseline updated: ${path}`)
+  }
+
+  // Regression gate: compare against the committed baseline when asked.
+  let regressed = false
+  if (args.includes('--baseline')) {
+    const baseline = loadBaseline()
+    if (!baseline) {
+      console.log('\n=== Regression vs baseline ===\n  no baseline found (run --update-baseline to set one)')
+    } else {
+      const diff = diffRuns(baseline, artifact)
+      printRegression(diff)
+      // A certified lane that did not run is under-verification, not a pass.
+      regressed = diff.hasRegression || diff.missingLanes.length > 0
+    }
+  }
+
   const allPass = laneResults.every(l => l.results.every(r => r.pass))
-  console.log(`\n${allPass ? 'EVAL PASS' : 'EVAL FAIL'} (${tasks.length} task${tasks.length === 1 ? '' : 's'} × ${lanes.length} lane${lanes.length === 1 ? '' : 's'})`)
-  process.exit(allPass ? 0 : 1)
+  console.log(`\n${allPass ? 'EVAL PASS' : 'EVAL FAIL'} (${tasks.length} task${tasks.length === 1 ? '' : 's'} × ${lanes.length} lane${lanes.length === 1 ? '' : 's'}, tier=${tierArg})`)
+  process.exit(allPass && !regressed ? 0 : 1)
 }
 
 main().catch(err => {

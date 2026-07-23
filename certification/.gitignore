@@ -1,0 +1,5 @@
+# Per-run history (written by `ab-eval --save`) is ephemeral; keep it local.
+runs/
+
+# The committed certified bar is tracked (created once you seed a baseline):
+!baseline.json
