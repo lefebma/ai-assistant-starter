@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0 - 2026-07-24
+
+- **New: keep your API keys in an encrypted vault instead of plain text.** Until now every secret (Telegram bot token, provider API keys) lived unencrypted in `.env`. The assistant now has a local vault: an AES-256-GCM encrypted file with a separate key file locked down to your user account, read before `.env` and the process environment. Nothing changes until you opt in — run `node dist/scripts/vault-cli.js migrate TELEGRAM_BOT_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY` (any names you like) to copy keys from `.env` into the vault. The copy is non-destructive: values stay in `.env` until you remove them yourself, and anything not in the vault keeps working exactly as before.
+- **A small CLI to manage it.** `vault-cli` supports `set` (reads the value from stdin so it never lands in your shell history), `get`, `list` (names only, never values), `rm`, and `migrate`. Set `AGENT_VAULT_DIR` to keep the vault somewhere other than the default.
+- **Every secret consumer goes through the vault.** The Telegram bot token, the Claude overflow key, and the OpenAI/Google/voice keys all resolve in the same vault → `.env` → environment order, so a migrated key is picked up everywhere with no other configuration.
+- **Under the hood:** new `src/vault/` module (crypto, store, resolver) built on Node's built-in crypto — zero new dependencies. Vault files are gitignored, the key file is created with 0600 permissions, and decryption fails closed if the encrypted blob is tampered with. 29 new tests (suite now 147) plus a `vitest.config.ts` so tests run against an isolated vault directory.
+
 ## 1.6.0 - 2026-07-23
 
 - **New: certify which models can actually run your assistant.** A golden-set test suite (`scripts/ab-eval.ts`) runs a batch of real tasks — shell commands, file edits, multi-step work, remembering things across turns, following exact instructions — against whichever provider you point it at, and grades each one automatically. Run it against Claude, OpenAI, and Gemini side by side to see which models handle your workload before you commit to one. `--tier=smoke` is a quick 8-task check; `--tier=full` is the whole 35-task grid.
