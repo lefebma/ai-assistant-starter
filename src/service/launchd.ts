@@ -1,4 +1,6 @@
-import { join } from 'node:path'
+// posix.join on purpose: launchd paths are POSIX by definition, and the
+// manager must render identically on any host (tests run on Windows CI too).
+import { posix } from 'node:path'
 import type { ServiceIO, ServiceManager, ServiceOptions, ServiceStatus } from './types.js'
 
 function xmlEscape(s: string): string {
@@ -48,7 +50,7 @@ export class LaunchdManager implements ServiceManager {
   ) {}
 
   artifactPath(): string {
-    return join(this.home, 'Library', 'LaunchAgents', `${this.opts.label}.plist`)
+    return posix.join(this.home, 'Library', 'LaunchAgents', `${this.opts.label}.plist`)
   }
 
   renderArtifact(): string {

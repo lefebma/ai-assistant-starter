@@ -1,4 +1,6 @@
-import { join } from 'node:path'
+// posix.join on purpose: systemd paths are POSIX by definition, and the
+// manager must render identically on any host (tests run on Windows CI too).
+import { posix } from 'node:path'
 import type { ServiceIO, ServiceManager, ServiceOptions, ServiceStatus } from './types.js'
 
 export function buildUnit(opts: ServiceOptions): string {
@@ -37,7 +39,7 @@ export class SystemdManager implements ServiceManager {
   ) {}
 
   artifactPath(): string {
-    return join(this.home, '.config', 'systemd', 'user', `${this.opts.name}.service`)
+    return posix.join(this.home, '.config', 'systemd', 'user', `${this.opts.name}.service`)
   }
 
   renderArtifact(): string {
