@@ -3,7 +3,7 @@
     "name": "Morning Briefing",
     "schedule": "0 7 * * *",
     "deliveryMode": "announce",
-    "prompt": "Generate a morning briefing. Check: 1) Weather for my city (use the weather skill). 2) Today's calendar events. 3) Unread emails needing attention (skip newsletters/promos). 4) Any project updates from STATE.md files. Format as a concise daily brief with sections: Weather, Schedule, Emails, Projects. Start with the date."
+    "prompt": "Generate a morning briefing. Check: 1) Weather for my city (use the weather skill). 2) Calendar: FIRST run `date '+%A %Y-%m-%d'` to get today's real date. Then generate a 7-day weekday lookup table by running: `for i in 0 1 2 3 4 5 6; do date -v+${i}d '+%Y-%m-%d %a'; done` -- this is the ONLY source of truth for day names (never compute day-of-week in your head, LLMs get this wrong). Pull calendar events for the next 7 days. When labeling upcoming events, look up each event's date in the lookup table to get the correct day name. 3) Unread emails needing attention (skip newsletters/promos). 4) Any project updates from STATE.md files. Format as a concise daily brief with sections: Weather, Schedule, Emails, Projects. Start with the date."
   },
   {
     "name": "Evening Debrief",
@@ -15,6 +15,7 @@
     "name": "Gmail Promo Cleanup",
     "schedule": "0 6 * * *",
     "deliveryMode": "silent",
+    "_comment": "COST WARNING: This LLM-based job costs ~22k tokens per run ($12-15/day). Replace with scripts/gmail-cleanup-sweep.sh via launchd for zero-cost polling. The shell script handles Gmail's thread-scoped search quirks and index lag. See docs/GMAIL-CLEANUP.md.",
     "prompt": "Clean up old promotional emails. Search for promotions older than 6 months and trash up to 50 per run. When done, respond with exactly: HEARTBEAT_OK"
   }
 ]

@@ -273,8 +273,10 @@ Once the service is running, message your bot:
 The most valuable scheduled task. Create it with a prompt like:
 
 ```
-/schedule create "Generate a morning briefing. Check: 1) Weather for [YOUR_CITY]. 2) Today's calendar events. 3) Unread emails needing attention (skip newsletters). 4) Any project updates. Format as a concise daily brief." "0 7 * * *" --name "Morning Briefing"
+/schedule create "Generate a morning briefing. Check: 1) Weather for [YOUR_CITY]. 2) Calendar: FIRST run date '+%A %Y-%m-%d' to get today. Then run: for i in 0 1 2 3 4 5 6; do date -v+${i}d '+%Y-%m-%d %a'; done -- this lookup table is the ONLY source of truth for day names (never compute day-of-week in your head). Pull events for the next 7 days and look up each date in the table for the correct day name. 3) Unread emails needing attention (skip newsletters). 4) Any project updates. Format as a concise daily brief." "0 7 * * *" --name "Morning Briefing"
 ```
+
+> **Why the lookup table?** LLMs reliably get day-of-week wrong for dates more than 2-3 days out. The `date` command generates the correct mapping and the LLM just reads it.
 
 ## Troubleshooting
 
