@@ -128,6 +128,7 @@ projects/              # Project state tracking (STATE.md files)
 src/                   # Engine (TypeScript)
 store/                 # SQLite database (auto-created)
 seed-jobs.example.json # Example scheduled tasks
+scripts/gmail-cleanup.ts # Zero-cost Gmail cleanup (replaces the LLM seed job)
 ```
 
 ## Adding Skills
