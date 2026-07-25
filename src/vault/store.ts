@@ -2,21 +2,20 @@
  * Encrypted secret store for the BYOK vault (Phase 4 slice a).
  *
  * Single-tenant, on the customer's machine: one AES-256-GCM blob of
- * {name: value} secrets (`secrets.json`) plus a separate 0600 master-key file
- * (`vault.key`). Keeping the key out of the blob means an accidentally
- * committed or cloud-synced `secrets.json` leaks nothing without the key file.
- *
- * The OS-keychain backend (@napi-rs/keyring, macOS Keychain / Windows
- * Credential Manager) will slot behind this same shape later; this is the
- * "encrypted-file fallback" from the design doc's Section 8, built first with
- * zero new dependencies.
+ * {name: value} secrets (`secrets.json`) plus a master key held by a
+ * KeyBackend — a 0600 `vault.key` file by default, or the OS credential
+ * store (macOS Keychain / Windows Credential Manager) when
+ * VAULT_KEY_BACKEND=keyring. Keeping the key out of the blob means an
+ * accidentally committed or cloud-synced `secrets.json` leaks nothing
+ * without the key.
  *
  * Values are never logged and never returned by list() (names only).
  */
-import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { PROJECT_ROOT } from '../env.js'
 import { decrypt, encrypt, newKey, type Envelope } from './crypto.js'
+import { ensureOwnerDir, resolveKeyBackend, type KeyBackend } from './key-backend.js'
 
 /**
  * Default vault location. A function (not a top-level const) so importing this
@@ -29,42 +28,36 @@ export function defaultVaultDir(): string {
 }
 
 const OWNER_ONLY = 0o600
-const OWNER_ONLY_DIR = 0o700
 
 export class SecretVault {
   private readonly dir: string
-  private readonly keyPath: string
   private readonly secretsPath: string
+  private readonly keyBackend: KeyBackend
   /** Lazily loaded, decrypted map. null until first access. */
   private cache: Record<string, string> | null = null
+  /** Master key, cached per instance after first resolve. */
+  private key: Buffer | null = null
 
-  constructor(opts: { dir?: string } = {}) {
+  constructor(opts: { dir?: string; keyBackend?: KeyBackend } = {}) {
     this.dir = opts.dir ?? defaultVaultDir()
-    this.keyPath = join(this.dir, 'vault.key')
     this.secretsPath = join(this.dir, 'secrets.json')
+    this.keyBackend = opts.keyBackend ?? resolveKeyBackend(this.dir)
   }
 
   /** Create the vault dir owner-only (0700); the secret files live here. */
   private ensureDir(): void {
-    mkdirSync(this.dir, { recursive: true, mode: OWNER_ONLY_DIR })
-    try {
-      chmodSync(this.dir, OWNER_ONLY_DIR) // enforce even if the dir pre-existed or umask widened it
-    } catch {
-      /* best effort: a parent we don't own shouldn't abort a write */
-    }
+    ensureOwnerDir(this.dir)
   }
 
-  /** Load the 32-byte key, creating it (0600) on first use. */
+  /** Load the 32-byte key from the backend, generating it on first use. */
   private loadKey(): Buffer {
-    if (existsSync(this.keyPath)) {
-      const key = readFileSync(this.keyPath)
-      if (key.length !== 32) throw new Error(`corrupt vault key at ${this.keyPath} (expected 32 bytes)`)
-      return key
+    if (this.key) return this.key
+    let key = this.keyBackend.getKey()
+    if (!key) {
+      key = newKey()
+      this.keyBackend.setKey(key)
     }
-    this.ensureDir()
-    const key = newKey()
-    writeFileSync(this.keyPath, key, { mode: OWNER_ONLY })
-    chmodSync(this.keyPath, OWNER_ONLY) // enforce even if umask widened the create mode
+    this.key = key
     return key
   }
 
