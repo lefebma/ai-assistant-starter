@@ -8,7 +8,7 @@
  * the same here. MCP servers land in the next Phase 2 slice.
  */
 import { execFile } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
@@ -27,12 +27,45 @@ function resolvePath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path)
 }
 
+let cachedShell: { cmd: string; buildArgs: (command: string) => string[] } | null = null
+
+/**
+ * Portable shell resolution. POSIX: zsh (macOS default), then bash (Linux
+ * default), then sh — with -l so the user's profile PATH (homebrew, nvm) is
+ * loaded, matching the claude runtime's shell behavior. Windows: cmd.exe via
+ * COMSPEC as a functional baseline until the installer ships a richer story.
+ * Hardcoding /bin/zsh broke the tool on every non-Mac platform (caught by
+ * the first CI matrix run).
+ */
+function resolveShell(): { cmd: string; buildArgs: (command: string) => string[] } {
+  if (cachedShell) return cachedShell
+  if (process.platform === 'win32') {
+    cachedShell = { cmd: process.env.COMSPEC || 'cmd.exe', buildArgs: c => ['/d', '/s', '/c', c] }
+    return cachedShell
+  }
+  for (const sh of ['/bin/zsh', '/usr/bin/zsh', '/bin/bash', '/usr/bin/bash']) {
+    if (existsSync(sh)) {
+      cachedShell = { cmd: sh, buildArgs: c => ['-lc', c] }
+      return cachedShell
+    }
+  }
+  cachedShell = { cmd: '/bin/sh', buildArgs: c => ['-c', c] }
+  return cachedShell
+}
+
 function runBash(command: string, cwd: string, timeoutMs: number): Promise<string> {
+  const shell = resolveShell()
   return new Promise(resolvePromise => {
     execFile(
-      '/bin/zsh',
-      ['-lc', command],
-      { cwd, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
+      shell.cmd,
+      shell.buildArgs(command),
+      {
+        cwd,
+        timeout: timeoutMs,
+        maxBuffer: 10 * 1024 * 1024,
+        // cmd.exe mangles quoted args without this; no-op elsewhere.
+        ...(process.platform === 'win32' ? { windowsVerbatimArguments: true } : {}),
+      },
       (error, stdout, stderr) => {
         const out = truncate(String(stdout ?? ''), OUTPUT_CAP)
         const err = truncate(String(stderr ?? ''), OUTPUT_CAP)
@@ -69,7 +102,7 @@ export function createTools(cwd: string, notify?: (toolName: string, status: str
   return {
     bash: tool({
       description:
-        'Execute a shell command (zsh) and return its output. Use for anything the file tools do not cover: '
+        'Execute a shell command and return its output. Use for anything the file tools do not cover: '
         + 'listing/searching files, git, network requests, running scripts.',
       inputSchema: z.object({
         command: z.string().describe('The shell command to execute'),

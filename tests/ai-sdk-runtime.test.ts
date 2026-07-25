@@ -107,7 +107,8 @@ describe('buildSystemPrompt', () => {
 })
 
 describe('createTools', () => {
-  it('bash executes in the given cwd and reports progress', async () => {
+  // POSIX commands; the Windows baseline is covered separately below.
+  it.skipIf(process.platform === 'win32')('bash executes in the given cwd and reports progress', async () => {
     const dir = tempDir()
     writeFileSync(join(dir, 'marker.txt'), 'x')
     const progress: string[] = []
@@ -117,11 +118,21 @@ describe('createTools', () => {
     expect(progress[0]).toBe('bash:ls')
   })
 
-  it('bash surfaces non-zero exit codes with stderr', async () => {
+  it.skipIf(process.platform === 'win32')('bash surfaces non-zero exit codes with stderr', async () => {
     const tools = createTools(tempDir())
     const out = await (tools.bash as any).execute({ command: 'ls /definitely/not/a/path' }, {} as any)
     expect(out).toContain('exit code:')
     expect(out.toLowerCase()).toContain('no such file')
+  })
+
+  // cmd.exe baseline: the shell tool must at least echo and surface exit
+  // codes on Windows until the installer ships a richer shell story.
+  it.skipIf(process.platform !== 'win32')('shell tool works on Windows (cmd.exe baseline)', async () => {
+    const tools = createTools(tempDir())
+    const out = await (tools.bash as any).execute({ command: 'echo marker-ok' }, {} as any)
+    expect(out).toContain('marker-ok')
+    const fail = await (tools.bash as any).execute({ command: 'exit 7' }, {} as any)
+    expect(fail).toContain('exit code: 7')
   })
 
   it('write_file then read_file roundtrips, creating parent dirs', async () => {

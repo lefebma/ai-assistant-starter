@@ -1,10 +1,9 @@
 import { writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { homedir } from 'node:os'
 import { CronExpressionParser } from 'cron-parser'
 import { getDueTasks, getAllTasks, updateTaskAfterRun, deleteTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { logger } from './logger.js'
+import { dashboardDataFile } from './cockpit/paths.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
 
@@ -14,8 +13,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 const SUPPRESSION_PATTERNS = ['HEARTBEAT_OK', 'NO_REPLY', 'NO_ACTION', 'NOTHING_TO_REPORT']
 const OVERLOAD_PATTERN = /API is temporarily overloaded/i
 const RETRY_DELAY_MS = 10 * 60 * 1000 // 10 minutes
-const DASHBOARD_JOBS_FILE =
-  process.env.DASHBOARD_JOBS_FILE || resolve(homedir(), 'clawd/dashboard-data/scheduled-jobs.json')
+const DASHBOARD_JOBS_FILE = process.env.DASHBOARD_JOBS_FILE || dashboardDataFile('scheduled-jobs.json')
 
 // Track deferred retries: taskId -> timeout handle
 const deferredRetries = new Map<string, ReturnType<typeof setTimeout>>()
@@ -43,6 +41,7 @@ function shouldSuppressResult(result: string): boolean {
 }
 
 function syncDashboardJobs(): void {
+  if (!DASHBOARD_JOBS_FILE) return // dashboard integration off
   try {
     const tasks = getAllTasks()
     const jobs = tasks.map((t) => ({

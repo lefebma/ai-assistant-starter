@@ -247,7 +247,7 @@ ${BOLD}${CYAN} ╚═════╝╚══════╝╚═╝  ╚═╝
 
   // Done
   header('Setup complete!')
-  console.log('  Your ClaudeClaw is ready. Open Telegram and message your bot.')
+  console.log('  Your assistant is ready. Open Telegram and message your bot.')
   console.log('  First, send /chatid to get your chat ID, then add it to .env as ALLOWED_CHAT_ID.')
   console.log()
   console.log('  Useful commands in Telegram:')

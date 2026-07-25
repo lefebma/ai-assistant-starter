@@ -1,15 +1,15 @@
 import { IncomingMessage, ServerResponse } from 'node:http'
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { homedir } from 'node:os'
+import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { logger } from '../logger.js'
 import { runAgent } from '../agent.js'
 import { getSession, setSession } from '../db.js'
 import { findSkill } from './registry.js'
 import { appendActivity } from './activity.js'
+import { dashboardDataFile } from './paths.js'
 
-const LAST_RUN_PATH = resolve(homedir(), 'clawd/dashboard-data/last-run.json')
+const lastRunPath = (): string | null => dashboardDataFile('last-run.json')
 const COCKPIT_CHAT_KEY = 'cockpit-user'
 const TELEGRAM_CHAT_KEY_FALLBACK = process.env['ALLOWED_CHAT_ID'] ?? process.env['PRIMARY_CHAT_ID'] ?? ''
 
@@ -28,9 +28,11 @@ function sse(res: ServerResponse, data: any): void {
 }
 
 function persistLastRun(payload: any): void {
+  const path = lastRunPath()
+  if (!path) return // dashboard integration off
   try {
-    mkdirSync(dirname(LAST_RUN_PATH), { recursive: true })
-    writeFileSync(LAST_RUN_PATH, JSON.stringify(payload, null, 2))
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, JSON.stringify(payload, null, 2))
   } catch (err) {
     logger.warn({ err }, 'cockpit: failed to persist last-run')
   }
@@ -172,8 +174,9 @@ export function handleCancel(req: IncomingMessage, res: ServerResponse): void {
 }
 
 export function readLastRun(): any | null {
-  if (!existsSync(LAST_RUN_PATH)) return null
-  try { return JSON.parse(readFileSync(LAST_RUN_PATH, 'utf8')) }
+  const path = lastRunPath()
+  if (!path || !existsSync(path)) return null
+  try { return JSON.parse(readFileSync(path, 'utf8')) }
   catch { return null }
 }
 
