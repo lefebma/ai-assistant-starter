@@ -9,7 +9,7 @@
  */
 import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loadBaseline, writeBaseline, writeRun, loadRun } from '../src/eval/store.js'
 import type { RunArtifact } from '../src/eval/types.js'
@@ -57,8 +57,10 @@ describe('run history persistence', () => {
 
   it('derives the run filename from the artifact timestamp (no wall-clock read)', () => {
     const path = writeRun(artifact, dir)
-    // colons are not filename-safe on all platforms; expect them sanitized out
-    expect(path).not.toContain(':')
-    expect(path).toContain('2026-07-23')
+    // colons are not filename-safe on all platforms; expect them sanitized
+    // out of the FILENAME (the full path legitimately contains ':' on
+    // Windows — C:\...).
+    expect(basename(path)).not.toContain(':')
+    expect(basename(path)).toContain('2026-07-23')
   })
 })

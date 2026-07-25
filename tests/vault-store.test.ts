@@ -80,21 +80,24 @@ describe('SecretVault', () => {
     }
   })
 
-  it('creates the key file with 0600 permissions', () => {
+  // POSIX-only: Windows uses NTFS ACLs, not mode bits — chmod is a no-op
+  // there. The Windows-correct key protection is the Phase 5 keyring backend
+  // (Credential Manager / DPAPI) behind the same vault interface.
+  it.skipIf(process.platform === 'win32')('creates the key file with 0600 permissions', () => {
     const v = new SecretVault({ dir })
     v.set('K', 'v')
     const mode = statSync(join(dir, 'vault.key')).mode & 0o777
     expect(mode).toBe(0o600)
   })
 
-  it('creates the secrets blob with 0600 permissions too (not just the key)', () => {
+  it.skipIf(process.platform === 'win32')('creates the secrets blob with 0600 permissions too (not just the key)', () => {
     const v = new SecretVault({ dir })
     v.set('K', 'v')
     const mode = statSync(join(dir, 'secrets.json')).mode & 0o777
     expect(mode).toBe(0o600)
   })
 
-  it('creates a new vault directory with 0700 permissions (not listable by other local users)', () => {
+  it.skipIf(process.platform === 'win32')('creates a new vault directory with 0700 permissions (not listable by other local users)', () => {
     // Force the vault to create its own dir (the beforeEach tmp dir already
     // exists at 0700 from mkdtemp, which would mask the behavior under test).
     const nested = join(dir, 'created-by-vault')
