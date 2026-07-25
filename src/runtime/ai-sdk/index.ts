@@ -21,10 +21,10 @@ import { z } from 'zod'
 import { PROJECT_ROOT } from '../../config.js'
 import { logger } from '../../logger.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime } from '../types.js'
-import { cachedSystem, historyMaxBytes, trimHistory, withCacheBreakpoint } from './history.js'
+import { cachedSystem, historyMaxBytes, reconcileHistory, trimHistory, withCacheBreakpoint } from './history.js'
 import { loadMcpTools } from './mcp.js'
 import { buildSystemPrompt } from './prompt.js'
-import { resolveModel } from './provider.js'
+import { configuredProvider, resolveModel } from './provider.js'
 import { SessionStore } from './sessions.js'
 import { createTools } from './tools.js'
 
@@ -171,12 +171,20 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const loaded: ModelMessage[] = (options.sessionId ? this.sessions.load(options.sessionId) : null) ?? []
     // Bound the replayed conversation; the save below persists the trimmed
     // history, so the stored session shrinks along with the request.
-    const history: ModelMessage[] = trimHistory(loaded, historyMaxBytes())
-    if (history.length < loaded.length) {
+    const trimmed: ModelMessage[] = trimHistory(loaded, historyMaxBytes())
+    if (trimmed.length < loaded.length) {
       logger.info(
-        { dropped: loaded.length - history.length, kept: history.length },
+        { dropped: loaded.length - trimmed.length, kept: trimmed.length },
         'Session history exceeded budget; trimmed oldest turns'
       )
+    }
+    // Provider switch since this session was written? Strip provider-specific
+    // baggage (providerOptions, reasoning signatures) that other vendors reject.
+    const turnProvider = this.modelOverride ? 'override' : configuredProvider()
+    const storedProvider = options.sessionId ? this.sessions.loadProvider(options.sessionId) : null
+    const history = reconcileHistory(trimmed, storedProvider, turnProvider)
+    if (history !== trimmed && trimmed.length > 0) {
+      logger.info({ storedProvider, turnProvider }, 'Provider changed; sanitized replayed session history')
     }
     const messages: ModelMessage[] = [...history, { role: 'user', content: options.message }]
 
@@ -234,7 +242,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
           if (loopDetected) {
             logger.error({ signature: loopSignature.slice(0, 200) }, 'Loop detected: identical tool calls repeated, aborting')
-            this.sessions.save(sessionId, messages)
+            this.sessions.save(sessionId, messages, turnProvider)
             return {
               text: `Loop detected: the agent repeated the same tool call ${LOOP_THRESHOLD} times. Aborting to prevent infinite loop. Try rephrasing or starting a /newchat.`,
               newSessionId: sessionId,
@@ -247,7 +255,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
           const response = await result.response
           messages.push(...response.messages)
-          this.sessions.save(sessionId, messages)
+          this.sessions.save(sessionId, messages, turnProvider)
 
           let text = (await result.text).trim() || null
           // Reply reconciliation, same contract as the claude runtime: a partial
@@ -273,7 +281,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           // A truncated real answer beats a fabricated one (claude runtime contract).
           if (streamedText.trim().length > 0) {
             logger.warn({ attempt, partialLength: streamedText.length }, 'Partial stream before error; delivering it')
-            this.sessions.save(sessionId, messages)
+            this.sessions.save(sessionId, messages, turnProvider)
             return { text: `${streamedText.trim()}\n\n_(partial reply, turn ended early)_`, newSessionId: sessionId }
           }
 

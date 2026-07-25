@@ -68,6 +68,13 @@ export function buildModel(
   }
 }
 
+/** Provider id currently configured, without constructing a model (used for
+ * session provider-switch detection, where a full resolve would be wasted). */
+export function configuredProvider(): string {
+  const env = readEnvFile()
+  return env['AI_PROVIDER']?.trim() || process.env.AI_PROVIDER?.trim() || DEFAULT_PROVIDER
+}
+
 export function resolveModel(): ResolvedModel {
   const env = readEnvFile()
   const read = (key: string): string | undefined =>
