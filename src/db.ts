@@ -115,6 +115,9 @@ export function initDatabase(): void {
   if (!colNames.has('timezone')) {
     d.exec("ALTER TABLE scheduled_tasks ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/Toronto'")
   }
+  if (!colNames.has('run_once')) {
+    d.exec('ALTER TABLE scheduled_tasks ADD COLUMN run_once INTEGER NOT NULL DEFAULT 0')
+  }
 }
 
 // --- Sessions ---
@@ -246,6 +249,7 @@ export interface ScheduledTask {
   status: 'active' | 'paused'
   delivery_mode: 'announce' | 'silent'
   timezone: string
+  run_once: number
   created_at: number
 }
 
@@ -257,13 +261,14 @@ export function createTask(
   nextRun: number,
   name?: string,
   deliveryMode: 'announce' | 'silent' = 'announce',
-  timezone = 'America/Toronto'
+  timezone = 'America/Toronto',
+  runOnce = false
 ): void {
   const d = getDb()
   d.prepare(
-    `INSERT INTO scheduled_tasks (id, chat_id, name, prompt, schedule, next_run, delivery_mode, timezone, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
-  ).run(id, chatId, name ?? null, prompt, schedule, nextRun, deliveryMode, timezone, now())
+    `INSERT INTO scheduled_tasks (id, chat_id, name, prompt, schedule, next_run, delivery_mode, timezone, run_once, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
+  ).run(id, chatId, name ?? null, prompt, schedule, nextRun, deliveryMode, timezone, runOnce ? 1 : 0, now())
 }
 
 export function getDueTasks(): ScheduledTask[] {
