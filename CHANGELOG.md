@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.10.0 - 2026-07-25
+
+- **Fixed: the assistant's shell tool now works on Linux and Windows.** On the AI SDK runtime, the built-in shell tool hardcoded macOS's `/bin/zsh`, so on any other OS every command silently failed with a bare "exit code: 1". It now picks the right shell for the platform: zsh, then bash, then sh on macOS/Linux (loading your profile so tools like homebrew and nvm are on PATH), and cmd.exe on Windows as a working baseline. If you ever wondered why a Linux install seemed unable to run commands, this was it.
+- **Every change is now tested on macOS, Windows, and Linux.** The repo has continuous integration that builds and runs the full test suite on all three operating systems for every change. Windows and Linux support stop being aspirational the moment a machine checks them on every commit.
+- **Cleaner defaults for the optional dashboard integration.** The cockpit/dashboard file paths previously assumed one specific machine layout. They're now configured via `DASHBOARD_DIR` and `DASHBOARD_DATA_DIR` in `.env`, and when unset the integration is simply off — no stray warnings, no files written to unexpected places. If you were using the cockpit with the old hardcoded layout, set those two variables to keep it working.
+- **Under the hood:** a guard test keeps machine-specific paths from ever creeping back into the shipped code; vault file-permission tests are scoped to POSIX systems (on Windows, key protection will come from the Credential Manager integration planned for the installer release).
+
 ## 1.9.0 - 2026-07-25
 
 - **Scheduled tasks now respect your engine routing.** `AGENT_RUNTIME_CRON` was supposed to let unattended work run on a different engine than live chat, but only the nightly reflection honored it — every other scheduled task quietly ran on the chat engine. Now all scheduled work goes through the cron lane, so "chat on the API model, overnight jobs on my Claude subscription" works exactly as configured.
