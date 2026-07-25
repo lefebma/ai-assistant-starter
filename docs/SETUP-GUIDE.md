@@ -65,6 +65,13 @@ This guide walks you through setting up your personal AI assistant powered by Cl
    TEAMS_TENANT_ID=your_tenant_id
    ```
 
+## Step 1b: Choose Your Model Provider (optional)
+
+Claude on a Claude subscription is the default. To run on OpenAI, Gemini, or a
+self-hosted model instead — or to route scheduled work and chat to different
+engines — see [PROVIDERS.md](PROVIDERS.md). To keep API keys encrypted at rest,
+see [VAULT.md](VAULT.md).
+
 ## Step 2: Connect Email
 
 Setup supports up to **two accounts per provider**. Pick "Both" if you have Gmail + Outlook; pick the same provider twice via the "Add a second … account?" prompt if you have two of the same kind.

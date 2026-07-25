@@ -33,6 +33,15 @@ export class SessionStore {
           updated_at INTEGER NOT NULL
         )
       `)
+      // Migration: track which provider wrote the session, so a provider
+      // switch can sanitize the replayed history (provider-specific
+      // options/reasoning signatures break other vendors' APIs). exec-only
+      // (no .pragma) so injected test doubles keep working.
+      try {
+        this.db.exec('ALTER TABLE ai_sdk_sessions ADD COLUMN provider TEXT')
+      } catch {
+        /* column already exists */
+      }
       this.initialized = true
     }
     return this.db
@@ -54,13 +63,21 @@ export class SessionStore {
     }
   }
 
-  save(sessionId: string, messages: ModelMessage[]): void {
+  save(sessionId: string, messages: ModelMessage[], provider?: string): void {
     this.init()
       .prepare(`
-        INSERT INTO ai_sdk_sessions (id, messages, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET messages = excluded.messages, updated_at = excluded.updated_at
+        INSERT INTO ai_sdk_sessions (id, messages, updated_at, provider)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET messages = excluded.messages, updated_at = excluded.updated_at, provider = excluded.provider
       `)
-      .run(sessionId, JSON.stringify(messages), Date.now())
+      .run(sessionId, JSON.stringify(messages), Date.now(), provider ?? null)
+  }
+
+  /** Provider that last wrote this session, or null for unknown/legacy rows. */
+  loadProvider(sessionId: string): string | null {
+    const row = this.init()
+      .prepare('SELECT provider FROM ai_sdk_sessions WHERE id = ?')
+      .get(sessionId) as { provider: string | null } | undefined
+    return row?.provider ?? null
   }
 }

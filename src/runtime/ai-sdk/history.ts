@@ -103,3 +103,29 @@ export function trimHistory(messages: ModelMessage[], maxBytes = historyMaxBytes
   }
   return messages.slice(start)
 }
+
+/**
+ * Sanitize a replayed session when the provider changed since it was written.
+ * Persisted messages carry provider-specific baggage — `providerOptions`
+ * (cache control, reasoning signatures) and reasoning parts — that other
+ * vendors' APIs reject. Same provider: history passes through untouched.
+ * Unknown stored provider (legacy rows) counts as a switch: over-sanitizing
+ * once is harmless, replaying anthropic signatures into OpenAI is not.
+ */
+export function reconcileHistory(
+  messages: ModelMessage[],
+  storedProvider: string | null,
+  currentProvider: string
+): ModelMessage[] {
+  if (storedProvider === currentProvider) return messages
+
+  return messages.map((msg) => {
+    const { providerOptions: _drop, ...rest } = msg as ModelMessage & { providerOptions?: unknown }
+    if (!Array.isArray(rest.content)) return rest as ModelMessage
+
+    const content = (rest.content as Array<Record<string, unknown>>)
+      .filter((part) => part.type !== 'reasoning')
+      .map(({ providerOptions: _p, ...keep }) => keep)
+    return { ...rest, content } as ModelMessage
+  })
+}

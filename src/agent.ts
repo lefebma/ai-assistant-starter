@@ -8,7 +8,7 @@
  * runtime) because it is provider-neutral chat concurrency, not a property
  * of any one model harness.
  */
-import { getAgentRuntime } from './runtime/index.js'
+import { getAgentRuntime, type RuntimeLane } from './runtime/index.js'
 
 /**
  * Lane-based concurrency tracking (OpenClaw v2026.5.19 -- cron wake-lane isolation).
@@ -51,9 +51,10 @@ export async function runAgent(
   sessionId?: string,
   onTyping?: () => void,
   onPartial?: (accumulated: string) => void,
-  onToolProgress?: (toolName: string, status: string) => void
+  onToolProgress?: (toolName: string, status: string) => void,
+  lane: RuntimeLane = 'chat'
 ): Promise<{ text: string | null; newSessionId?: string }> {
-  return getAgentRuntime().run({
+  return getAgentRuntime(lane).run({
     message,
     sessionId,
     onTyping,

@@ -105,7 +105,7 @@ export async function runDueTasks(): Promise<void> {
         await sender(task.chat_id, `Running: ${label}...`)
       }
 
-      const { text } = await runAgent(task.prompt)
+      const { text } = await runAgent(task.prompt, undefined, undefined, undefined, undefined, 'cron')
       const result = text ?? '(no response)'
 
       // Check if the API was overloaded and defer a retry
@@ -115,7 +115,7 @@ export async function runDueTasks(): Promise<void> {
           deferredRetries.delete(task.id)
           try {
             logger.info({ taskId: task.id }, 'Running deferred retry')
-            const { text: retryText } = await runAgent(task.prompt)
+            const { text: retryText } = await runAgent(task.prompt, undefined, undefined, undefined, undefined, 'cron')
             const retryResult = retryText ?? '(no response)'
             updateTaskAfterRun(task.id, retryResult, nextRun)
 

@@ -108,6 +108,14 @@ Message your bot on Telegram. If it replies, you're live.
 
 See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md) for Gmail and Outlook setup.
 
+### Optional: Run it on OpenAI, Gemini, or your own models
+
+Claude on a Claude subscription is the default, but the engine is
+provider-agnostic. See [docs/PROVIDERS.md](docs/PROVIDERS.md) for BYOK setup
+(OpenAI, Google, self-hosted via any OpenAI-compatible endpoint), per-lane
+engine routing, model certification, and usage reporting. Keep your API keys
+in the encrypted vault: [docs/VAULT.md](docs/VAULT.md).
+
 ## First Things to Try
 
 1. **"Hello"** - verify personality

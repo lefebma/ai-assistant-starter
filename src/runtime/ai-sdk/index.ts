@@ -21,10 +21,11 @@ import { z } from 'zod'
 import { PROJECT_ROOT } from '../../config.js'
 import { logger } from '../../logger.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime } from '../types.js'
-import { cachedSystem, historyMaxBytes, trimHistory, withCacheBreakpoint } from './history.js'
+import { cachedSystem, historyMaxBytes, reconcileHistory, trimHistory, withCacheBreakpoint } from './history.js'
 import { loadMcpTools } from './mcp.js'
 import { buildSystemPrompt } from './prompt.js'
-import { resolveModel } from './provider.js'
+import { configuredProvider, resolveModel } from './provider.js'
+import { recordUsage, type UsageMeter } from '../../metering.js'
 import { SessionStore } from './sessions.js'
 import { createTools } from './tools.js'
 
@@ -53,11 +54,15 @@ export class AiSdkAgentRuntime implements AgentRuntime {
   private readonly activeWorkspaces = new Map<string, string>()
   private readonly sessions: SessionStore
   private readonly modelOverride?: LanguageModel
+  private readonly meter?: UsageMeter
+  private lastResolved: { provider: string; modelId: string } | null = null
 
-  /** `model` is a test seam: injects a mock model instead of resolveModel(). */
-  constructor(sessions?: SessionStore, model?: LanguageModel) {
+  /** `model` is a test seam: injects a mock model instead of resolveModel().
+   * `meter` likewise: injects a usage store instead of the shared default. */
+  constructor(sessions?: SessionStore, model?: LanguageModel, meter?: UsageMeter) {
     this.sessions = sessions ?? new SessionStore()
     this.modelOverride = model
+    this.meter = meter
   }
 
   steer(message: string): void {
@@ -138,6 +143,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const { model, provider, modelId } = this.modelOverride
       ? { model: this.modelOverride, provider: 'override', modelId: 'override' }
       : resolveModel()
+    this.lastResolved = { provider, modelId }
     const mcpTools = this.withProgress(await this.getMcpTools(), onToolProgress)
     const tools: ToolSet = {
       ...createTools(cwd, onToolProgress),
@@ -171,12 +177,20 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const loaded: ModelMessage[] = (options.sessionId ? this.sessions.load(options.sessionId) : null) ?? []
     // Bound the replayed conversation; the save below persists the trimmed
     // history, so the stored session shrinks along with the request.
-    const history: ModelMessage[] = trimHistory(loaded, historyMaxBytes())
-    if (history.length < loaded.length) {
+    const trimmed: ModelMessage[] = trimHistory(loaded, historyMaxBytes())
+    if (trimmed.length < loaded.length) {
       logger.info(
-        { dropped: loaded.length - history.length, kept: history.length },
+        { dropped: loaded.length - trimmed.length, kept: trimmed.length },
         'Session history exceeded budget; trimmed oldest turns'
       )
+    }
+    // Provider switch since this session was written? Strip provider-specific
+    // baggage (providerOptions, reasoning signatures) that other vendors reject.
+    const turnProvider = this.modelOverride ? 'override' : configuredProvider()
+    const storedProvider = options.sessionId ? this.sessions.loadProvider(options.sessionId) : null
+    const history = reconcileHistory(trimmed, storedProvider, turnProvider)
+    if (history !== trimmed && trimmed.length > 0) {
+      logger.info({ storedProvider, turnProvider }, 'Provider changed; sanitized replayed session history')
     }
     const messages: ModelMessage[] = [...history, { role: 'user', content: options.message }]
 
@@ -234,7 +248,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
           if (loopDetected) {
             logger.error({ signature: loopSignature.slice(0, 200) }, 'Loop detected: identical tool calls repeated, aborting')
-            this.sessions.save(sessionId, messages)
+            this.sessions.save(sessionId, messages, turnProvider)
             return {
               text: `Loop detected: the agent repeated the same tool call ${LOOP_THRESHOLD} times. Aborting to prevent infinite loop. Try rephrasing or starting a /newchat.`,
               newSessionId: sessionId,
@@ -247,7 +261,28 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
           const response = await result.response
           messages.push(...response.messages)
-          this.sessions.save(sessionId, messages)
+          this.sessions.save(sessionId, messages, turnProvider)
+
+          try {
+            const usage = await result.totalUsage
+            recordUsage(
+              {
+                ts: Math.floor(Date.now() / 1000),
+                runtime: 'ai-sdk',
+                provider: this.lastResolved?.provider ?? turnProvider,
+                model: this.lastResolved?.modelId ?? 'unknown',
+                sessionId,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                totalTokens: usage.totalTokens,
+                cachedInputTokens: usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens,
+                reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens,
+              },
+              this.meter
+            )
+          } catch {
+            /* usage unavailable (aborted stream, mock without finish) — never block the turn */
+          }
 
           let text = (await result.text).trim() || null
           // Reply reconciliation, same contract as the claude runtime: a partial
@@ -273,7 +308,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           // A truncated real answer beats a fabricated one (claude runtime contract).
           if (streamedText.trim().length > 0) {
             logger.warn({ attempt, partialLength: streamedText.length }, 'Partial stream before error; delivering it')
-            this.sessions.save(sessionId, messages)
+            this.sessions.save(sessionId, messages, turnProvider)
             return { text: `${streamedText.trim()}\n\n_(partial reply, turn ended early)_`, newSessionId: sessionId }
           }
 
