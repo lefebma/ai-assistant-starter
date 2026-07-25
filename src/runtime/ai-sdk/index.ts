@@ -25,6 +25,7 @@ import { cachedSystem, historyMaxBytes, reconcileHistory, trimHistory, withCache
 import { loadMcpTools } from './mcp.js'
 import { buildSystemPrompt } from './prompt.js'
 import { configuredProvider, resolveModel } from './provider.js'
+import { recordUsage, type UsageMeter } from '../../metering.js'
 import { SessionStore } from './sessions.js'
 import { createTools } from './tools.js'
 
@@ -53,11 +54,15 @@ export class AiSdkAgentRuntime implements AgentRuntime {
   private readonly activeWorkspaces = new Map<string, string>()
   private readonly sessions: SessionStore
   private readonly modelOverride?: LanguageModel
+  private readonly meter?: UsageMeter
+  private lastResolved: { provider: string; modelId: string } | null = null
 
-  /** `model` is a test seam: injects a mock model instead of resolveModel(). */
-  constructor(sessions?: SessionStore, model?: LanguageModel) {
+  /** `model` is a test seam: injects a mock model instead of resolveModel().
+   * `meter` likewise: injects a usage store instead of the shared default. */
+  constructor(sessions?: SessionStore, model?: LanguageModel, meter?: UsageMeter) {
     this.sessions = sessions ?? new SessionStore()
     this.modelOverride = model
+    this.meter = meter
   }
 
   steer(message: string): void {
@@ -138,6 +143,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const { model, provider, modelId } = this.modelOverride
       ? { model: this.modelOverride, provider: 'override', modelId: 'override' }
       : resolveModel()
+    this.lastResolved = { provider, modelId }
     const mcpTools = this.withProgress(await this.getMcpTools(), onToolProgress)
     const tools: ToolSet = {
       ...createTools(cwd, onToolProgress),
@@ -256,6 +262,27 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           const response = await result.response
           messages.push(...response.messages)
           this.sessions.save(sessionId, messages, turnProvider)
+
+          try {
+            const usage = await result.totalUsage
+            recordUsage(
+              {
+                ts: Math.floor(Date.now() / 1000),
+                runtime: 'ai-sdk',
+                provider: this.lastResolved?.provider ?? turnProvider,
+                model: this.lastResolved?.modelId ?? 'unknown',
+                sessionId,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                totalTokens: usage.totalTokens,
+                cachedInputTokens: usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens,
+                reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens,
+              },
+              this.meter
+            )
+          } catch {
+            /* usage unavailable (aborted stream, mock without finish) — never block the turn */
+          }
 
           let text = (await result.text).trim() || null
           // Reply reconciliation, same contract as the claude runtime: a partial
