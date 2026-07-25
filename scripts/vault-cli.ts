@@ -28,7 +28,7 @@ function readStdin(): Promise<string> {
   })
 }
 
-const USAGE = 'usage: vault <set|get|list|rm|migrate> [name...]'
+const USAGE = 'usage: vault <set|get|list|rm|migrate|migrate-key-to-keyring> [name...]'
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2)
@@ -90,6 +90,29 @@ async function main() {
       console.log(`migrated from .env: ${migrated.join(', ') || '(none)'}`)
       if (skipped.length) console.log(`not found in .env (skipped): ${skipped.join(', ')}`)
       console.log('note: values remain in .env too; remove them there once you have verified the vault.')
+      break
+    }
+    case 'migrate-key-to-keyring': {
+      const { FileKeyBackend, KeyringKeyBackend } = await import('../src/vault/key-backend.js')
+      const { defaultVaultDir } = await import('../src/vault/store.js')
+      const vaultDir = dir ?? defaultVaultDir()
+
+      const fileBackend = new FileKeyBackend(vaultDir)
+      const key = fileBackend.getKey()
+      if (!key) throw new Error(`no vault.key found in ${vaultDir} - nothing to migrate (the key is created on first secret set)`)
+
+      const keyring = new KeyringKeyBackend()
+      keyring.setKey(key)
+      const readBack = keyring.getKey()
+      if (!readBack || !readBack.equals(key)) throw new Error('verification failed: key read back from the OS credential store does not match')
+
+      // Prove the decrypt path end-to-end through the keyring-sourced key.
+      const check = new SecretVault({ dir: vaultDir, keyBackend: keyring })
+      const names = check.list()
+      console.log(`key stored in the OS credential store and verified (${names.length} secret(s) decrypt correctly).`)
+      console.log('next: add VAULT_KEY_BACKEND=keyring to .env, restart the service, verify, THEN delete vault.key:')
+      console.log(`  rm "${vaultDir}/vault.key"`)
+      console.log('until vault.key is deleted, the file remains a usable copy of the master key.')
       break
     }
     default:

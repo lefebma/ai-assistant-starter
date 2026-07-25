@@ -50,6 +50,27 @@ Everything the engine reads via its secret resolver: `TELEGRAM_BOT_TOKEN`,
 stays in `.env` on purpose — it's not sensitive, and keeping it visible makes
 setups debuggable.
 
+## Keeping the master key in the OS credential store
+
+By default the encryption key is a file (`vault.key`) locked to your user with
+POSIX permissions. On Windows that lock doesn't exist (NTFS uses ACLs, not
+permission bits), and even on macOS/Linux you may prefer the OS-managed option:
+
+```bash
+node dist/scripts/vault-cli.js migrate-key-to-keyring
+```
+
+This stores the key in the macOS Keychain, Windows Credential Manager, or
+Linux Secret Service (via the audited `@napi-rs/keyring` native module), and
+verifies your secrets decrypt through it. Then:
+
+1. Add `VAULT_KEY_BACKEND=keyring` to `.env`
+2. Restart the service and verify the assistant works
+3. Delete `vault.key` — that's the moment the migration is complete
+
+The encrypted `secrets.json` blob stays where it was; only the key moves.
+Headless servers without a credential store should stay on the file backend.
+
 ## Custom vault location
 
 Set `AGENT_VAULT_DIR=/path/to/dir` to keep the vault somewhere other than the
