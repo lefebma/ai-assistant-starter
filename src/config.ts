@@ -5,7 +5,7 @@ import { getSecret } from './vault/index.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 export const PROJECT_ROOT = resolve(__dirname, '..', '..')
-export const STORE_DIR = resolve(PROJECT_ROOT, 'store')
+export const STORE_DIR = process.env.AGENT_STORE_DIR || resolve(PROJECT_ROOT, 'store')
 
 const env = readEnvFile()
 

@@ -15,7 +15,7 @@ function usage(): void {
 AI Assistant Scheduler CLI
 
 Usage:
-  schedule-cli create "<prompt>" "<cron>" <chat_id> [--name "name"] [--silent] [--tz "America/Toronto"]
+  schedule-cli create "<prompt>" "<cron>" <chat_id> [--name "name"] [--silent] [--once] [--tz "America/Toronto"]
   schedule-cli list
   schedule-cli delete <id>
   schedule-cli pause <id>
@@ -64,14 +64,15 @@ function main(): void {
 
       const name = parseFlag(args, '--name')
       const isSilent = args.includes('--silent')
+      const isOnce = args.includes('--once')
       const deliveryMode = isSilent ? 'silent' as const : 'announce' as const
       const timezone = parseFlag(args, '--tz') ?? 'America/Toronto'
 
       const id = randomUUID().slice(0, 8)
       const nextRun = computeNextRun(cron, timezone)
-      createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, timezone)
+      createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, timezone, isOnce)
       console.log(`Task created: ${id}${name ? ` (${name})` : ''}`)
-      console.log(`  Mode: ${deliveryMode}`)
+      console.log(`  Mode: ${deliveryMode}${isOnce ? ', one-shot (self-deletes after completion)' : ''}`)
       console.log(`  Schedule: ${cron} (${timezone})`)
       console.log(`  Next run: ${new Date(nextRun * 1000).toLocaleString()}`)
       break

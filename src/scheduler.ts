@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { CronExpressionParser } from 'cron-parser'
-import { getDueTasks, getAllTasks, updateTaskAfterRun } from './db.js'
+import { getDueTasks, getAllTasks, updateTaskAfterRun, deleteTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { logger } from './logger.js'
 
@@ -14,7 +14,8 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 const SUPPRESSION_PATTERNS = ['HEARTBEAT_OK', 'NO_REPLY', 'NO_ACTION', 'NOTHING_TO_REPORT']
 const OVERLOAD_PATTERN = /API is temporarily overloaded/i
 const RETRY_DELAY_MS = 10 * 60 * 1000 // 10 minutes
-const DASHBOARD_JOBS_FILE = resolve(homedir(), 'clawd/dashboard-data/scheduled-jobs.json')
+const DASHBOARD_JOBS_FILE =
+  process.env.DASHBOARD_JOBS_FILE || resolve(homedir(), 'clawd/dashboard-data/scheduled-jobs.json')
 
 // Track deferred retries: taskId -> timeout handle
 const deferredRetries = new Map<string, ReturnType<typeof setTimeout>>()
@@ -51,7 +52,7 @@ function syncDashboardJobs(): void {
       schedule: t.schedule,
       scheduleHuman: `${t.schedule} (${t.timezone})`,
       enabled: t.status === 'active',
-      oneTime: false,
+      oneTime: t.run_once === 1,
       nextRun: t.next_run ? new Date(t.next_run * 1000).toISOString() : null,
       lastRun: t.last_run ? new Date(t.last_run * 1000).toISOString() : null,
       lastStatus: t.last_result ? 'ok' : null,
@@ -128,6 +129,12 @@ export async function runDueTasks(): Promise<void> {
               logger.warn({ taskId: task.id }, 'Deferred retry also overloaded, giving up')
               // Don't spam the user, just log it
             }
+
+            // One-shot tasks self-delete once the retry actually completed
+            if (task.run_once && !OVERLOAD_PATTERN.test(retryResult)) {
+              deleteTask(task.id)
+              logger.info({ taskId: task.id, name: task.name }, 'One-shot task completed (deferred retry) and deleted')
+            }
           } catch (err) {
             logger.error({ err, taskId: task.id }, 'Deferred retry failed')
           }
@@ -153,6 +160,12 @@ export async function runDueTasks(): Promise<void> {
           // Announce mode
           await sender(task.chat_id, `${label}:\n\n${result}`)
         }
+      }
+
+      // One-shot tasks self-delete after a completed run so they never re-fire
+      if (task.run_once) {
+        deleteTask(task.id)
+        logger.info({ taskId: task.id, name: task.name }, 'One-shot task completed and deleted')
       }
 
       logger.info({ taskId: task.id, name: task.name, nextRun }, 'Scheduled task completed')
