@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, mkdirSync, appendFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { homedir } from 'node:os'
+import { dirname } from 'node:path'
+import { dashboardDataFile } from './paths.js'
 
-const ACTIVITY_LOG = resolve(homedir(), 'clawd/dashboard-data/activity.jsonl')
+const activityLog = (): string | null => dashboardDataFile('activity.jsonl')
 
 export type ActivityKind = 'cockpit' | 'telegram' | 'system'
 
@@ -15,9 +15,10 @@ export type ActivityEntry = {
 }
 
 export function readRecentActivity(limit = 50): ActivityEntry[] {
-  if (!existsSync(ACTIVITY_LOG)) return []
+  const log = activityLog()
+  if (!log || !existsSync(log)) return []
   let text: string
-  try { text = readFileSync(ACTIVITY_LOG, 'utf8') } catch { return [] }
+  try { text = readFileSync(log, 'utf8') } catch { return [] }
   const lines = text.split('\n').filter(Boolean)
   const tail = lines.slice(-limit)
   const out: ActivityEntry[] = []
@@ -35,9 +36,11 @@ export function appendActivity(entry: Omit<ActivityEntry, 't'> & { t?: string })
     ...(entry.skillId ? { skillId: entry.skillId } : {}),
     ...(entry.runId ? { runId: entry.runId } : {}),
   }
+  const log = activityLog()
+  if (!log) return // dashboard integration off
   try {
-    mkdirSync(dirname(ACTIVITY_LOG), { recursive: true })
-    appendFileSync(ACTIVITY_LOG, JSON.stringify(row) + '\n')
+    mkdirSync(dirname(log), { recursive: true })
+    appendFileSync(log, JSON.stringify(row) + '\n')
   } catch {
     // best-effort; never throw from logging
   }

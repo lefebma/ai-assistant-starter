@@ -1,10 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { homedir } from 'node:os'
 import { logger } from '../logger.js'
-
-const REGISTRY_PATH = resolve(homedir(), 'clawd/dashboard/skills.json')
-const FALLBACK_PATH = resolve(homedir(), 'clawd/dashboard/skills.example.json')
+import { dashboardFile } from './paths.js'
 
 export type SkillInput = {
   placeholder?: string
@@ -36,7 +32,10 @@ function isSkill(x: any): x is Skill {
 }
 
 export function loadRegistry(): Skill[] {
-  const path = existsSync(REGISTRY_PATH) ? REGISTRY_PATH : FALLBACK_PATH
+  const primary = dashboardFile('skills.json')
+  if (!primary) return [] // dashboard integration off — silent, not an error
+  const fallback = dashboardFile('skills.example.json')!
+  const path = existsSync(primary) ? primary : fallback
   if (!existsSync(path)) {
     logger.warn({ path }, 'cockpit: no skills registry found')
     return []

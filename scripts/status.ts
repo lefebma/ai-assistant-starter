@@ -27,7 +27,7 @@ function fail(msg: string): void {
 }
 
 function main(): void {
-  console.log(`\n${BOLD}${CYAN}ClaudeClaw Status${RESET}\n`)
+  console.log(`\n${BOLD}${CYAN}AI Assistant Status${RESET}\n`)
 
   // Node version
   const nodeVersion = process.versions.node
