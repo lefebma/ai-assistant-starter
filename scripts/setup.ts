@@ -13,6 +13,7 @@ import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { PROJECT_ROOT } from '../src/env.js'
 import { runWizard, type Prompter } from '../src/setup/wizard.js'
+import { checkRequirements } from '../src/setup/requirements.js'
 import { buildEnvContent, buildSkillPlan, installedSkillsList } from '../src/setup/plan.js'
 import { applyPlan } from '../src/setup/execute.js'
 
@@ -53,18 +54,19 @@ async function main(): Promise<void> {
   console.log(`${BOLD}${CYAN}\n  AI Assistant — Setup Wizard\n${RESET}`)
 
   header('Checking requirements...')
-  const major = parseInt(process.versions.node.split('.')[0], 10)
-  if (major >= 20) ok(`Node.js v${process.versions.node}`)
-  else {
-    fail(`Node.js v${process.versions.node} — need v20+`)
+  const report = checkRequirements({
+    nodeVersion: process.versions.node,
+    claudeVersion: () => {
+      const r = spawnSync('claude', ['--version'], { encoding: 'utf-8', timeout: 5000, shell: process.platform === 'win32' })
+      return r.status === 0 ? String(r.stdout).trim() : null
+    },
+  })
+  if (report.fatal) {
+    fail(report.fatal)
     process.exit(1)
   }
-  const claude = spawnSync('claude', ['--version'], { encoding: 'utf-8', timeout: 5000, shell: process.platform === 'win32' })
-  if (claude.status === 0) ok(`Claude CLI: ${String(claude.stdout).trim()}`)
-  else {
-    fail('Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code')
-    process.exit(1)
-  }
+  for (const note of report.notes) ok(note)
+  for (const w of report.warnings) warn(w)
 
   header('Configuration')
   const answers = await runWizard(prompter, PROJECT_ROOT)
