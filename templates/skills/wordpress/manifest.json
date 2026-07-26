@@ -18,5 +18,5 @@
     "upload image to site"
   ],
   "priority": 50,
-  "context": "WordPress REST helper. Site: {{WP_SITE_URL}}. Auth: Application Password, stored at ~/.config/wordpress/app_password (user={{WP_USERNAME}}).\nHelper: bash {{PROJECT_PATH}}/skills/wordpress/wp-api.sh <verb>\nVerbs: test, list-pages [N], list-posts [N status], get <id>, get-by-slug <slug>, seo <id>, draft-post, update-draft <id>, upload-media <file>\nGuardrails: write verbs force status=draft; update-draft refuses non-draft posts; no publish/delete verb exists. For Elementor-built pages, do not patch _elementor_data — propose copy changes as a diff instead. Full docs at skills/wordpress/SKILL.md."
+  "context": "WordPress REST helper. Site: {{WP_SITE_URL}}. Auth: Application Password, stored at ~/.config/wordpress/app_password (user={{WP_USERNAME}}).\nHelper: bash {{PROJECT_PATH}}/skills/wordpress/wp-api.mjs <verb>\nVerbs: test, list-pages [N], list-posts [N status], get <id>, get-by-slug <slug>, seo <id>, draft-post, update-draft <id>, upload-media <file>\nGuardrails: write verbs force status=draft; update-draft refuses non-draft posts; no publish/delete verb exists. For Elementor-built pages, do not patch _elementor_data — propose copy changes as a diff instead. Full docs at skills/wordpress/SKILL.md."
 }

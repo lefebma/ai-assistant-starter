@@ -7,7 +7,7 @@ Read site content, draft blog posts, audit SEO. Never publishes.
 - Site: `{{WP_SITE_URL}}`
 - User: `{{WP_USERNAME}}`
 - Application Password: `~/.config/wordpress/app_password` (chmod 600)
-- Helper wraps all of this: `bash {{PROJECT_PATH}}/skills/wordpress/wp-api.sh <verb>`
+- Helper wraps all of this: `bash {{PROJECT_PATH}}/skills/wordpress/wp-api.mjs <verb>`
 
 Generate an Application Password in WP-Admin → Users → Your Profile → Application Passwords. Don't use your login password — Application Passwords are revocable per integration.
 
@@ -55,7 +55,7 @@ cat > /tmp/post.html <<'EOF'
 <h2>Headline goes here</h2>
 <p>Body...</p>
 EOF
-bash {{PROJECT_PATH}}/skills/wordpress/wp-api.sh draft-post \
+bash {{PROJECT_PATH}}/skills/wordpress/wp-api.mjs draft-post \
   --title="Headline goes here" \
   --content=/tmp/post.html \
   --excerpt="One-line teaser."
@@ -63,12 +63,12 @@ bash {{PROJECT_PATH}}/skills/wordpress/wp-api.sh draft-post \
 
 **Pull current homepage copy for a rewrite proposal:**
 ```bash
-bash {{PROJECT_PATH}}/skills/wordpress/wp-api.sh get-by-slug homepage | jq -r '.content_rendered'
+bash {{PROJECT_PATH}}/skills/wordpress/wp-api.mjs get-by-slug homepage | jq -r '.content_rendered'
 ```
 
 **SEO audit of a page:**
 ```bash
-bash {{PROJECT_PATH}}/skills/wordpress/wp-api.sh seo 1234
+bash {{PROJECT_PATH}}/skills/wordpress/wp-api.mjs seo 1234
 ```
 
 ### Known quirks

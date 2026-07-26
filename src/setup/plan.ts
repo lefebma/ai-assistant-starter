@@ -181,7 +181,6 @@ export function buildSkillPlan(a: Answers, home: string): PlanAction[] {
     p.push({ type: 'copy', from: 'templates/skills/web-research', to: 'skills/web-research' })
     p.push({ type: 'edit', file: 'skills/web-research/SKILL.md', vars: { ...identity, OWNER_BIO: a.ownerBio } })
     p.push({ type: 'edit', file: 'skills/web-research/manifest.json', vars: identity })
-    p.push({ type: 'chmod-exec', file: 'skills/web-research/research.sh' })
     p.push({
       type: 'secret',
       path: posix.join(home, '.perplexity-api-key'),
@@ -192,7 +191,6 @@ export function buildSkillPlan(a: Answers, home: string): PlanAction[] {
 
   if (a.skills.apollo) {
     p.push({ type: 'copy', from: 'templates/skills/apollo', to: 'skills/apollo' })
-    p.push({ type: 'chmod-exec', file: 'skills/apollo/apollo-lookup.sh' })
     p.push({
       type: 'secret',
       path: posix.join(home, '.apollo-api-key'),
@@ -203,7 +201,6 @@ export function buildSkillPlan(a: Answers, home: string): PlanAction[] {
 
   if (a.skills.wordsmith) {
     p.push({ type: 'copy', from: 'templates/skills/wordsmith', to: 'skills/wordsmith' })
-    p.push({ type: 'chmod-exec', file: 'skills/wordsmith/wordsmith.sh' })
     // Key lands in .env via buildEnvContent, not a secret file.
   }
 
@@ -253,8 +250,7 @@ export function buildSkillPlan(a: Answers, home: string): PlanAction[] {
     p.push({ type: 'copy', from: 'templates/skills/wordpress', to: 'skills/wordpress' })
     p.push({ type: 'edit', file: 'skills/wordpress/SKILL.md', vars: { ...wp, OWNER_NAME: a.ownerName } })
     p.push({ type: 'edit', file: 'skills/wordpress/manifest.json', vars: wp })
-    p.push({ type: 'edit', file: 'skills/wordpress/wp-api.sh', vars: { WP_SITE_URL: wp.WP_SITE_URL, WP_USERNAME: wp.WP_USERNAME } })
-    p.push({ type: 'chmod-exec', file: 'skills/wordpress/wp-api.sh' })
+    p.push({ type: 'edit', file: 'skills/wordpress/wp-api.mjs', vars: { WP_SITE_URL: wp.WP_SITE_URL, WP_USERNAME: wp.WP_USERNAME } })
     p.push({
       type: 'secret',
       path: posix.join(home, '.config/wordpress/app_password'),

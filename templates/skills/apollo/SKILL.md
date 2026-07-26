@@ -14,9 +14,9 @@ All scripts source the key from that path (or `APOLLO_API_KEY` env var if set).
 ### Lookup (company / person / domain)
 
 ```bash
-bash {{PROJECT_PATH}}/skills/apollo/apollo-lookup.sh company "Acme Inc"
-bash {{PROJECT_PATH}}/skills/apollo/apollo-lookup.sh person "Jane Doe"
-bash {{PROJECT_PATH}}/skills/apollo/apollo-lookup.sh domain "example.com"
+bash {{PROJECT_PATH}}/skills/apollo/apollo-lookup.mjs company "Acme Inc"
+bash {{PROJECT_PATH}}/skills/apollo/apollo-lookup.mjs person "Jane Doe"
+bash {{PROJECT_PATH}}/skills/apollo/apollo-lookup.mjs domain "example.com"
 ```
 
 Returns up to 5 matches as JSON (jq-friendly). Use this when {{OWNER_NAME}} asks "who is X", "look up company Y", "find Z at company Q", etc.
