@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.1 - 2026-07-26
+
+- **Setup no longer requires the Claude CLI.** If you're bringing your own API key (`AGENT_RUNTIME=ai-sdk` with an Anthropic, OpenAI, or Google key), the assistant never uses the Claude CLI — but the setup wizard refused to run without it anyway. It now warns instead, tells you both options, and carries on. Running on a Claude subscription still works exactly as before; only the unnecessary roadblock is gone. Node 20+ remains required.
+
 ## 1.14.0 - 2026-07-26
 
 - **New: a real installer.** `node dist/scripts/build-installer.js` produces a self-contained bundle for your platform: the app, its dependencies, and a **pinned Node runtime** verified against nodejs.org's official checksums. Installing from a bundle means your system's Node version — or whether you have Node at all — no longer matters, and the whole class of "native module was compiled against a different Node" errors disappears. Unpack, run `node install.mjs`, follow the printed steps.
