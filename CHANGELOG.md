@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.0 - 2026-07-26
+
+- **Every skill now works on Windows and Linux.** The helper scripts behind the Apollo, web-research (Perplexity), Wordsmith (Gemini), and WordPress skills were bash — they only ran on macOS, and quietly required `jq` and `curl` without ever saying so. They're now plain Node scripts with zero dependencies (`node <skill>/<helper>.mjs`), so a skill that works on your Mac works the same on a Windows machine. Existing installs: re-run `npm run setup` or copy the updated skill folders from `templates/` to pick up the new versions.
+- **Behavior is unchanged on purpose.** WordPress keeps its drafts-only guarantee (no publish, no delete, all nine verbs intact), Wordsmith still auto-loads your voice samples and accepts piped source text, web research keeps its citations block and long deep-research timeout, and Apollo still prefers the environment variable over the key file.
+- **Under the hood:** the shipped product now contains zero shell scripts, enforced by a test with no exemptions left. This was the last portability item before the installer release.
+
 ## 1.12.0 - 2026-07-25
 
 - **New: run the assistant as a proper background service with one command.** `node dist/scripts/service.js install` registers the assistant with your OS — launchd on macOS (starts at login, restarts if it crashes), a systemd user service on Linux (same), or a logon task on Windows. `status`, `logs`, `start`, `stop`, and `uninstall` round it out, and `install --dry-run` shows exactly what would be written before anything touches your system. Windows note: the logon task doesn't restart on crash; the installer release upgrades it to a full Windows service.
