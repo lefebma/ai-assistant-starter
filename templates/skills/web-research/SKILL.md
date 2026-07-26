@@ -41,11 +41,11 @@ The asker is {{OWNER_NAME}}. {{OWNER_BIO}} Frame the answer with that lens where
 
 ```bash
 # Fast, no business context
-{{PROJECT_PATH}}/skills/web-research/research.sh sonar-pro "What's new in MCP servers this quarter?"
+{{PROJECT_PATH}}/skills/web-research/research.mjs sonar-pro "What's new in MCP servers this quarter?"
 
 # Medium, with injected context
 PPLX_CONTEXT="The asker is {{OWNER_NAME}}..." \
-  {{PROJECT_PATH}}/skills/web-research/research.sh sonar-reasoning-pro "How are SMB consultancies pricing AI automation in 2026?"
+  {{PROJECT_PATH}}/skills/web-research/research.mjs sonar-reasoning-pro "How are SMB consultancies pricing AI automation in 2026?"
 
 # Deep — write to file
 SLUG="mcp-servers-sales-automation"
@@ -56,7 +56,7 @@ mkdir -p {{PROJECT_PATH}}/research
   echo "Date: $(date +%Y-%m-%d) · Model: sonar-deep-research"
   echo ""
   PPLX_CONTEXT="..." \
-    {{PROJECT_PATH}}/skills/web-research/research.sh sonar-deep-research "..."
+    {{PROJECT_PATH}}/skills/web-research/research.mjs sonar-deep-research "..."
 } > "$OUT"
 echo "Saved: $OUT"
 ```

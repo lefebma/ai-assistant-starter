@@ -50,9 +50,9 @@ Output only the requested copy. No preamble, no "Here's the draft:", no trailing
 
 ## Voice samples (concrete examples, automatic)
 
-`{{PROJECT_PATH}}/skills/wordsmith/voice-samples/` holds real {{OWNER_NAME}} writing — a few representative pieces of email/Slack/LinkedIn copy. `wordsmith.sh` reads any `.md` files in that folder and appends them to the voice block as worked examples. Concrete samples constrain Gemini more reliably than abstract rules.
+`{{PROJECT_PATH}}/skills/wordsmith/voice-samples/` holds real {{OWNER_NAME}} writing — a few representative pieces of email/Slack/LinkedIn copy. `wordsmith.mjs` reads any `.md` files in that folder and appends them to the voice block as worked examples. Concrete samples constrain Gemini more reliably than abstract rules.
 
-You don't need to do anything to use them — invoking `wordsmith.sh` picks them up automatically. To refresh: drop new samples in, delete stale ones, no other config needed. See `voice-samples/README.md` for what makes a good sample.
+You don't need to do anything to use them — invoking `wordsmith.mjs` picks them up automatically. To refresh: drop new samples in, delete stale ones, no other config needed. See `voice-samples/README.md` for what makes a good sample.
 
 ## Brand context (optional, via WORDSMITH_CONTEXT)
 
@@ -65,7 +65,7 @@ Pass voice as env var, task as arg. Pipe source text on stdin when polishing/rew
 ```bash
 # Short draft from scratch
 WORDSMITH_VOICE="$(see voice block above)" \
-  {{PROJECT_PATH}}/skills/wordsmith/wordsmith.sh \
+  {{PROJECT_PATH}}/skills/wordsmith/wordsmith.mjs \
   gemini-2.5-pro \
   "Write a 4-line follow-up email to a prospect who liked our discovery call last Tuesday but hasn't replied to my proposal sent Friday. Goal: get a yes/no without sounding pushy."
 
@@ -73,7 +73,7 @@ WORDSMITH_VOICE="$(see voice block above)" \
 echo "$EXISTING_DRAFT" | \
 WORDSMITH_VOICE="..." \
 WORDSMITH_CONTEXT="audience context..." \
-  {{PROJECT_PATH}}/skills/wordsmith/wordsmith.sh \
+  {{PROJECT_PATH}}/skills/wordsmith/wordsmith.mjs \
   gemini-2.5-flash \
   "Tighten this to 80 words. Keep the call to action."
 ```
@@ -96,7 +96,7 @@ For anything externally bound (email, newsletter, public post, support reply), p
 
 ## Error handling
 
-- If `wordsmith.sh` exits non-zero, report the error verbatim and offer to fall back to native writing.
+- If `wordsmith.mjs` exits non-zero, report the error verbatim and offer to fall back to native writing.
 - 429 / 5xx: wait 5s and retry once. If it still fails, fall back.
 - Empty response: retry once with model upgraded (flash → pro). If still empty, fall back.
 

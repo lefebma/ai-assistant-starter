@@ -4,9 +4,7 @@ import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-// templates/ is skill CONTENT shipped to users, not product automation; its
-// Windows-compat pass is a separate tracked slice. Do not add product dirs here.
-const SKIP = new Set(['node_modules', '.git', 'dist', 'store', 'logs', 'templates'])
+const SKIP = new Set(['node_modules', '.git', 'dist', 'store', 'logs'])
 function findShellScripts(dir: string, hits: string[]): void {
   for (const name of readdirSync(dir)) {
     if (SKIP.has(name)) continue

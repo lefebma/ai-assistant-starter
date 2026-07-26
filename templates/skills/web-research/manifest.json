@@ -15,5 +15,5 @@
     "what is the latest on"
   ],
   "priority": 60,
-  "context": "Perplexity API key: ~/.perplexity-api-key\nScript: {{PROJECT_PATH}}/skills/web-research/research.sh\nDeep research folder: {{PROJECT_PATH}}/research/\nSee SKILL.md for model selection and output format."
+  "context": "Perplexity API key: ~/.perplexity-api-key\nScript: {{PROJECT_PATH}}/skills/web-research/research.mjs\nDeep research folder: {{PROJECT_PATH}}/research/\nSee SKILL.md for model selection and output format."
 }
