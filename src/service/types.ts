@@ -13,6 +13,9 @@ export interface ServiceOptions {
   entry: string
   cwd: string
   logFile: string
+  /** Bundled winsw executable (Windows); when present, a real SCM service
+   * replaces the schtasks logon-task baseline. */
+  winswExe?: string
 }
 
 export type ServiceStatus = 'running' | 'stopped' | 'not-installed'
@@ -26,7 +29,7 @@ export interface ServiceIO {
 }
 
 export interface ServiceManager {
-  readonly kind: 'launchd' | 'systemd' | 'schtasks'
+  readonly kind: 'launchd' | 'systemd' | 'schtasks' | 'winsw'
   /** Path of the artifact install writes, or null (schtasks registers via command). */
   artifactPath(): string | null
   /** Rendered artifact content for --dry-run display, or null. */

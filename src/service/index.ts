@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { LaunchdManager } from './launchd.js'
 import { SystemdManager } from './systemd.js'
 import { SchtasksManager } from './schtasks.js'
+import { WinswManager } from './winsw.js'
 import type { ServiceIO, ServiceManager, ServiceOptions } from './types.js'
 
 /** Real system I/O: execFile with an argv array (never a shell string). */
@@ -36,6 +37,8 @@ export function resolveServiceManager(
     case 'darwin':
       return new LaunchdManager(opts, io, home)
     case 'win32':
+      // Real SCM service when the installer bundled winsw; logon task otherwise.
+      if (opts.winswExe && io.exists(opts.winswExe)) return new WinswManager(opts, io, opts.winswExe)
       return new SchtasksManager(opts, io)
     default:
       return new SystemdManager(opts, io, home)
