@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.0 - 2026-07-25
+
+- **New: run the assistant as a proper background service with one command.** `node dist/scripts/service.js install` registers the assistant with your OS — launchd on macOS (starts at login, restarts if it crashes), a systemd user service on Linux (same), or a logon task on Windows. `status`, `logs`, `start`, `stop`, and `uninstall` round it out, and `install --dry-run` shows exactly what would be written before anything touches your system. Windows note: the logon task doesn't restart on crash; the installer release upgrades it to a full Windows service.
+- **The setup wizard is now one cross-platform flow.** `npm run setup` walks you through everything the old bash script did — your name and your assistant's personality, messaging platform, up to two Gmail and two Outlook accounts, and seven opt-in skills (web research, Apollo, Wordsmith, anti-library, Notion, Kanban Zone, WordPress) with their API keys — and it now runs on Windows too. Two fixes came along: re-running setup can no longer wipe your existing `.env` (it refuses to overwrite it), and setup hands service installation to the service command above instead of writing its own startup file.
+- **Under the hood:** the last bash script (`setup.sh`) is gone; the product's automation is 100% TypeScript, enforced by a test that fails the suite if a shell script ever reappears. The wizard's decisions (which skills to install, which files to substitute, when a secret file must not be overwritten) are all unit-tested. Suite now 245 tests across macOS, Windows, and Linux CI.
+
 ## 1.11.0 - 2026-07-25
 
 - **New: keep the vault's encryption key in your OS credential store.** Until now the vault's master key lived in a `vault.key` file protected by file permissions — solid on macOS and Linux, but Windows has no equivalent of those permission bits. Run `node dist/scripts/vault-cli.js migrate-key-to-keyring`, add `VAULT_KEY_BACKEND=keyring` to `.env`, and the key moves into the macOS Keychain, Windows Credential Manager, or Linux Secret Service instead. The migration verifies your secrets decrypt through the new home before telling you it's safe to delete the old key file, so there's never a moment where the key exists nowhere. The file backend stays the default and keeps working unchanged — headless servers should stick with it. See `docs/VAULT.md`.
