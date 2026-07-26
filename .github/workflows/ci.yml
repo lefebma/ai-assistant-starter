@@ -25,3 +25,25 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+
+  install-smoke:
+    name: install-smoke ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Bundle without the pinned runtime (system node stands in), install
+      # into a temp dir, then prove the install: self-test + service dry-run.
+      - run: node dist/scripts/build-installer.js --no-runtime
+      - run: node dist-installer/staging/install.mjs --dir "${{ runner.temp }}/assistant-install"
+      - run: node "${{ runner.temp }}/assistant-install/dist/src/index.js" --selftest
+      - run: node "${{ runner.temp }}/assistant-install/dist/scripts/service.js" install --dry-run

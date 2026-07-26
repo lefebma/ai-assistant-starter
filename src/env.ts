@@ -1,12 +1,27 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/** Nearest ancestor containing package.json — correct whether this module
+ * runs compiled (dist/src/), from source (src/ under tsx/vitest), or inside
+ * an installed bundle. The old fixed '../..' was wrong for source runs. */
+function findProjectRoot(start: string): string {
+  let dir = start
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(resolve(dir, 'package.json'))) return dir
+    const parent = resolve(dir, '..')
+    if (parent === dir) break
+    dir = parent
+  }
+  return resolve(start, '..', '..')
+}
+
 /** Exported so leaf modules (e.g. the vault) can resolve paths without importing
  * config.ts, which would form an import cycle once config resolves its secrets
  * through the vault. env.ts imports nothing from config/vault, so it's cycle-safe. */
-export const PROJECT_ROOT = resolve(__dirname, '..', '..')
+export const PROJECT_ROOT = findProjectRoot(__dirname)
 
 export function readEnvFile(keys?: string[]): Record<string, string> {
   const envPath = resolve(PROJECT_ROOT, '.env')

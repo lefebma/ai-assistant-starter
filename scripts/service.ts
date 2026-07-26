@@ -31,6 +31,7 @@ const manager = resolveServiceManager(process.platform, {
   entry: resolve(PROJECT_ROOT, 'dist', 'src', 'index.js'),
   cwd: PROJECT_ROOT,
   logFile,
+  winswExe: env.WINSW_PATH ?? resolve(PROJECT_ROOT, 'tools', 'winsw', `${name}-service.exe`),
 })
 
 const DRY_RUN = process.argv.includes('--dry-run')

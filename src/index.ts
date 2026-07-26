@@ -55,6 +55,13 @@ function releaseLock(): void {
 }
 
 async function main(): Promise<void> {
+  // Offline install verification: no lock, no bot, no network. Used by the
+  // installer's final step and the CI install smoke test.
+  if (process.argv.includes('--selftest')) {
+    const { runSelfTest } = await import('./selftest.js')
+    process.exit((await runSelfTest()) ? 0 : 1)
+  }
+
   console.log(BANNER)
 
   const platform = detectPlatform()
