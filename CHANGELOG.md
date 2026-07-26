@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.14.0 - 2026-07-26
+
+- **New: a real installer.** `node dist/scripts/build-installer.js` produces a self-contained bundle for your platform: the app, its dependencies, and a **pinned Node runtime** verified against nodejs.org's official checksums. Installing from a bundle means your system's Node version — or whether you have Node at all — no longer matters, and the whole class of "native module was compiled against a different Node" errors disappears. Unpack, run `node install.mjs`, follow the printed steps.
+- **New: verify any install with one command.** `node dist/src/index.js --selftest` checks the load-bearing pieces offline — configuration, database, secret vault, engine selection, install layout — and prints a pass/fail per item. It's designed to pass on a fresh install before you've entered any credentials, so "did the install work?" and "did I configure it?" are separate questions with separate answers.
+- **Windows: a real service.** Bundles built on Windows include a pinned copy of winsw; `service install` then registers a genuine Windows service that restarts on crash, replacing the logon-task baseline (which remains the fallback for non-bundle installs).
+- **Under the hood:** continuous integration now performs a full install rehearsal on macOS, Windows, and Linux for every change — build a bundle, install it to a scratch directory, self-test the installed copy, dry-run the service registration. Also fixed: path resolution is now correct in every execution context (compiled, source, installed bundle). Suite at 258 tests. Signed .pkg/.msi packages come in a future release.
+
 ## 1.13.0 - 2026-07-26
 
 - **Every skill now works on Windows and Linux.** The helper scripts behind the Apollo, web-research (Perplexity), Wordsmith (Gemini), and WordPress skills were bash — they only ran on macOS, and quietly required `jq` and `curl` without ever saying so. They're now plain Node scripts with zero dependencies (`node <skill>/<helper>.mjs`), so a skill that works on your Mac works the same on a Windows machine. Existing installs: re-run `npm run setup` or copy the updated skill folders from `templates/` to pick up the new versions.
