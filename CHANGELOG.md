@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.2 - 2026-07-28
+
+- **Fixed: setup no longer fails on its last step when you install from a bundle.** The wizard finished by running `npm install` and compiling the TypeScript, which only makes sense if you installed from a git clone. A bundle already ships the compiled app and its dependencies, and it carries its own Node — so on a machine that has no system Node, there's no `npm` to run at all. Setup did everything correctly and then reported `✗ npm install / build failed` on the way out. It now recognizes a prebuilt install and skips the build; clone installs still install and compile exactly as before. If you hit this, nothing was actually wrong with your install: fill in `.env`, run the self-test, and carry on.
+- **Clearer instructions when setup finishes.** The closing "next steps" now name the exact Node that's running them, so a bundle install gets its own runtime's path instead of a bare `node` command that may not exist on that machine, and the self-test is listed first. When a build genuinely is needed and genuinely fails, the underlying error is printed instead of being swallowed.
+- **Under the hood:** continuous integration now walks the setup wizard end to end on a freshly installed bundle on macOS, Windows, and Linux. The install rehearsal added in 1.14.0 stopped just short of the wizard because it's interactive — which is exactly why this bug and 1.14.1's shipped: the one step every new user walks through was the one step nothing tested. Suite at 263 tests.
+
 ## 1.14.1 - 2026-07-26
 
 - **Setup no longer requires the Claude CLI.** If you're bringing your own API key (`AGENT_RUNTIME=ai-sdk` with an Anthropic, OpenAI, or Google key), the assistant never uses the Claude CLI — but the setup wizard refused to run without it anyway. It now warns instead, tells you both options, and carries on. Running on a Claude subscription still works exactly as before; only the unnecessary roadblock is gone. Node 20+ remains required.
