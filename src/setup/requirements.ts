@@ -39,3 +39,31 @@ export function checkRequirements(io: RequirementIO): RequirementReport {
 
   return report
 }
+
+/** What the wizard can see about the tree it is setting up. */
+export interface BuildEnvironment {
+  /** dist/src/index.js exists — the app is already compiled. */
+  hasCompiledApp: boolean
+  /** node_modules/ is populated. */
+  hasDependencies: boolean
+  /** node_modules/typescript exists — `npm run build` (tsc) can actually run. */
+  hasBuildToolchain: boolean
+}
+
+export interface BuildDecision {
+  build: boolean
+  reason: string
+}
+
+/**
+ * Installer bundles ship a compiled dist/ plus production-only dependencies, so
+ * there is nothing to build and no tsc to build it with — running npm there
+ * fails (often before that, with no npm on PATH at all, since the bundle brings
+ * its own Node). Clone installs still need the full install + compile.
+ */
+export function planBuildStep(env: BuildEnvironment): BuildDecision {
+  if (env.hasCompiledApp && env.hasDependencies && !env.hasBuildToolchain) {
+    return { build: false, reason: 'prebuilt bundle — dependencies and compiled app already in place' }
+  }
+  return { build: true, reason: 'source install — dependencies and a TypeScript build are needed' }
+}

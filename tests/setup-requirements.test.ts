@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkRequirements } from '../src/setup/requirements.js'
+import { checkRequirements, planBuildStep } from '../src/setup/requirements.js'
 
 describe('checkRequirements', () => {
   it('fails fatally below Node 20', () => {
@@ -21,5 +21,28 @@ describe('checkRequirements', () => {
     expect(r.warnings).toEqual([])
     expect(r.notes.join(' ')).toContain('2.1.0')
     expect(r.notes.join(' ')).toContain('v20.20.2')
+  })
+})
+
+describe('planBuildStep', () => {
+  it('skips the build on an installer bundle (compiled app, production deps, no toolchain)', () => {
+    const d = planBuildStep({ hasCompiledApp: true, hasDependencies: true, hasBuildToolchain: false })
+    expect(d.build).toBe(false)
+    expect(d.reason).toMatch(/prebuilt/i)
+  })
+
+  it('builds on a fresh clone (nothing compiled, no deps yet)', () => {
+    const d = planBuildStep({ hasCompiledApp: false, hasDependencies: false, hasBuildToolchain: false })
+    expect(d.build).toBe(true)
+  })
+
+  it('builds when deps are missing even though a stale dist is present', () => {
+    const d = planBuildStep({ hasCompiledApp: true, hasDependencies: false, hasBuildToolchain: false })
+    expect(d.build).toBe(true)
+  })
+
+  it('builds on a developer clone that already has the toolchain', () => {
+    const d = planBuildStep({ hasCompiledApp: true, hasDependencies: true, hasBuildToolchain: true })
+    expect(d.build).toBe(true)
   })
 })

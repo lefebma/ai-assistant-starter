@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { PROJECT_ROOT } from '../src/env.js'
 import { runWizard, type Prompter } from '../src/setup/wizard.js'
-import { checkRequirements } from '../src/setup/requirements.js'
+import { checkRequirements, planBuildStep } from '../src/setup/requirements.js'
 import { buildEnvContent, buildSkillPlan, installedSkillsList } from '../src/setup/plan.js'
 import { applyPlan } from '../src/setup/execute.js'
 
@@ -104,14 +104,24 @@ async function main(): Promise<void> {
   mkdirSync(resolve(PROJECT_ROOT, 'workspace', 'uploads'), { recursive: true })
   ok('Directories created')
 
-  header('Building...')
-  try {
-    execFileSync('npm', ['install'], { cwd: PROJECT_ROOT, stdio: 'inherit', shell: process.platform === 'win32' })
-    execFileSync('npm', ['run', 'build'], { cwd: PROJECT_ROOT, stdio: 'inherit', shell: process.platform === 'win32' })
-    ok('Dependencies installed and TypeScript compiled')
-  } catch {
-    fail('npm install / build failed — fix and re-run npm run setup')
-    process.exit(1)
+  const buildStep = planBuildStep({
+    hasCompiledApp: existsSync(resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')),
+    hasDependencies: existsSync(resolve(PROJECT_ROOT, 'node_modules')),
+    hasBuildToolchain: existsSync(resolve(PROJECT_ROOT, 'node_modules', 'typescript')),
+  })
+  if (buildStep.build) {
+    header('Building...')
+    try {
+      execFileSync('npm', ['install'], { cwd: PROJECT_ROOT, stdio: 'inherit', shell: process.platform === 'win32' })
+      execFileSync('npm', ['run', 'build'], { cwd: PROJECT_ROOT, stdio: 'inherit', shell: process.platform === 'win32' })
+      ok('Dependencies installed and TypeScript compiled')
+    } catch (err) {
+      fail('npm install / build failed — fix and re-run npm run setup')
+      console.log(`    ${String(err)}`)
+      process.exit(1)
+    }
+  } else {
+    ok(`No build needed (${buildStep.reason})`)
   }
 
   header('Setup complete! Next steps:')
@@ -124,8 +134,12 @@ async function main(): Promise<void> {
   }
   if (answers.outlookAddress) console.log(`  ${step++}. Set up Microsoft 365 credentials (docs/SETUP-GUIDE.md > Outlook)`)
   if (answers.skills.wordsmith) console.log(`  ${step++}. Optional: drop writing samples into skills/wordsmith/voice-samples/`)
-  console.log(`  ${step++}. Test locally:  node dist/src/index.js`)
-  console.log(`  ${step++}. Install as a service:  node dist/scripts/service.js install`)
+  // Quote the running interpreter rather than a bare `node`: bundle installs
+  // carry their own runtime and may have no system Node on PATH at all.
+  const node = `"${process.execPath}"`
+  console.log(`  ${step++}. Verify the install:  ${node} dist/src/index.js --selftest`)
+  console.log(`  ${step++}. Test locally:  ${node} dist/src/index.js`)
+  console.log(`  ${step++}. Install as a service:  ${node} dist/scripts/service.js install`)
   console.log(`  ${step++}. Message your bot and say hello!\n`)
 
   rl.close()
