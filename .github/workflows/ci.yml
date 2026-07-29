@@ -45,5 +45,29 @@ jobs:
       # into a temp dir, then prove the install: self-test + service dry-run.
       - run: node dist/scripts/build-installer.js --no-runtime
       - run: node dist-installer/staging/install.mjs --dir "${{ runner.temp }}/assistant-install"
+      # The wizard is the one installer step --dry-run can never reach, because
+      # it is interactive — and it is where both v1.14.1 (Claude CLI treated as
+      # required) and v1.14.2 (npm build attempted on a prebuilt bundle) went
+      # wrong, each found only by a human doing a real install. Feed it a canned
+      # stdin: every free-text answer becomes "1", every numbered choice picks
+      # option 1, every y/N reads as no. The feed has to stay open rather than
+      # come from a file: readline drains a file before the later questions are
+      # asked, hits EOF, closes the interface, and the wizard exits early at
+      # question two. pipefail is off for that one line because the writer is
+      # meant to die of SIGPIPE when the wizard finishes; the wizard's own exit
+      # status is read back out of PIPESTATUS instead.
+      - name: setup wizard walks to the end on a bundle
+        shell: bash
+        timeout-minutes: 5
+        working-directory: ${{ runner.temp }}/assistant-install
+        run: |
+          set +o pipefail
+          while :; do echo 1; done | node dist/scripts/setup.js > wizard.log 2>&1
+          status=${PIPESTATUS[1]}
+          cat wizard.log
+          [ "$status" -eq 0 ]
+          grep -q 'No build needed' wizard.log
+          grep -q 'Setup complete' wizard.log
+          rm -f wizard.log
       - run: node "${{ runner.temp }}/assistant-install/dist/src/index.js" --selftest
       - run: node "${{ runner.temp }}/assistant-install/dist/scripts/service.js" install --dry-run
