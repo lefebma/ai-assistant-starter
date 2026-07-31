@@ -1,38 +1,41 @@
 /**
  * Update system for AI Assistant instances.
  *
- * Checks GitHub for new versions, downloads and applies updates
- * while preserving user files (.env, CLAUDE.md, skills/, projects/, store/).
+ * Two install kinds update differently; src/update/plan.ts owns the rules and
+ * the reasoning. Source installs fetch the repo and rebuild. Bundle installs
+ * swap in a published release payload, because they have no TypeScript
+ * toolchain and frequently no system npm at all.
  *
- * Since clients install via curl+unzip (no git), updates work the same way:
- * download the zip, extract engine files, rebuild.
+ * Everything here is I/O over those decisions. Downloads use global fetch and
+ * extraction uses tar, both of which exist on macOS, Linux, and Windows 10+.
+ * The old curl+unzip pair did not: Windows ships neither unzip nor a way to
+ * get one, so /update could not even reach its first step there.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync, rmSync, renameSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync, rmSync, statSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { logger } from './logger.js'
 import { syncAlwaysOnSkills } from './skills/sync.js'
+import {
+  detectInstallKind,
+  bundleAssetName,
+  pickReleaseAsset,
+  planUpdate,
+  BUNDLE_PAYLOAD_PATHS,
+  PRESERVED_PATHS,
+  type InstallEnvironment,
+} from './update/plan.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = resolve(__dirname, '..', '..')
 
 const GITHUB_REPO = 'lefebma/ai-assistant-starter'
 const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}/main`
-const GITHUB_ZIP_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.zip`
+const GITHUB_TARBALL_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz`
 
-// Files/dirs that belong to the user and must NEVER be overwritten
-const PRESERVED_PATHS = [
-  '.env',
-  'CLAUDE.md',
-  'skills',
-  'projects',
-  'store',
-  'seed-jobs.json',
-]
-
-// Files that get replaced during update (engine + config + bundled templates).
+// Files that get replaced during a source update (engine + config + bundled templates).
 // `templates/` ships new always-on skills and updated optional-skill templates;
 // existing user skills under `skills/` are preserved (PRESERVED_PATHS above).
 const ENGINE_PATHS = [
@@ -144,42 +147,194 @@ export async function checkForUpdate(useCache = false): Promise<UpdateStatus> {
   }
 }
 
+// ── Install inspection ──
+
+function currentEnvironment(): InstallEnvironment {
+  return {
+    hasCompiledApp: existsSync(resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')),
+    hasDependencies: existsSync(resolve(PROJECT_ROOT, 'node_modules')),
+    hasBuildToolchain: existsSync(resolve(PROJECT_ROOT, 'node_modules', 'typescript')),
+  }
+}
+
+/** Release asset for this platform, or null when none has been published. */
+async function resolveBundleAsset(version: string): Promise<string | null> {
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/v${version}`, {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+    if (!resp.ok) return null
+    const release = (await resp.json()) as { assets?: { name: string; browser_download_url: string }[] }
+    return pickReleaseAsset(release.assets ?? [], bundleAssetName(version, process.platform, process.arch))
+  } catch (err) {
+    logger.warn({ err }, 'Could not look up release assets')
+    return null
+  }
+}
+
+// ── Transport ──
+
+async function download(url: string, dest: string): Promise<void> {
+  const resp = await fetch(url, { redirect: 'follow' })
+  if (!resp.ok) throw new Error(`Download failed (${resp.status}) for ${url}`)
+  writeFileSync(dest, Buffer.from(await resp.arrayBuffer()))
+}
+
+function extractTarGz(archive: string, into: string): void {
+  execFileSync('tar', ['-xzf', archive, '-C', into], { timeout: 120_000 })
+}
+
+/** Copy a file or directory, replacing whatever is at the destination. */
+function replacePath(src: string, dst: string): void {
+  const stat = statSync(src)
+  if (stat.isDirectory()) {
+    if (existsSync(dst)) rmSync(dst, { recursive: true, force: true })
+    cpSync(src, dst, { recursive: true })
+  } else {
+    mkdirSync(dirname(dst), { recursive: true })
+    cpSync(src, dst)
+  }
+}
+
 // ── Apply update ──
 
 export async function applyUpdate(): Promise<UpdateResult> {
   const currentVersion = getCurrentVersion()
-
-  // 1. Check what's available
   const status = await checkForUpdate(false)
-  if (!status.updateAvailable || !status.latestVersion) {
+  const kind = detectInstallKind(currentEnvironment())
+
+  const assetUrl =
+    kind === 'bundle' && status.updateAvailable && status.latestVersion
+      ? await resolveBundleAsset(status.latestVersion)
+      : null
+
+  const plan = planUpdate({
+    kind,
+    currentVersion,
+    latestVersion: status.latestVersion,
+    updateAvailable: status.updateAvailable,
+    assetUrl,
+    error: status.error,
+  })
+
+  if (plan.action === 'none') {
     return {
       success: false,
       fromVersion: currentVersion,
       toVersion: status.latestVersion ?? currentVersion,
-      message: status.error
-        ? `Update check failed: ${status.error}`
-        : `Already on latest version (${currentVersion}).`,
+      message: plan.message,
     }
   }
 
-  const targetVersion = status.latestVersion
+  const targetVersion = status.latestVersion as string
+
+  return plan.action === 'replace-bundle'
+    ? applyBundleUpdate(currentVersion, targetVersion, assetUrl as string)
+    : applySourceUpdate(currentVersion, targetVersion)
+}
+
+/**
+ * Bundle path: fetch the published payload and swap it in. No npm, no tsc, no
+ * compile step — the payload is already built against the pinned runtime.
+ */
+async function applyBundleUpdate(
+  currentVersion: string,
+  targetVersion: string,
+  assetUrl: string
+): Promise<UpdateResult> {
   const backupDir = resolve(PROJECT_ROOT, 'store', `backup-v${currentVersion}-${Date.now()}`)
   const tempDir = resolve(PROJECT_ROOT, 'store', 'update-temp')
 
   try {
-    // 2. Download the zip
-    logger.info({ targetVersion }, 'Downloading update')
-    const zipPath = resolve(tempDir, 'update.zip')
+    logger.info({ targetVersion, assetUrl }, 'Downloading release payload')
+    rmSync(tempDir, { recursive: true, force: true })
     mkdirSync(tempDir, { recursive: true })
 
-    execFileSync('curl', ['-fsSL', GITHUB_ZIP_URL, '-o', zipPath], {
-      timeout: 60_000,
+    const archivePath = resolve(tempDir, 'payload.tar.gz')
+    await download(assetUrl, archivePath)
+    extractTarGz(archivePath, tempDir)
+
+    // build-installer archives the staging root, so the app payload lands in app/.
+    const payloadDir = resolve(tempDir, 'app')
+    if (!existsSync(payloadDir)) {
+      throw new Error('Release payload has no app/ directory')
+    }
+
+    logger.info({ backupDir }, 'Backing up current payload')
+    mkdirSync(backupDir, { recursive: true })
+    for (const p of BUNDLE_PAYLOAD_PATHS) {
+      const src = resolve(PROJECT_ROOT, p)
+      if (existsSync(src)) replacePath(src, resolve(backupDir, p))
+    }
+
+    logger.info('Applying release payload')
+    for (const p of BUNDLE_PAYLOAD_PATHS) {
+      const src = resolve(payloadDir, p)
+      if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
+    }
+
+    try {
+      const syncResult = syncAlwaysOnSkills()
+      if (syncResult.installed.length > 0) {
+        logger.info({ installed: syncResult.installed }, 'Installed new always-on skills')
+      }
+    } catch (syncErr) {
+      logger.warn({ syncErr }, 'Always-on skill sync failed; continuing update')
+    }
+
+    rmSync(tempDir, { recursive: true, force: true })
+    saveCachedStatus({
+      currentVersion: targetVersion,
+      latestVersion: targetVersion,
+      updateAvailable: false,
+      checkedAt: Date.now(),
     })
 
-    // 3. Extract
-    execFileSync('unzip', ['-o', '-q', zipPath, '-d', tempDir], {
-      timeout: 30_000,
-    })
+    logger.info({ from: currentVersion, to: targetVersion }, 'Bundle update applied')
+    return {
+      success: true,
+      fromVersion: currentVersion,
+      toVersion: targetVersion,
+      message: `Updated from ${currentVersion} to ${targetVersion}. Restart to activate.`,
+    }
+  } catch (err) {
+    logger.error({ err }, 'Bundle update failed, rolling back')
+    try {
+      if (existsSync(backupDir)) {
+        for (const p of BUNDLE_PAYLOAD_PATHS) {
+          const src = resolve(backupDir, p)
+          if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
+        }
+      }
+    } catch (rollbackErr) {
+      logger.error({ rollbackErr }, 'Rollback also failed')
+    }
+    try { rmSync(tempDir, { recursive: true, force: true }) } catch {}
+
+    return {
+      success: false,
+      fromVersion: currentVersion,
+      toVersion: targetVersion,
+      message: `Update failed: ${err instanceof Error ? err.message : String(err)}. Rolled back to ${currentVersion}.`,
+    }
+  }
+}
+
+/** Source path: fetch the repo, replace engine files, reinstall and rebuild. */
+async function applySourceUpdate(currentVersion: string, targetVersion: string): Promise<UpdateResult> {
+  const backupDir = resolve(PROJECT_ROOT, 'store', `backup-v${currentVersion}-${Date.now()}`)
+  const tempDir = resolve(PROJECT_ROOT, 'store', 'update-temp')
+
+  try {
+    // 2. Download and extract the source tarball
+    logger.info({ targetVersion }, 'Downloading update')
+    rmSync(tempDir, { recursive: true, force: true })
+    mkdirSync(tempDir, { recursive: true })
+
+    const archivePath = resolve(tempDir, 'update.tar.gz')
+    await download(GITHUB_TARBALL_URL, archivePath)
+    extractTarGz(archivePath, tempDir)
+
     const extractedDir = resolve(tempDir, 'ai-assistant-starter-main')
 
     if (!existsSync(extractedDir)) {
@@ -191,33 +346,14 @@ export async function applyUpdate(): Promise<UpdateResult> {
     mkdirSync(backupDir, { recursive: true })
     for (const p of ENGINE_PATHS) {
       const src = resolve(PROJECT_ROOT, p)
-      const dst = resolve(backupDir, p)
-      if (existsSync(src)) {
-        const stat = statSync(src)
-        if (stat.isDirectory()) {
-          cpSync(src, dst, { recursive: true })
-        } else {
-          mkdirSync(dirname(dst), { recursive: true })
-          cpSync(src, dst)
-        }
-      }
+      if (existsSync(src)) replacePath(src, resolve(backupDir, p))
     }
 
     // 5. Copy engine files from update (skip preserved paths)
     logger.info('Applying update files')
     for (const p of ENGINE_PATHS) {
       const src = resolve(extractedDir, p)
-      const dst = resolve(PROJECT_ROOT, p)
-      if (!existsSync(src)) continue
-
-      const stat = statSync(src)
-      if (stat.isDirectory()) {
-        // For directories like src/, replace entirely
-        if (existsSync(dst)) rmSync(dst, { recursive: true, force: true })
-        cpSync(src, dst, { recursive: true })
-      } else {
-        cpSync(src, dst)
-      }
+      if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
     }
 
     // 6. Copy any new top-level files that aren't preserved
@@ -287,16 +423,7 @@ export async function applyUpdate(): Promise<UpdateResult> {
       if (existsSync(backupDir)) {
         for (const p of ENGINE_PATHS) {
           const src = resolve(backupDir, p)
-          const dst = resolve(PROJECT_ROOT, p)
-          if (existsSync(src)) {
-            const stat = statSync(src)
-            if (stat.isDirectory()) {
-              if (existsSync(dst)) rmSync(dst, { recursive: true, force: true })
-              cpSync(src, dst, { recursive: true })
-            } else {
-              cpSync(src, dst)
-            }
-          }
+          if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
         }
         // Rebuild after rollback
         execFileSync('npm', ['install', '--production'], { cwd: PROJECT_ROOT, timeout: 120_000, stdio: 'pipe' })

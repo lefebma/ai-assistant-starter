@@ -124,6 +124,24 @@ async function main(): Promise<void> {
     ok(`No build needed (${buildStep.reason})`)
   }
 
+  // This wizard should be the last terminal the owner ever needs. Leaving the
+  // service as a command they have to come back and type means the assistant
+  // is installed but not running, which is indistinguishable from broken.
+  const serviceEntry = resolve(PROJECT_ROOT, 'dist', 'scripts', 'service.js')
+  let serviceInstalled = false
+  if (existsSync(serviceEntry)) {
+    header('Background service')
+    if (await prompter.yesNo('Start the assistant automatically in the background (recommended)?')) {
+      try {
+        execFileSync(process.execPath, [serviceEntry, 'install'], { cwd: PROJECT_ROOT, stdio: 'inherit' })
+        serviceInstalled = true
+      } catch (err) {
+        warn(`Could not install the background service: ${String(err)}`)
+        console.log(`    Install it later with: "${process.execPath}" dist/scripts/service.js install`)
+      }
+    }
+  }
+
   header('Setup complete! Next steps:')
   let step = 1
   if (!botToken || !chatId) console.log(`  ${step++}. Fill in your bot credentials in .env (see docs/SETUP-GUIDE.md)`)
@@ -139,7 +157,11 @@ async function main(): Promise<void> {
   const node = `"${process.execPath}"`
   console.log(`  ${step++}. Verify the install:  ${node} dist/src/index.js --selftest`)
   console.log(`  ${step++}. Test locally:  ${node} dist/src/index.js`)
-  console.log(`  ${step++}. Install as a service:  ${node} dist/scripts/service.js install`)
+  if (serviceInstalled) {
+    console.log(`  ${step++}. Already running in the background. To restart it later, use the Restart shortcut.`)
+  } else {
+    console.log(`  ${step++}. Install as a service:  ${node} dist/scripts/service.js install`)
+  }
   console.log(`  ${step++}. Message your bot and say hello!\n`)
 
   rl.close()

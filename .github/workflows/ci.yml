@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -71,3 +72,51 @@ jobs:
           rm -f wizard.log
       - run: node "${{ runner.temp }}/assistant-install/dist/src/index.js" --selftest
       - run: node "${{ runner.temp }}/assistant-install/dist/scripts/service.js" install --dry-run
+
+  # Distributable bundles, with the pinned Node runtime inside. install-smoke
+  # deliberately builds --no-runtime (fast, system node stands in), so it
+  # proves the install path but produces nothing you can hand to a customer.
+  # build-installer is host-only — nodeDistName() reads process.platform and
+  # npm ci compiles native modules against the host — so each platform's
+  # bundle has to be built on that platform. This is the only place that
+  # happens, which makes CI the way to get a Windows bundle without owning a
+  # Windows machine.
+  #
+  # macos-13 is the x64 runner: macos-latest is Apple Silicon only, and an
+  # Intel Mac given an arm64 bundle fails in a way that looks like our bug.
+  #
+  # Not on pull_request: several minutes and a Node download per platform,
+  # and the artifacts are only wanted for real distribution.
+  bundles:
+    name: bundle ${{ matrix.os }}
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-13, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/scripts/build-installer.js
+      # Prove the bundle actually runs before publishing it: a broken artifact
+      # that nobody opened until a customer opened it is the failure mode this
+      # whole job exists to avoid.
+      - name: installs and self-tests
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpack"
+          tar -xzf dist-installer/ai-assistant-v*.tar.gz -C "$RUNNER_TEMP/unpack"
+          node "$RUNNER_TEMP/unpack/install.mjs" --dir "$RUNNER_TEMP/bundle-install"
+          node "$RUNNER_TEMP/bundle-install/dist/src/index.js" --selftest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.os }}
+          path: dist-installer/ai-assistant-v*.tar.gz
+          retention-days: 30
+          if-no-files-found: error
