@@ -82,8 +82,12 @@ jobs:
   # happens, which makes CI the way to get a Windows bundle without owning a
   # Windows machine.
   #
-  # macos-13 is the x64 runner: macos-latest is Apple Silicon only, and an
-  # Intel Mac given an arm64 bundle fails in a way that looks like our bug.
+  # macos-15-intel covers darwin-x64: macos-latest is Apple Silicon only, and
+  # an Intel Mac handed an arm64 bundle fails in a way that looks like our bug
+  # rather than the wrong download (Rosetta translates x64 to arm64, not the
+  # reverse, so it cannot rescue this). macos-13 is not an option — it was
+  # retired 2025-12-04 and the label simply never schedules. Note the Intel
+  # runners themselves sunset in Fall 2027, so darwin-x64 has an expiry date.
   #
   # Not on pull_request: several minutes and a Node download per platform,
   # and the artifacts are only wanted for real distribution.
@@ -93,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, macos-13, windows-latest, ubuntu-latest]
+        os: [macos-latest, macos-15-intel, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
