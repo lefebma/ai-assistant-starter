@@ -127,6 +127,7 @@ export function distributionXml(o: DistributionOptions): string {
   <title>${o.title}</title>
   <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
   <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
+  <conclusion file="conclusion.html" mime-type="text/html"/>
   <choices-outline>
     <line choice="default"/>
   </choices-outline>
@@ -135,5 +136,32 @@ export function distributionXml(o: DistributionOptions): string {
   </choice>
   <pkg-ref id="${o.identifier}" version="${o.version}">${o.componentPkg}</pkg-ref>
 </installer-gui-script>
+`
+}
+
+/**
+ * The last screen of the installer. This is the only instruction the customer
+ * is guaranteed to read, and the .pkg deliberately does not launch anything
+ * itself, so it has to name exactly one thing to double-click and nothing
+ * else. No terminal, no commands.
+ */
+export function conclusionHtml(o: { appName: string }): string {
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+  body { font: 13px -apple-system, sans-serif; margin: 20px; color: #222; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .step { margin: 10px 0; }
+  code { background: #f0f0f0; padding: 2px 5px; border-radius: 3px; }
+</style></head>
+<body>
+  <h2>${o.appName} is installed. One more step.</h2>
+  <div class="step">1. Open your <b>Applications/${o.appName}</b> folder.</div>
+  <div class="step">2. Double-click <b>Setup ${o.appName}.command</b>.</div>
+  <div class="step">3. Answer the questions. It will tell you when it is done.</div>
+  <p>Setup asks for a few accounts and keys. Have them handy, or leave them blank
+  and add them later.</p>
+</body>
+</html>
 `
 }

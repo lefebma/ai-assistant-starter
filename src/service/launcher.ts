@@ -68,6 +68,64 @@ function macPlist(o: LauncherOptions): string {
 `
 }
 
+export interface SetupLauncherOptions {
+  /** Display name, e.g. "AI Assistant". */
+  appName: string
+}
+
+/**
+ * Double-clickable setup launcher, shipped *inside* the install folder.
+ *
+ * The signed .pkg lays down files and stops; without this the customer has an
+ * installed assistant and no way to configure it that does not begin with
+ * opening a terminal.
+ *
+ * macOS gets a `.command` rather than a `.app` on purpose. The wizard is
+ * interactive, so it needs a real terminal; an .app would have to drive
+ * Terminal through osascript, which trips the "wants to control Terminal"
+ * consent dialog on first run. Finder runs a `.command` in Terminal directly
+ * with no such prompt. It must carry the executable bit or Finder opens it in
+ * TextEdit instead of running it.
+ *
+ * Unlike the restart launcher, paths here resolve relative to the script's own
+ * location: the installer chooses where this lands, and the customer may move
+ * the folder later.
+ */
+export function setupLauncherFiles(platform: string, o: SetupLauncherOptions): LauncherFile[] {
+  if (platform === 'win32') {
+    return [
+      {
+        path: `Setup ${o.appName}.cmd`,
+        content: `@echo off
+title Set up ${o.appName}
+cd /d "%~dp0"
+"%~dp0runtime\\node.exe" "%~dp0dist\\scripts\\setup.js"
+echo.
+pause
+`,
+        executable: false,
+      },
+    ]
+  }
+
+  const name = platform === 'darwin' ? `Setup ${o.appName}.command` : `setup-${slug(o.appName)}.sh`
+  return [
+    {
+      path: name,
+      content: `#!/bin/sh
+# Sets up ${o.appName}. Double-click to run.
+DIR=$(cd "$(dirname "$0")" && pwd)
+cd "$DIR" || exit 1
+"$DIR/runtime/bin/node" "$DIR/dist/scripts/setup.js"
+echo ""
+printf "Press return to close this window. "
+read -r _
+`,
+      executable: true,
+    },
+  ]
+}
+
 export function launcherFiles(platform: string, o: LauncherOptions): LauncherFile[] {
   if (platform === 'darwin') {
     const app = `Restart ${o.appName}.app`

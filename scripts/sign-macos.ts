@@ -25,7 +25,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { readdirSync, statSync, openSync, readSync, closeSync, mkdirSync, rmSync, cpSync, writeFileSync, existsSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { PROJECT_ROOT } from '../src/env.js'
-import { parseCodesign, planBinary, nodeEntitlements, distributionXml } from '../src/sign/plan.js'
+import { parseCodesign, planBinary, nodeEntitlements, distributionXml, conclusionHtml } from '../src/sign/plan.js'
 
 const GREEN = '\x1b[32m'
 const YELLOW = '\x1b[33m'
@@ -211,9 +211,17 @@ function main(): void {
     distributionXml({ title: APP_NAME, componentPkg: `${SLUG}-component.pkg`, identifier: IDENTIFIER, version })
   )
 
+  // The installer's last screen. The package deliberately launches nothing
+  // itself, so this is where the customer is told what to double-click.
+  const resources = join(OUT, 'pkg-resources')
+  rmSync(resources, { recursive: true, force: true })
+  mkdirSync(resources, { recursive: true })
+  writeFileSync(join(resources, 'conclusion.html'), conclusionHtml({ appName: APP_NAME }))
+
   run('productbuild', [
     '--distribution', distPath,
     '--package-path', OUT,
+    '--resources', resources,
     '--sign', findIdentity('Developer ID Installer'),
     '--timestamp',
     finalPkg,
@@ -222,6 +230,7 @@ function main(): void {
 
   rmSync(componentPkg, { force: true })
   rmSync(distPath, { force: true })
+  rmSync(resources, { recursive: true, force: true })
   rmSync(payload, { recursive: true, force: true })
   rmSync(entitlementsPath, { force: true })
 

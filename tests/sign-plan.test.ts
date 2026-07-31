@@ -5,6 +5,7 @@ import {
   nodeEntitlements,
   distributionXml,
   TEAM_ID_PATTERN,
+  conclusionHtml,
 } from '../src/sign/plan.js'
 
 // Real `codesign -dvv --entitlements :-` output, trimmed to the lines that matter.
@@ -119,6 +120,22 @@ describe('distributionXml', () => {
   it('references the component package it was built with', () => {
     expect(xml).toContain('havn-app.pkg')
     expect(xml).toContain('com.havn.app')
+  })
+})
+
+describe('conclusionHtml', () => {
+  const html = conclusionHtml({ appName: 'Havn' })
+
+  it('names the exact thing to double-click', () => {
+    expect(html).toContain('Setup Havn.command')
+  })
+
+  it('says where the folder is', () => {
+    expect(html).toContain('Applications/Havn')
+  })
+
+  it('never asks the customer to run a terminal command', () => {
+    expect(html).not.toMatch(/Terminal|sudo|npm |node /)
   })
 })
 
