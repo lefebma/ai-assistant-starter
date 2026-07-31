@@ -107,13 +107,19 @@ jobs:
       # Prove the bundle actually runs before publishing it: a broken artifact
       # that nobody opened until a customer opened it is the failure mode this
       # whole job exists to avoid.
+      # Paths stay relative to the workspace on purpose. RUNNER_TEMP on Windows
+      # is a native path (D:\a\_temp) and GNU tar under Git Bash mangles the
+      # drive letter and backslashes; node accepts them, which is why
+      # install-smoke gets away with it and this step did not. Relative paths
+      # are resolved against cwd by both tools on all three platforms.
       - name: installs and self-tests
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/unpack"
-          tar -xzf dist-installer/ai-assistant-v*.tar.gz -C "$RUNNER_TEMP/unpack"
-          node "$RUNNER_TEMP/unpack/install.mjs" --dir "$RUNNER_TEMP/bundle-install"
-          node "$RUNNER_TEMP/bundle-install/dist/src/index.js" --selftest
+          rm -rf _verify && mkdir -p _verify/unpack
+          tar -xzf dist-installer/ai-assistant-v*.tar.gz -C _verify/unpack
+          node _verify/unpack/install.mjs --dir _verify/install
+          node _verify/install/dist/src/index.js --selftest
+          rm -rf _verify
       - uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.os }}
