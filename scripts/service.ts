@@ -1,6 +1,9 @@
 /**
- * Service CLI (Phase 5): install / uninstall / start / stop / status / logs
- * behind one command, on every platform.
+ * Service CLI (Phase 5): install / uninstall / start / stop / restart /
+ * status / logs behind one command, on every platform.
+ *
+ * `install` also drops a double-clickable restart launcher (see
+ * src/service/launcher.ts) so recovery never requires a terminal.
  *
  *   macOS:   launchd LaunchAgent (auto-start at login, restart on crash)
  *   Linux:   systemd user unit (enable --now, Restart=on-failure)
@@ -14,10 +17,12 @@
  * Config (.env): SERVICE_NAME (default ai-assistant), SERVICE_LABEL
  * (default com.<name>.service).
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { homedir } from 'node:os'
 import { PROJECT_ROOT, readEnvFile } from '../src/env.js'
 import { resolveServiceManager } from '../src/service/index.js'
+import { launcherFiles } from '../src/service/launcher.js'
 
 const env = { ...readEnvFile(), ...process.env } as Record<string, string | undefined>
 const name = env.SERVICE_NAME ?? 'ai-assistant'
@@ -36,6 +41,31 @@ const manager = resolveServiceManager(process.platform, {
 
 const DRY_RUN = process.argv.includes('--dry-run')
 const cmd = process.argv[2]
+
+/**
+ * Drop the double-clickable restart launcher next to the user's other apps.
+ * ~/Applications rather than /Applications: no admin prompt, and Spotlight
+ * indexes it either way. Never fatal — a missing launcher must not fail an
+ * otherwise good service install.
+ */
+function installLauncher(): void {
+  try {
+    const root = process.platform === 'darwin' ? resolve(homedir(), 'Applications') : PROJECT_ROOT
+    const files = launcherFiles(process.platform, {
+      appName: env.APP_NAME ?? 'AI Assistant',
+      nodePath: process.execPath,
+      cwd: PROJECT_ROOT,
+    })
+    for (const f of files) {
+      const dest = resolve(root, f.path)
+      mkdirSync(dirname(dest), { recursive: true })
+      writeFileSync(dest, f.content, f.executable ? { mode: 0o755 } : undefined)
+    }
+    console.log(`Restart shortcut installed: ${resolve(root, files[0].path.split('/')[0])}`)
+  } catch (err) {
+    console.log(`Note: could not create the restart shortcut (${err instanceof Error ? err.message : String(err)}).`)
+  }
+}
 
 async function main(): Promise<void> {
   switch (cmd) {
@@ -56,6 +86,7 @@ async function main(): Promise<void> {
       if (manager.kind === 'schtasks') {
         console.log('Note: Task Scheduler tasks do not restart on crash; the installer release upgrades this to a full Windows service.')
       }
+      installLauncher()
       break
     }
     case 'uninstall':
@@ -65,6 +96,14 @@ async function main(): Promise<void> {
     case 'start':
       await manager.start()
       console.log(`Start requested. Status: ${await manager.status()}`)
+      break
+    case 'restart':
+      // stop/start rather than a per-manager restart: launchd, systemd,
+      // schtasks and winsw all support these two, and a wedged-but-alive
+      // process is exactly what needs the stop half.
+      await manager.stop()
+      await manager.start()
+      console.log(`Restart requested. Status: ${await manager.status()}`)
       break
     case 'stop':
       await manager.stop()
@@ -84,7 +123,7 @@ async function main(): Promise<void> {
       break
     }
     default:
-      console.log('usage: service <install|uninstall|start|stop|status|logs> [--dry-run]')
+      console.log('usage: service <install|uninstall|start|stop|restart|status|logs> [--dry-run]')
       process.exit(cmd ? 1 : 0)
   }
 }
