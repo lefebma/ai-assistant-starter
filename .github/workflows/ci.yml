@@ -107,7 +107,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # APP_NAME names the setup launcher that ships inside the payload
+      # ("Setup Havn.command"). Without it the artifacts say "AI Assistant",
+      # which is the generic starter's name, not the product customers are
+      # handed. Note this does not rename the tarball itself — that string is
+      # hardcoded in build-installer and is a separate change.
       - run: node dist/scripts/build-installer.js
+        env:
+          APP_NAME: Havn
       # Prove the bundle actually runs before publishing it: a broken artifact
       # that nobody opened until a customer opened it is the failure mode this
       # whole job exists to avoid.
