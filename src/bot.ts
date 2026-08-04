@@ -14,6 +14,7 @@ import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY } from './config.js'
 import { getSession, setSession, clearSession, getMemoriesForChat } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
+import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
 import { saveConversationTurn } from './memory.js'
 import { createDefaultEngine } from './memory/engine.js'
@@ -61,10 +62,13 @@ function isPrimaryChat(chatId: string): boolean {
   return !!PRIMARY_CHAT_ID && chatId === PRIMARY_CHAT_ID
 }
 
-function isAuthorised(chatId: string): boolean {
-  if (!PRIMARY_CHAT_ID) return true
-  if (chatId === PRIMARY_CHAT_ID) return true
-  return isAuthorizedChat(chatId)
+function accessFor(chatId: string, text: string) {
+  return decideAccess({
+    chatId,
+    text,
+    primaryChatId: PRIMARY_CHAT_ID,
+    isExtraChat: isAuthorizedChat,
+  })
 }
 
 // --- Inline buttons ---
@@ -517,12 +521,14 @@ export function createBot(adapter: PlatformAdapter): BotCore {
   adapter.onMessage(async (msg: IncomingMessage) => {
     const { chatId, text, type } = msg
 
-    // Authorization check
-    if (!isAuthorised(chatId)) {
-      logger.warn({ chatId }, 'Unauthorized message')
+    // Authorization check. An install with no ALLOWED_CHAT_ID answers only the
+    // handful of commands needed to finish setting itself up; see src/access.ts.
+    const access = accessFor(chatId, typeof text === 'string' ? text : '')
+    if (!access.allow) {
+      logger.warn({ chatId, configured: !!PRIMARY_CHAT_ID }, 'Unauthorized message')
       if (!unauthorizedReplied.has(chatId)) {
         unauthorizedReplied.add(chatId)
-        await adapter.sendMessage(chatId, `Not authorized. Chat ID: ${chatId}\nAsk the owner to run: /authorize add ${chatId} from the primary chat.`)
+        if (access.reply) await adapter.sendMessage(chatId, access.reply)
       }
       return
     }

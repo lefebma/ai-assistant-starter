@@ -27,6 +27,22 @@ export interface LauncherFile {
   executable: boolean
 }
 
+/** Where build-installer stamps the product name into the payload. */
+export const APP_NAME_FILE = 'app-name.txt'
+
+export const DEFAULT_APP_NAME = 'AI Assistant'
+
+/**
+ * The setup launcher is named at build time and the restart launcher at run
+ * time, and nothing used to carry the name between them: a Havn bundle
+ * shipped "Setup Havn.command" beside "Restart AI Assistant.app". The build
+ * now stamps the name into the payload and the runtime reads it, with an
+ * explicit APP_NAME in .env still winning so an owner can rename their own.
+ */
+export function resolveAppName(fromEnv: string | undefined, fromFile: string | undefined): string {
+  return fromEnv?.trim() || fromFile?.trim() || DEFAULT_APP_NAME
+}
+
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }

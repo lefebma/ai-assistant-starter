@@ -22,7 +22,7 @@ import { resolve, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { PROJECT_ROOT, readEnvFile } from '../src/env.js'
 import { resolveServiceManager } from '../src/service/index.js'
-import { launcherFiles } from '../src/service/launcher.js'
+import { launcherFiles, resolveAppName, APP_NAME_FILE } from '../src/service/launcher.js'
 
 const env = { ...readEnvFile(), ...process.env } as Record<string, string | undefined>
 const name = env.SERVICE_NAME ?? 'ai-assistant'
@@ -51,8 +51,12 @@ const cmd = process.argv[2]
 function installLauncher(): void {
   try {
     const root = process.platform === 'darwin' ? resolve(homedir(), 'Applications') : PROJECT_ROOT
+    const stampPath = resolve(PROJECT_ROOT, APP_NAME_FILE)
     const files = launcherFiles(process.platform, {
-      appName: env.APP_NAME ?? 'AI Assistant',
+      // The build stamps the product name into the payload; without reading it
+      // a Havn install ends up with "Setup Havn.command" beside
+      // "Restart AI Assistant.app".
+      appName: resolveAppName(env.APP_NAME, existsSync(stampPath) ? readFileSync(stampPath, 'utf-8') : undefined),
       nodePath: process.execPath,
       cwd: PROJECT_ROOT,
     })

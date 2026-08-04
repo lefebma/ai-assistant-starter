@@ -1,5 +1,31 @@
 import { describe, it, expect } from 'vitest'
-import { setupLauncherFiles } from '../src/service/launcher.js'
+import { setupLauncherFiles, resolveAppName } from '../src/service/launcher.js'
+
+describe('resolveAppName', () => {
+  // The setup launcher is named at build time and the restart launcher at run
+  // time. Nothing carried the name between them, so a Havn bundle shipped
+  // "Setup Havn.command" next to "Restart AI Assistant.app".
+  it('prefers an explicit APP_NAME from the environment', () => {
+    expect(resolveAppName('Havn', 'Something Else')).toBe('Havn')
+  })
+
+  it('falls back to the name stamped in at build time', () => {
+    expect(resolveAppName(undefined, 'Havn')).toBe('Havn')
+  })
+
+  it('trims the trailing newline a file read leaves behind', () => {
+    // Otherwise the launcher becomes "Restart Havn\n.app".
+    expect(resolveAppName(undefined, 'Havn\n')).toBe('Havn')
+  })
+
+  it('ignores blank values rather than producing an empty name', () => {
+    expect(resolveAppName('', '  ')).toBe('AI Assistant')
+  })
+
+  it('defaults to the generic name when nothing is set', () => {
+    expect(resolveAppName(undefined, undefined)).toBe('AI Assistant')
+  })
+})
 
 describe('setupLauncherFiles on macOS', () => {
   const files = setupLauncherFiles('darwin', { appName: 'Havn' })

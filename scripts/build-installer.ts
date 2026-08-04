@@ -24,7 +24,7 @@ import {
   nodeDistName,
   parseShasums,
 } from '../src/installer/node-dist.js'
-import { setupLauncherFiles } from '../src/service/launcher.js'
+import { setupLauncherFiles, resolveAppName, APP_NAME_FILE } from '../src/service/launcher.js'
 
 const NO_RUNTIME = process.argv.includes('--no-runtime')
 const outIdx = process.argv.indexOf('--out')
@@ -53,9 +53,13 @@ async function main(): Promise<void> {
   // the installed folder. Without it a signed .pkg leaves the customer with an
   // installed assistant and no way to configure it that does not start with
   // opening a terminal.
-  for (const f of setupLauncherFiles(process.platform, { appName: process.env.APP_NAME ?? 'AI Assistant' })) {
+  const appName = resolveAppName(process.env.APP_NAME, undefined)
+  for (const f of setupLauncherFiles(process.platform, { appName })) {
     writeFileSync(join(app, f.path), f.content, f.executable ? { mode: 0o755 } : undefined)
   }
+  // Stamp the name so the restart launcher, which is generated at install time
+  // rather than build time, agrees with the setup launcher generated here.
+  writeFileSync(join(app, APP_NAME_FILE), `${appName}\n`)
 
   console.log('installing production dependencies (npm ci --omit=dev)...')
   execFileSync('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], {
