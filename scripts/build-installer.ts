@@ -25,6 +25,7 @@ import {
   parseShasums,
 } from '../src/installer/node-dist.js'
 import { setupLauncherFiles, resolveAppName, APP_NAME_FILE } from '../src/service/launcher.js'
+import { readEnvFile } from '../src/env.js'
 
 const NO_RUNTIME = process.argv.includes('--no-runtime')
 const outIdx = process.argv.indexOf('--out')
@@ -53,7 +54,14 @@ async function main(): Promise<void> {
   // the installed folder. Without it a signed .pkg leaves the customer with an
   // installed assistant and no way to configure it that does not start with
   // opening a terminal.
-  const appName = resolveAppName(process.env.APP_NAME, undefined)
+  // APP_NAME falls back to .env before the built-in default. CI sets the
+  // environment variable; a local build previously had nothing, so the same
+  // commit produced "Setup Havn.command" in CI and "Setup AI Assistant.command"
+  // on the maintainer's machine, discoverable only by listing the staging
+  // directory. Putting APP_NAME in .env makes the two agree without branding
+  // this starter, which is generic and public.
+  const appName = resolveAppName(process.env.APP_NAME, readEnvFile(['APP_NAME'])['APP_NAME'])
+  console.log(`product name: ${appName}`)
   for (const f of setupLauncherFiles(process.platform, { appName })) {
     writeFileSync(join(app, f.path), f.content, f.executable ? { mode: 0o755 } : undefined)
   }

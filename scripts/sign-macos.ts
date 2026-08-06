@@ -12,11 +12,12 @@
  *
  *   --staging <dir>    default dist-installer/staging
  *   --out <dir>        default dist-installer
- *   --app-name <name>  default $APP_NAME or "AI Assistant"
+ *   --app-name <name>  default $APP_NAME, then APP_NAME in .env, then "AI Assistant"
  *   --identifier <id>  default com.<slug>.app
  *   --profile <name>   notarytool keychain profile, default HAVN_NOTARY
  *   --skip-notarize    sign and package only (no Apple round trip)
  *   --dry-run          print the signing plan and stop
+ *   --help             print this and exit
  *
  * Requires: Developer ID Application + Developer ID Installer certificates in
  * the keychain, and `notarytool store-credentials` already run.
@@ -24,7 +25,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { readdirSync, statSync, openSync, readSync, closeSync, mkdirSync, rmSync, cpSync, writeFileSync, existsSync } from 'node:fs'
 import { resolve, join } from 'node:path'
-import { PROJECT_ROOT } from '../src/env.js'
+import { PROJECT_ROOT, readEnvFile } from '../src/env.js'
 import { parseCodesign, planBinary, nodeEntitlements, distributionXml, conclusionHtml } from '../src/sign/plan.js'
 
 const GREEN = '\x1b[32m'
@@ -43,9 +44,37 @@ function flag(name: string, fallback?: string): string | undefined {
 }
 const has = (name: string) => process.argv.includes(`--${name}`)
 
+// Before anything else. An unrecognised flag used to fall through to a real
+// signing run, so `--help` signed the tree and submitted it to Apple for
+// notarisation before it could be stopped. A tool whose dry-run flag is the
+// only thing standing between curiosity and an Apple round trip should answer
+// --help.
+if (has('help') || has('h')) {
+  console.log(`
+macOS signing, packaging and notarisation.
+
+  node dist/scripts/sign-macos.js [options]
+
+  --staging <dir>    default dist-installer/staging
+  --out <dir>        default dist-installer
+  --app-name <name>  default $APP_NAME, then APP_NAME in .env, then "AI Assistant"
+  --identifier <id>  default com.<slug>.app
+  --profile <name>   notarytool keychain profile, default HAVN_NOTARY
+  --skip-notarize    sign and package only (no Apple round trip)
+  --dry-run          print the signing plan and stop
+  --help             print this and exit
+
+Requires Developer ID Application + Developer ID Installer certificates in the
+keychain, and \`notarytool store-credentials\` already run.
+`)
+  process.exit(0)
+}
+
 const STAGING = resolve(flag('staging', join(PROJECT_ROOT, 'dist-installer', 'staging'))!)
 const OUT = resolve(flag('out', join(PROJECT_ROOT, 'dist-installer'))!)
-const APP_NAME = flag('app-name', process.env.APP_NAME ?? 'AI Assistant')!
+// Same .env fallback as build-installer, so the package name cannot disagree
+// with the launcher name baked into the staging tree it is packaging.
+const APP_NAME = flag('app-name', process.env.APP_NAME || readEnvFile(['APP_NAME'])['APP_NAME'] || 'AI Assistant')!
 const SLUG = APP_NAME.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 const IDENTIFIER = flag('identifier', `com.${SLUG}.app`)!
 const PROFILE = flag('profile', 'HAVN_NOTARY')!
