@@ -129,7 +129,21 @@ export function shouldSkipSecret(path: string): boolean {
   }
 }
 
-export function buildSkillPlan(a: Answers, home: string): PlanAction[] {
+/**
+ * How the assistant refers to the machine it lives on, in its own system
+ * prompt. Wrong here is worse than vague: an assistant told it runs on a Mac
+ * while sitting on a Windows box either contradicts its own instructions out
+ * loud, or trusts them and offers `brew` and `launchctl` to someone who has
+ * neither. Unknown platforms get the neutral word rather than a guess.
+ */
+export function hostOsLabel(platform: string): string {
+  if (platform === 'darwin') return 'Mac'
+  if (platform === 'win32') return 'Windows PC'
+  if (platform === 'linux') return 'Linux machine'
+  return 'computer'
+}
+
+export function buildSkillPlan(a: Answers, home: string, platform: string = process.platform): PlanAction[] {
   const p: PlanAction[] = []
   const identity = { OWNER_NAME: a.ownerName, PROJECT_PATH: a.projectPath }
 
@@ -268,7 +282,7 @@ export function buildSkillPlan(a: Answers, home: string): PlanAction[] {
       ASSISTANT_NAME: a.assistantName,
       OWNER_NAME: a.ownerName,
       PLATFORM: a.platform,
-      HOST_OS: 'Mac',
+      HOST_OS: hostOsLabel(platform),
       PERSONALITY_VIBE: a.personalityVibe,
       TIMEZONE: a.timezone,
       PROJECT_PATH: a.projectPath,
