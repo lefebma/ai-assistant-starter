@@ -7,6 +7,7 @@ import {
   buildEmailSignature,
   buildEnvContent,
   buildSkillPlan,
+  hostOsLabel,
   shouldSkipSecret,
 } from '../src/setup/plan.js'
 import { runWizard, type Prompter } from '../src/setup/wizard.js'
@@ -67,7 +68,30 @@ describe('buildEnvContent', () => {
   })
 })
 
+describe('hostOsLabel', () => {
+  it('names each supported platform', () => {
+    expect(hostOsLabel('darwin')).toBe('Mac')
+    expect(hostOsLabel('win32')).toBe('Windows PC')
+    expect(hostOsLabel('linux')).toBe('Linux machine')
+  })
+
+  it('falls back to a neutral label rather than guessing Mac', () => {
+    expect(hostOsLabel('freebsd')).toBe('computer')
+  })
+})
+
 describe('buildSkillPlan', () => {
+  it('stamps the real host OS into CLAUDE.md, not a hardcoded Mac', () => {
+    const claudeMd = (platform: string) =>
+      buildSkillPlan(BASE, '/home/sam', platform).find(
+        (a) => a.type === 'template' && a.to === 'CLAUDE.md',
+      ) as Extract<ReturnType<typeof buildSkillPlan>[number], { type: 'template' }>
+
+    expect(claudeMd('win32').vars.HOST_OS).toBe('Windows PC')
+    expect(claudeMd('linux').vars.HOST_OS).toBe('Linux machine')
+    expect(claudeMd('darwin').vars.HOST_OS).toBe('Mac')
+  })
+
   it('always installs weather, decision-log, and skill-builder', () => {
     const plan = buildSkillPlan(BASE, '/home/sam')
     const copies = plan.filter((a) => a.type === 'copy').map((a) => a.to)

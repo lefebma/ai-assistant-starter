@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { resolveGogBin } from '../../infra/gog-bin.js'
 import type { ContextProvider, ContextFragment } from './base.js'
 
 /**
@@ -37,7 +38,7 @@ export class CalendarProvider implements ContextProvider {
       if (!account) return []
 
       const events = execFileSync(
-        '/opt/homebrew/bin/gog',
+        resolveGogBin(process.env),
         ['calendar', 'events', '--account', account],
         { timeout: 10_000, encoding: 'utf-8' }
       ).trim()
