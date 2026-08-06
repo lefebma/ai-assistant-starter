@@ -10,7 +10,20 @@
  * file gets its own module registry in vitest, so these mocks don't leak
  * into tests/ai-sdk-runtime.test.ts or tests/ai-sdk-mcp.test.ts.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Windows CI collects this suite in ~60s on a cold filesystem. The default 5s
+// testTimeout is charged against the test body, and the body used to include a
+// dynamic import() of the runtime, so on a slow runner the first test aborted
+// mid-flight. That is not a harmless flake: `captured` is written by the mocked
+// ToolLoopAgent constructor at module scope, so the abandoned test's in-flight
+// promise resolved during the NEXT test and pushed into its freshly reset
+// array. The visible failure was "depth guard: expected 1, got 2" -- an
+// assertion about code that was working fine, three lines away from the real
+// cause. A global mock cannot be isolated from an abandoned async test, so the
+// fix is to not abandon it: the import is hoisted to beforeAll below, and the
+// budget is raised for headroom.
+vi.setConfig({ testTimeout: 20_000, hookTimeout: 20_000 })
 
 type CapturedAgent = {
   tools: Record<string, { execute?: (input: unknown, opts: unknown) => Promise<unknown> }>
@@ -58,9 +71,18 @@ class FakeDb {
   }
 }
 
-async function freshRuntime() {
-  const { AiSdkAgentRuntime } = await import('../src/runtime/ai-sdk/index.js')
-  const { SessionStore } = await import('../src/runtime/ai-sdk/sessions.js')
+// Imported once for the whole file rather than per test. These are the
+// expensive part on a cold runner, and paying that cost inside the first test
+// is what put it over the timeout.
+let AiSdkAgentRuntime: typeof import('../src/runtime/ai-sdk/index.js')['AiSdkAgentRuntime']
+let SessionStore: typeof import('../src/runtime/ai-sdk/sessions.js')['SessionStore']
+
+beforeAll(async () => {
+  ;({ AiSdkAgentRuntime } = await import('../src/runtime/ai-sdk/index.js'))
+  ;({ SessionStore } = await import('../src/runtime/ai-sdk/sessions.js'))
+})
+
+function freshRuntime() {
   return new AiSdkAgentRuntime(new SessionStore(new FakeDb() as any), {} as any)
 }
 
@@ -74,7 +96,7 @@ afterEach(() => {
 
 describe('AiSdkAgentRuntime tool wiring', () => {
   it('gives the top-level turn dispatch_subagent and the progress-wrapped MCP tools', async () => {
-    const runtime = await freshRuntime()
+    const runtime = freshRuntime()
     const progress: Array<[string, string]> = []
 
     await runtime.run({ message: 'hi', onToolProgress: (name, status) => progress.push([name, status]) })
@@ -93,7 +115,7 @@ describe('AiSdkAgentRuntime tool wiring', () => {
   })
 
   it('does not expose dispatch_subagent to a dispatched subagent (depth guard)', async () => {
-    const runtime = await freshRuntime()
+    const runtime = freshRuntime()
     await runtime.run({ message: 'hi' })
 
     expect(captured).toHaveLength(1)
@@ -113,7 +135,7 @@ describe('AiSdkAgentRuntime tool wiring', () => {
   })
 
   it('does not double-invoke or double-wrap the MCP tool between the top-level and subagent tool sets', async () => {
-    const runtime = await freshRuntime()
+    const runtime = freshRuntime()
     await runtime.run({ message: 'hi' })
     await captured[0].tools.dispatch_subagent!.execute!({ prompt: 'go' }, {})
     expect(captured).toHaveLength(2)
@@ -129,7 +151,7 @@ describe('AiSdkAgentRuntime tool wiring', () => {
 
   it('loads MCP tools once per runtime instance across multiple turns (memoization)', async () => {
     const { loadMcpTools } = await import('../src/runtime/ai-sdk/mcp.js')
-    const runtime = await freshRuntime()
+    const runtime = freshRuntime()
 
     await runtime.run({ message: 'first turn' })
     await runtime.run({ message: 'second turn' })
