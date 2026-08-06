@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.14.3 - 2026-08-05
+
+Three fixes found by installing on Windows by hand rather than reading the code. All three hit before the assistant answers its first message.
+
+- **Fixed: the installer now tells you to double-click the setup file, instead of printing three terminal commands.** After unpacking a bundle, `install.mjs` finished with a list of `node` commands to run and never mentioned the `Setup <name>.command` / `.cmd` file sitting in the folder it had just created. The whole point of a bundle is that you never need a terminal, and its closing message was sending you to one. It now names the launcher, and keeps the commands underneath for anyone who prefers them.
+- **Fixed: the assistant knows which computer it's on.** Its instructions said "you run as a persistent service on their Mac" on every install, including Windows and Linux ones. At best it contradicted itself out loud; at worst it believed the line and suggested `brew` or `launchctl` to someone who has neither.
+- **Fixed: Gmail and Calendar now work outside a Homebrew Mac.** The `gog` command behind both was hardcoded to `/opt/homebrew/bin/gog` — the Apple Silicon Homebrew path and nowhere else. On Windows, on Linux, or on an Intel Mac (where Homebrew installs to `/usr/local`), the skill reported no connection and the calendar quietly injected nothing. It now checks the sensible locations for your platform and falls back to your `PATH`; set `GOG_BIN` in `.env` if yours lives somewhere unusual. Windows users need `gog` installed and authenticated — the skill now tells you how instead of guessing.
+- **Under the hood:** fixed a Windows CI failure that blamed the wrong code. A test whose body included a dynamic import blew its 5-second budget on a slow runner, was abandoned mid-flight, and its leftover work then corrupted the *next* test's state, so the reported failure pointed at a feature that was working correctly. Suite at 342 tests.
+
 ## 1.14.2 - 2026-07-28
 
 - **Fixed: setup no longer fails on its last step when you install from a bundle.** The wizard finished by running `npm install` and compiling the TypeScript, which only makes sense if you installed from a git clone. A bundle already ships the compiled app and its dependencies, and it carries its own Node — so on a machine that has no system Node, there's no `npm` to run at all. Setup did everything correctly and then reported `✗ npm install / build failed` on the way out. It now recognizes a prebuilt install and skips the build; clone installs still install and compile exactly as before. If you hit this, nothing was actually wrong with your install: fill in `.env`, run the self-test, and carry on.
