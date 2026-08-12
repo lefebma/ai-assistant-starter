@@ -124,3 +124,45 @@ describe('log directory (regression: service loaded but never spawned)', () => {
     expect(dirs).not.toContain(OPTS.logFile)
   })
 })
+
+describe('reinstall (regression: launchd kept the old paths)', () => {
+  // From a real install. The plist on disk said
+  // /Users/x/Applications/Havn/..., but `launchctl print` showed launchd
+  // running /Users/x/ai-assistant/... — the previous install's default path,
+  // long since gone.
+  //
+  // `launchctl load` does nothing when the label is already loaded. It does
+  // not re-read the file. So installing a second time wrote a correct plist
+  // that launchd ignored, reported success at every layer, and produced a job
+  // that could never spawn: no process, no log at the new location, and a
+  // status of "stopped" because `launchctl list` still exits 0 for a
+  // registered job.
+  it('unloads the label before loading, so a reinstall actually takes effect', async () => {
+    const { io, order } = fakeIO()
+    const m = new LaunchdManager(OPTS, io, '/Users/me')
+    await m.install()
+
+    const unload = order.findIndex((o) => o.startsWith('exec:launchctl unload'))
+    const load = order.findIndex((o) => o.startsWith('exec:launchctl load'))
+    expect(unload).toBeGreaterThanOrEqual(0)
+    expect(load).toBeGreaterThan(unload)
+  })
+
+  it('writes the new plist before unloading, so the reload picks it up', async () => {
+    const { io, order } = fakeIO()
+    await new LaunchdManager(OPTS, io, '/Users/me').install()
+
+    const write = order.findIndex((o) => o.startsWith('write:/Users/me/Library/LaunchAgents'))
+    const unload = order.findIndex((o) => o.startsWith('exec:launchctl unload'))
+    expect(write).toBeGreaterThanOrEqual(0)
+    expect(unload).toBeGreaterThan(write)
+  })
+
+  it('survives a first install, where there is nothing to unload', async () => {
+    // launchctl unload exits non-zero for an unknown label; install must not
+    // treat that as fatal.
+    const { io, execCalls } = fakeIO({ 'launchctl unload': { code: 1, out: 'Could not find specified service' } })
+    await expect(new LaunchdManager(OPTS, io, '/Users/me').install()).resolves.toBeUndefined()
+    expect(execCalls.some((c) => c.startsWith('launchctl load -w'))).toBe(true)
+  })
+})

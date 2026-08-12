@@ -65,6 +65,14 @@ export class LaunchdManager implements ServiceManager {
     // cannot rescue it: the exec never happens.
     this.io.ensureDir(posix.dirname(this.opts.logFile))
     this.io.writeFile(this.artifactPath(), this.renderArtifact())
+    // `launchctl load` is a no-op when the label is already loaded: launchd
+    // keeps the definition it read the first time and silently ignores the
+    // file we just wrote. A second install (moved folder, reinstall to a new
+    // path) therefore leaves launchd running the OLD paths, which by then may
+    // not exist. It reports success at every layer and never spawns, with no
+    // log at the new location to say why. Unload first so install is
+    // idempotent. A not-loaded label makes this exit non-zero, which is fine.
+    await this.io.exec('launchctl', ['unload', this.artifactPath()])
     await this.io.exec('launchctl', ['load', '-w', this.artifactPath()])
   }
 
