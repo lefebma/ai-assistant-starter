@@ -26,6 +26,8 @@ export interface ServiceIO {
   writeFile(path: string, content: string): void
   removeFile(path: string): void
   exists(path: string): boolean
+  /** Create a directory and its parents. Used for the log directory. */
+  ensureDir(path: string): void
 }
 
 export interface ServiceManager {

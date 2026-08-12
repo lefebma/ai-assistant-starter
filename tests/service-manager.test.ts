@@ -17,20 +17,31 @@ function fakeIO(execResults: Record<string, { code?: number; out?: string }> = {
   const writes: Array<{ path: string; content: string }> = []
   const removed: string[] = []
   const execCalls: string[] = []
+  const dirs: string[] = []
+  /** Ordered trace, so "created the dir before loading the job" is checkable. */
+  const order: string[] = []
   const io: ServiceIO = {
     exec: vi.fn(async (cmd: string, args: string[]) => {
       const joined = `${cmd} ${args.join(' ')}`
       execCalls.push(joined)
+      order.push(`exec:${joined}`)
       for (const [prefix, res] of Object.entries(execResults)) {
         if (joined.startsWith(prefix)) return { code: res.code ?? 0, out: res.out ?? '' }
       }
       return { code: 0, out: '' }
     }),
-    writeFile: (path, content) => void writes.push({ path, content }),
+    writeFile: (path, content) => {
+      writes.push({ path, content })
+      order.push(`write:${path}`)
+    },
     removeFile: (path) => void removed.push(path),
     exists: () => true,
+    ensureDir: (path) => {
+      dirs.push(path)
+      order.push(`mkdir:${path}`)
+    },
   }
-  return { io, writes, removed, execCalls }
+  return { io, writes, removed, execCalls, dirs, order }
 }
 
 describe('LaunchdManager', () => {
@@ -74,5 +85,42 @@ describe('resolveServiceManager', () => {
     expect(resolveServiceManager('darwin', OPTS).kind).toBe('launchd')
     expect(resolveServiceManager('linux', OPTS).kind).toBe('systemd')
     expect(resolveServiceManager('win32', OPTS).kind).toBe('schtasks')
+  })
+})
+
+describe('log directory (regression: service loaded but never spawned)', () => {
+  // A real install on a fresh Mac: `service install` wrote the plist pointing
+  // StandardOutPath at <install>/logs/service.log, but nothing had created
+  // logs/. launchd will not create it, so the job loaded and never spawned.
+  // `launchctl list <label>` still exits 0, so status read "stopped", and
+  // because the failure was in setting up stdio there was no log to explain
+  // it. The owner saw a bot that answered nothing, with no diagnostic trail.
+  // The restart launcher already did `mkdir -p logs`; install did not.
+  it('launchd creates the log directory before loading the job', async () => {
+    const { io, dirs, order } = fakeIO()
+    await new LaunchdManager(OPTS, io, '/Users/me').install()
+
+    expect(dirs).toContain('/repo/logs')
+    const mkdir = order.indexOf('mkdir:/repo/logs')
+    const load = order.findIndex((o) => o.startsWith('exec:launchctl load'))
+    expect(mkdir).toBeGreaterThanOrEqual(0)
+    expect(load).toBeGreaterThan(mkdir)
+  })
+
+  it('systemd creates it too (StandardOutput=append: fails the same way)', async () => {
+    const { io, dirs, order } = fakeIO()
+    await new SystemdManager(OPTS, io, '/home/me').install()
+
+    expect(dirs).toContain('/repo/logs')
+    const mkdir = order.indexOf('mkdir:/repo/logs')
+    const enable = order.findIndex((o) => o.includes('enable'))
+    expect(mkdir).toBeGreaterThanOrEqual(0)
+    expect(enable).toBeGreaterThan(mkdir)
+  })
+
+  it('creates the directory holding the log, not the log path itself', async () => {
+    const { io, dirs } = fakeIO()
+    await new LaunchdManager(OPTS, io, '/Users/me').install()
+    expect(dirs).not.toContain(OPTS.logFile)
   })
 })

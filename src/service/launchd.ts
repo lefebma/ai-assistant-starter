@@ -58,6 +58,12 @@ export class LaunchdManager implements ServiceManager {
   }
 
   async install(): Promise<void> {
+    // launchd does not create parent directories for StandardOutPath /
+    // StandardErrorPath. Without this the job loads (so `launchctl list`
+    // exits 0 and status reads "stopped") but never spawns, and because the
+    // failure is in setting up stdio there is no log to say so. KeepAlive
+    // cannot rescue it: the exec never happens.
+    this.io.ensureDir(posix.dirname(this.opts.logFile))
     this.io.writeFile(this.artifactPath(), this.renderArtifact())
     await this.io.exec('launchctl', ['load', '-w', this.artifactPath()])
   }
