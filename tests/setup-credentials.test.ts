@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { sep } from 'node:path'
 import { checkCredentials } from '../src/setup/credentials.js'
 import { parseAuthStatus, checkClaudeAuth } from '../src/infra/claude-auth.js'
 import { bundledClaudeCandidates, resolveBundledClaude, sdkPlatformPackages } from '../src/infra/claude-bin.js'
@@ -119,8 +120,12 @@ describe('checkClaudeAuth', () => {
 
 describe('resolveBundledClaude', () => {
   it('looks inside the install, not on PATH', () => {
+    // Separators are the host's: join() emits '\' on Windows, which is correct
+    // for a Windows install and is what this assertion used to fail on.
+    // Normalise so the check is about the layout, not the platform.
+    const norm = (p: string) => p.split(sep).join('/')
     const paths = bundledClaudeCandidates('/opt/app', 'darwin', 'arm64')
-    expect(paths[0]).toBe('/opt/app/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude')
+    expect(norm(paths[0])).toBe('/opt/app/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude')
   })
 
   it('covers the musl linux packages too', () => {
