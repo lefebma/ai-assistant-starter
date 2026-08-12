@@ -18,6 +18,7 @@ import { resolveBundledClaude } from '../src/infra/claude-bin.js'
 import { checkClaudeAuth, spawnClaude } from '../src/infra/claude-auth.js'
 import { resolveGogBin } from '../src/infra/gog-bin.js'
 import { buildEnvContent, buildSkillPlan, installedSkillsList } from '../src/setup/plan.js'
+import { buildNextSteps, renderNextSteps } from '../src/setup/next-steps.js'
 import { applyPlan } from '../src/setup/execute.js'
 
 const GREEN = '\x1b[32m'
@@ -226,39 +227,26 @@ async function main(): Promise<void> {
   }
 
   header('Setup complete! Next steps:')
-  let step = 1
-  if (!botToken || !chatId) console.log(`  ${step++}. Fill in your bot credentials in .env (see docs/SETUP-GUIDE.md)`)
-  if (answers.gmailAddress) {
-    if (gogMissing) {
-      console.log(`  ${step++}. Install the gog CLI (see docs/SETUP-GUIDE.md > Gmail):`)
-      console.log(`       brew install gogcli   (no Homebrew? the guide covers direct download)`)
-    }
-    // gog needs a Google OAuth client before auth add works — a fresh machine
-    // that runs only the auth command hits an error with no path forward.
-    console.log(`  ${step++}. Authenticate Gmail with the gog CLI (needs a Google OAuth client — docs/SETUP-GUIDE.md > Gmail):`)
-    console.log(`       gog auth credentials set ~/Downloads/client_secret_*.json`)
-    console.log(`       gog auth add ${answers.gmailAddress} --services gmail,calendar`)
-    if (answers.gmailAddress2) console.log(`       gog auth add ${answers.gmailAddress2} --services gmail,calendar`)
-  }
-  if (answers.outlookAddress) console.log(`  ${step++}. Set up Microsoft 365 credentials (docs/SETUP-GUIDE.md > Outlook)`)
-  if (answers.skills.wordsmith) console.log(`  ${step++}. Optional: drop writing samples into skills/wordsmith/voice-samples/`)
   // Quote the running interpreter rather than a bare `node`: bundle installs
   // carry their own runtime and may have no system Node on PATH at all. Same
   // for the scripts: absolute paths, so the commands work from any directory.
-  const node = `"${process.execPath}"`
-  const app = `"${resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')}"`
-  // --live is the recommended form: it proves the credentials work rather
-  // than just exist, which is the difference the plain self-test used to miss.
-  console.log(`  ${step++}. Verify the install:  ${node} ${app} --selftest --live`)
-  console.log(`  ${step++}. Test locally:  ${node} ${app}`)
-  if (serviceInstalled) {
-    console.log(
-      `  ${step++}. Already running in the background. After filling in .env, use the Restart shortcut so it picks up your changes.`
-    )
-  } else {
-    console.log(`  ${step++}. Install as a service:  ${node} "${serviceEntry}" install`)
+  for (const line of renderNextSteps(
+    buildNextSteps({
+      needsBotCredentials: !botToken || !chatId,
+      gmailAddress: answers.gmailAddress,
+      gmailAddress2: answers.gmailAddress2,
+      gogMissing,
+      outlookAddress: answers.outlookAddress,
+      wordsmith: answers.skills.wordsmith,
+      serviceInstalled,
+      nodeBin: `"${process.execPath}"`,
+      appEntry: `"${resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')}"`,
+      serviceEntry: `"${serviceEntry}"`,
+    })
+  )) {
+    console.log(line)
   }
-  console.log(`  ${step++}. Message your bot and say hello!\n`)
+  console.log('')
 
   rl.close()
 }
