@@ -8,7 +8,7 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { PROJECT_ROOT } from '../src/env.js'
@@ -16,6 +16,7 @@ import { runWizard, type Prompter } from '../src/setup/wizard.js'
 import { checkRequirements, planBuildStep } from '../src/setup/requirements.js'
 import { resolveBundledClaude } from '../src/infra/claude-bin.js'
 import { checkClaudeAuth, spawnClaude } from '../src/infra/claude-auth.js'
+import { resolveGogBin } from '../src/infra/gog-bin.js'
 import { buildEnvContent, buildSkillPlan, installedSkillsList } from '../src/setup/plan.js'
 import { applyPlan } from '../src/setup/execute.js'
 
@@ -99,8 +100,45 @@ async function main(): Promise<void> {
     else warn('Sign-in did not complete. Setup will continue, but the assistant cannot answer yet.')
   }
 
+  // The next-steps list used to print `gog auth add ...` and nothing else; on
+  // a fresh machine that command does not exist. Catch it here, while the
+  // owner is still at the keyboard, instead of letting step 2 fail later.
+  const gogInstalled = (): boolean => {
+    const resolved = resolveGogBin(process.env)
+    if (isAbsolute(resolved)) return existsSync(resolved)
+    const probe = spawnSync(resolved, ['--version'], { encoding: 'utf-8', timeout: 5000, shell: process.platform === 'win32' })
+    return probe.status === 0
+  }
+  const findBrew = (): string | null => {
+    const candidate = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew', '/home/linuxbrew/.linuxbrew/bin/brew'].find(existsSync)
+    if (candidate) return candidate
+    const probe = spawnSync('brew', ['--version'], { encoding: 'utf-8', timeout: 5000 })
+    return probe.status === 0 ? 'brew' : null
+  }
+  let gogMissing = false
+  const ensureGog = async (): Promise<void> => {
+    if (gogInstalled()) {
+      ok('gog CLI found (the Gmail/Calendar backend)')
+      return
+    }
+    warn('The gog CLI (the Gmail/Calendar backend) is not installed.')
+    const brew = process.platform === 'win32' ? null : findBrew()
+    if (brew && (await prompter.yesNo('Install it now with Homebrew?'))) {
+      rl.pause()
+      spawnSync(brew, ['install', 'gogcli'], { stdio: 'inherit' })
+      rl.resume()
+      if (gogInstalled()) {
+        ok('gog CLI installed')
+        return
+      }
+    }
+    gogMissing = true
+    warn('Gmail and Calendar will not work until gog is installed.')
+    console.log('    See docs/SETUP-GUIDE.md > Gmail for install options (Homebrew or direct download).')
+  }
+
   header('Configuration')
-  const answers = await runWizard(prompter, PROJECT_ROOT, { signIn })
+  const answers = await runWizard(prompter, PROJECT_ROOT, { signIn, ensureGog })
 
   // Telegram-specific extras the platform env template leaves blank.
   let botToken = ''
@@ -191,23 +229,34 @@ async function main(): Promise<void> {
   let step = 1
   if (!botToken || !chatId) console.log(`  ${step++}. Fill in your bot credentials in .env (see docs/SETUP-GUIDE.md)`)
   if (answers.gmailAddress) {
-    console.log(`  ${step++}. Authenticate Gmail with the gog CLI:`)
+    if (gogMissing) {
+      console.log(`  ${step++}. Install the gog CLI (see docs/SETUP-GUIDE.md > Gmail):`)
+      console.log(`       brew install gogcli   (no Homebrew? the guide covers direct download)`)
+    }
+    // gog needs a Google OAuth client before auth add works — a fresh machine
+    // that runs only the auth command hits an error with no path forward.
+    console.log(`  ${step++}. Authenticate Gmail with the gog CLI (needs a Google OAuth client — docs/SETUP-GUIDE.md > Gmail):`)
+    console.log(`       gog auth credentials set ~/Downloads/client_secret_*.json`)
     console.log(`       gog auth add ${answers.gmailAddress} --services gmail,calendar`)
     if (answers.gmailAddress2) console.log(`       gog auth add ${answers.gmailAddress2} --services gmail,calendar`)
   }
   if (answers.outlookAddress) console.log(`  ${step++}. Set up Microsoft 365 credentials (docs/SETUP-GUIDE.md > Outlook)`)
   if (answers.skills.wordsmith) console.log(`  ${step++}. Optional: drop writing samples into skills/wordsmith/voice-samples/`)
   // Quote the running interpreter rather than a bare `node`: bundle installs
-  // carry their own runtime and may have no system Node on PATH at all.
+  // carry their own runtime and may have no system Node on PATH at all. Same
+  // for the scripts: absolute paths, so the commands work from any directory.
   const node = `"${process.execPath}"`
+  const app = `"${resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')}"`
   // --live is the recommended form: it proves the credentials work rather
   // than just exist, which is the difference the plain self-test used to miss.
-  console.log(`  ${step++}. Verify the install:  ${node} dist/src/index.js --selftest --live`)
-  console.log(`  ${step++}. Test locally:  ${node} dist/src/index.js`)
+  console.log(`  ${step++}. Verify the install:  ${node} ${app} --selftest --live`)
+  console.log(`  ${step++}. Test locally:  ${node} ${app}`)
   if (serviceInstalled) {
-    console.log(`  ${step++}. Already running in the background. To restart it later, use the Restart shortcut.`)
+    console.log(
+      `  ${step++}. Already running in the background. After filling in .env, use the Restart shortcut so it picks up your changes.`
+    )
   } else {
-    console.log(`  ${step++}. Install as a service:  ${node} dist/scripts/service.js install`)
+    console.log(`  ${step++}. Install as a service:  ${node} "${serviceEntry}" install`)
   }
   console.log(`  ${step++}. Message your bot and say hello!\n`)
 

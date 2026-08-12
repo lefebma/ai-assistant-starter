@@ -131,15 +131,61 @@ see [VAULT.md](VAULT.md).
 Setup supports up to **two accounts per provider**. Pick "Both" if you have Gmail + Outlook; pick the same provider twice via the "Add a second … account?" prompt if you have two of the same kind.
 
 ### Gmail (via gog CLI)
-1. Install: `brew install gogcli`
-2. Authenticate each account:
-   ```
-   gog auth add primary@gmail.com --services gmail,calendar
-   gog auth add secondary@gmail.com --services gmail,calendar
-   ```
-3. Grant permissions in the browser when prompted
-4. Test: `gog gmail search "newer_than:1d" --account primary@gmail.com`
-5. The skill at `skills/gmail/` is pre-configured for the primary address. If you opted into a second account, `skills/gmail-secondary/` is wired to it independently.
+
+Gmail and Google Calendar are backed by the [gog CLI](https://github.com/openclaw/gogcli). It needs two things a fresh machine does not have: the `gog` binary, and a Google OAuth client of your own.
+
+**1. Install gog**
+
+- With Homebrew: `brew install gogcli`
+- Without Homebrew: releases ship as **compressed archives, not a bare binary**,
+  so there is an extract step. From the
+  [gogcli releases page](https://github.com/openclaw/gogcli/releases), download
+  the archive matching your machine:
+
+  | Machine | Asset |
+  |---|---|
+  | Apple Silicon Mac (`uname -m` says `arm64`) | `gogcli_<version>_darwin_arm64.tar.gz` |
+  | Intel Mac (`uname -m` says `x86_64`) | `gogcli_<version>_darwin_amd64.tar.gz` |
+  | Linux | `gogcli_<version>_linux_arm64.tar.gz` or `_linux_amd64.tar.gz` |
+  | Windows | `gogcli_<version>_windows_amd64.zip` |
+
+  Then, on macOS or Linux:
+  ```
+  mkdir -p ~/.local/bin
+  cd ~/Downloads
+  tar -xzf gogcli_*_darwin_arm64.tar.gz        # unpacks a single file: gog
+  mv gog ~/.local/bin/gog
+  chmod +x ~/.local/bin/gog
+  xattr -d com.apple.quarantine ~/.local/bin/gog   # macOS only, clears the "unidentified developer" block
+  ~/.local/bin/gog --version                   # confirm before moving on
+  ```
+  `~/.local/bin/gog` is one of the paths the assistant probes automatically. For any other location, set `GOG_BIN=/path/to/gog` in `.env`.
+
+  Each release also publishes `checksums.txt` if you want to verify the download.
+
+**2. Create a Google OAuth client** (one-time, ~5 minutes)
+
+`gog auth add` fails without this — gog does not ship a shared client.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project (or reuse one)
+2. Enable the **Gmail API** and **Google Calendar API** for it
+3. Configure the OAuth consent screen; while it is in **Testing** mode, add each Gmail address you plan to connect as a **test user**
+4. Create an OAuth client of type **Desktop app** ([Credentials page](https://console.cloud.google.com/auth/clients)) and download its JSON file
+5. Store it: `gog auth credentials set ~/Downloads/client_secret_*.json`
+
+> Heads-up: while the consent screen stays in Testing mode, Google expires refresh tokens after 7 days and you must re-run `gog auth add`. Publish the app (no verification needed for personal use of these scopes) to get tokens that last.
+
+**3. Authenticate each account**
+```
+gog auth add primary@gmail.com --services gmail,calendar
+gog auth add secondary@gmail.com --services gmail,calendar
+```
+
+**4. Grant permissions** in the browser when prompted
+
+**5. Test:** `gog gmail search "newer_than:1d" --account primary@gmail.com`
+
+**6.** The skill at `skills/gmail/` is pre-configured for the primary address. If you opted into a second account, `skills/gmail-secondary/` is wired to it independently.
 
 ### Outlook / Microsoft 365 (via CLI or MCP)
 1. Register an app in [Azure AD App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps)

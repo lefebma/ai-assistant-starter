@@ -368,6 +368,57 @@ describe('runWizard', () => {
     )
   })
 
+  it('checks for the gog CLI right after a Gmail address is given', async () => {
+    const order: string[] = []
+    const p = recording(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        0, // engine: subscription
+        0, 'Bio',
+        'Gmail', 'a@g.com', false, // gmail, no second account
+        'Sam', '', '', 'a@g.com',
+        '1', '2', 'celsius',
+        false, false, false, false, false, false, false,
+      ]),
+      order
+    )
+    await runWizard(p, '/repo', { ensureGog: async () => void order.push('GOG-CHECK') })
+
+    const gmail = order.findIndex((s) => s === 'ask:Gmail address')
+    const check = order.indexOf('GOG-CHECK')
+    const signature = order.findIndex((s) => s.includes('signature'))
+    expect(gmail).toBeGreaterThanOrEqual(0)
+    expect(check).toBeGreaterThan(gmail)
+    expect(check).toBeLessThan(signature)
+  })
+
+  it('does not run the gog check when Gmail is skipped or Outlook-only', async () => {
+    const ensureGog = async () => {
+      throw new Error('gog check must not run without a Gmail account')
+    }
+    await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        0,
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      '/repo',
+      { ensureGog }
+    )
+    await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        0, 0, 'Bio',
+        'Outlook/Microsoft 365', 'a@o.com', false,
+        'Sam', '', '', 'a@o.com',
+        '1', '2', 'celsius',
+        false, false, false, false, false, false, false,
+      ]),
+      '/repo',
+      { ensureGog }
+    )
+  })
+
   it('records a deferred choice rather than pretending it was answered', async () => {
     const a = await runWizard(
       scripted([

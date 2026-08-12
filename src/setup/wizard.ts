@@ -29,6 +29,13 @@ export interface Prompter {
 export interface WizardHooks {
   /** No-ops when this machine is already signed in. */
   signIn?: () => Promise<void>
+  /**
+   * Checks that the gog CLI (the Gmail/Calendar backend) is installed and
+   * offers to install it. Runs right after a Gmail address is given, for the
+   * same reason signIn runs mid-wizard: the fix belongs next to the question,
+   * not in a list of homework after the wizard exits.
+   */
+  ensureGog?: () => Promise<void>
 }
 
 const PERSONALITY_PRESETS = [
@@ -146,6 +153,7 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
   if (emailProvider === 'Gmail' || emailProvider === 'Both') {
     gmailAddress = await p.ask('Gmail address')
     if (await p.yesNo('Add a second Gmail account?')) gmailAddress2 = await p.ask('Second Gmail address')
+    if (gmailAddress) await hooks?.ensureGog?.()
   }
   if (emailProvider === 'Outlook/Microsoft 365' || emailProvider === 'Both') {
     outlookAddress = await p.ask('Outlook email address')
