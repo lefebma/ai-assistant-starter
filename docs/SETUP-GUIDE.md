@@ -4,10 +4,17 @@ This guide walks you through setting up your personal AI assistant powered by Cl
 
 ## Prerequisites
 
-- macOS (Apple Silicon or Intel)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- Node.js 20+ (`brew install node`)
+- macOS (Apple Silicon or Intel), Windows, or Linux
+- Node.js 20+ (`brew install node`), unless you are using an installer bundle,
+  which brings its own
+- **An account with an AI company.** Either a Claude subscription (Pro or Max)
+  that you sign in with, or an API key from Anthropic, OpenAI, or Google that
+  bills per use. Setup asks which you have. See [Signing in](#signing-in) below.
 - A messaging platform account (Telegram, Slack, Discord, or Teams)
+
+You do **not** need to install Claude Code separately. The Claude engine ships
+inside this app, and a globally installed `claude` command is a different copy
+that the assistant never calls.
 
 ## Step 1: Choose Your Platform
 
@@ -64,6 +71,53 @@ This guide walks you through setting up your personal AI assistant powered by Cl
    TEAMS_APP_SECRET=your_app_secret
    TEAMS_TENANT_ID=your_tenant_id
    ```
+
+## Signing in
+
+Your assistant needs an account with an AI company before it can answer
+anything. Setup asks which you have and handles it for you. This section is for
+doing it by hand, or fixing it later.
+
+**Credentials are per user, per machine.** Signing in on your laptop does
+nothing for the computer the assistant actually runs on.
+
+### Option 1: a Claude subscription (Pro or Max)
+
+Run the sign-in from your install folder. A browser opens; sign in with the
+account that carries the plan.
+
+```bash
+# macOS / Linux
+node_modules/@anthropic-ai/claude-agent-sdk-*/claude auth login
+
+# Windows (PowerShell)
+Get-ChildItem node_modules\@anthropic-ai\claude-agent-sdk-*\claude.exe | Select-Object -First 1 | ForEach-Object { & $_ auth login }
+```
+
+Check it took with `... auth status`. A free Claude account is not enough; the
+plan has to be Pro or Max.
+
+### Option 2: an API key, billed per use
+
+No sign-in at all. Put the key in `.env`:
+
+```
+AGENT_RUNTIME=ai-sdk
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+For OpenAI or Google, set `AI_PROVIDER` accordingly, use `OPENAI_API_KEY` or
+`GOOGLE_API_KEY`, and set `AI_MODEL` explicitly (only Anthropic has a default).
+
+### Confirming it works
+
+```bash
+node dist/src/index.js --selftest --live
+```
+
+`--live` makes one real model call, which is the only check that proves the
+credentials work rather than merely exist. Drop it for a fast offline check.
 
 ## Step 1b: Choose Your Model Provider (optional)
 
@@ -289,6 +343,7 @@ The most valuable scheduled task. Create it with a prompt like:
 
 | Problem | Fix |
 |---------|-----|
+| Installed fine, but never replies | Run `node dist/src/index.js --selftest --live`. If `credentials` fails, see [Signing in](#signing-in) |
 | Bot not responding | Check `launchctl list \| grep ai-assistant`, look at `/tmp/ai-assistant.log` |
 | Email auth expired | Re-run `gog auth add` (Gmail) or `node scripts/ms-auth.js` (Outlook) |
 | Scheduled task not firing | Check `sqlite3 store/assistant.db "SELECT * FROM scheduled_tasks"` |

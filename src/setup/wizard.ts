@@ -3,7 +3,14 @@
  * presets as the retired setup.sh, over an injected Prompter so the flow is
  * testable with scripted answers.
  */
-import { buildEmailSignature, type Answers, type EmailProvider, type Platform } from './plan.js'
+import {
+  buildEmailSignature,
+  type AiProvider,
+  type Answers,
+  type EmailProvider,
+  type EngineChoice,
+  type Platform,
+} from './plan.js'
 
 export interface Prompter {
   ask(question: string, def?: string): Promise<string>
@@ -12,19 +19,106 @@ export interface Prompter {
   say(text: string): void
 }
 
+/**
+ * Side effects the wizard triggers but does not own. Only one so far: the
+ * Claude sign-in, which needs a subprocess and stdin handoff and so lives in
+ * the readline shell. It runs from here rather than after the wizard so the
+ * sign-in follows the question that asked for it, instead of arriving fifteen
+ * questions later when the owner has forgotten they chose a subscription.
+ */
+export interface WizardHooks {
+  /** No-ops when this machine is already signed in. */
+  signIn?: () => Promise<void>
+}
+
 const PERSONALITY_PRESETS = [
   'Professional, efficient, precise. Communicate clearly without unnecessary filler. Prioritize accuracy and actionability.',
   'Warm but efficient. Conversational tone without being chatty. Personable, remembers context, occasionally lighthearted.',
   'Direct, sharp, no fluff. Say what needs saying and move on. Push back when something doesn\'t make sense. Have opinions.',
 ]
 
-export async function runWizard(p: Prompter, projectPath: string): Promise<Answers> {
+/** What the engine question collects. Kept separate so it stays readable. */
+interface EngineAnswers {
+  engine: EngineChoice
+  aiProvider?: AiProvider
+  aiModel?: string
+  anthropicKey?: string
+  openaiKey?: string
+  googleKey?: string
+}
+
+const ENGINE_OPTIONS = [
+  'A Claude subscription (Claude Pro or Claude Max)',
+  'An API key, billed per use',
+  'Neither yet — I will sort this out later',
+]
+
+const PROVIDER_OPTIONS: Array<{ label: string; id: AiProvider; where: string }> = [
+  { label: 'Anthropic (Claude)', id: 'anthropic', where: 'https://console.anthropic.com/settings/keys' },
+  { label: 'OpenAI', id: 'openai', where: 'https://platform.openai.com/api-keys' },
+  { label: 'Google (Gemini)', id: 'google', where: 'https://aistudio.google.com/app/apikey' },
+]
+
+/**
+ * The question this wizard never asked. Setup used to warn about a missing
+ * `claude` command and mention "BYOK installs" as the alternative, describing a
+ * choice the owner was never offered and using words they had no reason to
+ * know. Ask it plainly instead, in terms of what someone actually has.
+ */
+async function askEngine(p: Prompter, hooks?: WizardHooks): Promise<EngineAnswers> {
+  p.say(
+    'Your assistant needs an account with an AI company to do its thinking.\n' +
+      '  A Claude subscription is a flat monthly fee and you sign in once on this computer.\n' +
+      '  An API key has no monthly fee and bills for what you use.\n' +
+      '  Either works. You can change your mind later by editing .env.'
+  )
+  const choice = await p.choice('Which do you have?', ENGINE_OPTIONS)
+
+  if (choice === ENGINE_OPTIONS[0]) {
+    await hooks?.signIn?.()
+    return { engine: 'subscription' }
+  }
+
+  if (choice === ENGINE_OPTIONS[2]) {
+    p.say(
+      'Fine. Setup will finish, but the assistant cannot answer messages until this is done.\n' +
+        '  .env will spell out both options, and the self-test will tell you it is still missing.'
+    )
+    return { engine: 'later' }
+  }
+
+  const providerLabel = await p.choice('Whose API key?', PROVIDER_OPTIONS.map((o) => o.label))
+  const provider = PROVIDER_OPTIONS.find((o) => o.label === providerLabel) ?? PROVIDER_OPTIONS[0]
+  p.say(`Get a key at ${provider.where}`)
+  const key = await p.ask(`${provider.label} API key (leave blank to fill in later)`, '')
+
+  // anthropic is the only provider with a default model id; the others must be
+  // named or the runtime refuses to start rather than guess an id that rots.
+  let aiModel = ''
+  if (provider.id !== 'anthropic') {
+    const example = provider.id === 'openai' ? 'gpt-5' : 'gemini-2.5-pro'
+    aiModel = await p.ask(`Which model? (required for ${provider.label}, e.g. ${example})`, example)
+  }
+
+  return {
+    engine: 'api-key',
+    aiProvider: provider.id,
+    aiModel,
+    anthropicKey: provider.id === 'anthropic' ? key : undefined,
+    openaiKey: provider.id === 'openai' ? key : undefined,
+    googleKey: provider.id === 'google' ? key : undefined,
+  }
+}
+
+export async function runWizard(p: Prompter, projectPath: string, hooks?: WizardHooks): Promise<Answers> {
   const ownerName = await p.ask('Your name')
   const assistantName = await p.ask('Name for your assistant', 'Atlas')
   const timezone = await p.ask('Your timezone', 'America/New_York')
   const city = await p.ask('Your city (for weather)', 'New York')
 
   const platform = (await p.choice('Which messaging platform?', ['Telegram', 'Slack', 'Discord', 'Teams'])) as Platform
+
+  const engineAnswers = await askEngine(p, hooks)
 
   const vibeChoice = await p.choice('How should your assistant communicate?', [
     'Professional and efficient',
@@ -70,7 +164,11 @@ export async function runWizard(p: Prompter, projectPath: string): Promise<Answe
   const longitude = await p.ask('Longitude', '-74.01')
   const tempUnit = (await p.choice('Temperature unit?', ['celsius', 'fahrenheit'])) as 'celsius' | 'fahrenheit'
 
-  const keys: Answers['keys'] = {}
+  const keys: Answers['keys'] = {
+    anthropic: engineAnswers.anthropicKey,
+    openai: engineAnswers.openaiKey,
+    google: engineAnswers.googleKey,
+  }
   const skills: Answers['skills'] = {
     webResearch: false,
     apollo: false,
@@ -91,7 +189,9 @@ export async function runWizard(p: Prompter, projectPath: string): Promise<Answe
 
   p.say('Wordsmith: delegates prose drafting to Gemini. Key: https://aistudio.google.com/app/apikey')
   skills.wordsmith = await p.yesNo('Enable Wordsmith skill?')
-  if (skills.wordsmith) keys.google = await p.ask('Google API key (leave blank to fill in later)', '')
+  // Do not ask twice for the same key: a Google key given as the model
+  // provider above is the same GOOGLE_API_KEY this skill reads.
+  if (skills.wordsmith && !keys.google) keys.google = await p.ask('Google API key (leave blank to fill in later)', '')
 
   p.say('Anti-library: structured wiki in an Obsidian vault.')
   skills.antilibrary = await p.yesNo('Enable Anti-library skill?')
@@ -122,6 +222,9 @@ export async function runWizard(p: Prompter, projectPath: string): Promise<Answe
     timezone,
     city,
     platform,
+    engine: engineAnswers.engine,
+    aiProvider: engineAnswers.aiProvider,
+    aiModel: engineAnswers.aiModel,
     personalityVibe,
     ownerBio,
     emailProvider,

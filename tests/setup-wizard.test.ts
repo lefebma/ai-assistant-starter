@@ -19,6 +19,7 @@ const BASE: Answers = {
   timezone: 'America/Toronto',
   city: 'Toronto',
   platform: 'Telegram',
+  engine: 'subscription',
   personalityVibe: 'Direct.',
   ownerBio: 'Consultant.',
   emailProvider: 'Skip for now',
@@ -65,6 +66,55 @@ describe('buildEnvContent', () => {
     expect(env).toContain('SLACK_BOT_TOKEN=')
     expect(env).toContain('GOOGLE_API_KEY=g-123')
     expect(env).not.toContain('TELEGRAM_BOT_TOKEN')
+  })
+
+  it('leaves the runtime at its default on a subscription install', () => {
+    const env = buildEnvContent(BASE)
+    // Commented guidance is fine; an active AGENT_RUNTIME line is not, since
+    // the subscription path is exactly the default.
+    expect(env).not.toMatch(/^AGENT_RUNTIME=/m)
+    expect(env).toMatch(/# AGENT_RUNTIME=ai-sdk/)
+  })
+
+  it('wires the ai-sdk runtime and the key for an API-key install', () => {
+    const env = buildEnvContent({ ...BASE, engine: 'api-key', aiProvider: 'anthropic', keys: { anthropic: 'sk-a' } })
+    expect(env).toMatch(/^AGENT_RUNTIME=ai-sdk$/m)
+    expect(env).toMatch(/^AI_PROVIDER=anthropic$/m)
+    expect(env).toMatch(/^ANTHROPIC_API_KEY=sk-a$/m)
+  })
+
+  it('carries the model id for providers that have no default', () => {
+    const env = buildEnvContent({ ...BASE, engine: 'api-key', aiProvider: 'openai', aiModel: 'gpt-5', keys: { openai: 'sk-o' } })
+    expect(env).toMatch(/^AI_MODEL=gpt-5$/m)
+    expect(env).toMatch(/^OPENAI_API_KEY=sk-o$/m)
+  })
+
+  it('flags a missing model id for a provider that requires one', () => {
+    const env = buildEnvContent({ ...BASE, engine: 'api-key', aiProvider: 'google', keys: { google: 'g-1' } })
+    expect(env).toMatch(/AI_MODEL is REQUIRED/)
+  })
+
+  it('never writes GOOGLE_API_KEY twice when Gemini is both the model and Wordsmith', () => {
+    // Two lines with the same name is not a harmless duplicate: the later one
+    // silently wins, so a blank Wordsmith answer would erase the model key.
+    const env = buildEnvContent({
+      ...BASE,
+      engine: 'api-key',
+      aiProvider: 'google',
+      aiModel: 'gemini-2.5-pro',
+      skills: { ...BASE.skills, wordsmith: true },
+      keys: { google: 'g-1' },
+    })
+    expect(env.match(/^GOOGLE_API_KEY=/gm)).toHaveLength(1)
+    expect(env).toMatch(/^GOOGLE_API_KEY=g-1$/m)
+  })
+
+  it('spells out both options when the owner defers the choice', () => {
+    const env = buildEnvContent({ ...BASE, engine: 'later' })
+    expect(env).toMatch(/NOT CONFIGURED YET/)
+    expect(env).toMatch(/Pro or Max/)
+    expect(env).toMatch(/# ANTHROPIC_API_KEY=/)
+    expect(env).not.toMatch(/^AGENT_RUNTIME=/m)
   })
 })
 
@@ -172,6 +222,7 @@ describe('runWizard', () => {
     const p = scripted([
       'Sam', 'Atlas', 'America/Toronto', 'Toronto', // identity
       'Telegram', // platform
+      0, // engine: Claude subscription
       2, // personality preset index 2 (direct, no-nonsense)
       'Consultant.', // bio
       'Skip for now', // email
@@ -182,6 +233,7 @@ describe('runWizard', () => {
     const a = await runWizard(p, '/repo')
     expect(a.ownerName).toBe('Sam')
     expect(a.platform).toBe('Telegram')
+    expect(a.engine).toBe('subscription')
     expect(a.personalityVibe).toContain('Direct')
     expect(a.emailProvider).toBe('Skip for now')
     expect(Object.values(a.skills).every((v) => v === false)).toBe(true)
@@ -191,6 +243,7 @@ describe('runWizard', () => {
     const p = scripted([
       'Sam', 'Atlas', 'America/Toronto', 'Toronto',
       'Telegram',
+      0, // engine
       1, // preset
       'Bio',
       'Gmail', 'a@g.com', true, 'b@g.com', // gmail + secondary
@@ -204,5 +257,127 @@ describe('runWizard', () => {
     expect(a.gmailAddress2).toBe('b@g.com')
     expect(a.skills.apollo).toBe(true)
     expect(a.keys.apollo).toBe('ap-1')
+  })
+
+  const tail = (extra: Array<string | boolean | number> = []) => [
+    0, // preset
+    'Bio',
+    'Skip for now',
+    'Sam', '', '', '',
+    '1', '2', 'celsius',
+    ...extra,
+  ]
+
+  it('asks for a model id when the provider has no default, and not when it does', async () => {
+    const anthropic = await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        1, 0, 'sk-a', // engine: API key -> Anthropic -> key (no model question)
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      '/repo'
+    )
+    expect(anthropic.engine).toBe('api-key')
+    expect(anthropic.aiProvider).toBe('anthropic')
+    expect(anthropic.keys.anthropic).toBe('sk-a')
+
+    const openai = await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        1, 1, 'sk-o', 'gpt-5', // engine -> OpenAI -> key -> model
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      '/repo'
+    )
+    expect(openai.aiProvider).toBe('openai')
+    expect(openai.keys.openai).toBe('sk-o')
+    expect(openai.aiModel).toBe('gpt-5')
+  })
+
+  it('does not ask for the same Google key twice when Wordsmith is also on', async () => {
+    // scripted() throws if the wizard asks more questions than were scripted,
+    // so a second Google prompt fails this test rather than silently passing.
+    const a = await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        1, 2, 'g-1', 'gemini-2.5-pro', // engine -> Google -> key -> model
+        ...tail([
+          false, // web research
+          false, // apollo
+          true, //  wordsmith enabled, key already known
+          false, false, false, false,
+        ]),
+      ]),
+      '/repo'
+    )
+    expect(a.skills.wordsmith).toBe(true)
+    expect(a.keys.google).toBe('g-1')
+  })
+
+  /** Wraps a scripted prompter to record the order questions were asked in. */
+  function recording(inner: Prompter, log: string[]): Prompter {
+    return {
+      ask: async (q, d) => (log.push(`ask:${q}`), inner.ask(q, d)),
+      choice: async (q, o) => (log.push(`choice:${q}`), inner.choice(q, o)),
+      yesNo: async (q) => (log.push(`yesNo:${q}`), inner.yesNo(q)),
+      say: () => {},
+    }
+  }
+
+  it('signs in right after the engine question, not fifteen questions later', async () => {
+    const order: string[] = []
+    const p = recording(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        0, // engine: subscription
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      order
+    )
+    await runWizard(p, '/repo', { signIn: async () => void order.push('SIGN-IN') })
+
+    const engine = order.findIndex((s) => s.startsWith('choice:Which do you have?'))
+    const signIn = order.indexOf('SIGN-IN')
+    const nextQuestion = order.findIndex((s) => s.includes('communicate'))
+    expect(engine).toBeGreaterThanOrEqual(0)
+    expect(signIn).toBe(engine + 1)
+    expect(signIn).toBeLessThan(nextQuestion)
+  })
+
+  it('does not try to sign in on the API-key or deferred paths', async () => {
+    const signIn = async () => {
+      throw new Error('sign-in must not run: neither path uses a Claude account')
+    }
+    await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        1, 0, 'sk-a',
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      '/repo',
+      { signIn }
+    )
+    await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        2,
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      '/repo',
+      { signIn }
+    )
+  })
+
+  it('records a deferred choice rather than pretending it was answered', async () => {
+    const a = await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        2, // engine: neither yet
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      '/repo'
+    )
+    expect(a.engine).toBe('later')
+    expect(a.aiProvider).toBeUndefined()
   })
 })

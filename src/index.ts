@@ -59,7 +59,11 @@ async function main(): Promise<void> {
   // installer's final step and the CI install smoke test.
   if (process.argv.includes('--selftest')) {
     const { runSelfTest } = await import('./selftest.js')
-    process.exit((await runSelfTest()) ? 0 : 1)
+    const ok = await runSelfTest({
+      skipAuth: process.argv.includes('--skip-auth'),
+      live: process.argv.includes('--live'),
+    })
+    process.exit(ok ? 0 : 1)
   }
 
   console.log(BANNER)

@@ -62,7 +62,7 @@ Installed to ${target}
 
   If you would rather stay in a terminal:
     Set up:            "${nodeBin}" dist/scripts/setup.js
-    Verify:            "${nodeBin}" dist/src/index.js --selftest
+    Verify:            "${nodeBin}" dist/src/index.js --selftest --live
     Run as a service:  "${nodeBin}" dist/scripts/service.js install
 `)
 } else {
@@ -70,7 +70,7 @@ Installed to ${target}
 Installed. Next steps (run from ${target}):
 
   1. Set up:            "${nodeBin}" dist/scripts/setup.js
-  2. Verify:            "${nodeBin}" dist/src/index.js --selftest
+  2. Verify:            "${nodeBin}" dist/src/index.js --selftest --live
   3. Run as a service:  "${nodeBin}" dist/scripts/service.js install
 `)
 }
