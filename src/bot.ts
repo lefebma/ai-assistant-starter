@@ -22,6 +22,7 @@ import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, UPLOADS_DIR } from './media.js'
 import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
+import { commandWord } from './infra/command-text.js'
 import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
 import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
@@ -584,8 +585,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
 
-    // Text messages: route commands
+    // Text messages: route commands. `cmd` is the leading word, lowercased;
+    // handlers still receive `trimmed` so argument case survives.
     const trimmed = text.trim()
+    const cmd = commandWord(trimmed)
 
     // /btw non-abort: read-only commands during active run
     if (isChatBusy(chatId) && isNonAbortMessage(trimmed)) {
@@ -595,22 +598,22 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     }
 
     // Command routing
-    if (trimmed.startsWith('/start') && trimmed.length <= 7) {
+    if (cmd === '/start') {
       await adapter.sendMessage(chatId, 'AI Assistant is running. Send me anything and I\'ll process it with Claude Code.')
       return
     }
-    if (trimmed === '/chatid') {
+    if (cmd === '/chatid') {
       await adapter.sendMessage(chatId, `Your chat ID is: ${chatId}`)
       return
     }
-    if (trimmed === '/newchat' || trimmed === '/forget') {
+    if (cmd === '/newchat' || cmd === '/forget') {
       clearSession(chatId)
       reloadSkills()
       contextEngine.invalidateCaches()
       await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
       return
     }
-    if (trimmed === '/voice') {
+    if (cmd === '/voice') {
       if (voiceModeChats.has(chatId)) {
         voiceModeChats.delete(chatId)
         await adapter.sendMessage(chatId, 'Voice replies disabled.')
@@ -624,7 +627,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       }
       return
     }
-    if (trimmed === '/memory') {
+    if (cmd === '/memory') {
       const memories = getMemoriesForChat(chatId, 10)
       if (memories.length === 0) {
         await adapter.sendMessage(chatId, 'No memories stored yet.')
@@ -636,11 +639,11 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       }
       return
     }
-    if (trimmed.startsWith('/schedule')) {
+    if (cmd === '/schedule') {
       await handleScheduleCommand(adapter, chatId, trimmed)
       return
     }
-    if (trimmed.startsWith('/dashboard')) {
+    if (cmd === '/dashboard') {
       const dashSubcmd = trimmed.split(/\s+/)[1]?.toLowerCase()
       const plist = resolve(homedir(), 'Library/LaunchAgents/com.ai-assistant.dashboard.plist')
       if (dashSubcmd === 'start') {
@@ -662,11 +665,11 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       }
       return
     }
-    if (trimmed.startsWith('/browser')) {
+    if (cmd === '/browser') {
       await handleBrowserCommand(adapter, chatId, trimmed)
       return
     }
-    if (trimmed.startsWith('/steer')) {
+    if (cmd === '/steer') {
       const steerText = trimmed.replace(/^\/steer\s*/i, '').trim()
       if (!steerText) {
         await adapter.sendMessage(chatId, 'Usage: /steer <message>\nInjects a steering message into the currently running agent.')
@@ -676,23 +679,23 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await adapter.sendMessage(chatId, `Steer queued: "${steerText.slice(0, 80)}${steerText.length > 80 ? '...' : ''}"`)
       return
     }
-    if (trimmed.startsWith('/skill')) {
+    if (cmd === '/skill') {
       await handleSkillCommand(adapter, chatId, trimmed)
       return
     }
-    if (trimmed.startsWith('/authorize')) {
+    if (cmd === '/authorize') {
       await handleAuthorizeCommand(adapter, chatId, trimmed)
       return
     }
-    if (trimmed === '/version') {
+    if (cmd === '/version') {
       await adapter.sendMessage(chatId, `AI Assistant v${getCurrentVersion()}`)
       return
     }
-    if (trimmed.startsWith('/update')) {
+    if (cmd === '/update') {
       await handleUpdateCommand(adapter, chatId, trimmed)
       return
     }
-    if (trimmed === '/help') {
+    if (cmd === '/help') {
       await adapter.sendMessage(chatId, [
         'Commands:',
         '/newchat - Clear session, start fresh',

@@ -44,8 +44,13 @@ describe('buildNextSteps', () => {
   })
 
   it('ties the restart to the .env edit only when .env is actually incomplete', () => {
-    expect(flatten({ ...BASE, serviceInstalled: true, needsBotCredentials: true })).toMatch(/filled in \.env/)
-    expect(flatten({ ...BASE, serviceInstalled: true, needsBotCredentials: false })).toMatch(/if you change \.env later/)
+    const incomplete = flatten({ ...BASE, serviceInstalled: true, needsBotCredentials: true })
+    // With no token the app exits on startup and launchd retries it, so it is
+    // installed but not answering. Claiming otherwise sends the owner looking
+    // for a bot that cannot reply.
+    expect(incomplete).not.toMatch(/already running/i)
+    expect(incomplete).toMatch(/as soon as \.env has your credentials/)
+    expect(flatten({ ...BASE, serviceInstalled: true, needsBotCredentials: false })).toMatch(/already running in the background/)
   })
 
   it('numbers steps contiguously from 1 whatever is included', () => {

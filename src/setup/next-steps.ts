@@ -83,9 +83,14 @@ export function buildNextSteps(i: NextStepsInput): NextStep[] {
   })
 
   if (i.serviceInstalled) {
+    // With no token the app exits on startup (createAdapter throws) and the
+    // launchd job retries it, so it is installed but not yet answering.
+    // Saying "already running" there sends the owner looking for a bot that
+    // cannot reply. It picks itself up once .env is filled; the Restart
+    // shortcut just makes that immediate.
     steps.push({
       text: i.needsBotCredentials
-        ? 'It is already running in the background. Once you have filled in .env, use the Restart shortcut so it picks up your changes.'
+        ? 'It is installed and will start answering as soon as .env has your credentials. Use the Restart shortcut after you save the file to skip the wait.'
         : 'It is already running in the background. Use the Restart shortcut if you change .env later.',
     })
   } else {
