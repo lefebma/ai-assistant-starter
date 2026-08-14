@@ -17,20 +17,31 @@ function fakeIO(execResults: Record<string, { code?: number; out?: string }> = {
   const writes: Array<{ path: string; content: string }> = []
   const removed: string[] = []
   const execCalls: string[] = []
+  const dirs: string[] = []
+  /** Ordered trace, so "created the dir before loading the job" is checkable. */
+  const order: string[] = []
   const io: ServiceIO = {
     exec: vi.fn(async (cmd: string, args: string[]) => {
       const joined = `${cmd} ${args.join(' ')}`
       execCalls.push(joined)
+      order.push(`exec:${joined}`)
       for (const [prefix, res] of Object.entries(execResults)) {
         if (joined.startsWith(prefix)) return { code: res.code ?? 0, out: res.out ?? '' }
       }
       return { code: 0, out: '' }
     }),
-    writeFile: (path, content) => void writes.push({ path, content }),
+    writeFile: (path, content) => {
+      writes.push({ path, content })
+      order.push(`write:${path}`)
+    },
     removeFile: (path) => void removed.push(path),
     exists: () => true,
+    ensureDir: (path) => {
+      dirs.push(path)
+      order.push(`mkdir:${path}`)
+    },
   }
-  return { io, writes, removed, execCalls }
+  return { io, writes, removed, execCalls, dirs, order }
 }
 
 describe('LaunchdManager', () => {
@@ -74,5 +85,84 @@ describe('resolveServiceManager', () => {
     expect(resolveServiceManager('darwin', OPTS).kind).toBe('launchd')
     expect(resolveServiceManager('linux', OPTS).kind).toBe('systemd')
     expect(resolveServiceManager('win32', OPTS).kind).toBe('schtasks')
+  })
+})
+
+describe('log directory (regression: service loaded but never spawned)', () => {
+  // A real install on a fresh Mac: `service install` wrote the plist pointing
+  // StandardOutPath at <install>/logs/service.log, but nothing had created
+  // logs/. launchd will not create it, so the job loaded and never spawned.
+  // `launchctl list <label>` still exits 0, so status read "stopped", and
+  // because the failure was in setting up stdio there was no log to explain
+  // it. The owner saw a bot that answered nothing, with no diagnostic trail.
+  // The restart launcher already did `mkdir -p logs`; install did not.
+  it('launchd creates the log directory before loading the job', async () => {
+    const { io, dirs, order } = fakeIO()
+    await new LaunchdManager(OPTS, io, '/Users/me').install()
+
+    expect(dirs).toContain('/repo/logs')
+    const mkdir = order.indexOf('mkdir:/repo/logs')
+    const load = order.findIndex((o) => o.startsWith('exec:launchctl load'))
+    expect(mkdir).toBeGreaterThanOrEqual(0)
+    expect(load).toBeGreaterThan(mkdir)
+  })
+
+  it('systemd creates it too (StandardOutput=append: fails the same way)', async () => {
+    const { io, dirs, order } = fakeIO()
+    await new SystemdManager(OPTS, io, '/home/me').install()
+
+    expect(dirs).toContain('/repo/logs')
+    const mkdir = order.indexOf('mkdir:/repo/logs')
+    const enable = order.findIndex((o) => o.includes('enable'))
+    expect(mkdir).toBeGreaterThanOrEqual(0)
+    expect(enable).toBeGreaterThan(mkdir)
+  })
+
+  it('creates the directory holding the log, not the log path itself', async () => {
+    const { io, dirs } = fakeIO()
+    await new LaunchdManager(OPTS, io, '/Users/me').install()
+    expect(dirs).not.toContain(OPTS.logFile)
+  })
+})
+
+describe('reinstall (regression: launchd kept the old paths)', () => {
+  // From a real install. The plist on disk said
+  // /Users/x/Applications/Havn/..., but `launchctl print` showed launchd
+  // running /Users/x/ai-assistant/... — the previous install's default path,
+  // long since gone.
+  //
+  // `launchctl load` does nothing when the label is already loaded. It does
+  // not re-read the file. So installing a second time wrote a correct plist
+  // that launchd ignored, reported success at every layer, and produced a job
+  // that could never spawn: no process, no log at the new location, and a
+  // status of "stopped" because `launchctl list` still exits 0 for a
+  // registered job.
+  it('unloads the label before loading, so a reinstall actually takes effect', async () => {
+    const { io, order } = fakeIO()
+    const m = new LaunchdManager(OPTS, io, '/Users/me')
+    await m.install()
+
+    const unload = order.findIndex((o) => o.startsWith('exec:launchctl unload'))
+    const load = order.findIndex((o) => o.startsWith('exec:launchctl load'))
+    expect(unload).toBeGreaterThanOrEqual(0)
+    expect(load).toBeGreaterThan(unload)
+  })
+
+  it('writes the new plist before unloading, so the reload picks it up', async () => {
+    const { io, order } = fakeIO()
+    await new LaunchdManager(OPTS, io, '/Users/me').install()
+
+    const write = order.findIndex((o) => o.startsWith('write:/Users/me/Library/LaunchAgents'))
+    const unload = order.findIndex((o) => o.startsWith('exec:launchctl unload'))
+    expect(write).toBeGreaterThanOrEqual(0)
+    expect(unload).toBeGreaterThan(write)
+  })
+
+  it('survives a first install, where there is nothing to unload', async () => {
+    // launchctl unload exits non-zero for an unknown label; install must not
+    // treat that as fatal.
+    const { io, execCalls } = fakeIO({ 'launchctl unload': { code: 1, out: 'Could not find specified service' } })
+    await expect(new LaunchdManager(OPTS, io, '/Users/me').install()).resolves.toBeUndefined()
+    expect(execCalls.some((c) => c.startsWith('launchctl load -w'))).toBe(true)
   })
 })

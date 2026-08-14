@@ -4,10 +4,17 @@ This guide walks you through setting up your personal AI assistant powered by Cl
 
 ## Prerequisites
 
-- macOS (Apple Silicon or Intel)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- Node.js 20+ (`brew install node`)
+- macOS (Apple Silicon or Intel), Windows, or Linux
+- Node.js 20+ (`brew install node`), unless you are using an installer bundle,
+  which brings its own
+- **An account with an AI company.** Either a Claude subscription (Pro or Max)
+  that you sign in with, or an API key from Anthropic, OpenAI, or Google that
+  bills per use. Setup asks which you have. See [Signing in](#signing-in) below.
 - A messaging platform account (Telegram, Slack, Discord, or Teams)
+
+You do **not** need to install Claude Code separately. The Claude engine ships
+inside this app, and a globally installed `claude` command is a different copy
+that the assistant never calls.
 
 ## Step 1: Choose Your Platform
 
@@ -65,6 +72,53 @@ This guide walks you through setting up your personal AI assistant powered by Cl
    TEAMS_TENANT_ID=your_tenant_id
    ```
 
+## Signing in
+
+Your assistant needs an account with an AI company before it can answer
+anything. Setup asks which you have and handles it for you. This section is for
+doing it by hand, or fixing it later.
+
+**Credentials are per user, per machine.** Signing in on your laptop does
+nothing for the computer the assistant actually runs on.
+
+### Option 1: a Claude subscription (Pro or Max)
+
+Run the sign-in from your install folder. A browser opens; sign in with the
+account that carries the plan.
+
+```bash
+# macOS / Linux
+node_modules/@anthropic-ai/claude-agent-sdk-*/claude auth login
+
+# Windows (PowerShell)
+Get-ChildItem node_modules\@anthropic-ai\claude-agent-sdk-*\claude.exe | Select-Object -First 1 | ForEach-Object { & $_ auth login }
+```
+
+Check it took with `... auth status`. A free Claude account is not enough; the
+plan has to be Pro or Max.
+
+### Option 2: an API key, billed per use
+
+No sign-in at all. Put the key in `.env`:
+
+```
+AGENT_RUNTIME=ai-sdk
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+For OpenAI or Google, set `AI_PROVIDER` accordingly, use `OPENAI_API_KEY` or
+`GOOGLE_API_KEY`, and set `AI_MODEL` explicitly (only Anthropic has a default).
+
+### Confirming it works
+
+```bash
+node dist/src/index.js --selftest --live
+```
+
+`--live` makes one real model call, which is the only check that proves the
+credentials work rather than merely exist. Drop it for a fast offline check.
+
 ## Step 1b: Choose Your Model Provider (optional)
 
 Claude on a Claude subscription is the default. To run on OpenAI, Gemini, or a
@@ -77,15 +131,61 @@ see [VAULT.md](VAULT.md).
 Setup supports up to **two accounts per provider**. Pick "Both" if you have Gmail + Outlook; pick the same provider twice via the "Add a second … account?" prompt if you have two of the same kind.
 
 ### Gmail (via gog CLI)
-1. Install: `brew install gogcli`
-2. Authenticate each account:
-   ```
-   gog auth add primary@gmail.com --services gmail,calendar
-   gog auth add secondary@gmail.com --services gmail,calendar
-   ```
-3. Grant permissions in the browser when prompted
-4. Test: `gog gmail search "newer_than:1d" --account primary@gmail.com`
-5. The skill at `skills/gmail/` is pre-configured for the primary address. If you opted into a second account, `skills/gmail-secondary/` is wired to it independently.
+
+Gmail and Google Calendar are backed by the [gog CLI](https://github.com/openclaw/gogcli). It needs two things a fresh machine does not have: the `gog` binary, and a Google OAuth client of your own.
+
+**1. Install gog**
+
+- With Homebrew: `brew install gogcli`
+- Without Homebrew: releases ship as **compressed archives, not a bare binary**,
+  so there is an extract step. From the
+  [gogcli releases page](https://github.com/openclaw/gogcli/releases), download
+  the archive matching your machine:
+
+  | Machine | Asset |
+  |---|---|
+  | Apple Silicon Mac (`uname -m` says `arm64`) | `gogcli_<version>_darwin_arm64.tar.gz` |
+  | Intel Mac (`uname -m` says `x86_64`) | `gogcli_<version>_darwin_amd64.tar.gz` |
+  | Linux | `gogcli_<version>_linux_arm64.tar.gz` or `_linux_amd64.tar.gz` |
+  | Windows | `gogcli_<version>_windows_amd64.zip` |
+
+  Then, on macOS or Linux:
+  ```
+  mkdir -p ~/.local/bin
+  cd ~/Downloads
+  tar -xzf gogcli_*_darwin_arm64.tar.gz        # unpacks a single file: gog
+  mv gog ~/.local/bin/gog
+  chmod +x ~/.local/bin/gog
+  xattr -d com.apple.quarantine ~/.local/bin/gog   # macOS only, clears the "unidentified developer" block
+  ~/.local/bin/gog --version                   # confirm before moving on
+  ```
+  `~/.local/bin/gog` is one of the paths the assistant probes automatically. For any other location, set `GOG_BIN=/path/to/gog` in `.env`.
+
+  Each release also publishes `checksums.txt` if you want to verify the download.
+
+**2. Create a Google OAuth client** (one-time, ~5 minutes)
+
+`gog auth add` fails without this — gog does not ship a shared client.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project (or reuse one)
+2. Enable the **Gmail API** and **Google Calendar API** for it
+3. Configure the OAuth consent screen; while it is in **Testing** mode, add each Gmail address you plan to connect as a **test user**
+4. Create an OAuth client of type **Desktop app** ([Credentials page](https://console.cloud.google.com/auth/clients)) and download its JSON file
+5. Store it: `gog auth credentials set ~/Downloads/client_secret_*.json`
+
+> Heads-up: while the consent screen stays in Testing mode, Google expires refresh tokens after 7 days and you must re-run `gog auth add`. Publish the app (no verification needed for personal use of these scopes) to get tokens that last.
+
+**3. Authenticate each account**
+```
+gog auth add primary@gmail.com --services gmail,calendar
+gog auth add secondary@gmail.com --services gmail,calendar
+```
+
+**4. Grant permissions** in the browser when prompted
+
+**5. Test:** `gog gmail search "newer_than:1d" --account primary@gmail.com`
+
+**6.** The skill at `skills/gmail/` is pre-configured for the primary address. If you opted into a second account, `skills/gmail-secondary/` is wired to it independently.
 
 ### Outlook / Microsoft 365 (via CLI or MCP)
 1. Register an app in [Azure AD App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps)
@@ -289,6 +389,7 @@ The most valuable scheduled task. Create it with a prompt like:
 
 | Problem | Fix |
 |---------|-----|
+| Installed fine, but never replies | Run `node dist/src/index.js --selftest --live`. If `credentials` fails, see [Signing in](#signing-in) |
 | Bot not responding | Check `launchctl list \| grep ai-assistant`, look at `/tmp/ai-assistant.log` |
 | Email auth expired | Re-run `gog auth add` (Gmail) or `node scripts/ms-auth.js` (Outlook) |
 | Scheduled task not firing | Check `sqlite3 store/assistant.db "SELECT * FROM scheduled_tasks"` |

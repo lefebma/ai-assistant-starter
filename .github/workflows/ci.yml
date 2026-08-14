@@ -70,7 +70,7 @@ jobs:
           grep -q 'No build needed' wizard.log
           grep -q 'Setup complete' wizard.log
           rm -f wizard.log
-      - run: node "${{ runner.temp }}/assistant-install/dist/src/index.js" --selftest
+      - run: node "${{ runner.temp }}/assistant-install/dist/src/index.js" --selftest --skip-auth
       - run: node "${{ runner.temp }}/assistant-install/dist/scripts/service.js" install --dry-run
 
   # Distributable bundles, with the pinned Node runtime inside. install-smoke
@@ -129,7 +129,7 @@ jobs:
           rm -rf _verify && mkdir -p _verify/unpack
           tar -xzf dist-installer/ai-assistant-v*.tar.gz -C _verify/unpack
           node _verify/unpack/install.mjs --dir _verify/install
-          node _verify/install/dist/src/index.js --selftest
+          node _verify/install/dist/src/index.js --selftest --skip-auth
           rm -rf _verify
       - uses: actions/upload-artifact@v4
         with:

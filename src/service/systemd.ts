@@ -47,6 +47,9 @@ export class SystemdManager implements ServiceManager {
   }
 
   async install(): Promise<void> {
+    // `StandardOutput=append:` fails the same way launchd does when the
+    // directory is missing: the unit refuses to start and says little.
+    this.io.ensureDir(posix.dirname(this.opts.logFile))
     this.io.writeFile(this.artifactPath(), this.renderArtifact())
     await this.io.exec('systemctl', ['--user', 'daemon-reload'])
     await this.io.exec('systemctl', ['--user', 'enable', '--now', this.opts.name])

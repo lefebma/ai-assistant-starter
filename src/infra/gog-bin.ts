@@ -1,5 +1,5 @@
 /**
- * Locating the gog CLI (github.com/steipete/gogcli), which backs the Gmail and
+ * Locating the gog CLI (github.com/openclaw/gogcli), which backs the Gmail and
  * Calendar skills.
  *
  * This used to be the literal string '/opt/homebrew/bin/gog'. That is the

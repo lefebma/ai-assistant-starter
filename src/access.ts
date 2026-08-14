@@ -14,6 +14,8 @@
  * path that would reach the model or the owner's data.
  */
 
+import { commandWord } from './infra/command-text.js'
+
 /** Commands an unconfigured install will still answer. */
 const BOOTSTRAP_COMMANDS = new Set(['/chatid', '/start', '/help'])
 
@@ -34,7 +36,10 @@ export interface AccessDecision {
 
 export function decideAccess(q: AccessQuery): AccessDecision {
   if (!q.primaryChatId) {
-    if (BOOTSTRAP_COMMANDS.has(q.text.trim().toLowerCase())) return { allow: true }
+    // Same normalisation the router uses. When these two disagreed, `/chatID`
+    // was allowed through here and then matched no handler, so the one command
+    // that has to work on an unconfigured install reached the model instead.
+    if (BOOTSTRAP_COMMANDS.has(commandWord(q.text))) return { allow: true }
     return {
       allow: false,
       // Deliberately not the "/authorize add <id>" wording used below: that

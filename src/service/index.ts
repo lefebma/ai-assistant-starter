@@ -24,6 +24,7 @@ export function realServiceIO(): ServiceIO {
     },
     removeFile: (path) => rmSync(path, { force: true }),
     exists: (path) => existsSync(path),
+    ensureDir: (path) => mkdirSync(path, { recursive: true }),
   }
 }
 

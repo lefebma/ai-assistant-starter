@@ -1,14 +1,21 @@
 /**
- * Setup requirement checks. Only a too-old Node is fatal: the Claude CLI is
- * required by the DEFAULT engine but not by BYOK installs
- * (AGENT_RUNTIME=ai-sdk), and the wizard runs before that choice is known —
- * so its absence warns instead of blocking the install.
+ * Setup requirement checks. Only a too-old Node is fatal.
+ *
+ * This deliberately does NOT probe PATH for a `claude` command. The engine
+ * ships inside the install (see infra/claude-bin.ts), so a missing global CLI
+ * says nothing about whether the assistant will work, and the advice that came
+ * with that warning ("npm install -g @anthropic-ai/claude-code") installed a
+ * second copy the assistant never calls while leaving the real gap — an
+ * account to sign in with — unmentioned. Credentials are now the wizard's
+ * question, asked in plain English, and the self-test's backstop.
  */
 
 export interface RequirementIO {
   nodeVersion: string
-  /** Claude CLI version string, or null when not installed. */
-  claudeVersion(): string | null
+  /** Path to the Claude engine vendored in this install, or null if absent. */
+  bundledClaude: string | null
+  /** Whether this machine already has a Claude sign-in. */
+  signedIn: boolean
 }
 
 export interface RequirementReport {
@@ -27,15 +34,19 @@ export function checkRequirements(io: RequirementIO): RequirementReport {
   }
   report.notes.push(`Node.js v${io.nodeVersion}`)
 
-  const claude = io.claudeVersion()
-  if (claude) {
-    report.notes.push(`Claude CLI: ${claude}`)
+  if (io.bundledClaude) {
+    report.notes.push('Claude engine bundled with this install')
   } else {
+    // Not fatal: an API-key install drives the model directly and never
+    // launches this binary. Worth flagging loudly all the same, because on a
+    // subscription install it means a broken dependency tree, not a choice.
     report.warnings.push(
-      'Claude CLI not found. The default engine needs it (npm install -g @anthropic-ai/claude-code); ' +
-        'BYOK installs (AGENT_RUNTIME=ai-sdk with a provider API key) run without it.'
+      'Claude engine missing from this install (node_modules is incomplete). ' +
+        'Re-run the installer, or choose the API key option when asked below.'
     )
   }
+
+  report.notes.push(io.signedIn ? 'Claude account: signed in on this machine' : 'Claude account: not signed in yet')
 
   return report
 }

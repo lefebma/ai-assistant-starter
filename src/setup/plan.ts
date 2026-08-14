@@ -11,12 +11,27 @@ import { posix } from 'node:path'
 export type Platform = 'Telegram' | 'Slack' | 'Discord' | 'Teams'
 export type EmailProvider = 'Gmail' | 'Outlook/Microsoft 365' | 'Both' | 'Skip for now'
 
+/**
+ * How the assistant pays for thinking. 'subscription' runs the bundled Claude
+ * engine against an interactive sign-in; 'api-key' drives a provider API
+ * directly and never signs in; 'later' leaves .env commented for both, which
+ * is honest but produces an assistant that cannot answer until someone
+ * returns to it.
+ */
+export type EngineChoice = 'subscription' | 'api-key' | 'later'
+export type AiProvider = 'anthropic' | 'openai' | 'google'
+
 export interface Answers {
   ownerName: string
   assistantName: string
   timezone: string
   city: string
   platform: Platform
+  engine: EngineChoice
+  /** Set only when engine is 'api-key'. */
+  aiProvider?: AiProvider
+  /** Model id for providers that have no default (openai, google). */
+  aiModel?: string
   personalityVibe: string
   ownerBio: string
   emailProvider: EmailProvider
@@ -42,6 +57,8 @@ export interface Answers {
     perplexity?: string
     apollo?: string
     google?: string
+    anthropic?: string
+    openai?: string
     notion?: string
     kanbanzone?: string
     kzBoardId?: string
@@ -76,6 +93,19 @@ export const PLATFORM_FORMAT_NOTES: Record<Platform, string> = {
   Teams: '- Teams supports Adaptive Cards and basic Markdown',
 }
 
+/** Which key each provider's answer lands in. Mirrors runtime/ai-sdk/provider.ts. */
+const PROVIDER_KEY: Record<AiProvider, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  google: 'GOOGLE_API_KEY',
+}
+
+function providerKeyValue(a: Answers): string {
+  if (a.aiProvider === 'openai') return a.keys.openai ?? ''
+  if (a.aiProvider === 'google') return a.keys.google ?? ''
+  return a.keys.anthropic ?? ''
+}
+
 export function buildEnvContent(a: Answers): string {
   const lines = [
     '# AI Assistant Configuration',
@@ -85,8 +115,46 @@ export function buildEnvContent(a: Answers): string {
     ...PLATFORM_ENV[a.platform],
     `TIMEZONE=${a.timezone}`,
   ]
-  if (a.skills.wordsmith) {
+
+  // Every key name already written, so an answer reused across two questions
+  // (a Google key for both Wordsmith and the model provider) does not produce
+  // two GOOGLE_API_KEY lines, where the later silently wins.
+  const emitted = new Set<string>()
+
+  lines.push('', '# How your assistant reaches a model')
+  if (a.engine === 'api-key') {
+    const provider = a.aiProvider ?? 'anthropic'
+    const keyName = PROVIDER_KEY[provider]
+    lines.push('AGENT_RUNTIME=ai-sdk', `AI_PROVIDER=${provider}`)
+    if (a.aiModel?.trim()) lines.push(`AI_MODEL=${a.aiModel.trim()}`)
+    else if (provider !== 'anthropic') lines.push('# AI_MODEL is REQUIRED for this provider, e.g. AI_MODEL=gpt-5', 'AI_MODEL=')
+    lines.push(`${keyName}=${providerKeyValue(a)}`)
+    emitted.add(keyName)
+  } else if (a.engine === 'subscription') {
+    lines.push(
+      '# Using the Claude subscription signed in on this machine.',
+      '# Nothing to set here. To switch to paying per use instead, uncomment:',
+      '# AGENT_RUNTIME=ai-sdk',
+      '# AI_PROVIDER=anthropic',
+      '# ANTHROPIC_API_KEY='
+    )
+  } else {
+    lines.push(
+      '# NOT CONFIGURED YET. Your assistant cannot answer until you do one of these.',
+      '#',
+      '# Option 1 — Claude subscription (Pro or Max): sign in once on this computer.',
+      '#   See docs/SETUP-GUIDE.md > Signing in. Nothing to set in this file.',
+      '#',
+      '# Option 2 — pay per use with an API key: uncomment and fill in.',
+      '# AGENT_RUNTIME=ai-sdk',
+      '# AI_PROVIDER=anthropic',
+      '# ANTHROPIC_API_KEY='
+    )
+  }
+
+  if (a.skills.wordsmith && !emitted.has('GOOGLE_API_KEY')) {
     lines.push('', '# Wordsmith (Gemini)', `GOOGLE_API_KEY=${a.keys.google ?? ''}`)
+    emitted.add('GOOGLE_API_KEY')
   }
   return lines.join('\n') + '\n'
 }
