@@ -1,12 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 // homedir no longer needed for Telegram mode
 import Database from 'better-sqlite3'
+import { PROJECT_ROOT } from '../src/env.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROJECT_ROOT = resolve(__dirname, '..')
+// Was resolve(__dirname, '..'), which compiled to dist/ — so status read
+// dist/store and dist/.env, found neither, and reported on an install that
+// was not there. That made it useless for exactly the diagnosis it exists for.
 const STORE_DIR = resolve(PROJECT_ROOT, 'store')
 
 const GREEN = '\x1b[32m'

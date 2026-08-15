@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { resolve } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { STORE_DIR } from './config.js'
+import { installTimezone } from './env.js'
 
 let db: Database.Database
 
@@ -261,7 +262,9 @@ export function createTask(
   nextRun: number,
   name?: string,
   deliveryMode: 'announce' | 'silent' = 'announce',
-  timezone = 'America/Toronto',
+  // Evaluated per call, so it follows TIMEZONE in .env rather than pinning
+  // every customer's scheduled tasks to the author's own city.
+  timezone = installTimezone(),
   runOnce = false
 ): void {
   const d = getDb()

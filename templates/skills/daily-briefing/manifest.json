@@ -1,0 +1,22 @@
+{
+  "id": "daily-briefing",
+  "name": "Daily Briefing",
+  "description": "Morning briefing: weather, triaged email, today's calendar, and yesterday's loose ends. Also knows how to schedule itself.",
+  "enabled": true,
+  "triggers": [
+    "briefing",
+    "brief me",
+    "daily briefing",
+    "morning briefing",
+    "good morning",
+    "catch me up",
+    "what's on today",
+    "whats on today",
+    "start my day",
+    "schedule",
+    "recurring",
+    "every morning",
+    "every day"
+  ],
+  "priority": 70
+}

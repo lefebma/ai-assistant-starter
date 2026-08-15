@@ -15,7 +15,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const { mockReadEnvFile } = vi.hoisted(() => ({
   mockReadEnvFile: vi.fn((): Record<string, string> => ({})),
 }))
-vi.mock('../src/env.js', () => ({ readEnvFile: mockReadEnvFile }))
+// Partial mock: these tests control what .env yields, not where the install
+// lives. Replacing the whole module also stubbed out PROJECT_ROOT and
+// installTimezone, which config.ts and db.ts now read from here.
+vi.mock('../src/env.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/env.js')>()),
+  readEnvFile: mockReadEnvFile,
+}))
 
 import { getSecret } from '../src/vault/index.js'
 import { SecretVault } from '../src/vault/store.js'

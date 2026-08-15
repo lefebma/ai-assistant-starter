@@ -29,7 +29,13 @@ const { mockQuery, mockReadEnvFile } = vi.hoisted(() => {
 })
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: mockQuery }))
-vi.mock('../src/env.js', () => ({ readEnvFile: mockReadEnvFile }))
+// Partial mock: these tests control what .env yields, not where the install
+// lives. Replacing the whole module also stubbed out PROJECT_ROOT and
+// installTimezone, which config.ts and db.ts now read from here.
+vi.mock('../src/env.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/env.js')>()),
+  readEnvFile: mockReadEnvFile,
+}))
 
 import { ClaudeAgentRuntime } from '../src/runtime/claude.js'
 
