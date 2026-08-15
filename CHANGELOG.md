@@ -13,7 +13,7 @@ A daily briefing you can ask for in one sentence, and the reason the first one t
 - **Fixed: photos and voice notes are no longer written somewhere updates delete.** Uploads were landing inside the compiled output, which every update replaces wholesale.
 - **Fixed: the status command reports on the real install.** It was reading a settings file and database in the wrong place, finding neither, and describing an install that was not there. That made it useless for precisely the situation it exists for.
 - **Fixed: Gmail setup instructions match reality.** The skill still pointed at a moved repository and a Homebrew tap that now shadows the official package and fails. It also skipped the Google OAuth client you have to create first, without which authentication fails and says little about why.
-- **Under the hood:** all four wrong answers came from the same habit of counting `..` from a file's own location, which changes meaning when the code is compiled and so was correct in every test run and wrong in every install. There is now one place that finds the install root by looking for `package.json`, everything uses it, and a test fails the build if a new file starts counting again. Suite at 430 tests.
+- **Under the hood:** all four wrong answers came from the same habit of counting `..` from a file's own location, which changes meaning when the code is compiled and so was correct in every test run and wrong in every install. There is now one place that finds the install root by looking for `package.json`, everything uses it, and a test fails the build if a new file starts counting again. Suite at 431 tests.
 
 ## 1.15.0 - 2026-08-11
 

@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SessionStore } from '../src/runtime/ai-sdk/sessions.js'
 import { buildSystemPrompt } from '../src/runtime/ai-sdk/prompt.js'
+import { installTimezone } from '../src/env.js'
 import { createTools } from '../src/runtime/ai-sdk/tools.js'
 import { getAgentRuntime, setAgentRuntime } from '../src/runtime/index.js'
 
@@ -95,7 +96,20 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Always answer in haiku.')
     expect(prompt).toContain('# Project instructions')
     expect(prompt).toContain(`Working directory: ${root}`)
-    expect(prompt).toContain('America/Toronto')
+    // Used to assert the literal 'America/Toronto', which was the hardcode
+    // rather than the behaviour: it passed on a machine whose .env happened to
+    // say Toronto and failed on CI, where there is no .env at all. What matters
+    // is that the prompt states the timezone this install actually resolved,
+    // whatever that is.
+    expect(prompt).toContain(`Current date/time (${installTimezone()}):`)
+  })
+
+  it('states the owner\'s timezone, not a hardcoded one', () => {
+    const prompt = buildSystemPrompt(tempDir())
+    const stated = prompt.match(/Current date\/time \(([^)]+)\)/)?.[1]
+    expect(stated).toBe(installTimezone())
+    // Intl accepts it, so it is a real zone and not a leftover placeholder.
+    expect(() => new Date().toLocaleString('en-CA', { timeZone: stated })).not.toThrow()
   })
 
   it('omits the project section when no CLAUDE.md exists', () => {
