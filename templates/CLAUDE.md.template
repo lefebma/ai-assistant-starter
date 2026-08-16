@@ -63,8 +63,34 @@ When running as a scheduled task (no human in the loop):
 
 ## Scheduling Tasks
 
-Create from {{PLATFORM}}:
+There is a scheduler built into this assistant. Use it. Never write a cron
+entry, a launchd plist, a systemd timer, or a Windows scheduled task by hand,
+and never use a scheduling tool belonging to the surrounding harness. Those
+run outside the assistant: `/schedule list` cannot see them, `/schedule delete`
+cannot remove them, they do not survive an update, and several expire on their
+own after a few days. If you find yourself reaching for one, the answer is the
+CLI below.
+
+**How {{OWNER_NAME}} creates one**, by typing in {{PLATFORM}}:
 `/schedule create "prompt" "cron" [--name "name"] [--silent]`
+
+**How YOU create one.** You cannot send yourself a {{PLATFORM}} command, so run
+the CLI directly:
+
+```
+node dist/src/schedule-cli.js create "<prompt>" "<cron>" "<chat_id>" [--name "..."] [--once] [--tz "..."]
+```
+
+- `<chat_id>` is `ALLOWED_CHAT_ID` from `.env`
+- `--once` self-deletes after a single completed run
+- Timezone defaults to `TIMEZONE` in `.env`; pass `--tz` only to override
+- On a bundle install there may be no system `node`: use `./runtime/bin/node`
+  (macOS, Linux) or `runtime\node.exe` (Windows)
+- Write the prompt so it triggers the skill you need: it runs as a fresh
+  message with no memory of this conversation
+
+Then run `node dist/src/schedule-cli.js list` and tell {{OWNER_NAME}} when it
+will fire and in which timezone, rather than assuming it worked.
 
 Common patterns:
 - Daily 9am: `0 9 * * *`

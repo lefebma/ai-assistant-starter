@@ -14,9 +14,9 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync, rmSync, statSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { logger } from './logger.js'
+import { PROJECT_ROOT } from './env.js'
 import { syncAlwaysOnSkills } from './skills/sync.js'
 import {
   detectInstallKind,
@@ -28,8 +28,6 @@ import {
   type InstallEnvironment,
 } from './update/plan.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROJECT_ROOT = resolve(__dirname, '..', '..')
 
 const GITHUB_REPO = 'lefebma/ai-assistant-starter'
 const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}/main`

@@ -233,6 +233,12 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
     onlyIfMissing: true,
   })
   p.push({ type: 'copy', from: 'templates/skills/skill-builder', to: 'skills/skill-builder' })
+  p.push({ type: 'copy', from: 'templates/skills/daily-briefing', to: 'skills/daily-briefing' })
+  // OWNER_NAME only: the same file is installed on existing machines by
+  // syncAlwaysOnSkills(), which can substitute OWNER_NAME and PROJECT_PATH and
+  // nothing else. A placeholder setup fills but sync cannot would render
+  // literally for every owner who arrived by update rather than fresh install.
+  p.push({ type: 'edit', file: 'skills/daily-briefing/SKILL.md', vars: { OWNER_NAME: a.ownerName } })
 
   const emailSkill = (kind: 'gmail' | 'outlook', address: string, secondary?: string) => {
     p.push({ type: 'copy', from: `templates/skills/${kind}`, to: `skills/${kind}` })

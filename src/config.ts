@@ -1,10 +1,12 @@
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { readEnvFile } from './env.js'
+import { resolve } from 'node:path'
+import { readEnvFile, PROJECT_ROOT } from './env.js'
 import { getSecret } from './vault/index.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-export const PROJECT_ROOT = resolve(__dirname, '..', '..')
+// Re-exported rather than recomputed. Counting '..' from __dirname gives a
+// different answer compiled than it does from source, and every module that
+// tried it landed on a different wrong answer. env.ts finds the nearest
+// package.json instead, which is correct in both. See tests/project-root.test.ts.
+export { PROJECT_ROOT }
 export const STORE_DIR = process.env.AGENT_STORE_DIR || resolve(PROJECT_ROOT, 'store')
 
 const env = readEnvFile()

@@ -11,6 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { homedir, platform } from 'node:os'
+import { installTimezone } from '../../env.js'
 
 function readIfExists(path: string): string | null {
   try {
@@ -38,13 +39,17 @@ export function buildSystemPrompt(projectRoot: string): string {
     parts.push(`# Project instructions\n\n${projectMd.trim()}`)
   }
 
+  // Was pinned to America/Toronto for every install. An owner elsewhere had the
+  // wrong clock stated as fact on every turn, which quietly poisons anything
+  // date-shaped: "today", scheduling, "is this email recent".
+  const tz = installTimezone()
   const now = new Date()
-  const dateStr = now.toLocaleString('en-CA', { timeZone: 'America/Toronto', hour12: false })
+  const dateStr = now.toLocaleString('en-CA', { timeZone: tz, hour12: false })
   parts.push(
     '# Environment\n\n'
       + `- Working directory: ${projectRoot}\n`
       + `- Platform: ${platform()}\n`
-      + `- Current date/time (America/Toronto): ${dateStr}\n`
+      + `- Current date/time (${tz}): ${dateStr}\n`
       + `- Agent runtime: ai-sdk (direct API billing, no Claude Code harness)`
   )
 

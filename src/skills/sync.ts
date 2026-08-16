@@ -12,15 +12,17 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync, readdirSync, statSync } from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { logger } from '../logger.js'
+import { PROJECT_ROOT } from '../env.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROJECT_ROOT = resolve(__dirname, '..', '..')
+// Was resolve(__dirname, '..', '..'), copied from updater.ts — but this file
+// sits one directory deeper, so compiled it landed on dist/src and never found
+// templates/skills. Every always-on skill added after an owner's install was
+// therefore skipped on update, with only a log line to say so.
 
 // Skills that should ship with every install, no opt-in required.
 // Keep this list short — these run on every startup.
-const ALWAYS_ON_SKILLS = ['weather', 'decision-log'] as const
+const ALWAYS_ON_SKILLS = ['weather', 'decision-log', 'daily-briefing'] as const
 
 export interface SyncResult {
   installed: string[]

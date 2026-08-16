@@ -1,12 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync, existsSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { initDatabase, createTask, getAllTasks } from './db.js'
 import { computeNextRun } from './scheduler.js'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROJECT_ROOT = resolve(__dirname, '..', '..')
+import { PROJECT_ROOT } from './env.js'
 
 function loadEnv(): Record<string, string> {
   const envPath = resolve(PROJECT_ROOT, '.env')

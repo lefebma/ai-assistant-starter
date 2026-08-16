@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
-import { dirname, join, resolve, relative } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, relative } from 'node:path'
+import { PROJECT_ROOT } from '../../env.js'
 import type { ContextProvider, ContextFragment } from './base.js'
 
 /**
@@ -24,8 +24,9 @@ interface CacheEntry {
   fetchedAt: number
 }
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROJECT_ROOT = resolve(__dirname, '..', '..', '..')
+// Was resolve(__dirname, '..', '..', '..'), which compiled to dist/ and made
+// this provider read dist/projects. That directory never exists, so project
+// context injection silently found nothing in every bundle install.
 const PROJECTS_DIR = join(PROJECT_ROOT, 'projects')
 const DISCOVERY_TTL = 300_000 // 5 min
 const SUMMARY_CHARS = 500

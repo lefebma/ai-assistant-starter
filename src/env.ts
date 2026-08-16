@@ -23,6 +23,42 @@ function findProjectRoot(start: string): string {
  * through the vault. env.ts imports nothing from config/vault, so it's cycle-safe. */
 export const PROJECT_ROOT = findProjectRoot(__dirname)
 
+/**
+ * Resolve an IANA timezone string, without ever inventing one.
+ * Exported for tests; callers want installTimezone().
+ */
+export function resolveTimezone(
+  fromProcess: string | undefined,
+  fromEnvFile: string | undefined,
+  hostZone: string | undefined
+): string {
+  const candidate = [fromProcess, fromEnvFile, hostZone].map((v) => v?.trim()).find(Boolean)
+  return candidate || 'UTC'
+}
+
+let cachedTimezone: string | null = null
+
+/**
+ * The timezone this install runs in.
+ *
+ * 'America/Toronto' used to be hardcoded in the scheduler, the task table and
+ * the ai-sdk system prompt. Setup has always asked for a timezone and written
+ * TIMEZONE to .env; nothing read it back. So an owner in London got a briefing
+ * at whatever 8am Toronto happened to be, and the model was told Toronto's
+ * clock as fact on every single turn.
+ */
+export function installTimezone(): string {
+  if (cachedTimezone) return cachedTimezone
+  let hostZone: string | undefined
+  try {
+    hostZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    hostZone = undefined
+  }
+  cachedTimezone = resolveTimezone(process.env.TIMEZONE, readEnvFile(['TIMEZONE']).TIMEZONE, hostZone)
+  return cachedTimezone
+}
+
 export function readEnvFile(keys?: string[]): Record<string, string> {
   const envPath = resolve(PROJECT_ROOT, '.env')
   let raw: string

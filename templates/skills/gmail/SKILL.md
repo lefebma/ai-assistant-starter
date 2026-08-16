@@ -1,7 +1,7 @@
 ## Gmail & Google Calendar
 
 Account: {{EMAIL_ADDRESS}}
-CLI: `gog` ([gogcli](https://github.com/steipete/gogcli))
+CLI: `gog` ([gogcli](https://github.com/openclaw/gogcli))
 
 Call it as plain `gog` and let PATH resolve it. If that fails, the binary is
 not installed or not on this machine's PATH: see "If gog is missing" below
@@ -23,13 +23,25 @@ binary installed and that account authenticated, and a confident-sounding
 answer built on no data is worse than "I am not connected".
 
 Install:
-- **macOS / Linux**: `brew install openclaw/tap/gogcli`
-- **Windows**: download `gogcli_<version>_windows_amd64.zip` from
-  https://github.com/steipete/gogcli/releases, unzip it, and put `gog.exe`
-  somewhere on PATH (`%USERPROFILE%\.local\bin` works)
+- **macOS / Linux with Homebrew**: `brew install gogcli` (it is in
+  homebrew-core; do not add a third-party tap, which shadows it and fails)
+- **Otherwise**: releases are compressed archives, not a bare binary, so there
+  is an extract step. Download the one matching the machine from
+  https://github.com/openclaw/gogcli/releases, unpack it, and put `gog` on
+  PATH (`~/.local/bin` is probed automatically; `%USERPROFILE%\.local\bin` on
+  Windows). On macOS also run
+  `xattr -d com.apple.quarantine ~/.local/bin/gog`.
 
-Then authenticate, once per account:
-`gog auth add {{EMAIL_ADDRESS}} --services gmail,calendar`
+Authentication needs two steps, not one. `gog auth add` fails on its own
+because gog ships no shared OAuth client:
+
+1. Create a Google Cloud **Desktop app** OAuth client, enable the Gmail and
+   Calendar APIs, then `gog auth credentials set <path-to-client_secret.json>`
+2. `gog auth add {{EMAIL_ADDRESS}} --services gmail,calendar`
+
+While that Google project stays in Testing mode, each address must be added as
+a test user and refresh tokens expire after 7 days. Publishing the app removes
+both limits and needs no Google review for these scopes.
 
 If it is installed somewhere unusual, set `GOG_BIN=<full path>` in `.env`
 rather than editing code.

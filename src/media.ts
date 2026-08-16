@@ -1,10 +1,11 @@
-import { resolve, dirname, basename, extname } from 'node:path'
+import { resolve, basename, extname } from 'node:path'
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import https from 'node:https'
+import { PROJECT_ROOT } from './env.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROJECT_ROOT = resolve(__dirname, '..')
+// Was resolve(__dirname, '..'), which compiled to dist/ — so every photo and
+// voice note landed in dist/workspace/uploads, a directory the next update
+// deletes wholesale. Setup creates workspace/uploads at the install root.
 export const UPLOADS_DIR = resolve(PROJECT_ROOT, 'workspace', 'uploads')
 
 // Ensure uploads dir exists

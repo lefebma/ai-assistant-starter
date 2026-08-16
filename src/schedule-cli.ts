@@ -9,17 +9,20 @@ import {
   resumeTask,
 } from './db.js'
 import { computeNextRun } from './scheduler.js'
+import { installTimezone } from './env.js'
 
 function usage(): void {
   console.log(`
 AI Assistant Scheduler CLI
 
 Usage:
-  schedule-cli create "<prompt>" "<cron>" <chat_id> [--name "name"] [--silent] [--once] [--tz "America/Toronto"]
+  schedule-cli create "<prompt>" "<cron>" <chat_id> [--name "name"] [--silent] [--once] [--tz "<IANA zone>"]
   schedule-cli list
   schedule-cli delete <id>
   schedule-cli pause <id>
   schedule-cli resume <id>
+
+--tz defaults to TIMEZONE from .env (this install: ${installTimezone()}).
 
 Examples:
   schedule-cli create "Summarize my emails" "0 9 * * *" "123456" --name "Email Summary"
@@ -66,7 +69,7 @@ function main(): void {
       const isSilent = args.includes('--silent')
       const isOnce = args.includes('--once')
       const deliveryMode = isSilent ? 'silent' as const : 'announce' as const
-      const timezone = parseFlag(args, '--tz') ?? 'America/Toronto'
+      const timezone = parseFlag(args, '--tz') ?? installTimezone()
 
       const id = randomUUID().slice(0, 8)
       const nextRun = computeNextRun(cron, timezone)
