@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL } from './config.js'
 import { getSession, setSession, clearSession, getMemoriesForChat } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
@@ -27,6 +27,14 @@ import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
 import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
 import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog } from './updater.js'
+import {
+  collectDiagnostics,
+  buildSupportDraft,
+  formatDraftPreview,
+  sendSupportEmail,
+  saveSupportRequest,
+} from './support/index.js'
+import type { SupportDraft } from './support/index.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
 
 // Non-abort text patterns (OpenClaw v2026.5.18 -- /btw non-abort behavior).
@@ -451,6 +459,106 @@ async function handleAuthorizeCommand(adapter: PlatformAdapter, chatId: string, 
   await adapter.sendMessage(chatId, 'Usage: /authorize [add|remove|list]')
 }
 
+// --- Support requests (/support) ---
+// A drafted request waits here until the user confirms via the Send / Edit /
+// Discard buttons (or types one of those words on platforms without buttons).
+// Nothing is ever sent without that explicit confirmation.
+const pendingSupport = new Map<string, SupportDraft>()
+// Chats where a bare /support (or Edit) is waiting for the problem description.
+const awaitingSupportDescription = new Set<string>()
+
+async function draftSupportRequest(
+  adapter: PlatformAdapter,
+  chatId: string,
+  description: string
+): Promise<void> {
+  awaitingSupportDescription.delete(chatId)
+  const diagnostics = collectDiagnostics()
+  const draft = buildSupportDraft(description, diagnostics, SUPPORT_EMAIL)
+  pendingSupport.set(chatId, draft)
+
+  const preview = formatDraftPreview(draft)
+  if (adapter.supportsButtons) {
+    await adapter.sendMessage(chatId, preview, { buttons: ['Send', 'Edit', 'Discard'] })
+  } else {
+    await adapter.sendMessage(chatId, `${preview}\n\nReply Send, Edit, or Discard.`)
+  }
+}
+
+async function handleSupportCommand(
+  adapter: PlatformAdapter,
+  chatId: string,
+  text: string
+): Promise<void> {
+  const description = text.replace(/^\/support\s*/i, '').trim()
+  if (!description) {
+    pendingSupport.delete(chatId)
+    awaitingSupportDescription.add(chatId)
+    await adapter.sendMessage(
+      chatId,
+      "What's going wrong? Describe the problem in your next message and I'll draft a support request.\n(Or skip this step next time with /support <description>.)"
+    )
+    return
+  }
+  await draftSupportRequest(adapter, chatId, description)
+}
+
+/**
+ * Resolve a Send / Edit / Discard action on a pending support draft.
+ * Returns false when there is no pending draft or the action is unrelated,
+ * so the caller can fall through to normal routing.
+ */
+async function resolveSupportAction(
+  adapter: PlatformAdapter,
+  chatId: string,
+  action: string
+): Promise<boolean> {
+  const draft = pendingSupport.get(chatId)
+  if (!draft) return false
+
+  const normalized = action.trim().toLowerCase()
+
+  if (normalized === 'send') {
+    pendingSupport.delete(chatId)
+    const result = await sendSupportEmail(draft)
+    if (result.ok) {
+      await adapter.sendMessage(chatId, `Support request sent to ${draft.to}.`)
+      return true
+    }
+    // No email connected (or gog missing/failing): keep the request locally.
+    try {
+      const path = saveSupportRequest(draft)
+      await adapter.sendMessage(
+        chatId,
+        `Couldn't send the email (${result.detail || 'no email account connected'}).\n` +
+          `Saved the request to:\n${path}\nSend it manually to ${draft.to} when you can.`
+      )
+    } catch (err) {
+      logger.error({ err }, 'Failed to save support request fallback file')
+      await adapter.sendMessage(
+        chatId,
+        `Couldn't send the email and couldn't save it locally either. Please email ${draft.to} directly.`
+      )
+    }
+    return true
+  }
+
+  if (normalized === 'edit') {
+    pendingSupport.delete(chatId)
+    awaitingSupportDescription.add(chatId)
+    await adapter.sendMessage(chatId, 'Draft dropped. Send the revised description as your next message.')
+    return true
+  }
+
+  if (normalized === 'discard') {
+    pendingSupport.delete(chatId)
+    await adapter.sendMessage(chatId, 'Support request discarded. Nothing was sent.')
+    return true
+  }
+
+  return false
+}
+
 // Track pending update confirmations
 const pendingUpdateConfirm = new Set<string>()
 
@@ -543,6 +651,9 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       if (msg.messageId) {
         await adapter.clearButtons(chatId, msg.messageId)
       }
+      // A pending support draft owns its Send/Edit/Discard buttons; resolve it
+      // here rather than routing the click through the agent.
+      if (await resolveSupportAction(adapter, chatId, label)) return
       await handleMessage(adapter, chatId, `[button_click]: ${label}`)
       return
     }
@@ -597,6 +708,17 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
 
+    // Support flow: a typed Send/Edit/Discard resolves a pending draft
+    // (platforms without buttons), and the message after a bare /support
+    // (or Edit) is the problem description.
+    if (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(trimmed)) {
+      if (await resolveSupportAction(adapter, chatId, trimmed)) return
+    }
+    if (awaitingSupportDescription.has(chatId) && !trimmed.startsWith('/')) {
+      await draftSupportRequest(adapter, chatId, trimmed)
+      return
+    }
+
     // Command routing
     if (cmd === '/start') {
       await adapter.sendMessage(chatId, 'AI Assistant is running. Send me anything and I\'ll process it with Claude Code.')
@@ -610,6 +732,8 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       clearSession(chatId)
       reloadSkills()
       contextEngine.invalidateCaches()
+      pendingSupport.delete(chatId)
+      awaitingSupportDescription.delete(chatId)
       await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
       return
     }
@@ -687,6 +811,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await handleAuthorizeCommand(adapter, chatId, trimmed)
       return
     }
+    if (cmd === '/support') {
+      await handleSupportCommand(adapter, chatId, trimmed)
+      return
+    }
     if (cmd === '/version') {
       await adapter.sendMessage(chatId, `AI Assistant v${getCurrentVersion()}`)
       return
@@ -707,6 +835,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/steer - Inject mid-run steering message',
         '/skill - Manage skills (list/enable/disable/reload)',
         '/authorize - Manage multi-chat access (add/remove/list)',
+        '/support - Draft and send a support request (confirms before sending)',
         '/update - Check for and apply updates (check/apply)',
         '/version - Show current version',
         '/chatid - Show your chat ID',
@@ -732,6 +861,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'steer', description: 'Inject mid-run steering message' },
           { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
           { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
+          { command: 'support', description: 'Draft and send a support request' },
           { command: 'update', description: 'Check for and apply updates' },
           { command: 'version', description: 'Show current version' },
           { command: 'chatid', description: 'Show your chat ID' },

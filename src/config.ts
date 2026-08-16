@@ -32,6 +32,10 @@ export const HTTP_BEARER_TOKEN = getSecret('HTTP_BEARER_TOKEN') ?? ''
 export const ELEVENLABS_API_KEY = getSecret('ELEVENLABS_API_KEY') ?? ''
 export const ELEVENLABS_AGENT_ID = env['ELEVENLABS_AGENT_ID'] ?? ''
 
+// Support requests (/support). Destination inbox for drafted support emails.
+// Non-secret, so plain .env like other addresses.
+export const SUPPORT_EMAIL = env['SUPPORT_EMAIL']?.trim() || 'support@els-partners.com'
+
 // Limits
 export const MAX_MESSAGE_LENGTH = 4096
 export const TYPING_REFRESH_MS = 4000
