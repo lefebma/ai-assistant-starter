@@ -163,17 +163,75 @@ Gmail and Google Calendar are backed by the [gog CLI](https://github.com/opencla
 
   Each release also publishes `checksums.txt` if you want to verify the download.
 
-**2. Create a Google OAuth client** (one-time, ~5 minutes)
+**2. Create a Google OAuth client** (one-time, ~10 minutes, all in the browser)
 
-`gog auth add` fails without this — gog does not ship a shared client.
+`gog auth add` fails without this — gog does not ship a shared client. Every
+install gets its own client: your own quota, your own revocation switch, and
+no dependency on anyone else's project staying alive.
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project (or reuse one)
-2. Enable the **Gmail API** and **Google Calendar API** for it
-3. Configure the OAuth consent screen; while it is in **Testing** mode, add each Gmail address you plan to connect as a **test user**
-4. Create an OAuth client of type **Desktop app** ([Credentials page](https://console.cloud.google.com/auth/clients)) and download its JSON file
-5. Store it: `gog auth credentials set ~/Downloads/client_secret_*.json`
+*a. Create a project*
 
-> Heads-up: while the consent screen stays in Testing mode, Google expires refresh tokens after 7 days and you must re-run `gog auth add`. Publish the app (no verification needed for personal use of these scopes) to get tokens that last.
+1. Open [Google Cloud Console](https://console.cloud.google.com/) signed in as
+   the Google account that should own the app registration (for a managed
+   install, the administrator's account is fine — the end user's Gmail does not
+   need to own it)
+2. Top bar → project picker → **New Project**. Name it after the install
+   (e.g. `havn-marina`). No billing account is needed for these APIs
+3. When the "project created" notification appears, **select the new project in
+   the top bar** — easy to miss, and every step below happens inside it
+
+*b. Enable the two APIs*
+
+4. Left menu → **APIs & Services → Library**
+5. Search **Gmail API** → open it → **Enable**
+6. Back to the Library, search **Google Calendar API** → **Enable**. Skipping
+   this one is the classic miss — Gmail works, then calendar auth fails later
+   with a scope error
+
+*c. Configure the consent screen*
+
+7. **APIs & Services → OAuth consent screen** (Google brands this area
+   **Google Auth Platform** — click **Get started** on a fresh project)
+8. App name: something the user will recognize on the Google sign-in screen
+   (e.g. `Havn`); support email and developer contact: your email
+9. Audience / user type: **External** — personal `@gmail.com` accounts cannot
+   use Internal, which is Workspace-only
+10. Scopes: skip — gog requests the scopes it needs at auth time
+11. Test users: add each Gmail address you plan to connect. This matters only
+    until the app is published in the next step, but the form may insist on at
+    least one
+
+*d. Publish the app — do not skip this*
+
+12. On the **Overview** (or **Audience**) page of the consent screen, click
+    **Publish app** and confirm. Publishing status must read **In production**
+    before you continue
+
+> While the app sits in **Testing**, Google silently expires every refresh
+> token after **7 days**: the assistant's Gmail access dies weekly and every
+> account has to re-run `gog auth add`. Publishing fixes that permanently. No
+> Google verification review is needed for a personal install — the one-time
+> "Google hasn't verified this app" screen during sign-in is expected. Click
+> **Advanced → Go to \<app name\> (unsafe)** and continue; it never appears
+> again for that account.
+
+*e. Create the Desktop client and download its key*
+
+13. **APIs & Services → Credentials** (listed as **Clients** in the Google Auth
+    Platform nav) → **Create credentials → OAuth client ID**
+14. Application type: **Desktop app**. Any name
+15. On the confirmation dialog, click **Download JSON** *now* — Google only
+    offers the secret at creation time. Reusing an existing client instead?
+    Open it and use **Add secret** to mint a fresh downloadable one; the old
+    secret keeps working while both exist
+
+*f. Hand it to gog*
+
+16. `gog auth credentials set ~/Downloads/client_secret_*.json`
+    (older gog builds use `gog auth credentials <file>` — check
+    `gog auth credentials --help` if the first form errors)
+17. Sanity check: `gog auth doctor` — it should report the credentials/config
+    present and the keyring opening cleanly
 
 **3. Authenticate each account**
 ```
