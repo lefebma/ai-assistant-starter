@@ -7,7 +7,7 @@
  * Usage: npm run setup
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
@@ -20,6 +20,7 @@ import { resolveGogBin } from '../src/infra/gog-bin.js'
 import { buildEnvContent, buildSkillPlan, installedSkillsList } from '../src/setup/plan.js'
 import { buildNextSteps, renderNextSteps } from '../src/setup/next-steps.js'
 import { applyPlan } from '../src/setup/execute.js'
+import { ensurePlaywrightMcp } from '../src/setup/mcp-config.js'
 
 const GREEN = '\x1b[32m'
 const YELLOW = '\x1b[33m'
@@ -192,6 +193,40 @@ async function main(): Promise<void> {
     }
   } else {
     ok(`No build needed (${buildStep.reason})`)
+  }
+
+  // Browser automation. CLAUDE.md has promised this since the first release and
+  // the pieces all shipped, but nothing registered the MCP server, so the agent
+  // was handed no browser tools. Runs after the build so the launcher it points
+  // at exists, and so node_modules is present for the browser download.
+  header('Browser automation')
+  const merge = ensurePlaywrightMcp(PROJECT_ROOT, process.execPath)
+  if (merge.content) {
+    ok(merge.outcome === 'created' ? '.mcp.json written (Playwright browser tools)' : 'Playwright browser tools added to .mcp.json')
+  } else if (merge.outcome === 'present') {
+    ok('Playwright browser tools already registered')
+  } else {
+    warn('.mcp.json is not valid JSON — left untouched, so browser tools are not registered')
+    console.log('    Fix the file and re-run npm run setup.')
+  }
+
+  // Only needed for the standalone path: with /browser start running, Playwright
+  // attaches to the owner's own Chrome and never touches this download. Asked
+  // rather than assumed because it is large, and best-effort because failing it
+  // should cost browser automation, not the install.
+  const playwrightCli = resolve(PROJECT_ROOT, 'node_modules', 'playwright', 'cli.js')
+  if (existsSync(playwrightCli)) {
+    if (await prompter.yesNo('Download the browser Playwright drives (~150 MB, one time)?')) {
+      try {
+        execFileSync(process.execPath, [playwrightCli, 'install', 'chromium'], { cwd: PROJECT_ROOT, stdio: 'inherit' })
+        ok('Chromium installed')
+      } catch (err) {
+        warn(`Browser download did not finish: ${String(err)}`)
+        console.log(`    Retry later with: "${process.execPath}" "${playwrightCli}" install chromium`)
+      }
+    } else {
+      warn('Skipped. It will download on first use, which makes that first request slow.')
+    }
   }
 
   // This wizard should be the last terminal the owner ever needs. Leaving the

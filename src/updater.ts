@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process'
 import { logger } from './logger.js'
 import { PROJECT_ROOT } from './env.js'
 import { syncAlwaysOnSkills } from './skills/sync.js'
+import { ensurePlaywrightMcp } from './setup/mcp-config.js'
 import {
   detectInstallKind,
   bundleAssetName,
@@ -28,6 +29,29 @@ import {
   type InstallEnvironment,
 } from './update/plan.js'
 
+
+/**
+ * Register the Playwright browser tools after a payload swap.
+ *
+ * Same role as syncAlwaysOnSkills above: reconcile owner-facing config that the
+ * payload itself must not carry. .mcp.json is in neither PRESERVED_PATHS nor
+ * BUNDLE_PAYLOAD_PATHS, so an update leaves it alone, which would strand every
+ * install predating browser automation until its owner re-ran setup by hand.
+ * Merging (never replacing) keeps a hand-edited entry intact, and a failure
+ * here costs browser tools, not the update.
+ */
+function syncPlaywrightMcp(): void {
+  try {
+    const { outcome } = ensurePlaywrightMcp(PROJECT_ROOT, process.execPath)
+    if (outcome === 'created' || outcome === 'added') {
+      logger.info({ outcome }, 'Registered Playwright browser tools in .mcp.json')
+    } else if (outcome === 'unparsable') {
+      logger.warn('.mcp.json is not valid JSON; left untouched, browser tools not registered')
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Could not register browser tools; continuing update')
+  }
+}
 
 const GITHUB_REPO = 'lefebma/ai-assistant-starter'
 const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}/main`
@@ -280,6 +304,8 @@ async function applyBundleUpdate(
       logger.warn({ syncErr }, 'Always-on skill sync failed; continuing update')
     }
 
+    syncPlaywrightMcp()
+
     rmSync(tempDir, { recursive: true, force: true })
     saveCachedStatus({
       currentVersion: targetVersion,
@@ -377,6 +403,9 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
     } catch (syncErr) {
       logger.warn({ syncErr }, 'Always-on skill sync failed; continuing update')
     }
+
+    // 6c. Register the browser tools for installs that predate them.
+    syncPlaywrightMcp()
 
     // 7. Install dependencies (package.json may have changed)
     logger.info('Installing dependencies')

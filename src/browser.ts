@@ -4,7 +4,39 @@ import { resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { logger } from './logger.js'
 
-const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+/**
+ * Chrome sits somewhere different on every platform, and the old macOS-only
+ * constant meant /browser start could never work on the Windows and Linux
+ * bundles CI publishes. Ordered per platform: the system-wide install first,
+ * then the per-user one.
+ */
+const CHROME_CANDIDATES: Record<string, string[]> = {
+  darwin: [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    resolve(homedir(), 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+  ],
+  win32: [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    resolve(homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  ],
+  linux: [
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+  ],
+}
+
+/** Exported for tests; callers want launchChrome(). */
+export function resolveChromePath(
+  platform: string = process.platform,
+  exists: (p: string) => boolean = existsSync
+): string | null {
+  return (CHROME_CANDIDATES[platform] ?? []).find(exists) ?? null
+}
+
 const CDP_PORT = 9222
 const CDP_ENDPOINT = `http://127.0.0.1:${CDP_PORT}`
 const BROWSER_DATA_DIR = resolve(homedir(), '.ai-assistant', 'browser-profile')
@@ -59,8 +91,9 @@ export async function getCdpPages(): Promise<Array<{ title: string; url: string 
  * but you can also attach to an already-running Chrome (see attachToExisting).
  */
 export function launchChrome(opts?: { useDefaultProfile?: boolean }): boolean {
-  if (!existsSync(CHROME_PATH)) {
-    logger.error('Chrome not found at expected path')
+  const chromePath = resolveChromePath()
+  if (!chromePath) {
+    logger.error({ platform: process.platform }, 'Google Chrome not found in any known install location')
     return false
   }
 
@@ -80,7 +113,7 @@ export function launchChrome(opts?: { useDefaultProfile?: boolean }): boolean {
   }
 
   try {
-    chromeProcess = spawn(CHROME_PATH, args, {
+    chromeProcess = spawn(chromePath, args, {
       detached: true,
       stdio: 'ignore',
     })
@@ -159,7 +192,11 @@ function cleanPidFile(): void {
 export async function getBrowserStatus(): Promise<string> {
   const available = await isCdpAvailable()
   if (!available) {
-    return 'Chrome CDP: not running\nUse /browser start to launch'
+    // Distinguish "not started" from "cannot start": /browser start would just
+    // fail silently on a machine with no Chrome, which reads as a broken bot.
+    return resolveChromePath()
+      ? 'Chrome CDP: not running\nUse /browser start to launch'
+      : 'Chrome CDP: not running\nGoogle Chrome is not installed, so /browser start has nothing to launch.\nThe assistant can still browse using its own bundled browser.'
   }
 
   const info = await getCdpInfo()
