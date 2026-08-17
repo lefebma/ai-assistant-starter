@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Browser automation has been listed as a capability since the first release. It has never once worked on a shipped install.
+
+- **Fixed: the assistant can now actually drive a browser.** Every piece was already here: a `/browser` command that starts Chrome ready to be controlled, and a launcher that connects to it and hands the tools over. Nothing connected the two. The file that tells the assistant which tools exist was never written, so on every install ever shipped the answer to "book this for me" or "log in and check that page" was a browser sitting open that it had no way to touch. Setup now writes that file. If you already have one listing other services, yours is merged, not replaced, and re-running setup a second time changes nothing.
+- **Fixed: the browser software was being deleted from the installer before it shipped.** It was marked as a development-only dependency, and the build strips those out, so the finished bundle carried an empty folder where the browser tooling should be. The fallback was to download it from the internet on first use, at whatever version happened to be current that day, which is the exact thing the code above it says it exists to avoid. It is now packaged properly, which adds about 15 MB to the download, and setup offers to fetch the browser itself so the first request is not the slow one.
+- **Fixed: `/browser` works on Windows and Linux, not just Macs.** It looked for Chrome at one hardcoded Mac path and nowhere else, so on the Windows and Linux bundles the command could only ever fail. It now checks the normal locations for your platform, and when Chrome genuinely is not installed it says so, rather than failing silently and looking broken.
+- **Fixed: `/browser stop` can close a Chrome it has lost track of on Windows.** Stopping the browser normally works from what the assistant remembers starting. When that memory is gone, because the service restarted or something crashed, it falls back to finding whatever is holding the browser's port, and that fallback used a tool that exists on Macs and Linux but not on Windows. It never mattered before, because Chrome could not start on Windows in the first place. Now that it can, `/browser stop` would have quietly done nothing and left a browser open that only Task Manager could close.
+- **Existing installs pick this up on `/update`.** The file that lists your tools is one an update deliberately never touches, so left alone this fix would have reached new installs only, and every assistant already out there would have kept the same broken capability it shipped with. Updating now registers the browser tools the same way it installs newly shipped skills: merged into what you already have, never replacing it, and a no-op if you have already got them or have edited the entry yourself.
+
 ## 1.16.0 - 2026-08-15
 
 A daily briefing you can ask for in one sentence, and the reason the first one took an evening of back-and-forth. Underneath it, four places where the code worked out where it was installed by counting directories, got a different answer once compiled, and quietly did nothing.

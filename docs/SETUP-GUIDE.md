@@ -259,7 +259,7 @@ gog auth add secondary@gmail.com --services gmail,calendar
 6. If you opted into a second Outlook account, `skills/outlook-secondary/` is wired to it. Same Azure app + tenant; the auth flow handles both addresses.
 
 ### Apple Mail / Other
-For non-API email providers, the assistant can use browser automation (Playwright) to read and draft emails through webmail. Slower but works with anything.
+For non-API email providers, the assistant can use browser automation (Playwright) to read and draft emails through webmail. Slower but works with anything. See [Browser automation](#browser-automation) below.
 
 ## Step 3: Connect Calendar
 
@@ -454,6 +454,30 @@ The most valuable scheduled task. Create it with a prompt like:
 ```
 
 > **Why the lookup table?** LLMs reliably get day-of-week wrong for dates more than 2-3 days out. The `date` command generates the correct mapping and the LLM just reads it.
+
+## Browser automation
+
+For anything with no API behind it: webmail, a supplier portal, a booking form, a site you have to be logged in to.
+
+Setup wires this up for you. It registers the Playwright browser tools in `.mcp.json` and offers to download the browser they drive (about 150 MB, one time). If you skipped that download, it happens on first use instead, which makes that one request slow.
+
+Two ways it can run:
+
+**Its own browser** (the default). Nothing to do. The assistant opens a clean browser it controls, with no access to your logins. Right for public pages and for anything you would rather it did in a sandbox.
+
+**Your Chrome, with your sessions.** Start it first:
+
+```
+/browser start
+```
+
+That launches Chrome with remote control enabled, under a separate profile, and the assistant attaches to it automatically. Add `--default` to use your real profile instead, so it inherits the accounts you are already signed in to. That is the point of the option and also the reason to be deliberate about it: anything you are logged in to, it can reach.
+
+Other commands: `/browser status` shows whether it is running and what tabs are open, `/browser stop` shuts it down.
+
+Chrome has to be installed for `/browser start` to do anything. `/browser status` tells you when it is missing. The assistant's own browser works either way.
+
+**Already installed before this shipped?** Just run `/update`. It registers the browser tools for you, merging them into any configuration you already have rather than replacing it. Nothing else to do, and no terminal needed.
 
 ## Troubleshooting
 
