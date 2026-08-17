@@ -396,6 +396,20 @@ The most valuable scheduled task. Create it with a prompt like:
 | Bot token conflict | Only one process can poll a Telegram bot token. Kill duplicates. |
 | Slow responses | Normal for tool-heavy queries. Simple chat is fast, email+calendar lookups take 10-30s. |
 
+### Still stuck? Send a support request
+
+Tell the bot `/support <what went wrong>` (or a bare `/support`, then describe the
+problem when prompted). It drafts a support email from your description plus
+auto-collected diagnostics — app version, OS and Node versions, enabled skill ids,
+and a redacted excerpt of recent error-level log lines. It never includes your
+`.env`, API keys, email addresses from logs, or message content, and nothing is
+sent until you confirm with the Send button.
+
+The destination is `SUPPORT_EMAIL` in `.env` (default `support@els-partners.com`),
+sent through your connected Gmail account via `gog`. If no email account is
+connected, the request is saved under `support-requests/` in the install folder so
+you can send it manually.
+
 ## What's Next
 
 - Add more skills as your workflow evolves
