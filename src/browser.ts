@@ -166,20 +166,99 @@ export function stopChrome(): boolean {
   }
 
   // Last resort: find by port
-  try {
-    const out = execFileSync('lsof', ['-ti', `:${CDP_PORT}`], { encoding: 'utf-8' }).trim()
-    if (out) {
-      for (const pid of out.split('\n')) {
-        try { process.kill(parseInt(pid, 10), 'SIGTERM') } catch { /* ignore */ }
-      }
-      logger.info('Chrome stopped via port lookup')
-      return true
-    }
-  } catch {
-    // No process on port
+  if (stopChromeByPort() > 0) {
+    logger.info('Chrome stopped via port lookup')
+    return true
   }
 
   return false
+}
+
+/** The port lookup shells out; these are injected so tests need no real Chrome. */
+export interface PortLookupDeps {
+  platform?: string
+  exec?: (cmd: string, args: string[]) => string
+  kill?: (pid: number) => void
+}
+
+/**
+ * `lsof` does not exist on Windows, so the port lookup needs its own command
+ * there. `netstat -ano` is parsed in JS rather than piped through `findstr`:
+ * a pipe would need a shell, and this repo keeps its automation shell-free
+ * (see tests/no-bash.test.ts).
+ */
+function portLookupCommand(platform: string, port: number): { cmd: string; args: string[] } {
+  return platform === 'win32'
+    ? { cmd: 'netstat', args: ['-ano'] }
+    : { cmd: 'lsof', args: ['-ti', `:${port}`] }
+}
+
+/** `127.0.0.1:9222` and `[::1]:9222` both keep the port after the last colon. */
+function addressPort(addr: string): number | null {
+  const i = addr.lastIndexOf(':')
+  if (i < 0) return null
+  const n = Number(addr.slice(i + 1))
+  return Number.isInteger(n) ? n : null
+}
+
+/**
+ * Pull PIDs out of `netstat -ano`. Only LISTENING rows whose *local* port is
+ * ours count: a foreign address of :9222 is some other machine's server, and
+ * killing our end of that connection would reap an unrelated process.
+ */
+export function parseNetstatPids(out: string, port: number): number[] {
+  const pids: number[] = []
+  for (const line of out.split(/\r?\n/)) {
+    // Proto, Local Address, Foreign Address, State, PID
+    const cols = line.trim().split(/\s+/)
+    if (cols.length < 5) continue
+    const [proto, local, , state, pid] = cols
+    if (!/^TCP/i.test(proto)) continue
+    if (state.toUpperCase() !== 'LISTENING') continue
+    if (addressPort(local) !== port) continue
+    pids.push(Number(pid))
+  }
+  return pids
+}
+
+/** `lsof -ti` prints one bare PID per line. */
+export function parseLsofPids(out: string): number[] {
+  return out.split(/\r?\n/).map(l => Number(l.trim()))
+}
+
+/**
+ * Last-resort reap: the PID file is gone (service restart, crash) but Chrome is
+ * still holding the CDP port. Without this an orphaned Chrome can only be
+ * closed by hand. Returns how many processes were actually signalled.
+ */
+export function stopChromeByPort(deps: PortLookupDeps = {}): number {
+  const platform = deps.platform ?? process.platform
+  const exec = deps.exec ?? ((cmd: string, args: string[]) =>
+    execFileSync(cmd, args, { encoding: 'utf-8', timeout: 5_000, stdio: 'pipe' }))
+  const kill = deps.kill ?? ((pid: number) => { process.kill(pid, 'SIGTERM') })
+
+  let pids: number[]
+  try {
+    const { cmd, args } = portLookupCommand(platform, CDP_PORT)
+    const out = exec(cmd, args)
+    pids = platform === 'win32' ? parseNetstatPids(out, CDP_PORT) : parseLsofPids(out)
+  } catch {
+    // Nothing on the port, or no lookup tool available. Degrade quietly.
+    return 0
+  }
+
+  // PID 0 is the Windows Idle process, and on POSIX process.kill(0) signals our
+  // own process group. Never a valid target either way.
+  const targets = [...new Set(pids.filter(p => Number.isInteger(p) && p > 0))]
+
+  let stopped = 0
+  for (const pid of targets) {
+    try {
+      kill(pid)
+      stopped++
+    } catch { /* already exited */ }
+  }
+  return stopped
 }
 
 function cleanPidFile(): void {
