@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SessionStore } from '../src/runtime/ai-sdk/sessions.js'
-import { buildSystemPrompt } from '../src/runtime/ai-sdk/prompt.js'
+import { buildSystemPrompt, resolveImports } from '../src/runtime/ai-sdk/prompt.js'
 import { installTimezone } from '../src/env.js'
 import { createTools } from '../src/runtime/ai-sdk/tools.js'
 import { getAgentRuntime, setAgentRuntime } from '../src/runtime/index.js'
@@ -117,6 +117,38 @@ describe('buildSystemPrompt', () => {
     const prompt = buildSystemPrompt(root)
     expect(prompt).not.toContain('# Project instructions')
     expect(prompt).toContain('persistent personal assistant')
+  })
+
+  // Claude Code resolves @file imports natively; setup leans on that to keep
+  // the personality in PERSONALITY.md. This runtime assembles the prompt by
+  // hand, so without its own resolution an API-key install would carry the
+  // literal "@PERSONALITY.md" line and no personality at all.
+  it('inlines @PERSONALITY.md the way Claude Code would', () => {
+    const root = tempDir()
+    writeFileSync(join(root, 'PERSONALITY.md'), 'Your name is Atlas. Dry wit, no filler.')
+    writeFileSync(join(root, 'CLAUDE.md'), '# Assistant\n\n## Personality\n\n@PERSONALITY.md\n')
+    const prompt = buildSystemPrompt(root)
+    expect(prompt).toContain('Dry wit, no filler.')
+    expect(prompt).not.toContain('@PERSONALITY.md')
+  })
+
+  it('leaves unresolvable imports and inline mentions alone', () => {
+    const root = tempDir()
+    writeFileSync(join(root, 'CLAUDE.md'), '@MISSING.md\nping @alice about invoices')
+    const prompt = buildSystemPrompt(root)
+    expect(prompt).toContain('@MISSING.md')
+    expect(prompt).toContain('ping @alice about invoices')
+  })
+})
+
+describe('resolveImports', () => {
+  it('caps mutual imports instead of recursing forever', () => {
+    const root = tempDir()
+    writeFileSync(join(root, 'a.md'), 'from-a\n@b.md')
+    writeFileSync(join(root, 'b.md'), 'from-b\n@a.md')
+    const out = resolveImports('@a.md', root)
+    expect(out).toContain('from-a')
+    expect(out).toContain('from-b')
   })
 })
 

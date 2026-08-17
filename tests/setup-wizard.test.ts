@@ -142,6 +142,20 @@ describe('buildSkillPlan', () => {
     expect(claudeMd('darwin').vars.HOST_OS).toBe('Mac')
   })
 
+  it('writes the personality once and regenerates CLAUDE.md around it', () => {
+    const plan = buildSkillPlan(BASE, '/home/sam')
+    type Template = Extract<ReturnType<typeof buildSkillPlan>[number], { type: 'template' }>
+    const personality = plan.find((a) => a.type === 'template' && a.to === 'PERSONALITY.md') as Template
+    const claudeMd = plan.find((a) => a.type === 'template' && a.to === 'CLAUDE.md') as Template
+
+    // The owner's edits live in PERSONALITY.md, so a re-run must not rewrite it.
+    expect(personality.onlyIfMissing).toBe(true)
+    expect(personality.vars.PERSONALITY_VIBE).toBe('Direct.')
+    // CLAUDE.md is safe to regenerate precisely because the vibe moved out of it.
+    expect(claudeMd.onlyIfMissing).toBeUndefined()
+    expect(claudeMd.vars.PERSONALITY_VIBE).toBeUndefined()
+  })
+
   it('always installs weather, decision-log, and skill-builder', () => {
     const plan = buildSkillPlan(BASE, '/home/sam')
     const copies = plan.filter((a) => a.type === 'copy').map((a) => a.to)

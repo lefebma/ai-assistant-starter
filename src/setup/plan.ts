@@ -347,6 +347,25 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
     })
   }
 
+  // Personality lives in its own file, written once and never regenerated.
+  // CLAUDE.md below is rebuilt on every setup run (skills list, platform
+  // notes, host OS), so anything the owner writes into it dies on the next
+  // run. PERSONALITY.md is the part owners actually rewrite, so it gets
+  // onlyIfMissing: a re-run or an update refreshes CLAUDE.md around it and
+  // leaves their voice alone. CLAUDE.md reaches it via an @PERSONALITY.md
+  // import, which Claude Code resolves natively.
+  p.push({
+    type: 'template',
+    from: 'templates/PERSONALITY.md.template',
+    to: 'PERSONALITY.md',
+    vars: {
+      ASSISTANT_NAME: a.assistantName,
+      OWNER_NAME: a.ownerName,
+      PERSONALITY_VIBE: a.personalityVibe,
+    },
+    onlyIfMissing: true,
+  })
+
   // CLAUDE.md from template, last (needs the final skills list).
   p.push({
     type: 'template',
@@ -357,7 +376,6 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
       OWNER_NAME: a.ownerName,
       PLATFORM: a.platform,
       HOST_OS: hostOsLabel(platform),
-      PERSONALITY_VIBE: a.personalityVibe,
       TIMEZONE: a.timezone,
       PROJECT_PATH: a.projectPath,
       INSTALLED_SKILLS: installedSkillsList(a),

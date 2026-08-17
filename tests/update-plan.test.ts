@@ -63,7 +63,7 @@ describe('bundle swap path lists', () => {
   })
 
   it('keeps the credentials and data a reinstall must not touch', () => {
-    for (const p of ['.env', 'store', 'projects', 'skills']) {
+    for (const p of ['.env', 'store', 'projects', 'skills', 'CLAUDE.md', 'PERSONALITY.md']) {
       expect(PRESERVED_PATHS).toContain(p)
     }
   })
