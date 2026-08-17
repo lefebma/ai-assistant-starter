@@ -22,6 +22,7 @@ import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio'
 import type { ToolSet } from 'ai'
 import { readEnvFile } from '../../env.js'
 import { logger } from '../../logger.js'
+import { selectMcpServerMap } from '../../mcp-shape.js'
 
 const CONNECT_TIMEOUT_MS = 10_000
 
@@ -33,11 +34,7 @@ export type McpServerConfig = {
 
 /** Parse .mcp.json content. Accepts flat { name: {command,...} } or { mcpServers: {...} }. */
 export function parseMcpConfig(json: string): Record<string, McpServerConfig> {
-  const data = JSON.parse(json) as Record<string, unknown>
-  const servers =
-    data && typeof data === 'object' && 'mcpServers' in data
-      ? (data.mcpServers as Record<string, unknown>)
-      : data
+  const servers = selectMcpServerMap(JSON.parse(json))
   const result: Record<string, McpServerConfig> = {}
   for (const [name, cfg] of Object.entries(servers ?? {})) {
     if (cfg && typeof cfg === 'object' && typeof (cfg as McpServerConfig).command === 'string') {
