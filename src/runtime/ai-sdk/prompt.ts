@@ -9,7 +9,7 @@
  * otherwise provide.
  */
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { homedir, platform } from 'node:os'
 import { installTimezone } from '../../env.js'
 
@@ -19,6 +19,30 @@ function readIfExists(path: string): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Claude Code resolves @file imports in CLAUDE.md natively; setup relies on
+ * that to keep the personality in its own PERSONALITY.md (`@PERSONALITY.md`
+ * inside CLAUDE.md). This runtime reads the files itself, so without the same
+ * resolution an API-key install would get the literal "@PERSONALITY.md" line
+ * in its system prompt and no personality at all. Only whole-line imports are
+ * resolved — the form setup writes — and a missing target leaves the line
+ * untouched, matching Claude Code's silence about unresolvable imports. Depth
+ * is capped so two files importing each other cannot recurse forever.
+ */
+export function resolveImports(text: string, baseDir: string, depth = 0): string {
+  if (depth >= 5) return text
+  return text
+    .split('\n')
+    .map((line) => {
+      const m = /^@(\S+)$/.exec(line.trim())
+      if (!m) return line
+      const target = m[1].startsWith('~/') ? resolve(homedir(), m[1].slice(2)) : resolve(baseDir, m[1])
+      const content = readIfExists(target)
+      return content === null ? line : resolveImports(content, dirname(target), depth + 1)
+    })
+    .join('\n')
 }
 
 export function buildSystemPrompt(projectRoot: string): string {
@@ -31,12 +55,12 @@ export function buildSystemPrompt(projectRoot: string): string {
 
   const userMd = readIfExists(resolve(homedir(), '.claude', 'CLAUDE.md'))
   if (userMd?.trim()) {
-    parts.push(`# User instructions (global)\n\n${userMd.trim()}`)
+    parts.push(`# User instructions (global)\n\n${resolveImports(userMd, resolve(homedir(), '.claude')).trim()}`)
   }
 
   const projectMd = readIfExists(resolve(projectRoot, 'CLAUDE.md'))
   if (projectMd?.trim()) {
-    parts.push(`# Project instructions\n\n${projectMd.trim()}`)
+    parts.push(`# Project instructions\n\n${resolveImports(projectMd, projectRoot).trim()}`)
   }
 
   // Was pinned to America/Toronto for every install. An owner elsewhere had the
