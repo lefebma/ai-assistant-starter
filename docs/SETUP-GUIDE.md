@@ -333,25 +333,37 @@ Example `manifest.json`:
 
 ## Step 5: Configure Your Assistant
 
-1. Copy the CLAUDE.md template:
+1. Copy the templates:
    ```bash
-   cp templates/client-assistant/CLAUDE.md.template CLAUDE.md
+   cp templates/CLAUDE.md.template CLAUDE.md
+   cp templates/PERSONALITY.md.template PERSONALITY.md
    ```
 
-2. Fill in the placeholders:
+2. Fill in the CLAUDE.md placeholders:
    - `{{ASSISTANT_NAME}}` - Give your assistant a name
    - `{{OWNER_NAME}}` - Your name
    - `{{PLATFORM}}` - Telegram / Slack / Discord / Teams
    - `{{HOST_OS}}` - Mac / Linux / Windows (WSL)
-   - `{{PERSONALITY_VIBE}}` - How you want the assistant to communicate
    - `{{TIMEZONE}}` - Your timezone (e.g., America/New_York)
    - `{{OWNER_BIO}}` - A short paragraph about you, your work, your preferences
    - `{{PROJECT_PATH}}` - Where this project lives on disk
    - `{{INSTALLED_SKILLS}}` - Comma-separated list of skill IDs you enabled
    - `{{EMAIL_SIGNATURE}}` - Your professional email signature
+
+3. Fill in the PERSONALITY.md placeholders:
+   - `{{ASSISTANT_NAME}}` and `{{OWNER_NAME}}` - Same as above
+   - `{{PERSONALITY_VIBE}}` - How you want the assistant to communicate
    - `{{CUSTOM_RULES}}` - Any personal formatting or behavior rules
 
-3. Review and edit. The template is a starting point. Add sections, remove what doesn't apply.
+4. Review and edit. The templates are a starting point. Add sections, remove what doesn't apply.
+
+## Customize your assistant's personality
+
+Your assistant's voice lives in `PERSONALITY.md` at the project root — the vibe, the tone, the rules it never breaks. `CLAUDE.md` pulls it in through the `@PERSONALITY.md` line, so the two files work as one document.
+
+Edit `PERSONALITY.md` any time: make the assistant drier, warmer, terser, add rules ("no emojis", "always answer in French"), or rewrite the whole thing. Changes take effect on the next message — no restart needed.
+
+The split exists so your edits survive the product. Re-running `npm run setup` regenerates `CLAUDE.md` (new skills list, platform notes) but only creates `PERSONALITY.md` when it doesn't exist yet. `/update` never touches it either. Once the file is yours, it stays yours.
 
 ## Step 6: Set Up the Service
 

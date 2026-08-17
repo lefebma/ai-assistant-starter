@@ -599,7 +599,7 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
       await adapter.sendMessage(
         chatId,
         `This will update the engine from v${status.currentVersion} to v${status.latestVersion}.\n` +
-        'Your .env, CLAUDE.md, skills, and data are preserved.\n' +
+        'Your .env, CLAUDE.md, PERSONALITY.md, skills, and data are preserved.\n' +
         'The service will need a restart after.\n\n' +
         'Run /update apply again to confirm.'
       )
