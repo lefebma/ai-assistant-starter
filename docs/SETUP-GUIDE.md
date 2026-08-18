@@ -435,6 +435,13 @@ systemctl --user enable ai-assistant
 systemctl --user start ai-assistant
 ```
 
+### Running on a server instead
+
+The assistant doesn't have to live on your laptop. A small Ubuntu VPS
+(provisioned unattended via cloud-init, zero inbound ports, managed over SSH)
+is covered end to end in [HOSTED-VPS.md](HOSTED-VPS.md) — provider choices,
+`npm run make-cloud-init`, and the interactive finishing steps.
+
 ## Step 7: First Conversation
 
 Once the service is running, message your bot:
