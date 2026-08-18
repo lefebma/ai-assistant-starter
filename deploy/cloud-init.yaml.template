@@ -1,0 +1,140 @@
+#cloud-config
+# Havn hosted-VPS user-data. Rendered from deploy/cloud-init.yaml.template by
+# scripts/make-cloud-init.ts (npm run make-cloud-init); see docs/HOSTED-VPS.md
+# for the full runbook. Target image: Ubuntu 24.04 LTS.
+#
+# The generator fills every double-brace placeholder and refuses to emit
+# while any remains. Straight substitutions: HOST_NAME, TIMEZONE,
+# SSH_PUBLIC_KEY, GIT_REPO, GIT_REF, GITHUB_DEPLOY_TOKEN, INSTALL_DIR, and
+# SYSTEMD_UNIT (the rendered deploy/havn.service.template).
+#
+# Two are computed from whether a Tailscale auth key was provided — that is
+# the documented SSH toggle:
+#   UFW_SSH_CMD    without Tailscale: a ufw rule opening SSH (key-only) so
+#                  you can reach the box at all. With Tailscale: a no-op,
+#                  leaving ZERO open inbound ports; SSH rides the tailnet.
+#   TAILSCALE_CMD  with a key: install Tailscale and join the tailnet with
+#                  its SSH mode on. Without: a no-op.
+
+hostname: {{HOST_NAME}}
+timezone: {{TIMEZONE}}
+
+# Key-only SSH. Ubuntu cloud images already default to this; be explicit.
+ssh_pwauth: false
+
+# Listing users: replaces the image's default 'ubuntu' account, so the box has
+# exactly one login: havn. It owns the install and runs the service; sudo is
+# for the finishing steps and later maintenance.
+users:
+  - name: havn
+    gecos: Havn assistant service
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "{{SSH_PUBLIC_KEY}}"
+
+package_update: true
+package_upgrade: true
+packages:
+  - git
+  - build-essential
+  - python3
+  - ca-certificates
+  - curl
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  # Security patches apply themselves; nobody logs into this box daily.
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+  # Registered but never enabled here: first-run setup is interactive, so the
+  # operator starts the service after the finishing steps (docs/HOSTED-VPS.md).
+  - path: /etc/systemd/system/havn.service
+    content: |
+      {{SYSTEMD_UNIT}}
+
+  - path: /usr/local/lib/havn/provision.sh
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # Havn VPS provisioning. Runs once, as root, at first boot.
+      set -euo pipefail
+      exec > >(tee -a /var/log/havn-provision.log) 2>&1
+      echo "havn-provision: start $(date -Is)"
+
+      # --- Node 22 (NodeSource) -------------------------------------------
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      apt-get install -y nodejs
+      node --version
+
+      # --- gog CLI (Gmail/Calendar backend) -------------------------------
+      # Linux release assets are gogcli_<version>_linux_{amd64,arm64}.tar.gz
+      # (docs/SETUP-GUIDE.md > Gmail). The archive unpacks a single file: gog.
+      # /usr/local/bin is one of the paths the assistant probes automatically.
+      ARCH=$(dpkg --print-architecture)   # amd64 or arm64
+      GOG_URL=$(curl -fsSL https://api.github.com/repos/openclaw/gogcli/releases/latest \
+        | grep -o "https://[^\"]*gogcli_[^\"]*_linux_${ARCH}\.tar\.gz" | head -1)
+      if [ -n "$GOG_URL" ]; then
+        curl -fsSL "$GOG_URL" -o /tmp/gogcli.tar.gz
+        tar -xzf /tmp/gogcli.tar.gz -C /tmp gog
+        install -m 0755 /tmp/gog /usr/local/bin/gog
+        rm -f /tmp/gogcli.tar.gz /tmp/gog
+        gog --version || true
+      else
+        echo "WARNING: no gogcli release found for ${ARCH}; install it by hand (docs/SETUP-GUIDE.md > Gmail)"
+      fi
+
+      # No separate Claude CLI install on purpose: the engine ships inside
+      # the app via @anthropic-ai/claude-agent-sdk (npm ci below brings it),
+      # and a globally installed claude is a copy the assistant never calls.
+
+      # --- Firewall: zero inbound by default ------------------------------
+      # All of Havn's traffic is outbound (Telegram long-polling, Anthropic,
+      # Google APIs), so nothing on this box needs to listen.
+      ufw default deny incoming
+      ufw default allow outgoing
+      {{UFW_SSH_CMD}}
+      ufw --force enable
+      ufw status verbose
+
+      # --- Tailscale (optional) -------------------------------------------
+      {{TAILSCALE_CMD}}
+
+      # --- Clone and build as the havn user -------------------------------
+      # The deploy token rides only in the clone URL; the remote is scrubbed
+      # immediately after so the token never persists in .git/config.
+      sudo -u havn git clone --branch {{GIT_REF}} \
+        "https://x-access-token:{{GITHUB_DEPLOY_TOKEN}}@github.com/{{GIT_REPO}}.git" {{INSTALL_DIR}}
+      sudo -u havn git -C {{INSTALL_DIR}} remote set-url origin "https://github.com/{{GIT_REPO}}.git"
+      sudo -u havn mkdir -p {{INSTALL_DIR}}/logs
+      sudo -u havn bash -lc 'cd {{INSTALL_DIR}} && npm ci --no-audit --no-fund && npm run build'
+
+      # --- Service: registered but NOT started ----------------------------
+      systemctl daemon-reload
+      # Deliberately no enable/start: .env and credentials do not exist yet.
+
+      # --- Ready marker ---------------------------------------------------
+      install -d /var/lib/havn
+      date -Is > /var/lib/havn/provisioned
+      cat > /etc/update-motd.d/99-havn <<'MOTD'
+      #!/bin/sh
+      echo ""
+      echo "Havn: provisioned, awaiting first-run setup."
+      echo "  As the havn user:  cd {{INSTALL_DIR}} && npm run setup"
+      echo "  Full finishing steps: docs/HOSTED-VPS.md in the repo."
+      echo "  When setup is done:  sudo systemctl enable --now havn"
+      echo ""
+      MOTD
+      chmod 0755 /etc/update-motd.d/99-havn
+      echo "havn-provision: done $(date -Is)"
+
+runcmd:
+  - [bash, /usr/local/lib/havn/provision.sh]
+
+final_message: "Havn VPS provisioned in $UPTIME seconds. SSH in as havn and follow docs/HOSTED-VPS.md > Finishing steps."

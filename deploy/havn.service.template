@@ -1,0 +1,39 @@
+# Systemd unit for a hosted single-tenant install (docs/HOSTED-VPS.md).
+#
+# This is the system-wide sibling of the user unit that `npm run setup` /
+# scripts/service.ts installs on a desktop Linux box (src/service/systemd.ts).
+# A VPS has no login session to hang a user unit off, so this one lives in
+# /etc/systemd/system and runs as the dedicated `havn` user instead.
+#
+# Rendered by scripts/make-cloud-init.ts, which fills the HOST_NAME and
+# INSTALL_DIR placeholders (double-brace syntax) and embeds the result into
+# the cloud-init user-data. Installed disabled:
+# first-run setup is interactive, so the operator enables it after finishing
+# the SSH steps in docs/HOSTED-VPS.md.
+[Unit]
+Description=Havn AI assistant ({{HOST_NAME}})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=havn
+Group=havn
+WorkingDirectory={{INSTALL_DIR}}
+# NodeSource puts node at /usr/bin/node on Ubuntu.
+ExecStart=/usr/bin/node {{INSTALL_DIR}}/dist/src/index.js
+Restart=on-failure
+RestartSec=10
+Environment=HOME=/home/havn
+# The app reads .env itself; this keeps anything systemd-relevant (PATH
+# additions, proxy vars) visible too. The dash means "fine if missing" so the
+# unit still starts on a box where setup has not written .env yet.
+EnvironmentFile=-{{INSTALL_DIR}}/.env
+# Same log target the in-app service manager uses on desktop Linux.
+StandardOutput=append:{{INSTALL_DIR}}/logs/service.log
+StandardError=append:{{INSTALL_DIR}}/logs/service.log
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
