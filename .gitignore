@@ -29,3 +29,5 @@ key_pair.txt.pub
 docs/CLIENT-ONBOARDING.md
 docs/EXTRACTION-PLAN.md
 dist-installer/
+# Rendered cloud-init user-data carries deploy tokens; never commit it
+deploy/rendered/
