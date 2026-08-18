@@ -211,6 +211,25 @@ describe('shipped templates', () => {
     expect(cloudInitTemplate).toContain('{{GITHUB_DEPLOY_TOKEN}}')
     expect(cloudInitTemplate).toContain('{{SSH_PUBLIC_KEY}}')
   })
+
+  // Pilot findings from the first real Hetzner provision (card #99):
+
+  it('extracts gog by locating the binary, not by naming a tar member', () => {
+    // Release tarballs prefix members with ./ (./gog); asking tar for the bare
+    // member name aborts the whole provision under set -e.
+    expect(cloudInitTemplate).not.toMatch(/tar -xzf \S+ -C \S+ gog\b/)
+    expect(cloudInitTemplate).toContain('find /tmp/gogcli-extract -type f -name gog')
+  })
+
+  it('clears the service account expiry before the first sudo -u switch', () => {
+    // Some images leave the cloud-init-created account password-expired and
+    // PAM then refuses sudo -u havn.
+    const chageAt = cloudInitTemplate.indexOf('chage -d')
+    const firstSwitchAt = cloudInitTemplate.indexOf('sudo -u havn')
+    expect(chageAt).toBeGreaterThan(-1)
+    expect(firstSwitchAt).toBeGreaterThan(-1)
+    expect(chageAt).toBeLessThan(firstSwitchAt)
+  })
 })
 
 describe('CLI shell', () => {

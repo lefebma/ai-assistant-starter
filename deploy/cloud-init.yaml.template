@@ -82,9 +82,12 @@ write_files:
         | grep -o "https://[^\"]*gogcli_[^\"]*_linux_${ARCH}\.tar\.gz" | head -1)
       if [ -n "$GOG_URL" ]; then
         curl -fsSL "$GOG_URL" -o /tmp/gogcli.tar.gz
-        tar -xzf /tmp/gogcli.tar.gz -C /tmp gog
-        install -m 0755 /tmp/gog /usr/local/bin/gog
-        rm -f /tmp/gogcli.tar.gz /tmp/gog
+        # Extract fully and locate the binary: release tarballs prefix members
+        # with ./ (./gog), which a bare member name does not match (pilot finding).
+        mkdir -p /tmp/gogcli-extract
+        tar -xzf /tmp/gogcli.tar.gz -C /tmp/gogcli-extract
+        install -m 0755 "$(find /tmp/gogcli-extract -type f -name gog | head -1)" /usr/local/bin/gog
+        rm -rf /tmp/gogcli.tar.gz /tmp/gogcli-extract
         gog --version || true
       else
         echo "WARNING: no gogcli release found for ${ARCH}; install it by hand (docs/SETUP-GUIDE.md > Gmail)"
@@ -107,6 +110,11 @@ write_files:
       {{TAILSCALE_CMD}}
 
       # --- Clone and build as the havn user -------------------------------
+      # cloud-init can leave the service account password-expired on some
+      # images, and PAM then refuses sudo -u switches (pilot finding). Clear
+      # the expiry state before the first user switch; the account stays
+      # passwordless and locked either way.
+      chage -d "$(date +%F)" -M -1 -E -1 havn
       # The deploy token rides only in the clone URL; the remote is scrubbed
       # immediately after so the token never persists in .git/config.
       sudo -u havn git clone --branch {{GIT_REF}} \
