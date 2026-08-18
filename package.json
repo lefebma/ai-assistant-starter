@@ -7,6 +7,7 @@
     "start": "node dist/src/index.js",
     "dev": "tsx src/index.ts",
     "setup": "tsx scripts/setup.ts",
+    "make-cloud-init": "tsx scripts/make-cloud-init.ts",
     "status": "tsx scripts/status.ts",
     "schedule": "node dist/src/schedule-cli.js",
     "seed-jobs": "tsx src/seed-jobs.ts",
