@@ -85,7 +85,11 @@ write_files:
         # Extract fully and locate the binary: release tarballs prefix members
         # with ./ (./gog), which a bare member name does not match (pilot finding).
         mkdir -p /tmp/gogcli-extract
-        tar -xzf /tmp/gogcli.tar.gz -C /tmp/gogcli-extract
+        # --no-same-owner/-permissions: run as root, and release tarballs can
+        # carry a ./ member whose metadata would otherwise be restored onto
+        # the extraction dir (pilot finding: a ./ entry with uid 501 mode 755
+        # broke /tmp on the first box).
+        tar -xzf /tmp/gogcli.tar.gz --no-same-owner --no-same-permissions -C /tmp/gogcli-extract
         install -m 0755 "$(find /tmp/gogcli-extract -type f -name gog | head -1)" /usr/local/bin/gog
         rm -rf /tmp/gogcli.tar.gz /tmp/gogcli-extract
         gog --version || true

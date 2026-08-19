@@ -14,6 +14,9 @@
 Description=Havn AI assistant ({{HOST_NAME}})
 After=network-online.target
 Wants=network-online.target
+# Never lock the service out after repeated restarts; with RestartSec=70 a
+# crash loop is already slow enough to be harmless.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -22,8 +25,13 @@ Group=havn
 WorkingDirectory={{INSTALL_DIR}}
 # NodeSource puts node at /usr/bin/node on Ubuntu.
 ExecStart=/usr/bin/node {{INSTALL_DIR}}/dist/src/index.js
-Restart=on-failure
-RestartSec=10
+# always, not on-failure: the app has legitimate voluntary exits (polling
+# watchdog exit 43, /update relaunch, an agent turn restarting the service)
+# and a clean exit must never leave a client's assistant dead (pilot finding:
+# Joy exited 0 mid-call and stayed down 3+ hours). 70s spacing keeps two
+# pollers from leapfrogging inside Telegram's ~60s getUpdates conflict window.
+Restart=always
+RestartSec=70
 Environment=HOME=/home/havn
 # The app reads .env itself; this keeps anything systemd-relevant (PATH
 # additions, proxy vars) visible too. The dash means "fine if missing" so the

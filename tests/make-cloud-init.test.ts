@@ -134,7 +134,12 @@ describe('renderCloudInit', () => {
   it('embeds the systemd unit, indented as a YAML block, disabled by default', () => {
     expect(rendered).toContain('      [Unit]')
     expect(rendered).toContain('      User=havn')
-    expect(rendered).toContain('      Restart=on-failure')
+    // always, never on-failure: voluntary clean exits (watchdog, /update,
+    // agent-initiated restarts) must respawn too - pilot finding, card #99.
+    expect(rendered).toContain('      Restart=always')
+    expect(rendered).toContain('      RestartSec=70')
+    expect(rendered).toContain('      StartLimitIntervalSec=0')
+    expect(rendered).not.toContain('Restart=on-failure')
     expect(rendered).toContain('      EnvironmentFile=-/home/havn/havn/.env')
     // Registered but never enabled: first-run setup is interactive.
     expect(rendered).toContain('systemctl daemon-reload')
