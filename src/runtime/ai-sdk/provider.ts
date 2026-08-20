@@ -75,12 +75,18 @@ export function buildModel(
           `Azure provider needs AZURE_RESOURCE_NAME (or AI_BASE_URL / resourceName) to locate the tenant's Azure OpenAI endpoint.`
         )
       }
+      // .chat() pins Azure to the stateless Chat Completions surface. The
+      // default (Responses API) stores response items server-side and session
+      // resumes then reference item ids Azure can't find ("Item with id
+      // 'msg_...' not found"), which broke the session-resume cert task.
+      // Chat Completions is also Azure's mature GA surface (sovereign clouds,
+      // older api-versions), so it's the safer tenant-compat default.
       return createAzure({
         apiKey: opts.apiKey,
         resourceName: opts.baseURL ? undefined : opts.resourceName,
         baseURL: opts.baseURL,
         apiVersion: opts.apiVersion,
-      })(modelId)
+      }).chat(modelId)
     }
     default:
       throw new Error(
