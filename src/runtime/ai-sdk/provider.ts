@@ -2,11 +2,14 @@
  * Model resolution for the AI SDK runtime.
  *
  * Reads provider + model from .env (AI_PROVIDER / AI_MODEL). Phase 3 opens
- * the runtime past Anthropic: anthropic, openai, and google are wired here,
- * with the openai case accepting an optional AI_BASE_URL so any
+ * the runtime past Anthropic: anthropic, openai, google, and azure are wired
+ * here, with the openai case accepting an optional AI_BASE_URL so any
  * OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, an OpenAI-compatible
- * gateway) rides the same adapter without a separate package. Azure and
- * Bedrock land in a later slice, on demand.
+ * gateway) rides the same adapter without a separate package. For azure,
+ * AI_MODEL is the customer's *deployment name*, the endpoint comes from
+ * AZURE_RESOURCE_NAME (or AI_BASE_URL for sovereign clouds / custom domains),
+ * and AZURE_API_VERSION passes through when a tenant needs to pin one.
+ * Bedrock lands in a later slice, on demand.
  *
  * Design rules (from the LLM-agnostic design doc, Layer 1):
  *   - Only anthropic carries a default model id. For every other provider the
@@ -21,6 +24,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createAzure } from '@ai-sdk/azure'
 import type { LanguageModel } from 'ai'
 import { readEnvFile } from '../../env.js'
 import { getSecret } from '../../vault/index.js'
@@ -33,6 +37,7 @@ const KEY_ENV: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
   google: 'GOOGLE_API_KEY',
+  azure: 'AZURE_API_KEY',
 }
 
 export type ResolvedModel = {
@@ -50,7 +55,7 @@ export type ResolvedModel = {
 export function buildModel(
   provider: string,
   modelId: string,
-  opts: { apiKey: string; baseURL?: string }
+  opts: { apiKey: string; baseURL?: string; resourceName?: string; apiVersion?: string }
 ): LanguageModel {
   switch (provider) {
     case 'anthropic':
@@ -61,15 +66,33 @@ export function buildModel(
       return createOpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL })(modelId)
     case 'google':
       return createGoogleGenerativeAI({ apiKey: opts.apiKey })(modelId)
+    case 'azure': {
+      // modelId is the customer's Azure *deployment name*, not a vendor model
+      // id. The endpoint needs resourceName OR an explicit baseURL (sovereign
+      // clouds / custom domains); baseURL wins when both are set.
+      if (!opts.resourceName && !opts.baseURL) {
+        throw new Error(
+          `Azure provider needs AZURE_RESOURCE_NAME (or AI_BASE_URL / resourceName) to locate the tenant's Azure OpenAI endpoint.`
+        )
+      }
+      return createAzure({
+        apiKey: opts.apiKey,
+        resourceName: opts.baseURL ? undefined : opts.resourceName,
+        baseURL: opts.baseURL,
+        apiVersion: opts.apiVersion,
+      })(modelId)
+    }
     default:
       throw new Error(
-        `Unknown AI_PROVIDER '${provider}'. Available: anthropic, openai, google. (Azure/Bedrock land in a later slice.)`
+        `Unknown AI_PROVIDER '${provider}'. Available: anthropic, openai, google, azure. (Bedrock lands in a later slice.)`
       )
   }
 }
 
-/** Provider id currently configured, without constructing a model (used for
- * session provider-switch detection, where a full resolve would be wasted). */
+/**
+ * The provider name the env currently selects, without building a model.
+ * Used by the session-store provider stamp (history sanitizer).
+ */
 export function configuredProvider(): string {
   const env = readEnvFile()
   return env['AI_PROVIDER']?.trim() || process.env.AI_PROVIDER?.trim() || DEFAULT_PROVIDER
@@ -91,7 +114,7 @@ export function resolveModel(): ResolvedModel {
   const keyEnv = KEY_ENV[provider]
   if (!keyEnv) {
     throw new Error(
-      `Unknown AI_PROVIDER '${provider}'. Available: anthropic, openai, google. (Azure/Bedrock land in a later slice.)`
+      `Unknown AI_PROVIDER '${provider}'. Available: anthropic, openai, google, azure. (Bedrock lands in a later slice.)`
     )
   }
   // BYOK: the key resolves through the vault first (encrypted at rest), then
@@ -104,6 +127,12 @@ export function resolveModel(): ResolvedModel {
     )
   }
 
-  const baseURL = provider === 'openai' ? read('AI_BASE_URL') : undefined
-  return { provider, modelId, model: buildModel(provider, modelId, { apiKey, baseURL }) }
+  const baseURL = provider === 'openai' || provider === 'azure' ? read('AI_BASE_URL') : undefined
+  const resourceName = provider === 'azure' ? read('AZURE_RESOURCE_NAME') : undefined
+  const apiVersion = provider === 'azure' ? read('AZURE_API_VERSION') : undefined
+  return {
+    provider,
+    modelId,
+    model: buildModel(provider, modelId, { apiKey, baseURL, resourceName, apiVersion }),
+  }
 }

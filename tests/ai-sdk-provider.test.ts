@@ -45,6 +45,9 @@ const PROVIDER_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
   'GOOGLE_API_KEY',
+  'AZURE_API_KEY',
+  'AZURE_RESOURCE_NAME',
+  'AZURE_API_VERSION',
 ]
 
 function clearProviderEnv(): void {
@@ -103,6 +106,42 @@ describe('resolveModel() provider resolution', () => {
     expect(r.provider).toBe('google')
     expect(r.modelId).toBe('gemini-2.5-pro')
     expect(r.model).toBeTruthy()
+  })
+
+  it('resolves the azure provider (AI_MODEL is the Azure deployment name)', () => {
+    mockReadEnvFile.mockReturnValue({
+      AI_PROVIDER: 'azure',
+      AI_MODEL: 'gpt-5-deployment',
+      AZURE_API_KEY: 'az-test',
+      AZURE_RESOURCE_NAME: 'contoso-openai',
+    })
+    const r = resolveModel()
+    expect(r.provider).toBe('azure')
+    expect(r.modelId).toBe('gpt-5-deployment')
+    expect(r.model).toBeTruthy()
+  })
+
+  it('resolves azure via AI_BASE_URL when AZURE_RESOURCE_NAME is unset (sovereign clouds / custom domains)', () => {
+    mockReadEnvFile.mockReturnValue({
+      AI_PROVIDER: 'azure',
+      AI_MODEL: 'gpt-5-deployment',
+      AZURE_API_KEY: 'az-test',
+      AI_BASE_URL: 'https://contoso.openai.azure.us/openai',
+    })
+    const r = resolveModel()
+    expect(r.provider).toBe('azure')
+    expect(r.model).toBeTruthy()
+  })
+
+  it('resolves azure with an explicit AZURE_API_VERSION passthrough', () => {
+    mockReadEnvFile.mockReturnValue({
+      AI_PROVIDER: 'azure',
+      AI_MODEL: 'gpt-5-deployment',
+      AZURE_API_KEY: 'az-test',
+      AZURE_RESOURCE_NAME: 'contoso-openai',
+      AZURE_API_VERSION: '2025-01-01-preview',
+    })
+    expect(resolveModel().model).toBeTruthy()
   })
 
   it('resolves openai with a custom AI_BASE_URL (OpenAI-compatible / self-hosted)', () => {
@@ -164,9 +203,42 @@ describe('resolveModel() error paths', () => {
     expect(() => resolveModel()).toThrow(/AI_MODEL/)
   })
 
+  it('throws naming AZURE_API_KEY when the azure key is missing', () => {
+    mockReadEnvFile.mockReturnValue({
+      AI_PROVIDER: 'azure',
+      AI_MODEL: 'gpt-5-deployment',
+      AZURE_RESOURCE_NAME: 'contoso-openai',
+    })
+    expect(() => resolveModel()).toThrow(/AZURE_API_KEY/)
+  })
+
+  it('throws naming AZURE_RESOURCE_NAME when azure has neither resource name nor AI_BASE_URL', () => {
+    mockReadEnvFile.mockReturnValue({
+      AI_PROVIDER: 'azure',
+      AI_MODEL: 'gpt-5-deployment',
+      AZURE_API_KEY: 'az-test',
+    })
+    expect(() => resolveModel()).toThrow(/AZURE_RESOURCE_NAME/)
+  })
+
+  it('requires an explicit AI_MODEL (deployment name) for azure', () => {
+    mockReadEnvFile.mockReturnValue({
+      AI_PROVIDER: 'azure',
+      AZURE_API_KEY: 'az-test',
+      AZURE_RESOURCE_NAME: 'contoso-openai',
+    })
+    expect(() => resolveModel()).toThrow(/AI_MODEL/)
+  })
+
+  it('lists azure among available providers in the unknown-provider error', () => {
+    mockReadEnvFile.mockReturnValue({ AI_PROVIDER: 'cohere', AI_MODEL: 'command-r' })
+    expect(() => resolveModel()).toThrow(/Available: anthropic, openai, google, azure/)
+  })
+
+
   it('lists every available provider in the unknown-provider error', () => {
     mockReadEnvFile.mockReturnValue({ AI_PROVIDER: 'cohere', AI_MODEL: 'command-r' })
-    expect(() => resolveModel()).toThrow(/Available: anthropic, openai, google/)
+    expect(() => resolveModel()).toThrow(/Available: anthropic, openai, google, azure/)
   })
 })
 
@@ -189,9 +261,30 @@ describe('buildModel() explicit construction (shared by resolveModel + eval/prob
     ).toBeTruthy()
   })
 
+  it('builds an azure model from explicit args (resourceName)', () => {
+    expect(
+      buildModel('azure', 'gpt-5-deployment', { apiKey: 'k', resourceName: 'contoso-openai' })
+    ).toBeTruthy()
+  })
+
+  it('builds an azure model from explicit args (baseURL, no resourceName)', () => {
+    expect(
+      buildModel('azure', 'gpt-5-deployment', {
+        apiKey: 'k',
+        baseURL: 'https://contoso.openai.azure.us/openai',
+      })
+    ).toBeTruthy()
+  })
+
+  it('throws when azure gets neither resourceName nor baseURL', () => {
+    expect(() => buildModel('azure', 'gpt-5-deployment', { apiKey: 'k' })).toThrow(
+      /AZURE_RESOURCE_NAME|resourceName/
+    )
+  })
+
   it('throws on an unknown provider, listing the supported set', () => {
     expect(() => buildModel('cohere', 'command-r', { apiKey: 'k' })).toThrow(
-      /Available: anthropic, openai, google/
+      /Available: anthropic, openai, google, azure/
     )
   })
 })
@@ -218,5 +311,26 @@ describe('resolveModel() BYOK vault-backed key', () => {
   it('still throws when the key is in neither the vault, .env, nor process.env', () => {
     mockReadEnvFile.mockReturnValue({ AI_PROVIDER: 'openai', AI_MODEL: 'gpt-5' })
     expect(() => resolveModel()).toThrow(/OPENAI_API_KEY/)
+  })
+
+  it('accepts an azure key stored in the vault (absent from .env/process.env)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prov-vault-az-'))
+    new SecretVault({ dir }).set('AZURE_API_KEY', 'az-from-vault')
+    const prev = process.env.AGENT_VAULT_DIR
+    process.env.AGENT_VAULT_DIR = dir
+    mockReadEnvFile.mockReturnValue({
+      AI_PROVIDER: 'azure',
+      AI_MODEL: 'gpt-5-deployment',
+      AZURE_RESOURCE_NAME: 'contoso-openai',
+    })
+    try {
+      const r = resolveModel()
+      expect(r.provider).toBe('azure')
+      expect(r.model).toBeTruthy()
+    } finally {
+      if (prev === undefined) delete process.env.AGENT_VAULT_DIR
+      else process.env.AGENT_VAULT_DIR = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

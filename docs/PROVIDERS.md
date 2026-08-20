@@ -11,7 +11,7 @@ In `.env`:
 
 ```
 AGENT_RUNTIME=ai-sdk
-AI_PROVIDER=openai          # anthropic | openai | google
+AI_PROVIDER=openai          # anthropic | openai | google | azure
 AI_MODEL=gpt-5.4            # required for every provider except anthropic
 OPENAI_API_KEY=sk-...       # or put it in the vault, see docs/VAULT.md
 ```
@@ -24,10 +24,30 @@ scheduled tasks carry over.
 | Anthropic (API) | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-5` (default) |
 | OpenAI | `openai` | `OPENAI_API_KEY` | `gpt-5.4` |
 | Google | `google` | `GOOGLE_API_KEY` | `gemini-2.5-pro` |
+| Azure OpenAI | `azure` | `AZURE_API_KEY` | your *deployment name* |
 | Self-hosted / compatible | `openai` + `AI_BASE_URL` | `OPENAI_API_KEY` (any value some servers ignore) | whatever your server hosts |
 
 Keys are read from the encrypted vault first, then `.env` (see
 [docs/VAULT.md](VAULT.md)). They are never logged.
+
+## Azure OpenAI
+
+For organizations that want the models billed and governed under their own
+Microsoft agreement. Create an Azure OpenAI resource, deploy a model in Azure
+AI Foundry, then:
+
+```
+AGENT_RUNTIME=ai-sdk
+AI_PROVIDER=azure
+AI_MODEL=my-gpt-deployment      # the DEPLOYMENT name you chose, not the vendor model id
+AZURE_API_KEY=...               # or put it in the vault
+AZURE_RESOURCE_NAME=contoso-ai  # the {name} in https://{name}.openai.azure.com
+```
+
+Optional: `AZURE_API_VERSION` pins an api-version if your tenant requires one,
+and `AI_BASE_URL` replaces the resource-name URL entirely for sovereign clouds
+(Azure Government, custom domains). Usage lands on your Azure invoice; nothing
+is billed through us.
 
 ## Self-hosted models
 

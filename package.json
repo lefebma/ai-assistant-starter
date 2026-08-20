@@ -20,6 +20,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@ai-sdk/azure": "^3.0.103",
     "@ai-sdk/anthropic": "^3.0.98",
     "@ai-sdk/google": "^3.0.95",
     "@ai-sdk/mcp": "^1.0.63",
