@@ -71,9 +71,8 @@ export function buildNextSteps(i: NextStepsInput): NextStep[] {
   if (i.outlookAddress) {
     steps.push({ text: 'Set up Microsoft 365 credentials (docs/SETUP-GUIDE.md > Outlook)' })
   }
-  if (i.wordsmith) {
-    steps.push({ text: 'Optional: drop writing samples into skills/wordsmith/voice-samples/' })
-  }
+  // Wordsmith voice samples are always a good idea — mention unconditionally.
+  steps.push({ text: 'Optional: drop writing samples into skills/wordsmith/voice-samples/' })
 
   // Safe to run alongside the service: --selftest returns before the app takes
   // the PID lock, so it never disturbs a running instance.
