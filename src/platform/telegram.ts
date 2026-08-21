@@ -3,12 +3,39 @@
  * Wraps all Telegram-specific I/O: polling, sending, editing, formatting.
  */
 
-import { Bot, InputFile, InlineKeyboard } from 'grammy'
+import { Bot, InputFile, InlineKeyboard, type Transformer } from 'grammy'
 import { downloadTelegramFile, UPLOADS_DIR } from '../media.js'
 import { hasProcessedUpdate, markUpdateProcessed } from '../db.js'
 import { handlePollingTermination } from '../infra/telegram-conflict.js'
 import { logger } from '../logger.js'
 import type { PlatformAdapter, IncomingMessage, SendOptions } from './types.js'
+
+/**
+ * Builds a grammY API transformer that reports every completed `getUpdates`
+ * round trip as activity.
+ *
+ * The polling watchdog in index.ts restarts the process when it stops seeing
+ * activity. Activity used to be reported from bot middleware, which grammY
+ * only runs when an update actually arrives, so a quiet chat was
+ * indistinguishable from a wedged poller: an idle box restarted itself once
+ * per watchdog interval, and raising the interval only traded that churn for
+ * a longer blind spot. A healthy long poll returns at least every ~30s
+ * whether or not anyone said anything, so the poll is the liveness signal.
+ *
+ * Two deliberate exclusions:
+ * - Failed calls do not count. A 409 from a duplicate poller is exactly the
+ *   failure the watchdog exists to catch.
+ * - Other API methods do not count. A bot that can still send (a scheduled
+ *   task, say) but can no longer poll is a real outage, and counting outbound
+ *   calls would hide it.
+ */
+export function createPollActivityTransformer(onActivity: () => void): Transformer {
+  return async (prev, method, payload, signal) => {
+    const res = await prev(method, payload, signal)
+    if (method === 'getUpdates' && res.ok) onActivity()
+    return res
+  }
+}
 
 export class TelegramAdapter implements PlatformAdapter {
   readonly name = 'telegram' as const
@@ -158,6 +185,9 @@ export class TelegramAdapter implements PlatformAdapter {
     this.bot.catch((err) => {
       logger.error({ err: err.error }, 'Bot error')
     })
+
+    // Report poll liveness to the watchdog (see createPollActivityTransformer).
+    this.bot.api.config.use(createPollActivityTransformer(() => this.activityHandler?.()))
 
     // Start polling
     this.bot.start().catch((err) => {

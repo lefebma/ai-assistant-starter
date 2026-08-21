@@ -156,8 +156,14 @@ async function main(): Promise<void> {
   // Start HTTP server (voice / custom-LLM endpoint)
   startHttpServer()
 
-  // Polling watchdog: if no activity for 30 min, exit for restart.
+  // Polling watchdog: exit for restart once the poller goes quiet.
   // Only for polling-based platforms. Socket-based ones reconnect internally.
+  //
+  // "Activity" is a completed getUpdates round trip, not an inbound message
+  // (see createPollActivityTransformer in platform/telegram.ts), so a healthy
+  // poller checks in every ~30s no matter how quiet the chat is. That makes
+  // the default threshold below a genuine liveness bound rather than a cap on
+  // how long a user may stay silent before the box restarts itself.
   if (platform === 'telegram') {
     const WATCHDOG_TIMEOUT_MS = Number(process.env.WATCHDOG_TIMEOUT_MIN || 0) * 60_000 || 30 * 60_000
     let lastActivity = Date.now()
