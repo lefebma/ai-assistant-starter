@@ -44,6 +44,9 @@ const KEY_ENV: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
   google: 'GOOGLE_API_KEY',
+  // azure has NO default model on purpose: the model id is the tenant's
+  // deployment name, so cert runs must pass --azure-model=<deployment>.
+  azure: 'AZURE_API_KEY',
 }
 
 /** Print a task × lane grid so cross-provider differences are legible at a glance. */
@@ -94,8 +97,10 @@ function buildProviderLanes(providersArg: string, args: string[]): Array<[string
     if (!keyEnv) throw new Error(`Unknown provider '${provider}'. Known: ${Object.keys(KEY_ENV).join(', ')}`)
     const apiKey = read(keyEnv)
     if (!apiKey) throw new Error(`Provider '${provider}' needs ${keyEnv} in .env`)
-    const baseURL = provider === 'openai' ? read('AI_BASE_URL') : undefined
-    const model = buildModel(provider, modelId, { apiKey, baseURL })
+    const baseURL = provider === 'openai' || provider === 'azure' ? read('AI_BASE_URL') : undefined
+    const resourceName = provider === 'azure' ? read('AZURE_RESOURCE_NAME') : undefined
+    const apiVersion = provider === 'azure' ? read('AZURE_API_VERSION') : undefined
+    const model = buildModel(provider, modelId, { apiKey, baseURL, resourceName, apiVersion })
     return [`${provider} (${modelId})`, new AiSdkAgentRuntime(undefined, model)] as [string, AgentRuntime]
   })
 }
