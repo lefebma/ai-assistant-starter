@@ -25,7 +25,7 @@
 //
 // Voice samples: drop-in *.md files under voice-samples/ (except README.md)
 // are appended to the voice block automatically.
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -216,6 +216,22 @@ async function main() {
   userText += `Task:\n${task}`
 
   const req = buildRequest(target, voice, userText)
+
+  // WORDSMITH_DRY_RUN=1 prints the resolved call (key redacted) and exits
+  // without any network I/O. Used by the test suite and handy when debugging
+  // an install's provider wiring.
+  if (process.env.WORDSMITH_DRY_RUN) {
+    console.log(
+      JSON.stringify({
+        provider: target.provider,
+        model: target.model,
+        url: req.url.replace(`key=${target.apiKey}`, 'key=REDACTED'),
+        temperature: req.body.temperature ?? null,
+        system: Boolean(req.body.system || req.body.system_instruction || (req.body.messages ?? []).some((m) => m.role === 'system')),
+      })
+    )
+    return
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 120_000)
   let res
@@ -251,6 +267,15 @@ async function main() {
 }
 
 // Run only when invoked directly; importable for tests without side effects.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// realpath both sides: Node realpaths the entry module, so a lexical compare
+// breaks behind symlinks (macOS /var -> /private/var, symlinked installs).
+const invokedDirectly = (() => {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+})()
+if (invokedDirectly) {
   await main()
 }
