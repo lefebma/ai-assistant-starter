@@ -7,16 +7,23 @@
  * present, and a clear error when no key exists at all. These tests import
  * the template's pure helpers directly; main() only runs when the script is
  * invoked as a CLI.
+ *
+ * The import is a native dynamic import via a file:// URL (with @vite-ignore)
+ * instead of a static specifier: vite's transform of a static .mjs import
+ * from outside the test root breaks on Windows runners with a bogus
+ * SyntaxError, while the runtime import behaves identically on all three
+ * platforms.
  */
 import { describe, expect, it } from 'vitest'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — plain .mjs template, no type declarations on purpose
-import {
-  parseDotEnv,
-  resolveTarget,
-  buildRequest,
-  extractText,
-} from '../templates/skills/wordsmith/wordsmith.mjs'
+import { pathToFileURL } from 'node:url'
+import { join } from 'node:path'
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const mod: any = await import(
+  /* @vite-ignore */
+  pathToFileURL(join(__dirname, '..', 'templates', 'skills', 'wordsmith', 'wordsmith.mjs')).href
+)
+const { parseDotEnv, resolveTarget, buildRequest, extractText } = mod
 
 describe('parseDotEnv', () => {
   it('parses KEY=value lines, strips quotes, ignores junk', () => {
