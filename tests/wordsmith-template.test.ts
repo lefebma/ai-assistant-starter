@@ -9,21 +9,31 @@
  * invoked as a CLI.
  *
  * The import is a native dynamic import via a file:// URL (with @vite-ignore)
- * instead of a static specifier: vite's transform of a static .mjs import
- * from outside the test root breaks on Windows runners with a bogus
- * SyntaxError, while the runtime import behaves identically on all three
- * platforms.
+ * inside beforeAll, instead of a static specifier: vite's handling of a
+ * static .mjs import from outside the test root broke on Windows runners
+ * with a bogus SyntaxError (so did top-level await), while a runtime import
+ * inside a hook behaves identically on all three platforms.
  */
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const mod: any = await import(
-  /* @vite-ignore */
-  pathToFileURL(join(__dirname, '..', 'templates', 'skills', 'wordsmith', 'wordsmith.mjs')).href
-)
-const { parseDotEnv, resolveTarget, buildRequest, extractText } = mod
+let parseDotEnv: any
+let resolveTarget: any
+let buildRequest: any
+let extractText: any
+
+beforeAll(async () => {
+  const url = pathToFileURL(
+    join(process.cwd(), 'templates', 'skills', 'wordsmith', 'wordsmith.mjs')
+  ).href
+  const mod: any = await import(/* @vite-ignore */ url)
+  parseDotEnv = mod.parseDotEnv
+  resolveTarget = mod.resolveTarget
+  buildRequest = mod.buildRequest
+  extractText = mod.extractText
+})
 
 describe('parseDotEnv', () => {
   it('parses KEY=value lines, strips quotes, ignores junk', () => {
