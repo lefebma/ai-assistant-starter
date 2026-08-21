@@ -12,7 +12,7 @@
  * get one, so /update could not even reach its first step there.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync, rmSync, statSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, cpSync, rmSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { logger } from './logger.js'
@@ -28,6 +28,7 @@ import {
   PRESERVED_PATHS,
   type InstallEnvironment,
 } from './update/plan.js'
+import { moveAside, moveInto, restoreBackup } from './update/swap.js'
 
 
 /**
@@ -218,17 +219,12 @@ function extractTarGz(archive: string, into: string): void {
   execFileSync('tar', ['-xzf', archive, '-C', into], { timeout: 120_000 })
 }
 
-/** Copy a file or directory, replacing whatever is at the destination. */
-function replacePath(src: string, dst: string): void {
-  const stat = statSync(src)
-  if (stat.isDirectory()) {
-    if (existsSync(dst)) rmSync(dst, { recursive: true, force: true })
-    cpSync(src, dst, { recursive: true })
-  } else {
-    mkdirSync(dirname(dst), { recursive: true })
-    cpSync(src, dst)
-  }
-}
+/**
+ * Which stage of the swap an update died in. Rollback needs to know: after a
+ * failed apply the target paths hold disposable new payload; after a failed
+ * stash they hold the remains of the old install (src/update/swap.ts).
+ */
+type SwapPhase = 'fetch' | 'stash' | 'apply'
 
 // ── Apply update ──
 
@@ -278,6 +274,7 @@ async function applyBundleUpdate(
 ): Promise<UpdateResult> {
   const backupDir = resolve(PROJECT_ROOT, 'store', `backup-v${currentVersion}-${Date.now()}`)
   const tempDir = resolve(PROJECT_ROOT, 'store', 'update-temp')
+  let phase: SwapPhase = 'fetch'
 
   try {
     logger.info({ targetVersion, assetUrl }, 'Downloading release payload')
@@ -294,18 +291,15 @@ async function applyBundleUpdate(
       throw new Error('Release payload has no app/ directory')
     }
 
-    logger.info({ backupDir }, 'Backing up current payload')
-    mkdirSync(backupDir, { recursive: true })
-    for (const p of BUNDLE_PAYLOAD_PATHS) {
-      const src = resolve(PROJECT_ROOT, p)
-      if (existsSync(src)) replacePath(src, resolve(backupDir, p))
-    }
+    // Rename, never delete: this process still has native addons mapped from
+    // node_modules, and Windows refuses to unlink those (issue #27).
+    logger.info({ backupDir }, 'Moving current payload aside')
+    phase = 'stash'
+    moveAside(PROJECT_ROOT, backupDir, BUNDLE_PAYLOAD_PATHS)
 
-    logger.info('Applying release payload')
-    for (const p of BUNDLE_PAYLOAD_PATHS) {
-      const src = resolve(payloadDir, p)
-      if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
-    }
+    logger.info('Moving release payload into place')
+    phase = 'apply'
+    moveInto(payloadDir, PROJECT_ROOT, BUNDLE_PAYLOAD_PATHS)
 
     try {
       const syncResult = syncAlwaysOnSkills()
@@ -334,13 +328,10 @@ async function applyBundleUpdate(
       message: `Updated from ${currentVersion} to ${targetVersion}. Restart to activate.`,
     }
   } catch (err) {
-    logger.error({ err }, 'Bundle update failed, rolling back')
+    logger.error({ err, phase }, 'Bundle update failed, rolling back')
     try {
-      if (existsSync(backupDir)) {
-        for (const p of BUNDLE_PAYLOAD_PATHS) {
-          const src = resolve(backupDir, p)
-          if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
-        }
+      if (phase !== 'fetch' && existsSync(backupDir)) {
+        restoreBackup(PROJECT_ROOT, backupDir, BUNDLE_PAYLOAD_PATHS, { clearTargets: phase === 'apply' })
       }
     } catch (rollbackErr) {
       logger.error({ rollbackErr }, 'Rollback also failed')
@@ -360,6 +351,7 @@ async function applyBundleUpdate(
 async function applySourceUpdate(currentVersion: string, targetVersion: string): Promise<UpdateResult> {
   const backupDir = resolve(PROJECT_ROOT, 'store', `backup-v${currentVersion}-${Date.now()}`)
   const tempDir = resolve(PROJECT_ROOT, 'store', 'update-temp')
+  let phase: SwapPhase = 'fetch'
 
   try {
     // 2. Download and extract the source tarball
@@ -377,20 +369,17 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
       throw new Error('Extracted directory not found')
     }
 
-    // 4. Backup current engine files
-    logger.info({ backupDir }, 'Backing up current engine files')
-    mkdirSync(backupDir, { recursive: true })
-    for (const p of ENGINE_PATHS) {
-      const src = resolve(PROJECT_ROOT, p)
-      if (existsSync(src)) replacePath(src, resolve(backupDir, p))
-    }
+    // 4. Move current engine files aside (same rename-based swap as the
+    // bundle path; engine files are not memory-mapped, but one mechanism
+    // beats two)
+    logger.info({ backupDir }, 'Moving current engine files aside')
+    phase = 'stash'
+    moveAside(PROJECT_ROOT, backupDir, ENGINE_PATHS)
 
-    // 5. Copy engine files from update (skip preserved paths)
+    // 5. Move engine files in from the update (skip preserved paths)
     logger.info('Applying update files')
-    for (const p of ENGINE_PATHS) {
-      const src = resolve(extractedDir, p)
-      if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
-    }
+    phase = 'apply'
+    moveInto(extractedDir, PROJECT_ROOT, ENGINE_PATHS)
 
     // 6. Copy any new top-level files that aren't preserved
     // (e.g., new config files, README updates)
@@ -457,13 +446,10 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
     }
   } catch (err) {
     // Attempt rollback
-    logger.error({ err }, 'Update failed, attempting rollback')
+    logger.error({ err, phase }, 'Update failed, attempting rollback')
     try {
-      if (existsSync(backupDir)) {
-        for (const p of ENGINE_PATHS) {
-          const src = resolve(backupDir, p)
-          if (existsSync(src)) replacePath(src, resolve(PROJECT_ROOT, p))
-        }
+      if (phase !== 'fetch' && existsSync(backupDir)) {
+        restoreBackup(PROJECT_ROOT, backupDir, ENGINE_PATHS, { clearTargets: phase === 'apply' })
         // Rebuild after rollback
         execFileSync('npm', ['install', '--production'], { cwd: PROJECT_ROOT, timeout: 120_000, stdio: 'pipe' })
         execFileSync('npm', ['run', 'build'], { cwd: PROJECT_ROOT, timeout: 60_000, stdio: 'pipe' })

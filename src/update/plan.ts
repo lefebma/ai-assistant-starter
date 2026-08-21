@@ -66,6 +66,11 @@ export const PRESERVED_PATHS = ['.env', 'CLAUDE.md', 'PERSONALITY.md', 'skills',
  * `runtime/` is deliberately absent. Replacing the Node binary that is
  * executing the update is a good way to end up with neither the old one nor
  * the new one. A runtime bump ships as a fresh install.
+ *
+ * `node_modules` has a milder version of the same property: its native
+ * addons are mapped into the running process, and Windows will not unlink a
+ * mapped file. It can stay on this list only because the updater swaps by
+ * rename, never by delete (src/update/swap.ts, issue #27).
  */
 export const BUNDLE_PAYLOAD_PATHS = [
   'dist',
