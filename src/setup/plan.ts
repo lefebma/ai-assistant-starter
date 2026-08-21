@@ -152,10 +152,8 @@ export function buildEnvContent(a: Answers): string {
     )
   }
 
-  if (a.skills.wordsmith && !emitted.has('GOOGLE_API_KEY')) {
-    lines.push('', '# Wordsmith (Gemini)', `GOOGLE_API_KEY=${a.keys.google ?? ''}`)
-    emitted.add('GOOGLE_API_KEY')
-  }
+  // Wordsmith no longer needs a separate API key — it writes directly
+  // using the configured LLM provider.
   return lines.join('\n') + '\n'
 }
 
@@ -167,7 +165,7 @@ export function installedSkillsList(a: Answers): string {
   if (a.outlookAddress2) list.push('outlook-secondary')
   if (a.skills.webResearch) list.push('web-research')
   if (a.skills.apollo) list.push('apollo')
-  if (a.skills.wordsmith) list.push('wordsmith')
+  list.push('wordsmith') // always on — writes natively
   if (a.skills.antilibrary) list.push('antilibrary')
   if (a.skills.notion) list.push('notion')
   if (a.skills.kanbanzone) list.push('kanbanzone')
@@ -287,10 +285,8 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
     })
   }
 
-  if (a.skills.wordsmith) {
-    p.push({ type: 'copy', from: 'templates/skills/wordsmith', to: 'skills/wordsmith' })
-    // Key lands in .env via buildEnvContent, not a secret file.
-  }
+  // Wordsmith is always copied — no opt-in needed.
+  p.push({ type: 'copy', from: 'templates/skills/wordsmith', to: 'skills/wordsmith' })
 
   if (a.skills.antilibrary) {
     p.push({ type: 'copy', from: 'templates/skills/antilibrary', to: 'skills/antilibrary' })

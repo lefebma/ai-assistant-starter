@@ -195,11 +195,9 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
   skills.apollo = await p.yesNo('Enable Apollo skill?')
   if (skills.apollo) keys.apollo = await p.ask('Apollo API key (leave blank to fill in later)', '')
 
-  p.say('Wordsmith: delegates prose drafting to Gemini. Key: https://aistudio.google.com/app/apikey')
-  skills.wordsmith = await p.yesNo('Enable Wordsmith skill?')
-  // Do not ask twice for the same key: a Google key given as the model
-  // provider above is the same GOOGLE_API_KEY this skill reads.
-  if (skills.wordsmith && !keys.google) keys.google = await p.ask('Google API key (leave blank to fill in later)', '')
+  // Wordsmith is always on — it writes directly using the configured LLM,
+  // no separate API key needed. The skill template is copied unconditionally
+  // by buildPlanActions.
 
   p.say('Anti-library: structured wiki in an Obsidian vault.')
   skills.antilibrary = await p.yesNo('Enable Anti-library skill?')

@@ -159,7 +159,7 @@ async function main(): Promise<void> {
   // Polling watchdog: if no activity for 30 min, exit for restart.
   // Only for polling-based platforms. Socket-based ones reconnect internally.
   if (platform === 'telegram') {
-    const WATCHDOG_TIMEOUT_MS = 30 * 60 * 1000
+    const WATCHDOG_TIMEOUT_MS = Number(process.env.WATCHDOG_TIMEOUT_MIN || 0) * 60_000 || 30 * 60_000
     let lastActivity = Date.now()
 
     adapter.onActivity(() => {

@@ -56,15 +56,14 @@ describe('buildEnvContent', () => {
     expect(env).toContain('ALLOWED_CHAT_ID=')
   })
 
-  it('emits slack keys for slack installs and the wordsmith key when enabled', () => {
+  it('emits slack keys for slack installs (wordsmith no longer needs a separate key)', () => {
     const env = buildEnvContent({
       ...BASE,
       platform: 'Slack',
-      skills: { ...BASE.skills, wordsmith: true },
-      keys: { google: 'g-123' },
+      skills: { ...BASE.skills },
+      keys: {},
     })
     expect(env).toContain('SLACK_BOT_TOKEN=')
-    expect(env).toContain('GOOGLE_API_KEY=g-123')
     expect(env).not.toContain('TELEGRAM_BOT_TOKEN')
   })
 
@@ -94,15 +93,13 @@ describe('buildEnvContent', () => {
     expect(env).toMatch(/AI_MODEL is REQUIRED/)
   })
 
-  it('never writes GOOGLE_API_KEY twice when Gemini is both the model and Wordsmith', () => {
-    // Two lines with the same name is not a harmless duplicate: the later one
-    // silently wins, so a blank Wordsmith answer would erase the model key.
+  it('writes GOOGLE_API_KEY once when Gemini is the model provider', () => {
     const env = buildEnvContent({
       ...BASE,
       engine: 'api-key',
       aiProvider: 'google',
       aiModel: 'gemini-2.5-pro',
-      skills: { ...BASE.skills, wordsmith: true },
+      skills: { ...BASE.skills },
       keys: { google: 'g-1' },
     })
     expect(env.match(/^GOOGLE_API_KEY=/gm)).toHaveLength(1)
@@ -308,9 +305,10 @@ describe('runWizard', () => {
     expect(openai.aiModel).toBe('gpt-5')
   })
 
-  it('does not ask for the same Google key twice when Wordsmith is also on', async () => {
-    // scripted() throws if the wizard asks more questions than were scripted,
-    // so a second Google prompt fails this test rather than silently passing.
+  it('no longer asks a Wordsmith question (skill is always-on)', async () => {
+    // The wizard should not prompt for Wordsmith at all. The scripted
+    // prompter throws if extra questions appear, so this verifies the
+    // question was removed.
     const a = await runWizard(
       scripted([
         'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
@@ -318,13 +316,13 @@ describe('runWizard', () => {
         ...tail([
           false, // web research
           false, // apollo
-          true, //  wordsmith enabled, key already known
+          // no wordsmith question
           false, false, false, false,
         ]),
       ]),
       '/repo'
     )
-    expect(a.skills.wordsmith).toBe(true)
+    expect(a.skills.wordsmith).toBe(false) // field exists but is never set true by wizard
     expect(a.keys.google).toBe('g-1')
   })
 
