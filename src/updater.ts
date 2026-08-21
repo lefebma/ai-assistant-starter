@@ -57,6 +57,13 @@ const GITHUB_REPO = 'lefebma/ai-assistant-starter'
 const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}/main`
 const GITHUB_TARBALL_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz`
 
+/** Auth headers for private-repo access. Without a token every fetch 404s. */
+function githubHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = process.env.GITHUB_TOKEN
+  if (!token) return extra
+  return { Authorization: `Bearer ${token}`, ...extra }
+}
+
 // Files that get replaced during a source update (engine + config + bundled templates).
 // `templates/` ships new always-on skills and updated optional-skill templates;
 // existing user skills under `skills/` are preserved (PRESERVED_PATHS above).
@@ -142,7 +149,9 @@ export async function checkForUpdate(useCache = false): Promise<UpdateStatus> {
   }
 
   try {
-    const resp = await fetch(`${GITHUB_RAW_BASE}/VERSION`)
+    const resp = await fetch(`${GITHUB_RAW_BASE}/VERSION`, {
+      headers: githubHeaders(),
+    })
     if (!resp.ok) {
       throw new Error(`GitHub returned ${resp.status}`)
     }
@@ -183,7 +192,7 @@ function currentEnvironment(): InstallEnvironment {
 async function resolveBundleAsset(version: string): Promise<string | null> {
   try {
     const resp = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/v${version}`, {
-      headers: { Accept: 'application/vnd.github+json' },
+      headers: githubHeaders({ Accept: 'application/vnd.github+json' }),
     })
     if (!resp.ok) return null
     const release = (await resp.json()) as { assets?: { name: string; browser_download_url: string }[] }
@@ -197,7 +206,10 @@ async function resolveBundleAsset(version: string): Promise<string | null> {
 // ── Transport ──
 
 async function download(url: string, dest: string): Promise<void> {
-  const resp = await fetch(url, { redirect: 'follow' })
+  const resp = await fetch(url, {
+    redirect: 'follow',
+    headers: githubHeaders({ Accept: 'application/octet-stream' }),
+  })
   if (!resp.ok) throw new Error(`Download failed (${resp.status}) for ${url}`)
   writeFileSync(dest, Buffer.from(await resp.arrayBuffer()))
 }
@@ -476,7 +488,9 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
 
 export async function getChangelog(): Promise<string | null> {
   try {
-    const resp = await fetch(`${GITHUB_RAW_BASE}/CHANGELOG.md`)
+    const resp = await fetch(`${GITHUB_RAW_BASE}/CHANGELOG.md`, {
+      headers: githubHeaders(),
+    })
     if (!resp.ok) return null
     const text = await resp.text()
     // Return just the latest entry (up to the second ## heading)

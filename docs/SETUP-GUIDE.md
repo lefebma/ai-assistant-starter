@@ -496,6 +496,45 @@ Chrome has to be installed for `/browser start` to do anything. `/browser status
 | Scheduled task not firing | Check `sqlite3 store/assistant.db "SELECT * FROM scheduled_tasks"` |
 | Bot token conflict | Only one process can poll a Telegram bot token. Kill duplicates. |
 | Slow responses | Normal for tool-heavy queries. Simple chat is fast, email+calendar lookups take 10-30s. |
+| App crashes on startup (missing module) | The `/update` command only works if the app can start. See [Manual update](#manual-update) below. |
+| `/update` returns "GitHub returned 404" | The repo is private. Add `GITHUB_TOKEN` to your `.env` with a fine-grained PAT that has Contents read access. |
+
+### Manual update
+
+When the app cannot start (e.g. a missing dependency crashes Node on launch), the in-app `/update` command is unreachable. Update manually instead:
+
+1. Download the tarball for your platform from the GitHub release (or from wherever your installer sent it).
+2. Stop the service:
+
+   **macOS:** `launchctl bootout gui/$(id -u)/com.ai-assistant.service`
+   **Linux:** `systemctl --user stop ai-assistant`
+   **Windows:** `.\runtime\node.exe .\dist\scripts\service.js stop`
+
+3. Extract the **app/** subtree from the tarball into your install directory. The tarball contains two top-level directories (`app/` and `runtime/`); you usually only need `app/`:
+
+   **macOS / Linux:**
+   ```
+   tar -xzf ai-assistant-v*.tar.gz --strip-components=1 -C /path/to/install "./app/"
+   ```
+
+   **Windows (PowerShell):** Windows `tar` handles `--strip-components` and path filters inconsistently. Extract to a temp folder first, then copy:
+   ```powershell
+   mkdir $env:TEMP\havn-update
+   tar -xzf "$env:USERPROFILE\Downloads\ai-assistant-v1.15.0-win32-x64.tar.gz" -C $env:TEMP\havn-update
+   Copy-Item "$env:TEMP\havn-update\app\*" -Destination C:\Users\you\havn -Recurse -Force
+   ```
+
+4. Verify: `type VERSION` (or `cat VERSION`) should show the new version.
+5. Test: run the app directly to confirm it starts without errors:
+
+   ```
+   ./runtime/node dist/src/index.js        # macOS/Linux
+   .\runtime\node.exe .\dist\src\index.js   # Windows
+   ```
+
+6. Start the service again (reverse of step 2, or `.\runtime\node.exe .\dist\scripts\service.js start` on Windows).
+
+Your `.env`, `skills/`, and `store/` are preserved because the tarball does not contain those files.
 
 ### Still stuck? Send a support request
 

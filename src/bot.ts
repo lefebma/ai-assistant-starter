@@ -569,7 +569,11 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
   if (!subcmd || subcmd === 'check') {
     const status = await checkForUpdate(false)
     if (status.error) {
-      await adapter.sendMessage(chatId, `Update check failed: ${status.error}`)
+      let errMsg = `Update check failed: ${status.error}`
+      if (status.error.includes('404') && !process.env.GITHUB_TOKEN) {
+        errMsg += '\n\nThe repo is private. Add GITHUB_TOKEN to your .env (a fine-grained PAT with Contents read access).'
+      }
+      await adapter.sendMessage(chatId, errMsg)
       return
     }
     if (status.updateAvailable && status.latestVersion) {
