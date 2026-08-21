@@ -27,6 +27,7 @@ import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
 import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
 import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog } from './updater.js'
+import { workingPhrase } from './working-indicator.js'
 import {
   collectDiagnostics,
   buildSupportDraft,
@@ -172,7 +173,9 @@ async function handleMessage(
   try {
     const onToolProg = streamingEnabled
       ? (toolName: string, _status: string) => {
-          const indicator = `\n\n>> ${toolName}...`
+          // Human phrase, never the raw tool name (card #97): ">> Running a
+          // command..." instead of ">> bash...".
+          const indicator = `\n\n>> ${workingPhrase(toolName)}...`
           scheduleStreamEdit((pendingPreviewText || '') + indicator)
         }
       : undefined
