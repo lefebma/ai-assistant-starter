@@ -129,6 +129,27 @@ Havn: provisioned, awaiting first-run setup.
 Provisioning leaves the systemd unit **registered but disabled** — the
 service has nothing to run on yet. That is the point of the finishing steps.
 
+## If provisioning fails
+
+`cloud-init status --long` says `error` and `/var/log/havn-provision.log` is
+the place to look. The MOTD only appears when the script ran to its end, so
+no MOTD on login means it stopped early. Two failures the template now guards
+against, in case they show up in a different costume:
+
+- **`node --version` prints v18.** The NodeSource installer was piped into
+  bash and a child process ate the rest of the script from stdin (debconf's
+  "pending kernel upgrade" dialog does this when `package_upgrade` installs a
+  newer kernel than the image boots). The template runs the installer from a
+  file and fails loudly if Node is not 22.
+- **`sudo: Account or password is expired` at the clone step.** Hetzner's
+  vendor-data sets and expires a root password; sudo checks the invoking
+  user's (root's) account and refuses. The template switches to `havn` with
+  `runuser`, whose PAM stack has no account phase.
+
+Fix the template, then rebuild rather than repair: regenerate the user-data,
+`hcloud server delete <name>`, and run the create command again. Ten minutes,
+and it proves the fix instead of leaving a hand-patched box behind.
+
 ## Finishing steps (interactive, over SSH)
 
 The wizard and the credential flows are interactive by design; budget 20–30

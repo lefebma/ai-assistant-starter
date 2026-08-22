@@ -67,11 +67,22 @@ write_files:
       set -euo pipefail
       exec > >(tee -a /var/log/havn-provision.log) 2>&1
       echo "havn-provision: start $(date -Is)"
+      # No terminal here: never let apt/debconf/needrestart try to draw a dialog.
+      export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
 
       # --- Node 22 (NodeSource) -------------------------------------------
-      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      # Run the installer from a file, not `curl | bash -`: bash reads a piped
+      # script incrementally, and any child that reads stdin (debconf's
+      # "pending kernel upgrade" dialog, when package_upgrade installed a newer
+      # kernel than the image runs) eats the rest of the script. bash then hits
+      # EOF and exits 0 before the repo is written, and apt installs Ubuntu's
+      # Node 18 instead. Seen on havn-test, 2026-08-22.
+      curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
+      bash /tmp/nodesource_setup.sh
+      rm -f /tmp/nodesource_setup.sh
       apt-get install -y nodejs
       node --version
+      node --version | grep -q '^v22\.' || { echo "havn-provision: expected Node 22, got $(node --version)"; exit 1; }
 
       # --- gog CLI (Gmail/Calendar backend) -------------------------------
       # Linux release assets are gogcli_<version>_linux_{amd64,arm64}.tar.gz
@@ -114,18 +125,20 @@ write_files:
       {{TAILSCALE_CMD}}
 
       # --- Clone and build as the havn user -------------------------------
-      # cloud-init can leave the service account password-expired on some
-      # images, and PAM then refuses sudo -u switches (pilot finding). Clear
-      # the expiry state before the first user switch; the account stays
-      # passwordless and locked either way.
+      # Switch users with runuser, not sudo. Hetzner's vendor-data sets a root
+      # password and expires it (chpasswd: expire: true); sudo runs PAM's
+      # account check on the *invoking* user, root, and refuses with "Account
+      # or password is expired". runuser's PAM stack has no account phase.
+      # (The pilot's chage on havn treated the wrong account; kept because it
+      # is harmless and some images do expire new users too.)
       chage -d "$(date +%F)" -M -1 -E -1 havn
       # The deploy token rides only in the clone URL; the remote is scrubbed
       # immediately after so the token never persists in .git/config.
-      sudo -u havn git clone --branch {{GIT_REF}} \
+      runuser -u havn -- git clone --branch {{GIT_REF}} \
         "https://x-access-token:{{GITHUB_DEPLOY_TOKEN}}@github.com/{{GIT_REPO}}.git" {{INSTALL_DIR}}
-      sudo -u havn git -C {{INSTALL_DIR}} remote set-url origin "https://github.com/{{GIT_REPO}}.git"
-      sudo -u havn mkdir -p {{INSTALL_DIR}}/logs
-      sudo -u havn bash -lc 'cd {{INSTALL_DIR}} && npm ci --no-audit --no-fund && npm run build'
+      runuser -u havn -- git -C {{INSTALL_DIR}} remote set-url origin "https://github.com/{{GIT_REPO}}.git"
+      runuser -u havn -- mkdir -p {{INSTALL_DIR}}/logs
+      runuser -u havn -- bash -lc 'cd {{INSTALL_DIR}} && npm ci --no-audit --no-fund && npm run build'
 
       # --- Service: registered but NOT started ----------------------------
       systemctl daemon-reload
