@@ -71,6 +71,14 @@ export interface PlatformAdapter {
   /** Remove inline buttons from a message */
   clearButtons(chatId: string, messageId: string): Promise<void>
 
+  /**
+   * Delete a user's message from the chat (used by the /secret flow to remove
+   * a pasted key). Optional: not every platform allows deleting user messages
+   * (Slack bots cannot). Returns whether the deletion actually happened so the
+   * caller can tell the user to delete it themselves.
+   */
+  deleteMessage?(chatId: string, messageId: string): Promise<boolean>
+
   // --- Formatting ---
 
   /**

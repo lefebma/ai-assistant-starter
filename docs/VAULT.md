@@ -16,6 +16,36 @@ your home directory doesn't hand over your keys.
   garbage.
 - Vault files are gitignored and never leave your machine.
 
+## From chat: the /secret command
+
+On a hosted or headless install you may have no terminal at all. The `/secret`
+command manages the vault from the chat, and it is built so the key value
+never reaches the AI model: the whole exchange is handled in bot code, outside
+the model conversation.
+
+```
+/secret set OPENAI_API_KEY   - the bot asks for the key as your next message
+/secret list                 - stored key names (values are never shown)
+/secret rm OPENAI_API_KEY    - remove a key
+/secret cancel               - abort a pending set
+```
+
+What happens on `set`: your next message is captured directly into the
+encrypted vault, the key is checked against its provider (a rejected key is
+not saved), your message is deleted from the chat, and the confirmation shows
+only the last four characters. The request expires after 3 minutes, and only
+the primary chat can use the command.
+
+Two honest caveats: your chat platform's servers still see the message in
+transit (Telegram bot chats are not end-to-end encrypted), and on platforms
+where bots cannot delete user messages (Slack) the bot asks you to delete it
+yourself. If your security policy forbids keys transiting chat at all, have
+your operator set the key over SSH with the CLI below.
+
+The model provider picks a new key up immediately. A few features read their
+keys once at startup (voice, the bot token itself), so those apply on the next
+service restart.
+
 ## Commands
 
 Run compiled, after `npm run build`:

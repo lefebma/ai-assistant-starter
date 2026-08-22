@@ -93,6 +93,7 @@ export class TelegramAdapter implements PlatformAdapter {
         userId: String(ctx.from?.id ?? ctx.chat.id),
         text: ctx.message.text,
         type: 'text',
+        messageId: String(ctx.message.message_id),
         updateId: ctx.update.update_id,
       })
     })
@@ -262,6 +263,18 @@ export class TelegramAdapter implements PlatformAdapter {
     // The bot-core handles it via sendMessage.
     void callbackId
     void text
+  }
+
+  async deleteMessage(chatId: string, messageId: string): Promise<boolean> {
+    try {
+      // Bots can delete any message in a private chat within 48h — plenty for
+      // removing a just-pasted secret.
+      await this.bot.api.deleteMessage(Number(chatId), Number(messageId))
+      return true
+    } catch (err) {
+      logger.warn({ err, chatId }, 'Failed to delete message')
+      return false
+    }
   }
 
   async clearButtons(chatId: string, messageId: string): Promise<void> {
