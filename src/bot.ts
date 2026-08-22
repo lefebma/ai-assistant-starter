@@ -28,6 +28,7 @@ import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './br
 import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
 import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog } from './updater.js'
 import { workingPhrase } from './working-indicator.js'
+import { SecretFlow } from './secrets/flow.js'
 import {
   collectDiagnostics,
   buildSupportDraft,
@@ -68,6 +69,10 @@ const unauthorizedReplied = new Set<string>()
 // Initialize ContextEngine with all providers
 const contextEngine = createDefaultEngine()
 
+// /secret command state: captures pasted API keys straight into the vault,
+// bypassing the model entirely (see src/secrets/flow.ts).
+const secretFlow = new SecretFlow()
+
 function isPrimaryChat(chatId: string): boolean {
   return !!PRIMARY_CHAT_ID && chatId === PRIMARY_CHAT_ID
 }
@@ -94,6 +99,30 @@ function extractButtons(text: string): { cleanText: string; labels: string[] } {
     .filter(Boolean)
     .map((l) => l.slice(0, MAX_BUTTON_LABEL))
   return { cleanText: text.replace(BUTTONS_RE, '').trim(), labels }
+}
+
+/**
+ * Deliver a /secret flow reply. When the user's message held a key value it is
+ * deleted from the chat first; if the platform can't delete it (Slack bots
+ * can't remove user messages), the reply says so and the user cleans it up.
+ */
+async function sendSecretReply(
+  adapter: PlatformAdapter,
+  chatId: string,
+  reply: string,
+  opts: { deleteUserMessage?: boolean; messageId?: string }
+): Promise<void> {
+  let text = reply
+  if (opts.deleteUserMessage) {
+    const deleted =
+      opts.messageId && adapter.deleteMessage
+        ? await adapter.deleteMessage(chatId, opts.messageId).catch(() => false)
+        : false
+    if (!deleted) {
+      text += '\n\nI could not delete your message from this chat. Please delete it yourself so the key does not sit in the history.'
+    }
+  }
+  await adapter.sendMessage(chatId, text)
 }
 
 // --- Core message handling ---
@@ -665,7 +694,14 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
 
-    // Handle media
+    // Handle media. While a /secret set is pending, media replies are refused
+    // rather than routed to the model: a voice note or caption sent mid-flow
+    // could carry the key, and transcripts/captions must never reach the agent
+    // in that window.
+    if (secretFlow.hasPending(chatId) && (type === 'voice' || type === 'photo' || type === 'document' || type === 'video')) {
+      await adapter.sendMessage(chatId, 'I am waiting for a secret value. Send it as a plain text message, or /secret cancel.')
+      return
+    }
     if (type === 'voice' && msg.filePath) {
       if (!voiceCapabilities().stt) {
         await adapter.sendMessage(chatId, 'Voice transcription is not enabled. Add OPENAI_API_KEY to .env.')
@@ -707,6 +743,26 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     // handlers still receive `trimmed` so argument case survives.
     const trimmed = text.trim()
     const cmd = commandWord(trimmed)
+
+    // A pending /secret set owns the next text message: capture it in code,
+    // delete it from the chat, never let it near the model. This must run
+    // before the busy check and the support flow — the capture touches
+    // nothing but the vault. capture() is the single gate (it also owns the
+    // expired case, where the late message probably IS a key and still needs
+    // deleting). A command other than /secret cancels the capture instead,
+    // so stale state can't swallow unrelated commands.
+    if (!trimmed.startsWith('/')) {
+      const captured = await secretFlow.capture(chatId, trimmed)
+      if (captured) {
+        await sendSecretReply(adapter, chatId, captured.reply, {
+          deleteUserMessage: captured.deleteUserMessage,
+          messageId: msg.messageId,
+        })
+        return
+      }
+    } else if (cmd !== '/secret' && secretFlow.cancelPending(chatId)) {
+      await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
+    }
 
     // /btw non-abort: read-only commands during active run
     if (isChatBusy(chatId) && isNonAbortMessage(trimmed)) {
@@ -814,6 +870,23 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await handleSkillCommand(adapter, chatId, trimmed)
       return
     }
+    if (cmd === '/secret') {
+      if (!isPrimaryChat(chatId)) {
+        // An inline `/secret set NAME value` from a non-primary chat still
+        // holds a key — delete it even though the command is refused.
+        await sendSecretReply(adapter, chatId, 'Only the primary chat can manage secrets.', {
+          deleteUserMessage: trimmed.split(/\s+/).length > 3,
+          messageId: msg.messageId,
+        })
+        return
+      }
+      const outcome = await secretFlow.handleCommand(chatId, trimmed)
+      await sendSecretReply(adapter, chatId, outcome.reply, {
+        deleteUserMessage: outcome.deleteUserMessage,
+        messageId: msg.messageId,
+      })
+      return
+    }
     if (cmd === '/authorize') {
       await handleAuthorizeCommand(adapter, chatId, trimmed)
       return
@@ -841,6 +914,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/browser - Chrome CDP (start/stop/status)',
         '/steer - Inject mid-run steering message',
         '/skill - Manage skills (list/enable/disable/reload)',
+        '/secret - Manage API keys in the encrypted vault (set/list/rm)',
         '/authorize - Manage multi-chat access (add/remove/list)',
         '/support - Draft and send a support request (confirms before sending)',
         '/update - Check for and apply updates (check/apply)',
@@ -867,6 +941,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'browser', description: 'Chrome CDP (start/stop/status)' },
           { command: 'steer', description: 'Inject mid-run steering message' },
           { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
+          { command: 'secret', description: 'Manage API keys in the encrypted vault' },
           { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
           { command: 'support', description: 'Draft and send a support request' },
           { command: 'update', description: 'Check for and apply updates' },
