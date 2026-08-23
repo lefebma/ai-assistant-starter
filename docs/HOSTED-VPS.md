@@ -200,21 +200,64 @@ Fallback that definitely works today: an Anthropic **API key** in `.env`
 (`AGENT_RUNTIME=ai-sdk`, `AI_PROVIDER=anthropic`, `ANTHROPIC_API_KEY=...`),
 billed per use. See `docs/SETUP-GUIDE.md > Signing in`.
 
-### 3. Connect Gmail with gog — *verify during pilot*
+### 3. Connect Gmail with gog
 
-`gog` is already installed at `/usr/local/bin/gog`. Two headless wrinkles:
+`gog` is already installed at `/usr/local/bin/gog`. Confirmed end-to-end on
+havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
 
-- **Keyring:** headless Linux has no Secret Service, so gog's default token
-  store may not open. gog supports a file-based keyring mode; run
-  `gog auth doctor` first and switch the keyring backend to file mode if it
-  complains. *Pilot check: capture the exact flag/config line here once
-  confirmed on Ubuntu 24.04.*
-- **OAuth without a browser:** `gog auth add you@gmail.com --services
-  gmail,calendar` wants to open a browser. Candidates: a manual/console URL
-  flow if gog offers one, SSH port-forwarding the local callback
-  (`ssh -L 8080:localhost:8080 havn@<host>`) and completing the consent in
-  your local browser, or completing auth on your Mac and copying gog's token
-  store across. *Pilot check: record which of these actually works.*
+- **Keyring.** Headless Linux has no Secret Service, so gog's default token
+  store won't open. Switch to the file backend:
+
+  ```bash
+  gog config set keyring_backend file
+  ```
+
+  (That's a config key, not a CLI flag.) File-backend tokens are encrypted
+  with `GOG_KEYRING_PASSWORD`. Put it in `.env` — systemd's `EnvironmentFile`
+  picks it up for the service automatically — but it must **also** be
+  exported by hand in any interactive SSH session, since `.env` isn't
+  auto-sourced by a plain shell:
+
+  ```bash
+  export GOG_KEYRING_PASSWORD=<same value as in .env>
+  ```
+
+  Skip that and `gog auth doctor` fails with `GOG_KEYRING_PASSWORD is not set
+  in a non-interactive process`.
+
+- **OAuth without a browser.** Use gog's built-in remote flow — no listener,
+  no open port needed, which fits these boxes better than SSH port-forwarding
+  the callback (ufw denies all inbound, remember):
+
+  ```bash
+  gog auth add you@gmail.com --services gmail,calendar --remote --step 1
+  ```
+
+  This prints an `auth_url`. Open it in a local browser, complete consent,
+  then copy the (broken) `127.0.0.1:...` redirect URL from the browser's
+  address bar and finish the flow:
+
+  ```bash
+  gog auth add you@gmail.com --services gmail,calendar --remote --step 2 \
+    --auth-url '<full redirect URL>'
+  ```
+
+  **The `--auth-url` value must be single-quoted.** It contains unescaped
+  `&`, which bash reads as background-job separators — paste it unquoted and
+  the command silently receives only the fragment before the first `&` (no
+  `code=` param), while the discarded remainder shows up as bogus background
+  "commands". Don't try to fix a parse error by stripping `http://` or the
+  host either — that makes it worse: Go's URL parser then rejects it with
+  `first path segment cannot contain colon`. OAuth codes are single-use and
+  short-lived, so after a couple of mangled attempts don't try to salvage
+  one — rerun `--step 1` for a fresh code and do `--step 2` once, correctly
+  quoted.
+
+**Common follow-on failure:** Gmail works but Calendar 403s with
+`accessNotConfigured`. Cause: the OAuth client's GCP project has the Gmail
+API enabled but not the Calendar API. Fix in Cloud Console → **APIs &
+Services → Library → Google Calendar API → Enable**, wait ~1-2 minutes, no
+re-auth needed.
 
 The Google OAuth client setup itself (Cloud Console, consent screen,
 publish-to-production) is unchanged from `docs/SETUP-GUIDE.md > Gmail` and
