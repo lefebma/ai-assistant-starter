@@ -51,8 +51,10 @@ approval flows, and files the user sends. Validated on a hosted VPS box.
   buttons, cleared card (plain text), typing.
 - `conversations.ts` — conversation-reference store. New SQLite table
   `teams_conversations(conversation_id PK, service_url, bot_id, user_id,
-  tenant_id, updated_at)`. Upsert on every inbound activity; read for every
-  outbound call. Proactive sends (scheduled tasks, briefings) depend on it.
+  tenant_id, updated_at)` plus `teams_processed_activities(activity_id PK,
+  processed_at)` for replay protection. Upsert on every inbound activity;
+  read for every outbound call. Proactive sends (scheduled tasks, briefings)
+  depend on it.
 
 ### HTTP seam
 
@@ -117,7 +119,8 @@ push-based and needs no change there.
 3. Respond `200` immediately, then process asynchronously. Teams expects a
    response within 15 s and our agent turns run longer. Any error after the
    200 is logged with the activity id and not retried.
-4. Dedupe on `activity.id` with the existing `processed_updates` table.
+4. Dedupe on `activity.id` with `teams_processed_activities` (Teams ids are
+   strings; the Telegram table's key is an integer).
 5. Upsert the conversation reference.
 6. Map by `activity.type`:
    - `message` with `value.btn` (a `messageBack` click) →
@@ -222,7 +225,8 @@ the Teams admin publishes it to the org catalog; both paths in the runbook.
   line per minute with a count).
 - Outbound: retry policy in `connector.ts` (above). Failures propagate like
   Telegram send failures; the bot logs and continues.
-- Replay: `processed_updates` on `activity.id`, 7-day window as today.
+- Replay: `teams_processed_activities` on `activity.id`, 7-day window like
+  Telegram's `processed_updates`.
 - Edge: Caddy proxies only `/api/teams/*`, 404 elsewhere; ufw 80/443 only;
   3030 never exposed. Certificates are Caddy's responsibility.
 - Secrets: `TEAMS_APP_SECRET` in `.env` only, never logged. Expiry (24
