@@ -115,3 +115,25 @@ export function cleanupOldUploads(maxAgeMs = 24 * 60 * 60 * 1000): void {
     // Uploads dir may not exist yet
   }
 }
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+
+/**
+ * Download any URL into the uploads dir. Used by adapters whose files come
+ * with a plain (or bearer-authenticated) URL rather than a Telegram file id.
+ */
+export async function downloadToUploads(
+  url: string,
+  filename: string,
+  headers?: Record<string, string>,
+  fetchImpl: FetchLike = (input, init) => fetch(input, init)
+): Promise<string> {
+  const resp = await fetchImpl(url, { headers })
+  if (!resp.ok) throw new Error(`Download failed (${resp.status}) for ${url}`)
+  const buffer = Buffer.from(await resp.arrayBuffer())
+  const ext = extname(filename)
+  const base = sanitizeFilename(basename(filename, ext))
+  const destPath = resolve(UPLOADS_DIR, `${Date.now()}_${base}${ext}`)
+  writeFileSync(destPath, buffer)
+  return destPath
+}
