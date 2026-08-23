@@ -782,7 +782,12 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
 
-    // Command routing
+    // Command routing. The log line is the only trace a command leaves at
+    // info level (agent-bound messages log "Processing message" instead);
+    // without it a handled command is indistinguishable from a dropped one.
+    if (trimmed.startsWith('/')) {
+      logger.info({ chatId, command: cmd }, 'Handling command')
+    }
     if (cmd === '/start') {
       await adapter.sendMessage(chatId, 'AI Assistant is running. Send me anything and I\'ll process it with Claude Code.')
       return
