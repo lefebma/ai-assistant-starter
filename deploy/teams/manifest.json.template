@@ -1,0 +1,36 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "{{APP_ID}}",
+  "packageName": "com.elspartners.havn.{{SLUG}}",
+  "developer": {
+    "name": "{{DEVELOPER_NAME}}",
+    "websiteUrl": "{{WEBSITE_URL}}",
+    "privacyUrl": "{{WEBSITE_URL}}",
+    "termsOfUseUrl": "{{WEBSITE_URL}}"
+  },
+  "name": {
+    "short": "{{NAME}}",
+    "full": "{{NAME}} (Havn assistant)"
+  },
+  "description": {
+    "short": "Your personal AI assistant",
+    "full": "{{NAME}} is your personal AI assistant, hosted for you by {{DEVELOPER_NAME}}. Chat with it here like you would with a colleague."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#1F2937",
+  "bots": [
+    {
+      "botId": "{{APP_ID}}",
+      "scopes": ["personal"],
+      "supportsFiles": true,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}
