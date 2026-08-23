@@ -267,8 +267,8 @@ the credentials blank).
    that can create app registrations and Azure Bot resources:
 
    ```bash
-   scripts/teams-register.sh <name> <hostname>              # multi-tenant
-   scripts/teams-register.sh <name> <hostname> --tenant <id>  # single-tenant, the firm's own
+   npm run teams-register -- <name> <hostname>                # multi-tenant
+   npm run teams-register -- <name> <hostname> --tenant <id>  # single-tenant, the firm's own
    ```
 
    It prints three lines for the box's `.env`: `TEAMS_APP_ID`,

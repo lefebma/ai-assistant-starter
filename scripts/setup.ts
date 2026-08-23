@@ -155,7 +155,7 @@ async function main(): Promise<void> {
   let teamsAppSecret = ''
   let teamsTenantId = ''
   if (answers.platform === 'Teams') {
-    prompter.say('Register the bot first (docs/HOSTED-VPS.md > Teams, or scripts/teams-register.sh). Blank = fill in later.')
+    prompter.say('Register the bot first (docs/HOSTED-VPS.md > Teams, or npm run teams-register). Blank = fill in later.')
     teamsAppId = await prompter.ask('Teams app (client) ID', '')
     teamsAppSecret = await prompter.ask('Teams app secret', '')
     teamsTenantId = await prompter.ask('Tenant ID (blank for a multi-tenant registration)', '')
