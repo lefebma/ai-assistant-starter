@@ -85,3 +85,68 @@ export class InboundTokenValidator {
     return this.keySet
   }
 }
+
+export interface OutboundTokenOptions {
+  appId: string
+  appSecret: string
+  tenantId?: string
+  fetchImpl?: FetchLike
+  now?: () => number
+}
+
+const REFRESH_MARGIN_MS = 300_000
+
+export class OutboundTokenProvider {
+  private readonly opts: OutboundTokenOptions
+  private readonly fetchImpl: FetchLike
+  private readonly now: () => number
+  private cached: { token: string; expiresAt: number } | null = null
+  private inflight: Promise<string> | null = null
+
+  constructor(opts: OutboundTokenOptions) {
+    this.opts = opts
+    this.fetchImpl = opts.fetchImpl ?? ((input, init) => fetch(input, init))
+    this.now = opts.now ?? (() => Date.now())
+  }
+
+  static tokenUrl(tenantId?: string): string {
+    return `https://login.microsoftonline.com/${tenantId ?? 'botframework.com'}/oauth2/v2.0/token`
+  }
+
+  invalidate(): void {
+    this.cached = null
+  }
+
+  async token(): Promise<string> {
+    if (this.cached && this.cached.expiresAt - this.now() > REFRESH_MARGIN_MS) return this.cached.token
+    if (!this.inflight) {
+      this.inflight = this.fetchToken().finally(() => {
+        this.inflight = null
+      })
+    }
+    return this.inflight
+  }
+
+  private async fetchToken(): Promise<string> {
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: this.opts.appId,
+      client_secret: this.opts.appSecret,
+      scope: 'https://api.botframework.com/.default',
+    })
+    const resp = await this.fetchImpl(OutboundTokenProvider.tokenUrl(this.opts.tenantId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    })
+    if (!resp.ok) {
+      // Body may describe the failure; it never contains our secret.
+      const detail = (await resp.text()).slice(0, 200)
+      throw new Error(`Bot Framework token request failed: ${resp.status} ${detail}`)
+    }
+    const json = (await resp.json()) as { access_token?: string; expires_in?: number }
+    if (!json.access_token) throw new Error('Bot Framework token response had no access_token')
+    this.cached = { token: json.access_token, expiresAt: this.now() + (json.expires_in ?? 3600) * 1000 }
+    return this.cached.token
+  }
+}

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { SignJWT, exportJWK, generateKeyPair } from 'jose'
-import { InboundTokenValidator, BOT_FRAMEWORK_ISSUER } from '../src/platform/teams/auth.js'
+import { InboundTokenValidator, BOT_FRAMEWORK_ISSUER, OutboundTokenProvider } from '../src/platform/teams/auth.js'
 
 // jose v6 has no KeyLike export; take the type from generateKeyPair itself.
 type PrivateKey = Awaited<ReturnType<typeof generateKeyPair>>['privateKey']
@@ -86,5 +86,57 @@ describe('InboundTokenValidator', () => {
     const stranger = await generateKeyPair('RS256')
     const v = new InboundTokenValidator({ appId: APP_ID, fetchImpl: fakeFetch(() => [publicJwk], { jwks: 0 }), openIdConfigUrl: OPENID })
     expect(await v.validate(`Bearer ${await sign(stranger.privateKey, 'key-1', {})}`)).toBe(false)
+  })
+})
+
+describe('OutboundTokenProvider', () => {
+  function tokenServer(counter: { calls: number }, expiresIn = 3600) {
+    return async (url: string, init?: RequestInit): Promise<Response> => {
+      counter.calls++
+      expect(url).toBe('https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token')
+      expect(init?.method).toBe('POST')
+      const body = String(init?.body)
+      expect(body).toContain('grant_type=client_credentials')
+      expect(body).toContain(`client_id=${APP_ID}`)
+      expect(body).toContain('client_secret=s3cret')
+      expect(body).toContain(encodeURIComponent('https://api.botframework.com/.default'))
+      return new Response(JSON.stringify({ access_token: `tok-${counter.calls}`, expires_in: expiresIn }), { status: 200 })
+    }
+  }
+
+  it('fetches once and caches', async () => {
+    const counter = { calls: 0 }
+    const p = new OutboundTokenProvider({ appId: APP_ID, appSecret: 's3cret', fetchImpl: tokenServer(counter) })
+    expect(await p.token()).toBe('tok-1')
+    expect(await p.token()).toBe('tok-1')
+    expect(counter.calls).toBe(1)
+  })
+
+  it('refreshes when under five minutes from expiry, and after invalidate()', async () => {
+    const counter = { calls: 0 }
+    let clock = 1_000_000
+    const p = new OutboundTokenProvider({ appId: APP_ID, appSecret: 's3cret', fetchImpl: tokenServer(counter, 600), now: () => clock })
+    expect(await p.token()).toBe('tok-1')
+    clock += 200_000 // 200 s in: still fresh (600 - 200 = 400 s > 300 s)
+    expect(await p.token()).toBe('tok-1')
+    clock += 150_000 // 350 s in: 250 s left < 300 s → refresh
+    expect(await p.token()).toBe('tok-2')
+    p.invalidate()
+    expect(await p.token()).toBe('tok-3')
+  })
+
+  it('uses the tenant endpoint for single-tenant registrations', () => {
+    expect(OutboundTokenProvider.tokenUrl('tenant-1')).toBe('https://login.microsoftonline.com/tenant-1/oauth2/v2.0/token')
+    expect(OutboundTokenProvider.tokenUrl()).toBe('https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token')
+  })
+
+  it('throws with the status, never the secret, when the token endpoint refuses', async () => {
+    const p = new OutboundTokenProvider({
+      appId: APP_ID,
+      appSecret: 's3cret',
+      fetchImpl: async () => new Response('{"error":"invalid_client"}', { status: 401 }),
+    })
+    await expect(p.token()).rejects.toThrow(/401/)
+    await expect(p.token()).rejects.not.toThrow(/s3cret/)
   })
 })
