@@ -60,17 +60,20 @@ that the assistant never calls.
    DISCORD_ALLOWED_USERS=your_user_id
    ```
 
-### Teams Setup (via Power Automate or Azure Bot Service)
-1. Register a bot in [Azure Bot Service](https://portal.azure.com/#create/Microsoft.AzureBot)
-2. Create a Teams app manifest with the bot ID
-3. Deploy the bot endpoint (this project's HTTP server handles the webhook)
-4. Sideload or publish the app in Teams Admin Center
-5. Add to `.env`:
-   ```
-   TEAMS_APP_ID=your_app_id
-   TEAMS_APP_SECRET=your_app_secret
-   TEAMS_TENANT_ID=your_tenant_id
-   ```
+### Teams Setup
+Teams delivers messages by HTTPS, so the assistant needs a public address.
+On a hosted box this is `sudo node dist/scripts/hosted/enable-teams.js <hostname>` (Caddy on 443);
+the full walk-through is in `docs/HOSTED-VPS.md > Teams instead of Telegram`.
+A laptop install would need a tunnel and is not supported for Teams yet.
+
+1. Register the bot: `npm run teams-register -- <name> <hostname>` (needs the
+   Azure CLI, signed in). It prints `TEAMS_APP_ID`, `TEAMS_APP_SECRET` and,
+   for single-tenant registrations, `TEAMS_TENANT_ID`.
+2. Add them to `.env` (or paste the secret with `/secret set TEAMS_APP_SECRET`).
+3. Build the app package: `npm run teams-manifest -- --app-id <id> --name "<assistant>"`.
+4. Upload `deploy/rendered/<name>-teams.zip` in Teams: Apps → Manage your apps → Upload a custom app.
+5. Send the bot anything; it answers with your chat id. Put it in
+   `ALLOWED_CHAT_ID` and restart.
 
 ## Signing in
 
