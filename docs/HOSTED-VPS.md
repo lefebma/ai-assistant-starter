@@ -342,9 +342,11 @@ the credentials blank).
    `ALLOWED_CHAT_ID` in `.env` and restart the service.
 
 What works: text with Markdown, typing indicator, streaming replies,
-approval buttons, files and images sent to the assistant. What does not, yet:
-voice notes, the assistant sending files back (it says where it saved them),
-group chats and channels.
+approval buttons, files and images sent to the assistant, and voice messages
+sent to the assistant (transcribed; needs OPENAI_API_KEY, and recording is a
+Teams mobile-app feature). What does not, yet: the assistant replying with
+voice (Teams has no bot voice bubble), sending files back (it says where it
+saved them), group chats and channels.
 
 ## Updates, snapshots, backups
 

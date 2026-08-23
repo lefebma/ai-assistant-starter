@@ -6,7 +6,7 @@
 import type { IncomingMessage } from '../types.js'
 import type { Activity, ConversationReference, OutboundActivity } from './types.js'
 
-export type AttachmentDownload = { url: string; name: string; needsAuth: boolean; kind: 'photo' | 'document' }
+export type AttachmentDownload = { url: string; name: string; needsAuth: boolean; kind: 'photo' | 'document' | 'voice' }
 
 export type InboundMapping =
   | { kind: 'message'; message: IncomingMessage }
@@ -59,8 +59,21 @@ function buttonLabel(value: unknown): string | null {
   return null
 }
 
+/**
+ * Audio subtypes are normalised to extensions the transcription API accepts
+ * (audio/mp4 is an AAC voice memo: .m4a, not .mp4).
+ */
+const AUDIO_EXTENSIONS: Record<string, string> = {
+  mp4: 'm4a',
+  mpeg: 'mp3',
+  mpga: 'mp3',
+  'x-wav': 'wav',
+}
+
 function extensionFor(contentType: string): string {
-  const sub = contentType.split('/')[1] ?? 'bin'
+  const [type, rawSub] = contentType.split('/')
+  const sub = rawSub ?? 'bin'
+  if (type === 'audio') return (AUDIO_EXTENSIONS[sub] ?? sub).replace(/[^a-z0-9]/gi, '')
   return sub === 'jpeg' ? 'jpg' : sub.replace(/[^a-z0-9]/gi, '')
 }
 
@@ -109,6 +122,14 @@ export function mapInbound(activity: Activity, botId: string): InboundMapping {
         kind: 'attachment',
         download: { url: att.contentUrl, name, needsAuth: true, kind: 'photo' },
         base: { ...common, text: '', type: 'photo', fileName: name, caption: text || undefined },
+      }
+    }
+    if (att.contentType.startsWith('audio/') && att.contentUrl) {
+      const name = att.name ?? `voice-${id || Date.now()}.${extensionFor(att.contentType)}`
+      return {
+        kind: 'attachment',
+        download: { url: att.contentUrl, name, needsAuth: true, kind: 'voice' },
+        base: { ...common, text: '', type: 'voice', fileName: name, caption: text || undefined },
       }
     }
     // text/html and card echoes duplicate activity.text; fall through.

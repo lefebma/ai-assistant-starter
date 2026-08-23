@@ -121,6 +121,40 @@ describe('mapInbound', () => {
     expect(m.download.name).toMatch(/\.png$/)
   })
 
+  it('maps a voice message (audio attachment) to a voice download with the bot token', () => {
+    const m = mapInbound(
+      activity({
+        attachments: [{ contentType: 'audio/mp4', contentUrl: 'https://smba.trafficmanager.net/amer/v3/attachments/v/views/original' }],
+      }),
+      BOT_ID
+    )
+    expect(m.kind).toBe('attachment')
+    if (m.kind !== 'attachment') return
+    expect(m.download.kind).toBe('voice')
+    expect(m.download.needsAuth).toBe(true)
+    expect(m.download.name).toMatch(/\.m4a$/)
+    expect(m.base.type).toBe('voice')
+  })
+
+  it('keeps voice-note text as the caption and maps common audio types to transcribable extensions', () => {
+    const m = mapInbound(
+      activity({
+        text: 'listen to this',
+        attachments: [{ contentType: 'audio/mpeg', contentUrl: 'https://smba.trafficmanager.net/amer/v3/attachments/v/views/original', name: undefined }],
+      }),
+      BOT_ID
+    )
+    expect(m.kind).toBe('attachment')
+    if (m.kind !== 'attachment') return
+    expect(m.download.name).toMatch(/\.mp3$/)
+    expect(m.base.caption).toBe('listen to this')
+    const wav = mapInbound(
+      activity({ attachments: [{ contentType: 'audio/wav', contentUrl: 'https://smba.trafficmanager.net/x' }] }),
+      BOT_ID
+    )
+    if (wav.kind === 'attachment') expect(wav.download.name).toMatch(/\.wav$/)
+  })
+
   it('ignores the text/html duplicate Teams attaches to every message', () => {
     const m = mapInbound(
       activity({ text: 'plain', attachments: [{ contentType: 'text/html', content: '<p>plain</p>' }] }),

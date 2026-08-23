@@ -133,6 +133,25 @@ describe('TeamsAdapter inbound', () => {
     expect(received[1]).toMatchObject({ type: 'photo', filePath: expect.stringMatching(/\.png$/) })
   })
 
+  it('downloads a voice message with the bot token and hands it over as a voice type', async () => {
+    const downloads: Array<{ url: string; headers?: Record<string, string> }> = []
+    const { adapter } = makeAdapter(sent, {
+      download: async (url, name, headers) => {
+        downloads.push({ url, headers })
+        return `/tmp/uploads/${name}`
+      },
+      tokens: { token: async () => 'bot-token', invalidate: () => {} } as never,
+    })
+    adapter.onMessage(async (m) => {
+      received.push(m)
+    })
+    await adapter.processActivity(
+      inbound({ attachments: [{ contentType: 'audio/mp4', contentUrl: 'https://smba.trafficmanager.net/att/voice1' }] })
+    )
+    expect(downloads[0].headers).toEqual({ Authorization: 'Bearer bot-token' })
+    expect(received[0]).toMatchObject({ type: 'voice', filePath: expect.stringMatching(/\.m4a$/) })
+  })
+
   it('turns the bot being added into a /chatid so the owner learns the id to allow', async () => {
     const { adapter } = makeAdapter(sent)
     adapter.onMessage(async (m) => {
