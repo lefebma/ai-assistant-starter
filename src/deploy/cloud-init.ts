@@ -163,7 +163,7 @@ export function buildVars(spec: ClientSpec): Record<string, string> {
       ? 'true  # inbound SSH stays closed; connect over Tailscale'
       : 'ufw allow OpenSSH',
     TAILSCALE_CMD: tailscaleKey
-      ? `curl -fsSL https://tailscale.com/install.sh | sh && tailscale up --auth-key ${tailscaleKey} --ssh --hostname ${hostName}`
+      ? `curl -fsSL https://tailscale.com/install.sh -o /tmp/tailscale_install.sh && sh /tmp/tailscale_install.sh && rm -f /tmp/tailscale_install.sh && tailscale up --auth-key ${tailscaleKey} --ssh --hostname ${hostName}`
       : 'true  # Tailscale not used on this install',
   }
 }

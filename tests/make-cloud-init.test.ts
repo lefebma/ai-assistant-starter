@@ -129,6 +129,9 @@ describe('renderCloudInit', () => {
     expect(ts).not.toContain('ufw allow OpenSSH')
     expect(ts).toContain('inbound SSH stays closed')
     expect(ts).toContain('tailscale up --auth-key tskey-test-not-real --ssh --hostname havn-testclient')
+    // same stdin hazard as the NodeSource installer: run it from a file
+    expect(ts).not.toMatch(/install\.sh\s*\|\s*sh/)
+    expect(ts).toContain('sh /tmp/tailscale_install.sh')
   })
 
   it('embeds the systemd unit, indented as a YAML block, disabled by default', () => {
@@ -155,6 +158,26 @@ describe('renderCloudInit', () => {
     expect(rendered).toContain("npm ci --no-audit --no-fund && npm run build'")
     expect(rendered).toContain('/etc/update-motd.d/99-havn')
     expect(rendered).toContain('npm run setup')
+  })
+
+  it('runs the NodeSource installer from a file, never piped into bash', () => {
+    // `curl | bash -` lets any child that reads stdin (debconf's kernel-upgrade
+    // dialog, seen on havn-test 2026-08-22) eat the rest of the script, so bash
+    // exits 0 early and apt then installs Ubuntu's Node 18 instead of 22.
+    expect(rendered).not.toMatch(/setup_22\.x\s*\|\s*bash/)
+    expect(rendered).toContain('curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh')
+    expect(rendered).toContain('bash /tmp/nodesource_setup.sh')
+    expect(rendered).toContain('export DEBIAN_FRONTEND=noninteractive')
+  })
+
+  it('fails provisioning loudly if the installed Node is not 22', () => {
+    expect(rendered).toContain("node --version | grep -q '^v22\\.' || { echo \"havn-provision: expected Node 22")
+  })
+
+  it('switches to the havn user with runuser, not sudo (root is password-expired on Hetzner images)', () => {
+    expect(rendered).not.toMatch(/sudo -u havn/)
+    expect(rendered).toContain('runuser -u havn -- git clone')
+    expect(rendered).toContain("runuser -u havn -- bash -lc 'cd /home/havn/havn && npm ci --no-audit --no-fund && npm run build'")
   })
 
   it('keeps unattended-upgrades on', () => {
@@ -226,11 +249,11 @@ describe('shipped templates', () => {
     expect(cloudInitTemplate).toContain('find /tmp/gogcli-extract -type f -name gog')
   })
 
-  it('clears the service account expiry before the first sudo -u switch', () => {
-    // Some images leave the cloud-init-created account password-expired and
-    // PAM then refuses sudo -u havn.
+  it('clears the service account expiry before the first user switch', () => {
+    // Some images leave the cloud-init-created account password-expired;
+    // clear it before anything runs as havn.
     const chageAt = cloudInitTemplate.indexOf('chage -d')
-    const firstSwitchAt = cloudInitTemplate.indexOf('sudo -u havn')
+    const firstSwitchAt = cloudInitTemplate.indexOf('runuser -u havn')
     expect(chageAt).toBeGreaterThan(-1)
     expect(firstSwitchAt).toBeGreaterThan(-1)
     expect(chageAt).toBeLessThan(firstSwitchAt)
