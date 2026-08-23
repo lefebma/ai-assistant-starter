@@ -155,6 +155,26 @@ describe('mapInbound', () => {
     if (wav.kind === 'attachment') expect(wav.download.name).toMatch(/\.wav$/)
   })
 
+  it('routes an uploaded audio file to the voice path, not the document path', () => {
+    const m = mapInbound(
+      activity({
+        attachments: [{ contentType: 'application/vnd.microsoft.teams.file.download.info', name: 'memo.m4a', content: { downloadUrl: 'https://f/memo.m4a' } }],
+      }),
+      BOT_ID
+    )
+    expect(m.kind).toBe('attachment')
+    if (m.kind !== 'attachment') return
+    expect(m.download.kind).toBe('voice')
+    expect(m.base.type).toBe('voice')
+    const pdf = mapInbound(
+      activity({
+        attachments: [{ contentType: 'application/vnd.microsoft.teams.file.download.info', name: 'a.pdf', content: { downloadUrl: 'https://f/a.pdf' } }],
+      }),
+      BOT_ID
+    )
+    if (pdf.kind === 'attachment') expect(pdf.base.type).toBe('document')
+  })
+
   it('ignores the text/html duplicate Teams attaches to every message', () => {
     const m = mapInbound(
       activity({ text: 'plain', attachments: [{ contentType: 'text/html', content: '<p>plain</p>' }] }),

@@ -63,6 +63,9 @@ function buttonLabel(value: unknown): string | null {
  * Audio subtypes are normalised to extensions the transcription API accepts
  * (audio/mp4 is an AAC voice memo: .m4a, not .mp4).
  */
+/** Extensions the transcription API accepts, for audio shared as a file. */
+const AUDIO_FILE_EXTENSIONS = /\.(m4a|mp3|mp4|mpeg|mpga|wav|webm|ogg|oga|flac)$/i
+
 const AUDIO_EXTENSIONS: Record<string, string> = {
   mp4: 'm4a',
   mpeg: 'mp3',
@@ -110,10 +113,14 @@ export function mapInbound(activity: Activity, botId: string): InboundMapping {
       const content = (att.content ?? {}) as { downloadUrl?: string }
       if (!content.downloadUrl) continue
       const name = att.name ?? 'file'
+      // Teams offers no voice-memo mic in bot chats, so voice arrives as an
+      // uploaded audio file; route those to transcription instead of the
+      // document path.
+      const voice = AUDIO_FILE_EXTENSIONS.test(name)
       return {
         kind: 'attachment',
-        download: { url: content.downloadUrl, name, needsAuth: false, kind: 'document' },
-        base: { ...common, text: '', type: 'document', fileName: name, caption: text || undefined },
+        download: { url: content.downloadUrl, name, needsAuth: false, kind: voice ? 'voice' : 'document' },
+        base: { ...common, text: '', type: voice ? 'voice' : 'document', fileName: name, caption: text || undefined },
       }
     }
     if (att.contentType.startsWith('image/') && att.contentUrl) {
