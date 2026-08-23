@@ -283,7 +283,7 @@ the credentials blank).
    npm run teams-manifest -- --app-id <TEAMS_APP_ID> --name "<assistant name>"
    ```
 
-   Writes `deploy/rendered/<name>-teams.zip`.
+   Writes `deploy/rendered/<slug>-teams.zip` (the assistant name, lowercased, with dashes).
 
 4. **Install it in Teams.** The user opens Teams → Apps → Manage your apps →
    Upload an app → Upload a custom app, picks the zip, and opens the chat.
@@ -291,8 +291,7 @@ the credentials blank).
    zip to the org catalog (Teams admin center → Teams apps → Manage apps →
    Upload new app) and the user installs it from there.
 
-5. **Claim the chat.** The first message the bot receives makes it reply with
-   the chat id (it treats being added as `/chatid`). Put that id in
+5. **Claim the chat.** Adding the app makes the bot announce the chat id (the adapter treats the install event as `/chatid`; sending `/chatid` shows it again). Put that id in
    `ALLOWED_CHAT_ID` in `.env` and restart the service.
 
 What works: text with Markdown, typing indicator, streaming replies,
