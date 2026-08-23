@@ -237,3 +237,79 @@ describe('TeamsAdapter.handleRequest', () => {
     }
   })
 })
+
+import { upsertConversation } from '../src/platform/teams/conversations.js'
+
+describe('TeamsAdapter outbound', () => {
+  const REF = { conversationId: 'a:out', serviceUrl: 'https://smba.trafficmanager.net/amer/', botId: BOT_ID, userId: 'aad-marc' }
+  let sent: Sent[]
+
+  beforeEach(() => {
+    sent = []
+    upsertConversation(REF)
+  })
+
+  it('sends markdown text and returns the activity id', async () => {
+    const { adapter } = makeAdapter(sent)
+    const id = await adapter.sendMessage('a:out', 'hi **there**')
+    expect(id).toBe('sent-1')
+    expect(sent[0]).toMatchObject({ kind: 'send', conversationId: 'a:out', activity: { type: 'message', text: 'hi **there**', textFormat: 'markdown' } })
+  })
+
+  it('sends a card when buttons are requested, and clears it by replacing with plain text', async () => {
+    const { adapter } = makeAdapter(sent)
+    const id = await adapter.sendMessage('a:out', 'Send this?', { buttons: ['Send', 'Discard'] })
+    expect((sent[0].activity as { attachments: unknown[] }).attachments).toHaveLength(1)
+    await adapter.clearButtons('a:out', id)
+    expect(sent[1]).toMatchObject({ kind: 'update', activityId: id, activity: { type: 'message', text: 'Send this?' } })
+  })
+
+  it('is a no-op when asked to clear buttons on a card it does not remember', async () => {
+    const { adapter } = makeAdapter(sent)
+    await adapter.clearButtons('a:out', 'forgotten')
+    expect(sent).toEqual([])
+  })
+
+  it('throws a clear error when no conversation reference exists yet', async () => {
+    const { adapter } = makeAdapter(sent)
+    await expect(adapter.sendMessage('a:never', 'x')).rejects.toThrow(/message the bot first/)
+  })
+
+  it('sends typing', async () => {
+    const { adapter } = makeAdapter(sent)
+    await adapter.sendTyping('a:out')
+    expect(sent[0]).toMatchObject({ kind: 'typing', conversationId: 'a:out' })
+  })
+
+  it('throttles edits to one per second per conversation and always lands the latest text', async () => {
+    let clock = 10_000
+    const { adapter } = makeAdapter(sent, { now: () => clock })
+    await adapter.editMessage('a:out', 'm1', 'v1')
+    expect(sent).toHaveLength(1)
+    clock += 200
+    await adapter.editMessage('a:out', 'm1', 'v2')
+    clock += 200
+    await adapter.editMessage('a:out', 'm1', 'v3')
+    expect(sent).toHaveLength(1) // v2 and v3 queued, v2 dropped
+    await new Promise((r) => setTimeout(r, 950)) // timer fires at 1000 - 200 = 800 ms real time
+    expect(sent).toHaveLength(2)
+    expect(sent[1]).toMatchObject({ kind: 'update', activityId: 'm1', activity: { text: 'v3' } })
+  })
+
+  it('explains instead of sending files, and refuses to delete user messages', async () => {
+    const { adapter } = makeAdapter(sent)
+    await adapter.sendFile('a:out', '/tmp/x/report.pdf', 'document')
+    expect((sent[0].activity as { text: string }).text).toMatch(/report\.pdf/)
+    expect(await adapter.deleteMessage('a:out', 'm1')).toBe(false)
+  })
+
+  it('formats and splits', () => {
+    const { adapter } = makeAdapter(sent)
+    expect(adapter.formatText('# T\n<b>x</b>')).toBe('**T**\n**x**')
+    const long = Array.from({ length: 300 }, (_, i) => `line ${i} ${'x'.repeat(40)}`).join('\n')
+    const chunks = adapter.splitMessage(long)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(8000)
+    expect(chunks.join('\n')).toBe(long)
+  })
+})

@@ -15,7 +15,8 @@ import { registerHttpRoute } from '../../http-server.js'
 import { logger } from '../../logger.js'
 import { downloadToUploads } from '../../media.js'
 import type { PlatformAdapter, IncomingMessage, SendOptions } from '../types.js'
-import { mapInbound, referenceFrom } from './activities.js'
+import { basename } from 'node:path'
+import { buildCardActivity, buildClearedCardActivity, buildTextActivity, formatForTeams, mapInbound, referenceFrom } from './activities.js'
 import { InboundTokenValidator, OutboundTokenProvider } from './auth.js'
 import { BotConnector } from './connector.js'
 import {
@@ -30,6 +31,7 @@ import type { Activity, ConversationReference, TeamsCredentials } from './types.
 export const TEAMS_WEBHOOK_PATH = '/api/teams/messages'
 const MAX_BODY_BYTES = 1_000_000
 const AUTH_LOG_INTERVAL_MS = 60_000
+const EDIT_INTERVAL_MS = 1000
 
 export interface TeamsAdapterOptions extends TeamsCredentials {
   validator?: Pick<InboundTokenValidator, 'validate'>
@@ -57,6 +59,8 @@ export class TeamsAdapter implements PlatformAdapter {
   private messageHandler: ((msg: IncomingMessage) => Promise<void>) | null = null
   private activityHandler: (() => void) | null = null
   private authFailures = { lastLoggedAt: 0, suppressed: 0 }
+  private cardTexts = new Map<string, string>()
+  private edits = new Map<string, { lastSentAt: number; pending?: { activityId: string; text: string }; timer?: NodeJS.Timeout }>()
 
   constructor(opts: TeamsAdapterOptions) {
     this.appId = opts.appId
@@ -175,32 +179,99 @@ export class TeamsAdapter implements PlatformAdapter {
     return ref
   }
 
-  // --- Outbound (implemented in Task 10) ---
+  // --- Outbound ---
 
-  async sendMessage(_chatId: string, _text: string, _options?: SendOptions): Promise<string> {
-    throw new Error('not implemented')
+  async sendMessage(chatId: string, text: string, options?: SendOptions): Promise<string> {
+    const ref = this.reference(chatId)
+    const buttons = options?.buttons?.filter((b) => b.trim()) ?? []
+    const activity = buttons.length ? buildCardActivity(text, buttons) : buildTextActivity(text)
+    const id = await this.connector.sendActivity(ref, activity)
+    if (buttons.length && id) this.cardTexts.set(id, text)
+    return id
   }
-  async editMessage(_chatId: string, _messageId: string, _text: string, _options?: SendOptions): Promise<void> {
-    throw new Error('not implemented')
+
+  /**
+   * Teams throttles bots well below Telegram's edit rate. One PUT per second
+   * per conversation; edits inside the window are coalesced and the latest
+   * text goes out when the window closes.
+   */
+  async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
+    const ref = this.reference(chatId)
+    const state = this.edits.get(chatId) ?? { lastSentAt: 0 }
+    this.edits.set(chatId, state)
+    const elapsed = this.now() - state.lastSentAt
+    if (elapsed >= EDIT_INTERVAL_MS && !state.timer) {
+      state.lastSentAt = this.now()
+      await this.connector.updateActivity(ref, messageId, buildTextActivity(text))
+      return
+    }
+    state.pending = { activityId: messageId, text }
+    if (!state.timer) {
+      state.timer = setTimeout(() => {
+        state.timer = undefined
+        const pending = state.pending
+        state.pending = undefined
+        if (!pending) return
+        state.lastSentAt = this.now()
+        this.connector.updateActivity(ref, pending.activityId, buildTextActivity(pending.text)).catch((err) => {
+          logger.warn({ err, chatId }, 'Teams: coalesced edit failed')
+        })
+      }, Math.max(0, EDIT_INTERVAL_MS - elapsed))
+      state.timer.unref?.()
+    }
   }
-  async sendTyping(_chatId: string): Promise<void> {
-    throw new Error('not implemented')
+
+  async sendTyping(chatId: string): Promise<void> {
+    await this.connector.sendTyping(this.reference(chatId))
   }
-  async sendFile(_chatId: string, _filePath: string, _type: 'voice' | 'document'): Promise<void> {
-    throw new Error('not implemented')
+
+  async sendFile(chatId: string, filePath: string, _type: 'voice' | 'document'): Promise<void> {
+    await this.sendMessage(
+      chatId,
+      `Saved on the assistant's machine as ${basename(filePath)}. Sending files into Teams is not supported yet.`
+    )
   }
-  async answerCallback(_callbackId: string, _text?: string): Promise<void> {}
-  async clearButtons(_chatId: string, _messageId: string): Promise<void> {
-    throw new Error('not implemented')
+
+  async answerCallback(_callbackId: string, _text?: string): Promise<void> {
+    // messageBack clicks arrive as ordinary messages; nothing to acknowledge.
   }
+
+  async clearButtons(chatId: string, messageId: string): Promise<void> {
+    const text = this.cardTexts.get(messageId)
+    if (text === undefined) {
+      logger.debug({ messageId }, 'Teams: no remembered card to clear (restarted since it was sent?)')
+      return
+    }
+    await this.connector.updateActivity(this.reference(chatId), messageId, buildClearedCardActivity(text))
+    this.cardTexts.delete(messageId)
+  }
+
   async deleteMessage(_chatId: string, _messageId: string): Promise<boolean> {
+    // Bots cannot delete a user's message in Teams; the caller tells the user.
     return false
   }
+
   formatText(markdown: string): string {
-    return markdown
+    return formatForTeams(markdown)
   }
+
   splitMessage(text: string): string[] {
-    return [text]
+    const limit = this.maxMessageLength
+    if (text.length <= limit) return [text]
+    const chunks: string[] = []
+    let remaining = text
+    while (remaining.length > 0) {
+      if (remaining.length <= limit) {
+        chunks.push(remaining)
+        break
+      }
+      let splitAt = remaining.lastIndexOf('\n', limit)
+      if (splitAt === -1 || splitAt < limit * 0.5) splitAt = remaining.lastIndexOf(' ', limit)
+      if (splitAt === -1 || splitAt < limit * 0.5) splitAt = limit
+      chunks.push(remaining.slice(0, splitAt))
+      remaining = remaining.slice(splitAt).replace(/^[ \n]/, '')
+    }
+    return chunks
   }
 }
 
