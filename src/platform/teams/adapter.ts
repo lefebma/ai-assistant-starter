@@ -97,17 +97,17 @@ export class TeamsAdapter implements PlatformAdapter {
   // --- Inbound ---
 
   async handleRequest(req: HttpRequest, res: ServerResponse): Promise<void> {
+    if (!(await this.validator.validate(req.headers.authorization))) {
+      this.logAuthFailure()
+      res.writeHead(401)
+      res.end()
+      return
+    }
     let body: string
     try {
       body = await readBodyLimited(req, MAX_BODY_BYTES)
     } catch {
       res.writeHead(413)
-      res.end()
-      return
-    }
-    if (!(await this.validator.validate(req.headers.authorization))) {
-      this.logAuthFailure()
-      res.writeHead(401)
       res.end()
       return
     }

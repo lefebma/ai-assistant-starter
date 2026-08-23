@@ -201,4 +201,39 @@ describe('TeamsAdapter.handleRequest', () => {
     await new Promise((r) => setTimeout(r, 10))
     expect(handled).toBe(true)
   })
+
+  it('answers 413 for a body over the cap, after the token check', async () => {
+    const { adapter } = makeAdapter([])
+    const big = '{"type":"message","text":"' + 'x'.repeat(1_100_000) + '"}'
+    const { req, res, out } = request(big, 'Bearer good')
+    await adapter.handleRequest(req, res)
+    expect(out.status).toBe(413)
+    const unauth = request(big, 'Bearer bad')
+    await adapter.handleRequest(unauth.req, unauth.res)
+    expect(unauth.out.status).toBe(401)
+  })
+
+  it('logs auth failures at most once per minute and counts the rest', async () => {
+    let clock = 1_000_000
+    const { adapter } = makeAdapter([], { now: () => clock })
+    const warnings: Array<{ suppressedSinceLast: number }> = []
+    const { logger } = await import('../src/logger.js')
+    const original = logger.warn.bind(logger)
+    ;(logger as { warn: unknown }).warn = (obj: { suppressedSinceLast: number }) => {
+      if (obj && typeof obj === 'object' && 'suppressedSinceLast' in obj) warnings.push(obj)
+    }
+    try {
+      for (let i = 0; i < 3; i++) {
+        const { req, res } = request('{}', 'Bearer bad')
+        await adapter.handleRequest(req, res)
+      }
+      expect(warnings).toEqual([{ suppressedSinceLast: 0 }])
+      clock += 61_000
+      const { req, res } = request('{}', 'Bearer bad')
+      await adapter.handleRequest(req, res)
+      expect(warnings).toEqual([{ suppressedSinceLast: 0 }, { suppressedSinceLast: 2 }])
+    } finally {
+      ;(logger as { warn: unknown }).warn = original
+    }
+  })
 })
