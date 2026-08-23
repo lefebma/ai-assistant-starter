@@ -496,6 +496,7 @@ Chrome has to be installed for `/browser start` to do anything. `/browser status
 | Installed fine, but never replies | Run `node dist/src/index.js --selftest --live`. If `credentials` fails, see [Signing in](#signing-in) |
 | Bot not responding | Check `launchctl list \| grep ai-assistant`, look at `/tmp/ai-assistant.log` |
 | Email auth expired | Re-run `gog auth add` (Gmail) or `node scripts/ms-auth.js` (Outlook) |
+| Gmail works, Calendar 403s with `accessNotConfigured` | The OAuth client's GCP project has the Gmail API enabled but not the Calendar API. Cloud Console → APIs & Services → Library → Google Calendar API → Enable, wait ~1-2 min. No re-auth needed. |
 | Scheduled task not firing | Check `sqlite3 store/assistant.db "SELECT * FROM scheduled_tasks"` |
 | Bot token conflict | Only one process can poll a Telegram bot token. Kill duplicates. |
 | Slow responses | Normal for tool-heavy queries. Simple chat is fast, email+calendar lookups take 10-30s. |
