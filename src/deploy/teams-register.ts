@@ -61,3 +61,18 @@ export function registrationPlan(opts: RegisterOptions): RegistrationPlan {
     groupLocation: opts.location === 'global' ? 'eastus' : opts.location,
   }
 }
+
+/**
+ * `az ad app list --display-name X --query '[].appId' -o tsv` prints one id
+ * per line. None means create; one means reuse; more than one means a human
+ * has to pick, because guessing would silently bind the bot to the wrong app.
+ */
+export function pickExistingAppId(tsv: string, displayName: string): string | null {
+  const ids = tsv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  if (ids.length === 0) return null
+  if (ids.length === 1) return ids[0]
+  throw new Error(
+    `${ids.length} app registrations are named "${displayName}" (${ids.join(', ')}). ` +
+      'Delete the extras in Entra (App registrations) or rename them, then re-run.'
+  )
+}

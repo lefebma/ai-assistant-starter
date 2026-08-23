@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildCaddyfile, isValidHostname, sslipHostname } from '../src/deploy/teams-edge.js'
-import { parseRegisterArgs, registrationPlan } from '../src/deploy/teams-register.js'
+import { parseRegisterArgs, registrationPlan, pickExistingAppId } from '../src/deploy/teams-register.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const ENABLE = join(ROOT, 'scripts', 'hosted', 'enable-teams.ts')
@@ -85,6 +85,13 @@ describe('teams-register', () => {
     expect(single.groupLocation).toBe('westeurope')
   })
 
+  it('reuses a single existing registration, creates when none, and refuses to guess between duplicates', () => {
+    expect(pickExistingAppId('', 'Havn - test')).toBeNull()
+    expect(pickExistingAppId('\n', 'Havn - test')).toBeNull()
+    expect(pickExistingAppId('11111111-2222-3333-4444-555555555555\n', 'Havn - test')).toBe('11111111-2222-3333-4444-555555555555')
+    expect(() => pickExistingAppId('aaa\nbbb\n', 'Havn - test')).toThrow(/2 app registrations are named "Havn - test" \(aaa, bbb\)/)
+  })
+
   it('script drives az with argument arrays only and never puts the secret on a command line', () => {
     expect(existsSync(REGISTER)).toBe(true)
     const t = readFileSync(REGISTER, 'utf-8')
@@ -92,6 +99,8 @@ describe('teams-register', () => {
     expect(t).toContain("'bot', 'create'")
     expect(t).toContain("'bot', 'msteams', 'create'")
     expect(t).toContain("'credential', 'reset'")
+    expect(t).toContain("'[].appId'")
+    expect(t).not.toContain("'[0].appId'")
     expect(t).not.toMatch(/\bexecSync\(|\bexec\(|shell:\s*true/)
     expect(t).not.toMatch(/--password|'--secret'/)
   })

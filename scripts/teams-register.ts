@@ -15,7 +15,7 @@
  * call is execFileSync with an argument array: no shell, nothing interpolated.
  */
 import { execFileSync } from 'node:child_process'
-import { parseRegisterArgs, registrationPlan, REGISTER_USAGE } from '../src/deploy/teams-register.js'
+import { parseRegisterArgs, registrationPlan, pickExistingAppId, REGISTER_USAGE } from '../src/deploy/teams-register.js'
 
 function az(args: string[]): string {
   return execFileSync('az', [...args, '-o', 'tsv'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'inherit'] }).trim()
@@ -54,7 +54,7 @@ function main(): void {
   const plan = registrationPlan(opts)
 
   // 1. App registration (find or create)
-  let appId = az(['ad', 'app', 'list', '--display-name', plan.displayName, '--query', '[0].appId'])
+  let appId: string | null = pickExistingAppId(az(['ad', 'app', 'list', '--display-name', plan.displayName, '--query', '[].appId']), plan.displayName)
   let created = false
   if (!appId) {
     appId = az(['ad', 'app', 'create', '--display-name', plan.displayName, '--sign-in-audience', plan.audience, '--query', 'appId'])
