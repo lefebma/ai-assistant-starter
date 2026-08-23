@@ -256,7 +256,7 @@ the credentials blank).
 1. **Expose the webhook.** On the box, as root:
 
    ```bash
-   sudo bash /home/havn/havn/scripts/hosted/enable-teams.sh <ip-with-dashes>.sslip.io
+   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <ip-with-dashes>.sslip.io
    ```
 
    Use the box's public IP with dots replaced by dashes (`5.161.197.79` →
