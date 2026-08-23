@@ -26,7 +26,7 @@ import {
   markActivityProcessed,
   upsertConversation,
 } from './conversations.js'
-import type { Activity, ConversationReference, TeamsCredentials } from './types.js'
+import type { Activity, ConversationReference, OutboundActivity, TeamsCredentials } from './types.js'
 
 export const TEAMS_WEBHOOK_PATH = '/api/teams/messages'
 const MAX_BODY_BYTES = 1_000_000
@@ -60,7 +60,7 @@ export class TeamsAdapter implements PlatformAdapter {
   private activityHandler: (() => void) | null = null
   private authFailures = { lastLoggedAt: 0, suppressed: 0 }
   private cardTexts = new Map<string, string>()
-  private edits = new Map<string, { lastSentAt: number; pending?: { activityId: string; text: string }; timer?: NodeJS.Timeout }>()
+  private edits = new Map<string, { lastSentAt: number; pending?: { activityId: string; activity: OutboundActivity }; timer?: NodeJS.Timeout }>()
 
   constructor(opts: TeamsAdapterOptions) {
     this.appId = opts.appId
@@ -195,17 +195,20 @@ export class TeamsAdapter implements PlatformAdapter {
    * per conversation; edits inside the window are coalesced and the latest
    * text goes out when the window closes.
    */
-  async editMessage(chatId: string, messageId: string, text: string): Promise<void> {
+  async editMessage(chatId: string, messageId: string, text: string, options?: SendOptions): Promise<void> {
     const ref = this.reference(chatId)
+    const buttons = options?.buttons?.filter((b) => b.trim()) ?? []
+    const activity = buttons.length ? buildCardActivity(text, buttons) : buildTextActivity(text)
+    if (buttons.length) this.cardTexts.set(messageId, text)
     const state = this.edits.get(chatId) ?? { lastSentAt: 0 }
     this.edits.set(chatId, state)
     const elapsed = this.now() - state.lastSentAt
     if (elapsed >= EDIT_INTERVAL_MS && !state.timer) {
       state.lastSentAt = this.now()
-      await this.connector.updateActivity(ref, messageId, buildTextActivity(text))
+      await this.connector.updateActivity(ref, messageId, activity)
       return
     }
-    state.pending = { activityId: messageId, text }
+    state.pending = { activityId: messageId, activity }
     if (!state.timer) {
       state.timer = setTimeout(() => {
         state.timer = undefined
@@ -213,7 +216,7 @@ export class TeamsAdapter implements PlatformAdapter {
         state.pending = undefined
         if (!pending) return
         state.lastSentAt = this.now()
-        this.connector.updateActivity(ref, pending.activityId, buildTextActivity(pending.text)).catch((err) => {
+        this.connector.updateActivity(ref, pending.activityId, pending.activity).catch((err) => {
           logger.warn({ err, chatId }, 'Teams: coalesced edit failed')
         })
       }, Math.max(0, EDIT_INTERVAL_MS - elapsed))

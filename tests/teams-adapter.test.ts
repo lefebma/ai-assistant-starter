@@ -264,6 +264,15 @@ describe('TeamsAdapter outbound', () => {
     expect(sent[1]).toMatchObject({ kind: 'update', activityId: id, activity: { type: 'message', text: 'Send this?' } })
   })
 
+  it('edits a message into a card when buttons are passed, and can clear it afterwards', async () => {
+    const { adapter } = makeAdapter(sent)
+    await adapter.editMessage('a:out', 'm7', 'Approve?', { buttons: ['Send', 'Discard'] })
+    expect(sent[0]).toMatchObject({ kind: 'update', activityId: 'm7' })
+    expect((sent[0].activity as { attachments: unknown[] }).attachments).toHaveLength(1)
+    await adapter.clearButtons('a:out', 'm7')
+    expect(sent[1]).toMatchObject({ kind: 'update', activityId: 'm7', activity: { type: 'message', text: 'Approve?' } })
+  })
+
   it('is a no-op when asked to clear buttons on a card it does not remember', async () => {
     const { adapter } = makeAdapter(sent)
     await adapter.clearButtons('a:out', 'forgotten')
@@ -303,13 +312,24 @@ describe('TeamsAdapter outbound', () => {
     expect(await adapter.deleteMessage('a:out', 'm1')).toBe(false)
   })
 
-  it('formats and splits', () => {
+  it('formats text', () => {
     const { adapter } = makeAdapter(sent)
     expect(adapter.formatText('# T\n<b>x</b>')).toBe('**T**\n**x**')
-    const long = Array.from({ length: 300 }, (_, i) => `line ${i} ${'x'.repeat(40)}`).join('\n')
-    const chunks = adapter.splitMessage(long)
-    expect(chunks.length).toBeGreaterThan(1)
-    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(8000)
-    expect(chunks.join('\n')).toBe(long)
+  })
+
+  it('splits long text at newline, then space, then hard boundaries, never over the limit, losing nothing but the separator', () => {
+    const { adapter } = makeAdapter(sent)
+    const squash = (s: string) => s.replace(/\s+/g, ' ').trim()
+    const lines = Array.from({ length: 300 }, (_, i) => `line ${i} ${'x'.repeat(40)}`).join('\n')
+    const spaced = Array.from({ length: 3000 }, (_, i) => `w${i}`).join(' ')
+    const solid = 'y'.repeat(20_000)
+    for (const [name, text] of [['lines', lines], ['spaced', spaced], ['solid', solid]] as const) {
+      const chunks = adapter.splitMessage(text)
+      expect(chunks.length, name).toBeGreaterThan(1)
+      for (const c of chunks) expect(c.length, name).toBeLessThanOrEqual(8000)
+      if (name === 'solid') expect(chunks.join('')).toBe(text)
+      else expect(squash(chunks.join(' '))).toBe(squash(text))
+    }
+    expect(adapter.splitMessage('short')).toEqual(['short'])
   })
 })
