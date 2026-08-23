@@ -156,6 +156,17 @@ describe('formatForTeams', () => {
     expect(out.startsWith('```')).toBe(true)
     expect(out).toContain('| 1 | 2 |')
   })
+
+  it('leaves fenced code blocks alone', () => {
+    const src = 'Run this:\n\n```python\n# comment\ndef __init__(self):\n    pass\n```\n\n# Heading after'
+    const out = formatForTeams(src)
+    expect(out).toContain('```python\n# comment\ndef __init__(self):\n    pass\n```')
+    expect(out).toContain('**Heading after**')
+  })
+
+  it('leaves inline code alone', () => {
+    expect(formatForTeams('call `__init__` then `<b>` literally')).toBe('call `__init__` then `<b>` literally')
+  })
 })
 
 describe('outbound builders', () => {

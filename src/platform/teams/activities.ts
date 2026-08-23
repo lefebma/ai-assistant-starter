@@ -109,7 +109,14 @@ const ADAPTIVE_CARD = 'application/vnd.microsoft.card.adaptive'
  * Telegram path; both are normalised here.
  */
 export function formatForTeams(markdown: string): string {
-  let out = markdown
+  // Code must pass through untouched: stash fences and inline spans behind
+  // placeholders, transform the prose, then put them back.
+  const stash: string[] = []
+  const keep = (s: string): string => {
+    stash.push(s)
+    return `\0STASH_${stash.length - 1}\0`
+  }
+  let out = markdown.replace(/```[\s\S]*?```/g, keep).replace(/`[^`\n]+`/g, keep)
 
   // HTML leftovers from the Telegram formatter → Markdown
   out = out.replace(/<b>(.*?)<\/b>/gs, '**$1**')
@@ -129,6 +136,7 @@ export function formatForTeams(markdown: string): string {
   // __bold__ → **bold**
   out = out.replace(/__(.+?)__/g, '**$1**')
 
+  out = out.replace(/\0STASH_(\d+)\0/g, (_, i: string) => stash[Number(i)])
   return out.trim()
 }
 
