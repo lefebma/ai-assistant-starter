@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { sendSupportEmail, saveSupportRequest, type SendIO } from '../src/support/send.js'
+import {
+  sendSupportEmail,
+  saveSupportRequest,
+  resolveGmailAccount,
+  type SendIO,
+} from '../src/support/send.js'
 import type { SupportDraft } from '../src/support/draft.js'
 
 const draft: SupportDraft = {
@@ -49,6 +54,74 @@ describe('sendSupportEmail', () => {
     const res = await sendSupportEmail(draft, io)
     expect(res.ok).toBe(false)
     expect(res.detail).toContain('ENOENT')
+  })
+
+  it('passes --account explicitly when the resolver finds one, ahead of --to', async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = []
+    const io: SendIO = {
+      exec: async (cmd, args) => {
+        calls.push({ cmd, args })
+        return { code: 0, out: 'sent' }
+      },
+    }
+
+    await sendSupportEmail(draft, io, () => 'owner@gmail.com')
+    const args = calls[0].args
+    expect(args).toContain('--account')
+    expect(args[args.indexOf('--account') + 1]).toBe('owner@gmail.com')
+    expect(args.indexOf('--account')).toBeLessThan(args.indexOf('--to'))
+  })
+
+  it('omits --account when the resolver finds nothing, unchanged from before', async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = []
+    const io: SendIO = {
+      exec: async (cmd, args) => {
+        calls.push({ cmd, args })
+        return { code: 0, out: 'sent' }
+      },
+    }
+
+    await sendSupportEmail(draft, io, () => undefined)
+    expect(calls[0].args).not.toContain('--account')
+  })
+})
+
+describe('resolveGmailAccount', () => {
+  it('reads the Account line out of the deployed gmail skill', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gmail-account-'))
+    try {
+      mkdirSync(join(dir, 'skills', 'gmail'), { recursive: true })
+      writeFileSync(
+        join(dir, 'skills', 'gmail', 'SKILL.md'),
+        '## Gmail & Google Calendar\n\nAccount: marina@swaysales.org\nCLI: `gog`\n'
+      )
+      expect(resolveGmailAccount(dir)).toBe('marina@swaysales.org')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads a hand-edited "Default account:" line too (multi-account box)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gmail-account-'))
+    try {
+      mkdirSync(join(dir, 'skills', 'gmail'), { recursive: true })
+      writeFileSync(
+        join(dir, 'skills', 'gmail', 'SKILL.md'),
+        '## Gmail & Google Calendar\n\nDefault account: marina@aimmalliance.com\nCLI: `gog`\n'
+      )
+      expect(resolveGmailAccount(dir)).toBe('marina@aimmalliance.com')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns undefined when the gmail skill is not deployed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gmail-account-'))
+    try {
+      expect(resolveGmailAccount(dir)).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
