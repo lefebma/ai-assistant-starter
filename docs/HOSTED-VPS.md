@@ -18,6 +18,12 @@ machine you can snapshot, rebuild, and reach without touching their hardware.
   port (default 3030, voice/cockpit). The firewall never exposes it; with
   Tailscale you can still reach it privately over the tailnet if a client
   wants the voice interface.
+- **Teams is the one exception to "nothing inbound."** Microsoft delivers
+  Teams messages by HTTPS POST, so a Teams install runs Caddy on 443 (and 80
+  for the certificate challenge) proxying exactly one path,
+  `/api/teams/*`, to the app. Every request on it must carry a Bot Framework
+  token signed for this bot's app id; everything else on 443 is a 404. See
+  "Teams instead of Telegram" below.
 - **SSH is key-only** (`ssh_pwauth: false`), and exists in one of two modes:
   - **Without Tailscale:** ufw allows inbound SSH (key-only) so you can log in.
   - **With Tailscale:** inbound SSH is closed too — zero open ports. You SSH
@@ -240,6 +246,59 @@ internet sees a machine with zero open ports. If you skipped Tailscale at
 provision time you can add it later: install per tailscale.com/download, then
 `sudo tailscale up --ssh`, then close the SSH hole with
 `sudo ufw delete allow OpenSSH`.
+
+## Teams instead of Telegram
+
+One Azure Bot per install, like one BotFather bot per install. Do this after
+the box is provisioned and `npm run setup` has run (choose Teams there, leave
+the credentials blank).
+
+1. **Expose the webhook.** On the box, as root:
+
+   ```bash
+   sudo bash /home/havn/havn/scripts/hosted/enable-teams.sh <ip-with-dashes>.sslip.io
+   ```
+
+   Use the box's public IP with dots replaced by dashes (`5.161.197.79` →
+   `5-161-197-79.sslip.io`), or a subdomain you control that points at the IP.
+   It prints the messaging endpoint.
+
+2. **Register the bot.** On your machine, signed in to `az` with an account
+   that can create app registrations and Azure Bot resources:
+
+   ```bash
+   scripts/teams-register.sh <name> <hostname>              # multi-tenant
+   scripts/teams-register.sh <name> <hostname> --tenant <id>  # single-tenant, the firm's own
+   ```
+
+   It prints three lines for the box's `.env`: `TEAMS_APP_ID`,
+   `TEAMS_APP_SECRET`, `TEAMS_TENANT_ID`. Paste them in (or use `/secret set`
+   for the secret once the bot is up), then `sudo systemctl restart havn`.
+   The secret expires in 24 months; note the date next to the box in your
+   records, as with the Claude token.
+
+3. **Build the Teams app package.** On your machine:
+
+   ```bash
+   npm run teams-manifest -- --app-id <TEAMS_APP_ID> --name "<assistant name>"
+   ```
+
+   Writes `deploy/rendered/<name>-teams.zip`.
+
+4. **Install it in Teams.** The user opens Teams → Apps → Manage your apps →
+   Upload an app → Upload a custom app, picks the zip, and opens the chat.
+   If the tenant blocks custom uploads, their Teams admin publishes the same
+   zip to the org catalog (Teams admin center → Teams apps → Manage apps →
+   Upload new app) and the user installs it from there.
+
+5. **Claim the chat.** The first message the bot receives makes it reply with
+   the chat id (it treats being added as `/chatid`). Put that id in
+   `ALLOWED_CHAT_ID` in `.env` and restart the service.
+
+What works: text with Markdown, typing indicator, streaming replies,
+approval buttons, files and images sent to the assistant. What does not, yet:
+voice notes, the assistant sending files back (it says where it saved them),
+group chats and channels.
 
 ## Updates, snapshots, backups
 
