@@ -83,7 +83,7 @@ const PLATFORM_ENV: Record<Platform, string[]> = {
   Telegram: ['TELEGRAM_BOT_TOKEN=', 'ALLOWED_CHAT_ID='],
   Slack: ['SLACK_BOT_TOKEN=', 'SLACK_APP_TOKEN=', 'SLACK_ALLOWED_USERS='],
   Discord: ['DISCORD_BOT_TOKEN=', 'DISCORD_ALLOWED_USERS='],
-  Teams: ['TEAMS_APP_ID=', 'TEAMS_APP_SECRET=', 'TEAMS_TENANT_ID='],
+  Teams: ['TEAMS_APP_ID=', 'TEAMS_APP_SECRET=', 'TEAMS_TENANT_ID=', 'ALLOWED_CHAT_ID='],
 }
 
 export const PLATFORM_FORMAT_NOTES: Record<Platform, string> = {

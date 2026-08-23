@@ -18,6 +18,7 @@ export function detectPlatform(): PlatformName {
 
   // Auto-detect from available tokens
   if (env['SLACK_BOT_TOKEN'] && env['SLACK_APP_TOKEN']) return 'slack'
+  if (env['TEAMS_APP_ID'] && env['TEAMS_APP_SECRET']) return 'teams'
   if (env['TELEGRAM_BOT_TOKEN']) return 'telegram'
 
   return 'telegram' // default
@@ -50,8 +51,15 @@ export async function createAdapter(): Promise<PlatformAdapter> {
     case 'discord':
       throw new Error('Discord adapter not yet implemented. Use PLATFORM=telegram or PLATFORM=slack.')
 
-    case 'teams':
-      throw new Error('Teams adapter not yet implemented. Use PLATFORM=telegram or PLATFORM=slack.')
+    case 'teams': {
+      const appId = env['TEAMS_APP_ID']
+      const appSecret = env['TEAMS_APP_SECRET']
+      if (!appId || !appSecret) {
+        throw new Error('TEAMS_APP_ID and TEAMS_APP_SECRET must both be set in .env')
+      }
+      const { TeamsAdapter } = await import('./teams/adapter.js')
+      return new TeamsAdapter({ appId, appSecret, tenantId: env['TEAMS_TENANT_ID'] || undefined })
+    }
 
     default:
       throw new Error(`Unknown platform: ${platform}`)

@@ -151,6 +151,17 @@ async function main(): Promise<void> {
     chatId = await prompter.ask('Your Telegram chat ID (send /chatid to the bot later if unknown)', '')
   }
 
+  let teamsAppId = ''
+  let teamsAppSecret = ''
+  let teamsTenantId = ''
+  if (answers.platform === 'Teams') {
+    prompter.say('Register the bot first (docs/HOSTED-VPS.md > Teams, or scripts/teams-register.sh). Blank = fill in later.')
+    teamsAppId = await prompter.ask('Teams app (client) ID', '')
+    teamsAppSecret = await prompter.ask('Teams app secret', '')
+    teamsTenantId = await prompter.ask('Tenant ID (blank for a multi-tenant registration)', '')
+    chatId = await prompter.ask('Your Teams chat ID (send anything to the bot later; it replies with /chatid if unknown)', '')
+  }
+
   header('Generating configuration...')
 
   const plan = buildSkillPlan(answers, homedir())
@@ -166,6 +177,9 @@ async function main(): Promise<void> {
     let env = buildEnvContent(answers)
     if (botToken) env = env.replace('TELEGRAM_BOT_TOKEN=', `TELEGRAM_BOT_TOKEN=${botToken}`)
     if (chatId) env = env.replace('ALLOWED_CHAT_ID=', `ALLOWED_CHAT_ID=${chatId}`)
+    if (teamsAppId) env = env.replace('TEAMS_APP_ID=', `TEAMS_APP_ID=${teamsAppId}`)
+    if (teamsAppSecret) env = env.replace('TEAMS_APP_SECRET=', `TEAMS_APP_SECRET=${teamsAppSecret}`)
+    if (teamsTenantId) env = env.replace('TEAMS_TENANT_ID=', `TEAMS_TENANT_ID=${teamsTenantId}`)
     writeFileSync(envPath, env)
     ok('.env written')
   }
@@ -267,7 +281,8 @@ async function main(): Promise<void> {
   // for the scripts: absolute paths, so the commands work from any directory.
   for (const line of renderNextSteps(
     buildNextSteps({
-      needsBotCredentials: !botToken || !chatId,
+      needsBotCredentials:
+        answers.platform === 'Teams' ? !teamsAppId || !teamsAppSecret || !chatId : !botToken || !chatId,
       gmailAddress: answers.gmailAddress,
       gmailAddress2: answers.gmailAddress2,
       gogMissing,
