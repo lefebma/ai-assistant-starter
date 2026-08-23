@@ -231,6 +231,36 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   Skip that and `gog auth doctor` fails with `GOG_KEYRING_PASSWORD is not set
   in a non-interactive process`.
 
+  **Extracting the password from `.env` with `cut`: use `-f2-`, not `-f2`.**
+  A password from `openssl rand -base64` routinely ends in `=` padding, so
+  the line has two `=` characters (`KEY=value=`). Plain `cut -d= -f2` keeps
+  only the text between the first two `=` and silently drops the padding —
+  the value you export is one character short of what's actually in `.env`.
+  This is dangerous specifically because it's *consistent*: every command
+  that reads `.env` with the same broken `cut` keeps agreeing with itself,
+  and `gog auth doctor` reports `ok`, right up until something else parses
+  `.env` correctly (systemd's `EnvironmentFile=`, for one) and gets a
+  different value than what's actually encrypting the keyring on disk. That
+  mismatch surfaces as `aes.KeyUnwrap(): integrity check failed` on a real
+  send, with nothing in the error pointing back at a shell one-liner. Use
+  `cut -d= -f2-` (trailing dash — take field 2 onward) or
+  `sed 's/^[^=]*=//'` instead.
+
+  **Restart the service after any `.env` edit.** `EnvironmentFile=` only
+  loads at service start — a running `havn` process keeps its stale
+  environment even after you edit `.env` and re-export the value by hand in
+  your own shell. Confirmed on havn-test: the service ran a full day with a
+  keyring password `.env` didn't have yet, and every automated send (e.g.
+  the `/support` command) failed until `sudo systemctl restart havn`. Don't
+  just trust `systemctl is-active` to confirm a restart picked up a new
+  value — check the running process's real environment:
+
+  ```bash
+  sudo systemctl restart havn
+  PID=$(systemctl show havn --property=MainPID --value)
+  sudo cat /proc/$PID/environ | tr '\0' '\n' | grep GOG_KEYRING_PASSWORD
+  ```
+
 - **OAuth without a browser.** Use gog's built-in remote flow — no listener,
   no open port needed, which fits these boxes better than SSH port-forwarding
   the callback (ufw denies all inbound, remember):
@@ -264,6 +294,15 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
 API enabled but not the Calendar API. Fix in Cloud Console → **APIs &
 Services → Library → Google Calendar API → Enable**, wait ~1-2 minutes, no
 re-auth needed.
+
+**Multi-account boxes:** anything in the app that calls `gog` without an
+explicit `--account` (the support-request emailer, for one) resolves the
+account from `skills/gmail/SKILL.md`'s `Account:` (or hand-edited `Default
+account:`) line — not from gog's own "exactly one stored token" fallback.
+That fallback is unusable the moment a box has more than one Google account
+authorized, which happens easily once accounts get added by hand outside
+the setup wizard's two-address limit. If you add accounts manually, keep
+that line pointing at whichever address should be the default sender.
 
 The Google OAuth client setup itself (Cloud Console, consent screen,
 publish-to-production) is unchanged from `docs/SETUP-GUIDE.md > Gmail` and
