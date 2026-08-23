@@ -98,6 +98,7 @@ describe('teams-register', () => {
     expect(t).toContain("'ad', 'app', 'create'")
     expect(t).toContain("'bot', 'create'")
     expect(t).toContain("'bot', 'msteams', 'create'")
+    expect(t).toContain("'bot', 'msteams', 'show'")
     expect(t).toContain("'credential', 'reset'")
     expect(t).toContain("'[].appId'")
     expect(t).not.toContain("'[0].appId'")

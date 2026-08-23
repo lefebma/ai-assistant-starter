@@ -16,7 +16,15 @@ import { logger } from '../../logger.js'
 import { downloadToUploads } from '../../media.js'
 import type { PlatformAdapter, IncomingMessage, SendOptions } from '../types.js'
 import { basename } from 'node:path'
-import { buildCardActivity, buildClearedCardActivity, buildTextActivity, formatForTeams, mapInbound, referenceFrom } from './activities.js'
+import {
+  buildCardActivity,
+  buildClearedCardActivity,
+  buildTextActivity,
+  formatForTeams,
+  isMicrosoftAttachmentHost,
+  mapInbound,
+  referenceFrom,
+} from './activities.js'
 import { InboundTokenValidator, OutboundTokenProvider } from './auth.js'
 import { BotConnector } from './connector.js'
 import {
@@ -113,6 +121,7 @@ export class TeamsAdapter implements PlatformAdapter {
     } catch {
       res.writeHead(413)
       res.end()
+      res.once('finish', () => req.destroy())
       return
     }
     let activity: Activity
@@ -149,7 +158,11 @@ export class TeamsAdapter implements PlatformAdapter {
         await this.messageHandler?.(mapped.message)
         return
       case 'attachment': {
-        const headers = mapped.download.needsAuth ? { Authorization: `Bearer ${await this.tokens.token()}` } : undefined
+        const allowedHost = isMicrosoftAttachmentHost(mapped.download.url)
+        if (mapped.download.needsAuth && !allowedHost) {
+          logger.warn({ hostname: safeHostname(mapped.download.url) }, 'Teams: attachment host is not a Microsoft domain; downloading without the bot token')
+        }
+        const headers = mapped.download.needsAuth && allowedHost ? { Authorization: `Bearer ${await this.tokens.token()}` } : undefined
         const filePath = await this.download(mapped.download.url, mapped.download.name, headers)
         await this.messageHandler?.({ ...mapped.base, filePath })
         return
@@ -285,8 +298,10 @@ function readBodyLimited(req: HttpRequest, maxBytes: number): Promise<string> {
     req.on('data', (chunk: Buffer) => {
       size += chunk.length
       if (size > maxBytes) {
+        // Reject but don't destroy the socket: the caller still needs to
+        // write the 413 response on it. Pause so no more data piles up.
         reject(new Error('body too large'))
-        req.destroy()
+        req.pause()
         return
       }
       chunks.push(chunk)
@@ -294,4 +309,12 @@ function readBodyLimited(req: HttpRequest, maxBytes: number): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
     req.on('error', reject)
   })
+}
+
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return '(unparseable url)'
+  }
 }

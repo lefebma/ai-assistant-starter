@@ -68,18 +68,56 @@ describe('InboundTokenValidator', () => {
     expect(await v.validate(`Bearer ${await sign(privateKey, 'key-1', { expSeconds: -120 })}`)).toBe(false)
   })
 
-  it('refetches the key set once when it sees an unknown kid (key rotation)', async () => {
+  it('refetches the key set once when it sees an unknown kid (key rotation), capped to once per 60s', async () => {
+    let clock = Date.now()
     let published = [publicJwk]
     const counter = { jwks: 0 }
-    const v = new InboundTokenValidator({ appId: APP_ID, fetchImpl: fakeFetch(() => published, counter), openIdConfigUrl: OPENID })
+    const v = new InboundTokenValidator({
+      appId: APP_ID,
+      fetchImpl: fakeFetch(() => published, counter),
+      openIdConfigUrl: OPENID,
+      now: () => new Date(clock),
+    })
     expect(await v.validate(`Bearer ${await sign(privateKey, 'key-1', {})}`)).toBe(true)
     published = [publicJwk, rotatedJwk]
     expect(await v.validate(`Bearer ${await sign(rotatedPrivate, 'key-2', {})}`)).toBe(true)
     expect(counter.jwks).toBe(2)
-    // unknown kid that never appears: one refetch, then reject
+    // unknown kid, same cooldown window as the rotation refetch above: no new fetch
     const stranger = await generateKeyPair('RS256')
     expect(await v.validate(`Bearer ${await sign(stranger.privateKey, 'key-9', {})}`)).toBe(false)
+    expect(counter.jwks).toBe(2)
+    // window elapses: an unknown kid now gets one refetch, then reject
+    clock += 61_000
+    expect(await v.validate(`Bearer ${await sign(stranger.privateKey, 'key-9', {})}`)).toBe(false)
     expect(counter.jwks).toBe(3)
+    // still inside the new cooldown: another unknown kid does not refetch again
+    expect(await v.validate(`Bearer ${await sign(stranger.privateKey, 'key-9', {})}`)).toBe(false)
+    expect(counter.jwks).toBe(3)
+  })
+
+  it('shares one JWKS fetch across concurrent validate() calls on a cold validator', async () => {
+    const counter = { jwks: 0 }
+    const v = new InboundTokenValidator({ appId: APP_ID, fetchImpl: fakeFetch(() => [publicJwk], counter), openIdConfigUrl: OPENID })
+    const token = await sign(privateKey, 'key-1', {})
+    const [a, b] = await Promise.all([v.validate(`Bearer ${token}`), v.validate(`Bearer ${token}`)])
+    expect(a).toBe(true)
+    expect(b).toBe(true)
+    expect(counter.jwks).toBe(1)
+  })
+
+  it('rejects a token signed with a non-RS256 algorithm even if the JWKS publishes a matching kid', async () => {
+    const es = await generateKeyPair('ES256')
+    const esJwk = { ...(await exportJWK(es.publicKey)), kid: 'es1', alg: 'ES256', use: 'sig' }
+    const v = new InboundTokenValidator({ appId: APP_ID, fetchImpl: fakeFetch(() => [publicJwk, esJwk], { jwks: 0 }), openIdConfigUrl: OPENID })
+    const nowSec = Math.floor(Date.now() / 1000)
+    const token = await new SignJWT({ serviceurl: 'https://smba.trafficmanager.net/amer/' })
+      .setProtectedHeader({ alg: 'ES256', kid: 'es1' })
+      .setIssuer(BOT_FRAMEWORK_ISSUER)
+      .setAudience(APP_ID)
+      .setIssuedAt(nowSec)
+      .setExpirationTime(nowSec + 300)
+      .sign(es.privateKey)
+    expect(await v.validate(`Bearer ${token}`)).toBe(false)
   })
 
   it('rejects a token signed with a key that is not published', async () => {

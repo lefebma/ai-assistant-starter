@@ -6,6 +6,7 @@ import {
   buildCardActivity,
   buildTextActivity,
   buildTypingActivity,
+  isMicrosoftAttachmentHost,
 } from '../src/platform/teams/activities.js'
 import type { Activity } from '../src/platform/teams/types.js'
 
@@ -58,6 +59,13 @@ describe('mapInbound', () => {
       messageId: '1724400000001',
       updateId: '1724400000001',
     })
+  })
+
+  it('keeps newlines and list structure in multi-line messages', () => {
+    const m = mapInbound(activity({ text: '<at>Nami</at> line one\nline two\n\n- bullet\n- bullet2' }), BOT_ID)
+    expect(m.kind).toBe('message')
+    if (m.kind !== 'message') return
+    expect(m.message.text).toBe('line one\nline two\n\n- bullet\n- bullet2')
   })
 
   it('maps a messageBack button click to the callback shape the bot already handles', () => {
@@ -193,5 +201,23 @@ describe('outbound builders', () => {
       data: { msteams: { type: 'messageBack', text: 'Send', displayText: 'Send', value: { btn: 'Send' } }, btn: 'Send' },
     })
     expect(JSON.stringify(content.body)).toContain('Send this?')
+  })
+})
+
+describe('isMicrosoftAttachmentHost', () => {
+  it('allows known Bot Framework / Microsoft download hosts over https', () => {
+    expect(isMicrosoftAttachmentHost('https://smba.trafficmanager.net/amer/v3/attachments/x')).toBe(true)
+  })
+
+  it('rejects arbitrary hosts', () => {
+    expect(isMicrosoftAttachmentHost('https://evil.example/x')).toBe(false)
+  })
+
+  it('rejects a Microsoft host over plain http', () => {
+    expect(isMicrosoftAttachmentHost('http://smba.trafficmanager.net/x')).toBe(false)
+  })
+
+  it('rejects unparseable input', () => {
+    expect(isMicrosoftAttachmentHost('not a url')).toBe(false)
   })
 })

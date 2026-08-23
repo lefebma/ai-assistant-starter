@@ -126,11 +126,19 @@ export async function downloadToUploads(
   url: string,
   filename: string,
   headers?: Record<string, string>,
-  fetchImpl: FetchLike = (input, init) => fetch(input, init)
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+  maxBytes = 50 * 1024 * 1024
 ): Promise<string> {
   const resp = await fetchImpl(url, { headers })
   if (!resp.ok) throw new Error(`Download failed (${resp.status}) for ${url}`)
+  const declaredLength = Number(resp.headers.get('content-length'))
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(`Download too large (${declaredLength} bytes) for ${url}`)
+  }
   const buffer = Buffer.from(await resp.arrayBuffer())
+  if (buffer.length > maxBytes) {
+    throw new Error(`Download too large (${buffer.length} bytes) for ${url}`)
+  }
   const ext = extname(filename)
   const base = sanitizeFilename(basename(filename, ext))
   const destPath = resolve(UPLOADS_DIR, `${Date.now()}_${base}${ext}`)

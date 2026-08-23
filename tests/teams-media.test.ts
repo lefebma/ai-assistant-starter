@@ -28,4 +28,27 @@ describe('downloadToUploads', () => {
       downloadToUploads('https://files.example/x.png', 'x.png', undefined, async () => new Response('nope', { status: 403 }))
     ).rejects.toThrow(/403/)
   })
+
+  it('rejects up front on a declared Content-Length over the cap, writing nothing', async () => {
+    await expect(
+      downloadToUploads(
+        'https://files.example/huge.bin',
+        'huge.bin',
+        undefined,
+        async () => new Response('x', { status: 200, headers: { 'Content-Length': String(60 * 1024 * 1024) } })
+      )
+    ).rejects.toThrow(/too large/)
+  })
+
+  it('rejects an oversized body against an explicit maxBytes even without a Content-Length hint', async () => {
+    await expect(
+      downloadToUploads(
+        'https://files.example/small-cap.bin',
+        'small-cap.bin',
+        undefined,
+        async () => new Response('12345', { status: 200 }),
+        4
+      )
+    ).rejects.toThrow(/too large/)
+  })
 })

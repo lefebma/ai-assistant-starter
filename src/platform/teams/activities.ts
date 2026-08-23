@@ -29,9 +29,27 @@ export function referenceFrom(activity: Activity): ConversationReference | null 
   }
 }
 
-/** Teams wraps the bot mention as <at>Name</at>; strip it and surrounding space. */
+/** Teams wraps the bot mention as <at>Name</at>; drop it, tidy the spaces it leaves, keep every newline. */
 function stripMentions(text: string): string {
-  return text.replace(/<at>[^<]*<\/at>/g, '').replace(/\s+/g, ' ').trim()
+  return text
+    .replace(/<at>[^<]*<\/at>/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/^[ \t]+|[ \t]+$/gm, '')
+    .trim()
+}
+
+const MICROSOFT_ATTACHMENT_HOSTS = ['.botframework.com', '.trafficmanager.net', '.skype.com', '.sharepoint.com', '.office.net', '.microsoft.com']
+
+/** Only these hosts should ever see the bot's bearer token in a download request. */
+export function isMicrosoftAttachmentHost(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'https:') return false
+  return MICROSOFT_ATTACHMENT_HOSTS.some((suffix) => parsed.hostname.endsWith(suffix))
 }
 
 function buttonLabel(value: unknown): string | null {

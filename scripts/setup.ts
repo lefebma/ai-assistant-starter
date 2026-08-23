@@ -159,7 +159,7 @@ async function main(): Promise<void> {
     teamsAppId = await prompter.ask('Teams app (client) ID', '')
     teamsAppSecret = await prompter.ask('Teams app secret', '')
     teamsTenantId = await prompter.ask('Tenant ID (blank for a multi-tenant registration)', '')
-    chatId = await prompter.ask('Your Teams chat ID (send anything to the bot later; it replies with /chatid if unknown)', '')
+    chatId = await prompter.ask('Your Teams chat ID (the bot announces it when the app is added; /chatid shows it again)', '')
   }
 
   header('Generating configuration...')

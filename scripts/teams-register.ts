@@ -95,9 +95,14 @@ function main(): void {
     note(`Created bot ${plan.botName} -> ${plan.endpoint}`)
   }
 
-  // 4. Teams channel (idempotent; az errors if already present)
-  azOk(['bot', 'msteams', 'create', '-n', plan.botName, '-g', opts.resourceGroup])
-  note('Teams channel enabled')
+  // 4. Teams channel (idempotent; a real create failure now throws instead of
+  // being swallowed as if the channel were already there)
+  if (azOk(['bot', 'msteams', 'show', '-n', plan.botName, '-g', opts.resourceGroup])) {
+    note('Teams channel already enabled')
+  } else {
+    az(['bot', 'msteams', 'create', '-n', plan.botName, '-g', opts.resourceGroup])
+    note('Teams channel enabled')
+  }
 
   // 5. Values for .env (stdout only)
   console.log(`TEAMS_APP_ID=${appId}`)

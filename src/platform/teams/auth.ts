@@ -31,6 +31,8 @@ export class InboundTokenValidator {
   private readonly openIdConfigUrl: string
   private jwksUri: string | null = null
   private keySet: ReturnType<typeof createLocalJWKSet> | null = null
+  private lastRefetchAt = -Infinity
+  private inflight: Promise<ReturnType<typeof createLocalJWKSet>> | null = null
 
   constructor(opts: InboundValidatorOptions) {
     this.appId = opts.appId
@@ -63,13 +65,32 @@ export class InboundTokenValidator {
     await jwtVerify(token, keySet, {
       issuer: BOT_FRAMEWORK_ISSUER,
       audience: this.appId,
+      algorithms: ['RS256'],
       clockTolerance: 60,
       currentDate: this.now(),
     })
   }
 
+  /**
+   * `refresh` is only requested after an unknown kid (possible key rotation).
+   * Cap those rotation refetches to once per 60s and share one in-flight
+   * fetch across concurrent callers, so a burst of requests signed with an
+   * unrecognised kid can't be used to hammer Microsoft's JWKS endpoint.
+   * The first (cold) load is never capped.
+   */
   private async keys(refresh: boolean): Promise<ReturnType<typeof createLocalJWKSet>> {
     if (this.keySet && !refresh) return this.keySet
+    if (refresh && this.keySet && this.now().getTime() - this.lastRefetchAt < 60_000) {
+      return this.keySet
+    }
+    if (this.inflight) return this.inflight
+    this.inflight = this.load(refresh).finally(() => {
+      this.inflight = null
+    })
+    return this.inflight
+  }
+
+  private async load(refresh: boolean): Promise<ReturnType<typeof createLocalJWKSet>> {
     if (!this.jwksUri) {
       const resp = await this.fetchImpl(this.openIdConfigUrl)
       if (!resp.ok) throw new Error(`OpenID configuration fetch failed: ${resp.status}`)
@@ -81,6 +102,7 @@ export class InboundTokenValidator {
     if (!resp.ok) throw new Error(`JWKS fetch failed: ${resp.status}`)
     const jwks = (await resp.json()) as JSONWebKeySet
     this.keySet = createLocalJWKSet(jwks)
+    if (refresh) this.lastRefetchAt = this.now().getTime()
     logger.debug({ keys: jwks.keys.length, refresh }, 'Teams: Bot Framework signing keys loaded')
     return this.keySet
   }

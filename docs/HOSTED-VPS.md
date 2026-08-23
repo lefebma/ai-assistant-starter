@@ -271,8 +271,8 @@ the credentials blank).
    npm run teams-register -- <name> <hostname> --tenant <id>  # single-tenant, the firm's own
    ```
 
-   It prints three lines for the box's `.env`: `TEAMS_APP_ID`,
-   `TEAMS_APP_SECRET`, `TEAMS_TENANT_ID`. Paste them in (or use `/secret set`
+   It prints the lines for the box's `.env`: `TEAMS_APP_ID`,
+   `TEAMS_APP_SECRET`, and `TEAMS_TENANT_ID` when `--tenant` was given. Paste them in (or use `/secret set`
    for the secret once the bot is up), then `sudo systemctl restart havn`.
    The secret expires in 24 months; note the date next to the box in your
    records, as with the Claude token.

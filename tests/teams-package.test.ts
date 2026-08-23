@@ -29,6 +29,7 @@ describe('renderManifest', () => {
     expect(m.name.short).toBe('Nami')
     expect(m.icons).toEqual({ color: 'color.png', outline: 'outline.png' })
     expect(m.validDomains).toEqual([])
+    expect(m.permissions).toEqual([])
     expect(JSON.stringify(m)).not.toMatch(/\{\{[A-Z_]+\}\}/)
   })
 })

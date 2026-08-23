@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { rmSync } from 'node:fs'
 import { Readable } from 'node:stream'
+import { createServer } from 'node:http'
 
 // Own SQLite store for this file (see teams-conversations.test.ts).
 const STORE = vi.hoisted(() => {
@@ -123,9 +124,11 @@ describe('TeamsAdapter inbound', () => {
         attachments: [{ contentType: 'application/vnd.microsoft.teams.file.download.info', name: 'a.pdf', content: { downloadUrl: 'https://f/a.pdf' } }],
       })
     )
-    await adapter.processActivity(inbound({ attachments: [{ contentType: 'image/png', contentUrl: 'https://smba/att/1' }] }))
+    await adapter.processActivity(inbound({ attachments: [{ contentType: 'image/png', contentUrl: 'https://smba.trafficmanager.net/att/1' }] }))
+    await adapter.processActivity(inbound({ attachments: [{ contentType: 'image/png', contentUrl: 'https://evil.example/img.png' }] }))
     expect(downloads[0]).toEqual({ url: 'https://f/a.pdf', name: 'a.pdf', headers: undefined })
     expect(downloads[1].headers).toEqual({ Authorization: 'Bearer bot-token' })
+    expect(downloads[2].headers).toEqual(undefined)
     expect(received[0]).toMatchObject({ type: 'document', filePath: '/tmp/uploads/a.pdf', fileName: 'a.pdf', caption: 'see attached' })
     expect(received[1]).toMatchObject({ type: 'photo', filePath: expect.stringMatching(/\.png$/) })
   })
@@ -164,6 +167,10 @@ describe('TeamsAdapter.handleRequest', () => {
       },
       end(chunk?: string) {
         if (chunk) out.body += chunk
+      },
+      once(_event: string, cb: () => void) {
+        cb()
+        return this
       },
     } as unknown as import('node:http').ServerResponse
     return { req, res, out }
@@ -234,6 +241,27 @@ describe('TeamsAdapter.handleRequest', () => {
       expect(warnings).toEqual([{ suppressedSinceLast: 0 }, { suppressedSinceLast: 2 }])
     } finally {
       ;(logger as { warn: unknown }).warn = original
+    }
+  })
+})
+
+describe('handleRequest over a real socket', () => {
+  it('returns 413 to the client instead of resetting the connection on an oversized body', async () => {
+    const { adapter } = makeAdapter([])
+    const server = createServer((req, res) => void adapter.handleRequest(req, res))
+    await new Promise<void>((resolve) => server.listen(0, resolve))
+    try {
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('server did not bind to a port')
+      const body = 'x'.repeat(1_100_000)
+      const resp = await fetch(`http://127.0.0.1:${address.port}${TEAMS_WEBHOOK_PATH}`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer good' },
+        body,
+      })
+      expect(resp.status).toBe(413)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
 })
