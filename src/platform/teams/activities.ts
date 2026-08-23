@@ -4,7 +4,7 @@
  * downloading and sending.
  */
 import type { IncomingMessage } from '../types.js'
-import type { Activity, ConversationReference } from './types.js'
+import type { Activity, ConversationReference, OutboundActivity } from './types.js'
 
 export type AttachmentDownload = { url: string; name: string; needsAuth: boolean; kind: 'photo' | 'document' }
 
@@ -98,4 +98,71 @@ export function mapInbound(activity: Activity, botId: string): InboundMapping {
 
   if (!text) return { kind: 'ignore', reason: 'empty message' }
   return { kind: 'message', message: { ...common, text, type: 'text' } }
+}
+
+const ADAPTIVE_CARD = 'application/vnd.microsoft.card.adaptive'
+
+/**
+ * Teams bot text renders a Markdown subset: bold, italic, strikethrough,
+ * inline code, fenced code, links, lists. No headings, no tables, no HTML.
+ * The bot core produces Markdown, and a few HTML tags left over from the
+ * Telegram path; both are normalised here.
+ */
+export function formatForTeams(markdown: string): string {
+  let out = markdown
+
+  // HTML leftovers from the Telegram formatter → Markdown
+  out = out.replace(/<b>(.*?)<\/b>/gs, '**$1**')
+  out = out.replace(/<strong>(.*?)<\/strong>/gs, '**$1**')
+  out = out.replace(/<i>(.*?)<\/i>/gs, '*$1*')
+  out = out.replace(/<em>(.*?)<\/em>/gs, '*$1*')
+  out = out.replace(/<code>(.*?)<\/code>/gs, '`$1`')
+  out = out.replace(/<pre>(.*?)<\/pre>/gs, '```\n$1\n```')
+  out = out.replace(/<a href="([^"]+)">(.*?)<\/a>/gs, '[$2]($1)')
+
+  // Markdown tables → fenced block (Teams renders pipes literally otherwise)
+  out = out.replace(/((?:^\|.*\|\s*$\n?){2,})/gm, (table) => '```\n' + table.trimEnd() + '\n```\n')
+
+  // Headings → bold line
+  out = out.replace(/^#{1,6}\s+(.+)$/gm, '**$1**')
+
+  // __bold__ → **bold**
+  out = out.replace(/__(.+?)__/g, '**$1**')
+
+  return out.trim()
+}
+
+export function buildTextActivity(text: string): OutboundActivity {
+  return { type: 'message', text, textFormat: 'markdown' }
+}
+
+/** Replacing a card with plain text is how buttons are "cleared". */
+export function buildClearedCardActivity(text: string): OutboundActivity {
+  return buildTextActivity(text)
+}
+
+export function buildTypingActivity(): OutboundActivity {
+  return { type: 'typing' }
+}
+
+/**
+ * One Adaptive Card: the text as a wrapping TextBlock, one Action.Submit per
+ * label. `msteams.type = messageBack` makes the click arrive as a normal
+ * message activity carrying `value.btn`, which mapInbound turns into the
+ * callback shape the bot core already handles. `btn` is duplicated at the top
+ * level of `data` because Teams merges `data` into `value` on the way back.
+ */
+export function buildCardActivity(text: string, buttons: string[]): OutboundActivity {
+  const card = {
+    $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+    type: 'AdaptiveCard',
+    version: '1.4',
+    body: [{ type: 'TextBlock', text, wrap: true }],
+    actions: buttons.map((label) => ({
+      type: 'Action.Submit',
+      title: label,
+      data: { msteams: { type: 'messageBack', text: label, displayText: label, value: { btn: label } }, btn: label },
+    })),
+  }
+  return { type: 'message', attachments: [{ contentType: ADAPTIVE_CARD, content: card }] }
 }

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { mapInbound, referenceFrom } from '../src/platform/teams/activities.js'
+import {
+  mapInbound,
+  referenceFrom,
+  formatForTeams,
+  buildCardActivity,
+  buildTextActivity,
+  buildTypingActivity,
+} from '../src/platform/teams/activities.js'
 import type { Activity } from '../src/platform/teams/types.js'
 
 const BOT_ID = '28:11111111-2222-3333-4444-555555555555'
@@ -124,5 +131,56 @@ describe('mapInbound', () => {
     expect(mapInbound(activity({ type: 'invoke' }), BOT_ID).kind).toBe('ignore')
     expect(mapInbound(activity({ type: 'messageReaction' }), BOT_ID).kind).toBe('ignore')
     expect(mapInbound(activity({ type: 'message', text: '   ' }), BOT_ID).kind).toBe('ignore')
+  })
+})
+
+describe('formatForTeams', () => {
+  it('keeps the Markdown subset Teams renders and rewrites the rest', () => {
+    const out = formatForTeams('# Title\n\n**bold** and __also__ and *it* `code`\n\n- a\n- b\n\n[link](https://x.y)\n\n~~gone~~')
+    expect(out).toContain('**Title**')
+    expect(out).toContain('**bold** and **also** and *it* `code`')
+    expect(out).toContain('- a\n- b')
+    expect(out).toContain('[link](https://x.y)')
+    expect(out).toContain('~~gone~~')
+    expect(out).not.toMatch(/^#/m)
+  })
+
+  it('turns the HTML tags the bot emits for Telegram into Markdown', () => {
+    expect(formatForTeams('<b>bold</b> <i>it</i> <code>x</code> <a href="https://x.y">link</a>')).toBe(
+      '**bold** *it* `x` [link](https://x.y)'
+    )
+  })
+
+  it('renders a Markdown table as a code block, since Teams has no tables in bot text', () => {
+    const out = formatForTeams('| a | b |\n|---|---|\n| 1 | 2 |')
+    expect(out.startsWith('```')).toBe(true)
+    expect(out).toContain('| 1 | 2 |')
+  })
+})
+
+describe('outbound builders', () => {
+  it('builds a markdown text activity', () => {
+    expect(buildTextActivity('hi **there**')).toEqual({ type: 'message', text: 'hi **there**', textFormat: 'markdown' })
+  })
+
+  it('builds a typing activity', () => {
+    expect(buildTypingActivity()).toEqual({ type: 'typing' })
+  })
+
+  it('builds an Adaptive Card with one messageBack action per button', () => {
+    const a = buildCardActivity('Send this?', ['Send', 'Edit', 'Discard'])
+    expect(a.type).toBe('message')
+    expect(a.attachments).toHaveLength(1)
+    const card = a.attachments![0]
+    expect(card.contentType).toBe('application/vnd.microsoft.card.adaptive')
+    const content = card.content as { version: string; body: unknown[]; actions: Array<{ type: string; title: string; data: unknown }> }
+    expect(content.version).toBe('1.4')
+    expect(content.actions.map((x) => x.title)).toEqual(['Send', 'Edit', 'Discard'])
+    expect(content.actions[0]).toEqual({
+      type: 'Action.Submit',
+      title: 'Send',
+      data: { msteams: { type: 'messageBack', text: 'Send', displayText: 'Send', value: { btn: 'Send' } }, btn: 'Send' },
+    })
+    expect(JSON.stringify(content.body)).toContain('Send this?')
   })
 })
