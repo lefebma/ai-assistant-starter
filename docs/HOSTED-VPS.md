@@ -25,10 +25,12 @@ machine you can snapshot, rebuild, and reach without touching their hardware.
 - **One login on the box:** the `havn` user, which owns the install and runs
   the service. The image's default `ubuntu` user is not created.
 - **unattended-upgrades** keeps the OS patched without anyone logging in.
-- **The deploy token is scrubbed** from the git remote right after the clone,
-  so it never persists in `.git/config`. It does remain in the cloud-init
-  user-data on the box (root-readable: `/var/lib/cloud/`), so use a
-  fine-grained, read-only, expiring token — see below.
+- **No GitHub credential on the box.** The repo is public, so the clone is
+  anonymous. If you deploy a private fork and give the generator a deploy
+  token, it rides only in the clone URL and the remote is reset right after,
+  so it never persists in `.git/config`; it does remain in the cloud-init
+  user-data on the box (root-readable: `/var/lib/cloud/`), so make it
+  fine-grained, read-only, and expiring.
 
 ## Pick a provider
 
@@ -49,20 +51,20 @@ arm64 builds; the provisioner picks the right gog asset from `dpkg
 
 ## Before you start, collect
 
-1. **A GitHub deploy token.** Fine-grained PAT on the repo, **Contents:
-   read-only**, expiry set (it is only needed at provision time; the box pulls
-   later updates through `/update` release tarballs or you re-provision).
-2. **Your SSH public key** (`~/.ssh/id_ed25519.pub`).
+1. **Your SSH public key** (`~/.ssh/id_ed25519.pub`).
+2. **Optional: a GitHub deploy token**, only if you deploy a private fork.
+   Fine-grained PAT on that repo, **Contents: read-only**, expiry set; it is
+   only used at provision time. The public repo needs nothing.
 3. **Optional: a Tailscale auth key** (admin console → Settings → Keys).
    Pre-authorized, not ephemeral (the server should survive key GC), ideally
    tagged (e.g. `tag:havn`) so ACLs can scope it.
 
 ## Generate the user-data
 
-Secrets go in environment variables, never in argv:
+Secrets, when you have any, go in environment variables, never in argv:
 
 ```bash
-export GITHUB_DEPLOY_TOKEN=<paste from your password manager>
+export GITHUB_DEPLOY_TOKEN=<paste, only for a private fork>
 export TAILSCALE_AUTH_KEY=<paste, only if using --tailscale>
 
 npm run make-cloud-init -- \
@@ -89,10 +91,11 @@ npm run make-cloud-init -- --config clients/marina.json
 ```
 
 The generator validates everything (hostname shape, IANA timezone, SSH key
-format, non-empty token), refuses to emit if any `{{VAR}}` would remain
+format, token shape if given), refuses to emit if any `{{VAR}}` would remain
 unfilled, and writes `deploy/rendered/<host>.user-data.yaml` with mode 0600.
-That file **contains the deploy token** (and Tailscale key): the directory is
-gitignored, and you should delete the file once the server exists.
+That file holds your SSH public key and **any deploy token or Tailscale key
+you gave**: the directory is gitignored, and you should delete the file once
+the server exists.
 
 It then prints the create command for each provider. It never runs them.
 
@@ -243,10 +246,10 @@ provision time you can add it later: install per tailscale.com/download, then
 - **OS:** unattended-upgrades applies security patches automatically. Kernel
   updates still want an occasional reboot: `sudo reboot` in a quiet moment;
   the service starts on boot once enabled.
-- **App:** the `/update` command works as on any install, once a fine-grained
-  GitHub PAT (Contents: read on the repo) is in `.env` as `GITHUB_TOKEN`; the
-  repo is private, so without it every check 404s. After "Updated ... Restart
-  the service to activate", restart over SSH: `sudo systemctl restart havn`.
+- **App:** the `/update` command works as on any install; the repo is public,
+  so no token is involved (a private fork would need a fine-grained PAT with
+  Contents: read in `.env` as `GITHUB_TOKEN`). After "Updated ... Restart the
+  service to activate", restart over SSH: `sudo systemctl restart havn`.
   Manual equivalent: `git pull && npm ci && npm run build && sudo systemctl
   restart havn`. **Boxes provisioned before 2026-08-23** run an updater that
   prunes its own build tools (`npm install --production`, then `tsc: not
@@ -266,6 +269,5 @@ provision time you can add it later: install per tailscale.com/download, then
 ## Rebuild from scratch
 
 The whole point of cloud-init: destroy the server, re-run the create command
-with a freshly generated user-data (new deploy token if the old one expired),
-restore the backup over the fresh install, `sudo systemctl enable --now havn`.
+with a freshly generated user-data, restore the backup over the fresh install, `sudo systemctl enable --now havn`.
 Twenty minutes, no archaeology.

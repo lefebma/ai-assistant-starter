@@ -15,7 +15,7 @@
  *
  * Secrets come from the environment only — never from argv, where they would
  * land in shell history and `ps` output:
- *   GITHUB_DEPLOY_TOKEN   required; read access to the private repo
+ *   GITHUB_DEPLOY_TOKEN   only for a private fork (read access); the public repo needs none
  *   TAILSCALE_AUTH_KEY    required only with --tailscale
  *
  * The rendered file CONTAINS those secrets. It is written 0600 into
@@ -54,7 +54,7 @@ Options:
                          (default deploy/rendered/<host>.user-data.yaml)
 
 Environment (secrets never go in argv):
-  GITHUB_DEPLOY_TOKEN    required
+  GITHUB_DEPLOY_TOKEN    only for a private fork; the public repo clones anonymously
   TAILSCALE_AUTH_KEY     required with --tailscale`
 
 interface CliOptions extends Partial<ClientSpec> {
@@ -115,11 +115,8 @@ function main(): void {
     process.exit(1)
   }
 
-  const token = process.env.GITHUB_DEPLOY_TOKEN?.trim()
-  if (!token) {
-    console.error('GITHUB_DEPLOY_TOKEN is not set. Export it from your secret store first; it never goes in argv.')
-    process.exit(1)
-  }
+  // Optional: the public repo clones without it. Set it only for a private fork.
+  const token = process.env.GITHUB_DEPLOY_TOKEN?.trim() || undefined
 
   let tailscaleAuthKey: string | undefined
   if (opts.tailscale) {
@@ -158,7 +155,12 @@ function main(): void {
   mkdirSync(dirname(outFile), { recursive: true })
   writeFileSync(outFile, rendered, { mode: 0o600 })
 
-  console.log(`Wrote ${outFile} (0600 — it contains the deploy token${tailscaleAuthKey ? ' and Tailscale key' : ''}).`)
+  const secrets = [token && 'the deploy token', tailscaleAuthKey && 'the Tailscale key'].filter(Boolean)
+  console.log(
+    secrets.length
+      ? `Wrote ${outFile} (0600 — it contains ${secrets.join(' and ')}).`
+      : `Wrote ${outFile} (0600). No deploy token given: the box clones the public repo anonymously.`
+  )
   console.log(
     tailscaleAuthKey
       ? 'SSH toggle: Tailscale mode — zero open inbound ports; reach the box over the tailnet.'

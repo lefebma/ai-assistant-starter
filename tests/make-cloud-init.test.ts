@@ -36,9 +36,13 @@ describe('validateSpec', () => {
     expect(validateSpec(SPEC)).toEqual([])
   })
 
-  it('refuses an empty deploy token', () => {
-    const problems = validateSpec({ ...SPEC, githubDeployToken: '' })
-    expect(problems.join('\n')).toContain('githubDeployToken')
+  it('accepts a missing deploy token (the repo is public; a token is only for a private fork)', () => {
+    expect(validateSpec({ ...SPEC, githubDeployToken: undefined })).toEqual([])
+    expect(validateSpec({ ...SPEC, githubDeployToken: '' })).toEqual([])
+  })
+
+  it('still refuses a deploy token with whitespace in it', () => {
+    expect(validateSpec({ ...SPEC, githubDeployToken: 'ghp_abc def' }).join('\n')).toContain('githubDeployToken')
   })
 
   it('refuses an unknown timezone', () => {
@@ -56,7 +60,7 @@ describe('validateSpec', () => {
   })
 
   it('reports every problem at once, not just the first', () => {
-    const problems = validateSpec({ ...SPEC, hostName: '', timezone: '', githubDeployToken: '' })
+    const problems = validateSpec({ ...SPEC, hostName: '', timezone: '', sshPublicKey: '' })
     expect(problems.length).toBeGreaterThanOrEqual(3)
   })
 })
@@ -149,9 +153,16 @@ describe('renderCloudInit', () => {
     expect(rendered).not.toMatch(/systemctl (enable|start) havn/)
   })
 
-  it('clones with the deploy token, then scrubs it from the git remote', () => {
+  it('clones with the deploy token when one is given, then scrubs it from the git remote', () => {
     expect(rendered).toContain(`x-access-token:test-deploy-token-not-real@github.com/${DEFAULT_GIT_REPO}.git`)
     expect(rendered).toContain(`remote set-url origin "https://github.com/${DEFAULT_GIT_REPO}.git"`)
+  })
+
+  it('clones anonymously when no deploy token is given, and no credential shape appears anywhere', () => {
+    const anon = renderCloudInit(cloudInitTemplate, unitTemplate, { ...SPEC, githubDeployToken: undefined })
+    expect(anon).toContain(`git clone --branch main "https://github.com/${DEFAULT_GIT_REPO}.git"`)
+    expect(anon).not.toContain('x-access-token')
+    expect(anon).not.toMatch(/\{\{[A-Z_]+\}\}/)
   })
 
   it('builds as the havn user and leaves a ready marker', () => {
@@ -189,7 +200,7 @@ describe('renderCloudInit', () => {
     expect(() => renderCloudInit(cloudInitTemplate, unitTemplate, { ...SPEC, sshPublicKey: '' })).toThrow(
       /refusing to render/
     )
-    expect(() => renderCloudInit(cloudInitTemplate, unitTemplate, { ...SPEC, githubDeployToken: ' ' })).toThrow(
+    expect(() => renderCloudInit(cloudInitTemplate, unitTemplate, { ...SPEC, githubDeployToken: 'a b' })).toThrow(
       /githubDeployToken/
     )
   })
@@ -236,7 +247,7 @@ describe('shipped templates', () => {
   })
 
   it('every credential is a placeholder, not a value', () => {
-    expect(cloudInitTemplate).toContain('{{GITHUB_DEPLOY_TOKEN}}')
+    expect(cloudInitTemplate).toContain('{{GIT_CLONE_URL}}')
     expect(cloudInitTemplate).toContain('{{SSH_PUBLIC_KEY}}')
   })
 
