@@ -60,7 +60,7 @@ const GITHUB_REPO = 'lefebma/ai-assistant-starter'
 const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO}/main`
 const GITHUB_TARBALL_URL = `https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz`
 
-/** Auth headers for private-repo access. Without a token every fetch 404s. */
+/** Auth headers, only when GITHUB_TOKEN is set (a private fork). The public repo needs none. */
 function githubHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const token = process.env.GITHUB_TOKEN
   if (!token) return extra

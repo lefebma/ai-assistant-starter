@@ -21,8 +21,11 @@ export interface ClientSpec {
   timezone: string
   /** The operator's SSH public key line (authorized_keys format). */
   sshPublicKey: string
-  /** GitHub token able to read the private repo. Never logged, never in argv. */
-  githubDeployToken: string
+  /**
+   * GitHub token able to read the repo. Only needed when deploying a private
+   * fork; the public repo clones anonymously. Never logged, never in argv.
+   */
+  githubDeployToken?: string
   /** When set, Tailscale is installed and inbound SSH stays closed. */
   tailscaleAuthKey?: string
   /** owner/name on GitHub. */
@@ -97,9 +100,8 @@ export function validateSpec(spec: ClientSpec, timezones: string[] = knownTimezo
   const keyProblem = validateSshPublicKey(spec.sshPublicKey ?? '')
   if (keyProblem) problems.push(keyProblem)
 
-  if (!spec.githubDeployToken?.trim()) {
-    problems.push('githubDeployToken is required (set GITHUB_DEPLOY_TOKEN in the environment)')
-  } else if (/\s/.test(spec.githubDeployToken.trim())) {
+  const token = spec.githubDeployToken?.trim()
+  if (token && /\s/.test(token)) {
     problems.push('githubDeployToken must not contain whitespace')
   }
 
@@ -151,12 +153,18 @@ export function renderTemplate(
 export function buildVars(spec: ClientSpec): Record<string, string> {
   const hostName = spec.hostName.trim()
   const tailscaleKey = spec.tailscaleAuthKey?.trim()
+  const token = spec.githubDeployToken?.trim()
+  const gitRepo = spec.gitRepo?.trim() || DEFAULT_GIT_REPO
   return {
     HOST_NAME: hostName,
     TIMEZONE: spec.timezone.trim(),
     SSH_PUBLIC_KEY: spec.sshPublicKey.trim(),
-    GITHUB_DEPLOY_TOKEN: spec.githubDeployToken.trim(),
-    GIT_REPO: spec.gitRepo?.trim() || DEFAULT_GIT_REPO,
+    // The token rides only in the clone URL; the remote is scrubbed right
+    // after the clone either way, so it never persists in .git/config.
+    GIT_CLONE_URL: token
+      ? `https://x-access-token:${token}@github.com/${gitRepo}.git`
+      : `https://github.com/${gitRepo}.git`,
+    GIT_REPO: gitRepo,
     GIT_REF: spec.gitRef?.trim() || DEFAULT_GIT_REF,
     INSTALL_DIR: spec.installDir?.trim() || DEFAULT_INSTALL_DIR,
     UFW_SSH_CMD: tailscaleKey
@@ -238,6 +246,6 @@ export function providerCommands(outFile: string, hostName: string): string {
   #   instance in BHS, pick Ubuntu 24.04, and paste the contents of
   #   ${outFile} into the cloud-init / post-installation script box.
 
-The rendered file contains the deploy token and any Tailscale key.
+The rendered file holds the SSH public key plus any deploy token or Tailscale key you gave.
 Delete it once the server exists: rm ${outFile}`
 }

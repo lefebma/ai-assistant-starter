@@ -5,7 +5,7 @@
 #
 # The generator fills every double-brace placeholder and refuses to emit
 # while any remains. Straight substitutions: HOST_NAME, TIMEZONE,
-# SSH_PUBLIC_KEY, GIT_REPO, GIT_REF, GITHUB_DEPLOY_TOKEN, INSTALL_DIR, and
+# SSH_PUBLIC_KEY, GIT_REPO, GIT_REF, GIT_CLONE_URL, INSTALL_DIR, and
 # SYSTEMD_UNIT (the rendered deploy/havn.service.template).
 #
 # Two are computed from whether a Tailscale auth key was provided — that is
@@ -132,10 +132,10 @@ write_files:
       # (The pilot's chage on havn treated the wrong account; kept because it
       # is harmless and some images do expire new users too.)
       chage -d "$(date +%F)" -M -1 -E -1 havn
-      # The deploy token rides only in the clone URL; the remote is scrubbed
-      # immediately after so the token never persists in .git/config.
-      runuser -u havn -- git clone --branch {{GIT_REF}} \
-        "https://x-access-token:{{GITHUB_DEPLOY_TOKEN}}@github.com/{{GIT_REPO}}.git" {{INSTALL_DIR}}
+      # A deploy token, if one was given for a private fork, rides only in the
+      # clone URL; the remote is reset immediately after so it never persists
+      # in .git/config. The public repo clones anonymously.
+      runuser -u havn -- git clone --branch {{GIT_REF}} "{{GIT_CLONE_URL}}" {{INSTALL_DIR}}
       runuser -u havn -- git -C {{INSTALL_DIR}} remote set-url origin "https://github.com/{{GIT_REPO}}.git"
       runuser -u havn -- mkdir -p {{INSTALL_DIR}}/logs
       runuser -u havn -- bash -lc 'cd {{INSTALL_DIR}} && npm ci --no-audit --no-fund && npm run build'

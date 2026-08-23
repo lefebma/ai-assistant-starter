@@ -497,7 +497,7 @@ Chrome has to be installed for `/browser start` to do anything. `/browser status
 | Bot token conflict | Only one process can poll a Telegram bot token. Kill duplicates. |
 | Slow responses | Normal for tool-heavy queries. Simple chat is fast, email+calendar lookups take 10-30s. |
 | App crashes on startup (missing module) | The `/update` command only works if the app can start. See [Manual update](#manual-update) below. |
-| `/update` returns "GitHub returned 404" | The repo is private. Add `GITHUB_TOKEN` to your `.env` with a fine-grained PAT that has Contents read access. |
+| `/update` returns "GitHub returned 404" | The install points at a private fork. Add `GITHUB_TOKEN` to your `.env` with a fine-grained PAT that has Contents read access on it. The public repo needs no token. |
 
 ### Manual update
 
