@@ -12,6 +12,26 @@ import { getDeclaredMcpServers } from './cockpit/mcp.js'
 import { publicRegistry } from './cockpit/registry.js'
 import { handleRun, handleCancel, readLastRun, getActiveRun } from './cockpit/run.js'
 
+export type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
+
+// Routes registered by platform adapters (the Teams webhook). Consulted at
+// request time, before the built-in routes, so registration order relative to
+// listen() does not matter. They carry their own authentication and are
+// deliberately not behind requireAuth().
+const registeredRoutes = new Map<string, RouteHandler>()
+
+function routeKey(method: string, pathname: string): string {
+  return `${method.toUpperCase()} ${pathname}`
+}
+
+export function registerHttpRoute(method: string, pathname: string, handler: RouteHandler): () => void {
+  const key = routeKey(method, pathname)
+  registeredRoutes.set(key, handler)
+  return () => {
+    if (registeredRoutes.get(key) === handler) registeredRoutes.delete(key)
+  }
+}
+
 // If a voice turn takes longer than this without streaming content, hand off to Telegram instead.
 const VOICE_TIMEOUT_MS = 12_000
 
@@ -280,7 +300,7 @@ function handleCockpitJson<T>(req: IncomingMessage, res: ServerResponse, payload
   }
 }
 
-export function startHttpServer(): void {
+export function startHttpServer(port: number = HTTP_PORT): void {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
 
@@ -288,6 +308,18 @@ export function startHttpServer(): void {
     if (req.method === 'OPTIONS') {
       res.writeHead(204)
       res.end()
+      return
+    }
+
+    const registered = registeredRoutes.get(routeKey(req.method ?? 'GET', url.pathname))
+    if (registered) {
+      Promise.resolve(registered(req, res)).catch((err) => {
+        logger.error({ err, path: url.pathname }, 'registered route failed')
+        if (!res.headersSent) {
+          res.writeHead(500)
+          res.end()
+        }
+      })
       return
     }
 
@@ -361,8 +393,8 @@ export function startHttpServer(): void {
 
   // Bind to 0.0.0.0 so the dashboard's Cockpit tab can reach Umi from other devices
   // on the LAN. Bearer-token auth (HTTP_BEARER_TOKEN) is the security boundary.
-  server.listen(HTTP_PORT, '0.0.0.0', () => {
-    logger.info({ port: HTTP_PORT }, 'HTTP server listening (voice/custom-LLM/cockpit)')
+  server.listen(port, '0.0.0.0', () => {
+    logger.info({ port }, 'HTTP server listening (voice/custom-LLM/cockpit)')
   })
   httpServer = server
 }

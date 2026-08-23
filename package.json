@@ -20,8 +20,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@ai-sdk/azure": "^3.0.103",
     "@ai-sdk/anthropic": "^3.0.98",
+    "@ai-sdk/azure": "^3.0.103",
     "@ai-sdk/google": "^3.0.95",
     "@ai-sdk/mcp": "^1.0.63",
     "@ai-sdk/openai": "^3.0.86",
@@ -34,6 +34,7 @@
     "cron-parser": "^5.0.0",
     "form-data": "^4.0.5",
     "grammy": "^1.41.1",
+    "jose": "^6.2.10",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
     "playwright": "1.60.0-alpha-1774999321000",
