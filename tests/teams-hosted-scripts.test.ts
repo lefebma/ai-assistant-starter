@@ -93,6 +93,12 @@ describe('teams-register', () => {
     expect(t).not.toMatch(/MultiTenant|AzureADMultipleOrgs/)
   })
 
+  it('script ensures a service principal exists for the app (single-tenant client credentials need one)', () => {
+    const t = readFileSync(REGISTER, 'utf-8')
+    expect(t).toContain("['ad', 'sp', 'show', '--id', appId]")
+    expect(t).toContain("['ad', 'sp', 'create', '--id', appId]")
+  })
+
   it('reuses a single existing registration, creates when none, and refuses to guess between duplicates', () => {
     expect(pickExistingAppId('', 'Havn - test')).toBeNull()
     expect(pickExistingAppId('\n', 'Havn - test')).toBeNull()

@@ -74,6 +74,16 @@ function main(): void {
     note(`Found app registration ${plan.displayName} (${appId})`)
   }
 
+  // 1b. Service principal. `az ad app create` does not make one, and a
+  // single-tenant client-credentials grant fails without it
+  // (AADSTS7000229 "missing service principal in the tenant").
+  if (azOk(['ad', 'sp', 'show', '--id', appId])) {
+    note('Service principal present')
+  } else {
+    az(['ad', 'sp', 'create', '--id', appId])
+    note('Created service principal')
+  }
+
   // 2. Client secret: first run, or on request. 24 months.
   let secret = ''
   if (created || opts.rotateSecret) {

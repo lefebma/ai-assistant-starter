@@ -192,7 +192,9 @@ hosted box.
 using the `az` CLI (authenticated once by the operator):
 
 1. `az ad app create` — display name "Havn – <name>", sign-in audience
-   `AzureADMyOrg` (single-tenant; multi-tenant bots can no longer be created).
+   `AzureADMyOrg` (single-tenant; multi-tenant bots can no longer be created),
+   then `az ad sp create --id <appId>`: the client-credentials grant needs a
+   service principal in the tenant (AADSTS7000229 without it).
 2. `az ad app credential reset` — client secret, 24-month expiry. Printed
    once; the operator pastes it into `.env` (or `/secret set`).
 3. `az bot create --kind azurebot --sku F0 --app-type SingleTenant --tenant-id <tenant> --endpoint https://<hostname>/api/teams/messages`.
