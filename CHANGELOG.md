@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **New: add API keys from the chat with `/secret`.** On a hosted box there is
+  no terminal, so until now getting a key into the vault meant the operator
+  SSHing in. `/secret set OPENAI_API_KEY` asks for the key as your next
+  message and handles the whole exchange in bot code: the value never reaches
+  the AI model, a key the provider rejects is not saved, your message is
+  deleted from the chat, and the confirmation shows only the last four
+  characters. `/secret list` and `/secret rm` round it out. Primary chat only;
+  a pending request expires after 3 minutes. Details in docs/VAULT.md.
+
 ## 1.17.0 - 2026-08-20
 
 Two doors open: Microsoft shops can run the assistant under their own Azure agreement, and the writing skill now works with whatever AI you already pay for instead of demanding its own. Also, browser automation has been listed as a capability since the first release; this is the release where that starts being true.
