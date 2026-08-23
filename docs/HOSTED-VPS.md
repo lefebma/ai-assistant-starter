@@ -243,8 +243,15 @@ provision time you can add it later: install per tailscale.com/download, then
 - **OS:** unattended-upgrades applies security patches automatically. Kernel
   updates still want an occasional reboot: `sudo reboot` in a quiet moment;
   the service starts on boot once enabled.
-- **App:** the `/update` command works as on any install. Manual equivalent:
-  `git pull && npm ci && npm run build && sudo systemctl restart havn`.
+- **App:** the `/update` command works as on any install, once a fine-grained
+  GitHub PAT (Contents: read on the repo) is in `.env` as `GITHUB_TOKEN`; the
+  repo is private, so without it every check 404s. After "Updated ... Restart
+  the service to activate", restart over SSH: `sudo systemctl restart havn`.
+  Manual equivalent: `git pull && npm ci && npm run build && sudo systemctl
+  restart havn`. **Boxes provisioned before 2026-08-23** run an updater that
+  prunes its own build tools (`npm install --production`, then `tsc: not
+  found`); do the manual update once to get past it, after which `/update`
+  works.
 - **Snapshot before app updates.** Every provider above does whole-disk
   snapshots (Hetzner/DO/Vultr one click or one CLI call; OVH via the manager).
   A snapshot taken while the service runs is fine for this workload — SQLite

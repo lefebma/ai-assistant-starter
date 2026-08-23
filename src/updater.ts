@@ -26,6 +26,8 @@ import {
   planUpdate,
   BUNDLE_PAYLOAD_PATHS,
   PRESERVED_PATHS,
+  SOURCE_ENGINE_PATHS,
+  SOURCE_INSTALL_ARGS,
   type InstallEnvironment,
 } from './update/plan.js'
 import { moveAside, moveInto, restoreBackup } from './update/swap.js'
@@ -65,17 +67,9 @@ function githubHeaders(extra: Record<string, string> = {}): Record<string, strin
   return { Authorization: `Bearer ${token}`, ...extra }
 }
 
-// Files that get replaced during a source update (engine + config + bundled templates).
-// `templates/` ships new always-on skills and updated optional-skill templates;
-// existing user skills under `skills/` are preserved (PRESERVED_PATHS above).
-const ENGINE_PATHS = [
-  'src',
-  'scripts',
-  'package.json',
-  'tsconfig.json',
-  'templates',
-  'VERSION',
-]
+// Files a source update replaces live in src/update/plan.ts (SOURCE_ENGINE_PATHS)
+// next to the bundle list, where the tests can see both.
+const ENGINE_PATHS = SOURCE_ENGINE_PATHS
 
 export interface UpdateStatus {
   currentVersion: string
@@ -408,9 +402,10 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
     // 6c. Register the browser tools for installs that predate them.
     syncPlaywrightMcp()
 
-    // 7. Install dependencies (package.json may have changed)
+    // 7. Reinstall against the lockfile that came with the update. Dev
+    //    dependencies included: the build step needs tsc.
     logger.info('Installing dependencies')
-    execFileSync('npm', ['install', '--production'], {
+    execFileSync('npm', SOURCE_INSTALL_ARGS, {
       cwd: PROJECT_ROOT,
       timeout: 120_000,
       stdio: 'pipe',
@@ -451,7 +446,7 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
       if (phase !== 'fetch' && existsSync(backupDir)) {
         restoreBackup(PROJECT_ROOT, backupDir, ENGINE_PATHS, { clearTargets: phase === 'apply' })
         // Rebuild after rollback
-        execFileSync('npm', ['install', '--production'], { cwd: PROJECT_ROOT, timeout: 120_000, stdio: 'pipe' })
+        execFileSync('npm', SOURCE_INSTALL_ARGS, { cwd: PROJECT_ROOT, timeout: 120_000, stdio: 'pipe' })
         execFileSync('npm', ['run', 'build'], { cwd: PROJECT_ROOT, timeout: 60_000, stdio: 'pipe' })
       }
     } catch (rollbackErr) {

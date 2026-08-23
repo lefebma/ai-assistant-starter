@@ -5,7 +5,7 @@
  *
  *   source  — a git clone or source download. Has the TypeScript toolchain, so
  *             it updates the way it always has: fetch the repo, replace engine
- *             files, `npm install` + `npm run build`.
+ *             files, `npm ci` + `npm run build`.
  *
  *   bundle  — an installer payload. Ships a compiled dist/ and production-only
  *             dependencies, and brings its own Node, so there is frequently no
@@ -72,6 +72,32 @@ export const PRESERVED_PATHS = ['.env', 'CLAUDE.md', 'PERSONALITY.md', 'skills',
  * mapped file. It can stay on this list only because the updater swaps by
  * rename, never by delete (src/update/swap.ts, issue #27).
  */
+/**
+ * What a source update replaces: the engine plus the two files npm needs to
+ * agree with each other. `templates/` ships new always-on skills; the user's
+ * own skills/ are in PRESERVED_PATHS. package-lock.json rides along with
+ * package.json so the reinstall is the one the new version was built with.
+ */
+export const SOURCE_ENGINE_PATHS = [
+  'src',
+  'scripts',
+  'package.json',
+  'package-lock.json',
+  'tsconfig.json',
+  'templates',
+  'VERSION',
+]
+
+/**
+ * How a source update reinstalls before `npm run build`. A source install is
+ * defined by having the TypeScript toolchain, and tsc is a devDependency, so
+ * the install must keep devDependencies: `--production` here pruned typescript
+ * and then the build (and the rollback's rebuild) failed with "tsc: not found"
+ * on havn-test, 2026-08-22. `ci` is deterministic against the lockfile that
+ * arrived with the update and matches what provisioning runs.
+ */
+export const SOURCE_INSTALL_ARGS = ['ci', '--no-audit', '--no-fund']
+
 export const BUNDLE_PAYLOAD_PATHS = [
   'dist',
   'node_modules',
