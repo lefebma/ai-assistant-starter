@@ -1,7 +1,12 @@
 /**
- * Planning half of the Teams registration: what to name things, which tenant
- * mode, where the messaging endpoint lives. No I/O; scripts/teams-register.ts
- * drives `az` from this.
+ * Planning half of the Teams registration: what to name things, where the
+ * messaging endpoint lives. No I/O; scripts/teams-register.ts drives `az`
+ * from this.
+ *
+ * Registrations are always single-tenant: Azure stopped accepting new
+ * multi-tenant bots (`InvalidBotCreationData: Multitenant bot creation is
+ * deprecated`, Aug 2026). `tenant` picks which tenant; when it is absent the
+ * script uses the tenant `az` is signed in to.
  */
 import { isValidHostname } from './teams-edge.js'
 
@@ -18,8 +23,8 @@ export interface RegistrationPlan {
   displayName: string
   botName: string
   endpoint: string
-  audience: 'AzureADMultipleOrgs' | 'AzureADMyOrg'
-  appType: 'MultiTenant' | 'SingleTenant'
+  audience: 'AzureADMyOrg'
+  appType: 'SingleTenant'
   groupLocation: string
 }
 
@@ -51,13 +56,12 @@ export function parseRegisterArgs(argv: string[]): RegisterOptions {
 }
 
 export function registrationPlan(opts: RegisterOptions): RegistrationPlan {
-  const single = !!opts.tenant
   return {
     displayName: `Havn - ${opts.name}`,
     botName: `havn-${opts.name}`,
     endpoint: `https://${opts.hostname}/api/teams/messages`,
-    audience: single ? 'AzureADMyOrg' : 'AzureADMultipleOrgs',
-    appType: single ? 'SingleTenant' : 'MultiTenant',
+    audience: 'AzureADMyOrg',
+    appType: 'SingleTenant',
     groupLocation: opts.location === 'global' ? 'eastus' : opts.location,
   }
 }

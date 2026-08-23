@@ -7,8 +7,10 @@
  *   npm run teams-register -- <name> <hostname> [--tenant <id>] [--resource-group havn-bots]
  *                               [--location global] [--rotate-secret]
  *
- * Multi-tenant by default (any Microsoft 365 tenant can install the app);
- * --tenant makes it single-tenant for a firm that registers in its own tenant.
+ * Always single-tenant (Azure no longer creates multi-tenant bots): the app
+ * installs in the tenant it is registered in. Without --tenant that is the
+ * tenant az is signed in to; a firm that wants the bot in its own tenant signs
+ * in there, or passes --tenant with an account that can create there.
  * Idempotent: re-running finds the existing app and bot and prints the ids
  * again; the secret is minted only the first time or with --rotate-secret,
  * and is printed once, to stdout, never passed on a command line. Every az
@@ -52,8 +54,15 @@ function main(): void {
   }
 
   const plan = registrationPlan(opts)
+  const tenant = opts.tenant ?? az(['account', 'show', '--query', 'tenantId'])
+  if (!tenant) {
+    console.error('Could not determine the tenant: pass --tenant <id> or sign in to one with az login')
+    process.exit(1)
+  }
 
-  // 1. App registration (find or create)
+  // 1. App registration (find or create). An existing one is pinned to
+  // single-tenant too, so a registration from before the multi-tenant
+  // deprecation still matches the bot.
   let appId: string | null = pickExistingAppId(az(['ad', 'app', 'list', '--display-name', plan.displayName, '--query', '[].appId']), plan.displayName)
   let created = false
   if (!appId) {
@@ -61,6 +70,7 @@ function main(): void {
     created = true
     note(`Created app registration ${plan.displayName} (${appId})`)
   } else {
+    az(['ad', 'app', 'update', '--id', appId, '--sign-in-audience', plan.audience])
     note(`Found app registration ${plan.displayName} (${appId})`)
   }
 
@@ -89,8 +99,8 @@ function main(): void {
       '--endpoint', plan.endpoint,
       '--sku', 'F0',
       '--location', opts.location,
+      '--tenant-id', tenant,
     ]
-    if (opts.tenant) args.push('--tenant-id', opts.tenant)
     az(args)
     note(`Created bot ${plan.botName} -> ${plan.endpoint}`)
   }
@@ -108,7 +118,7 @@ function main(): void {
   console.log(`TEAMS_APP_ID=${appId}`)
   if (secret) console.log(`TEAMS_APP_SECRET=${secret}`)
   else console.log('# TEAMS_APP_SECRET unchanged (use --rotate-secret to mint a new one)')
-  if (opts.tenant) console.log(`TEAMS_TENANT_ID=${opts.tenant}`)
+  console.log(`TEAMS_TENANT_ID=${tenant}`)
 }
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {

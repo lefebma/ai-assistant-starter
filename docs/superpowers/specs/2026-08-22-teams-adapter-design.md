@@ -18,7 +18,7 @@ approval flows, and files the user sends. Validated on a hosted VPS box.
 | Bot topology | One Azure Bot + one Teams app **per install** | Pricing and the runtime are per install; mirrors Telegram/Slack; no shared infrastructure; ELS never in the message path. A firm-wide bot with a relay is a later card if 30 users materialise. |
 | Inbound path | **Caddy on the box, port 443**, hostname via sslip.io or an owned subdomain | No new accounts or domains. Only `/api/teams/*` is proxied. Laptop installs would need a tunnel; out of scope. |
 | Implementation | **Hand-rolled Bot Connector REST + `jose`** for JWT | Protocol surface is small and stable; one audited dependency; matches the repo's style. Microsoft 365 Agents SDK is the fallback if the REST surface surprises us. |
-| Registration tenant | Marc's Entra tenant, **multi-tenant** registration for the pilot; `TEAMS_TENANT_ID` optional for a firm that registers single-tenant in its own tenant | Fastest path to validation; keeps the governance door open. |
+| Registration tenant | **Single-tenant only** (amended Aug 23 2026: `az bot create` rejects `MultiTenant` with `InvalidBotCreationData: Multitenant bot creation is deprecated`). Pilot registers in the Sitewide tenant; a firm registers in its own tenant (`--tenant` or an az session there). `TEAMS_TENANT_ID` is always set. | Azure's rule, not ours; the original multi-tenant default is no longer available. |
 | v1 scope | 1:1 personal chat: text/Markdown, typing, edit-streaming, buttons (Adaptive Cards), inbound documents and images | Enough to prove Teams to Marina. Voice, outbound files, channels, laptop installs, relay: out. |
 
 ## Architecture
@@ -176,7 +176,7 @@ scope). `ALLOWED_CHAT_ID` holds it; `/chatid` reports it. Authorisation in
 PLATFORM=teams
 TEAMS_APP_ID=
 TEAMS_APP_SECRET=
-TEAMS_TENANT_ID=          # optional; omit for a multi-tenant registration
+TEAMS_TENANT_ID=          # the tenant the bot is registered in (always set)
 ALLOWED_CHAT_ID=          # the Teams conversation id from /chatid
 ```
 
@@ -192,10 +192,10 @@ hosted box.
 using the `az` CLI (authenticated once by the operator):
 
 1. `az ad app create` — display name "Havn – <name>", sign-in audience
-   `AzureADMultipleOrgs` (or `AzureADMyOrg` with `--tenant`).
+   `AzureADMyOrg` (single-tenant; multi-tenant bots can no longer be created).
 2. `az ad app credential reset` — client secret, 24-month expiry. Printed
    once; the operator pastes it into `.env` (or `/secret set`).
-3. `az bot create --kind azurebot --sku F0 --app-type MultiTenant|SingleTenant --endpoint https://<hostname>/api/teams/messages`.
+3. `az bot create --kind azurebot --sku F0 --app-type SingleTenant --tenant-id <tenant> --endpoint https://<hostname>/api/teams/messages`.
 4. `az bot msteams create` — enable the Teams channel.
 5. Print `TEAMS_APP_ID`, `TEAMS_APP_SECRET`, `TEAMS_TENANT_ID` lines.
 

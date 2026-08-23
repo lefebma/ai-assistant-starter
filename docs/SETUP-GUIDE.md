@@ -68,7 +68,7 @@ A laptop install would need a tunnel and is not supported for Teams yet.
 
 1. Register the bot: `npm run teams-register -- <name> <hostname>` (needs the
    Azure CLI, signed in); add `--tenant <id>` for a single-tenant registration in the firm's own tenant.
-   It prints `TEAMS_APP_ID`, `TEAMS_APP_SECRET` and, for single-tenant registrations, `TEAMS_TENANT_ID`.
+   It prints `TEAMS_APP_ID`, `TEAMS_APP_SECRET` and `TEAMS_TENANT_ID`.
 2. Add them to `.env` (or paste the secret with `/secret set TEAMS_APP_SECRET`).
 3. Build the app package: `npm run teams-manifest -- --app-id <id> --name "<assistant>"`.
 4. Upload `deploy/rendered/<slug>-teams.zip` (the assistant name, lowercased, with dashes) in Teams: Apps → Manage your apps → Upload a custom app.

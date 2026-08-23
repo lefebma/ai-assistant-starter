@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, streaming replies, approval buttons as Adaptive Cards, and files sent to the assistant all work in 1:1 chat. Not yet: voice notes, sending files back, channels, laptop installs.
+- **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, streaming replies, approval buttons as Adaptive Cards, and files sent to the assistant all work in 1:1 chat. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: voice notes, sending files back, channels, laptop installs.
 
 - **New: add API keys from the chat with `/secret`.** On a hosted box there is
   no terminal, so until now getting a key into the vault meant the operator

@@ -69,20 +69,28 @@ describe('teams-register', () => {
     expect(() => parseRegisterArgs(['test', 'bot.acme.com', '--tenant'])).toThrow(/value/)
   })
 
-  it('plans a multi-tenant registration by default and single-tenant with --tenant', () => {
-    const multi = registrationPlan(parseRegisterArgs(['test', '5-161-197-79.sslip.io']))
-    expect(multi).toEqual({
+  it('always plans a single-tenant registration (Azure refuses new multi-tenant bots)', () => {
+    const plan = registrationPlan(parseRegisterArgs(['test', '5-161-197-79.sslip.io']))
+    expect(plan).toEqual({
       displayName: 'Havn - test',
       botName: 'havn-test',
       endpoint: 'https://5-161-197-79.sslip.io/api/teams/messages',
-      audience: 'AzureADMultipleOrgs',
-      appType: 'MultiTenant',
+      audience: 'AzureADMyOrg',
+      appType: 'SingleTenant',
       groupLocation: 'eastus',
     })
-    const single = registrationPlan(parseRegisterArgs(['acme', 'bot.acme.com', '--tenant', 't-1', '--location', 'westeurope']))
-    expect(single.audience).toBe('AzureADMyOrg')
-    expect(single.appType).toBe('SingleTenant')
-    expect(single.groupLocation).toBe('westeurope')
+    const explicit = registrationPlan(parseRegisterArgs(['acme', 'bot.acme.com', '--tenant', 't-1', '--location', 'westeurope']))
+    expect(explicit.audience).toBe('AzureADMyOrg')
+    expect(explicit.appType).toBe('SingleTenant')
+    expect(explicit.groupLocation).toBe('westeurope')
+  })
+
+  it('script resolves the tenant from the az session when --tenant is absent and always emits TEAMS_TENANT_ID', () => {
+    const t = readFileSync(REGISTER, 'utf-8')
+    expect(t).toMatch(/'account', 'show', '--query', 'tenantId'/)
+    expect(t).toContain("'--tenant-id', tenant")
+    expect(t).toContain('`TEAMS_TENANT_ID=${tenant}`')
+    expect(t).not.toMatch(/MultiTenant|AzureADMultipleOrgs/)
   })
 
   it('reuses a single existing registration, creates when none, and refuses to guess between duplicates', () => {

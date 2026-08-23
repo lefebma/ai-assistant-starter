@@ -267,12 +267,16 @@ the credentials blank).
    that can create app registrations and Azure Bot resources:
 
    ```bash
-   npm run teams-register -- <name> <hostname>                # multi-tenant
-   npm run teams-register -- <name> <hostname> --tenant <id>  # single-tenant, the firm's own
+   npm run teams-register -- <name> <hostname>                # in the tenant az is signed in to
+   npm run teams-register -- <name> <hostname> --tenant <id>  # a specific tenant
    ```
 
-   It prints the lines for the box's `.env`: `TEAMS_APP_ID`,
-   `TEAMS_APP_SECRET`, and `TEAMS_TENANT_ID` when `--tenant` was given. Paste them in (or use `/secret set`
+   Bots are single-tenant (Azure no longer creates multi-tenant ones), so
+   the app installs only in the tenant it is registered in. For a firm that
+   wants the bot in its own Microsoft 365 tenant, register it there: sign in
+   with an account that can create app registrations in that tenant, or pass
+   `--tenant`. It prints the lines for the box's `.env`: `TEAMS_APP_ID`,
+   `TEAMS_APP_SECRET`, and `TEAMS_TENANT_ID`. Paste them in (or use `/secret set`
    for the secret once the bot is up), then `sudo systemctl restart havn`.
    The secret expires in 24 months; note the date next to the box in your
    records, as with the Claude token.
