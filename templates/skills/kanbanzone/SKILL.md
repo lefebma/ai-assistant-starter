@@ -47,6 +47,21 @@ The API does **not** cover:
 
 For those two cases, fall back to browser automation via the Chrome MCP. See `references/browser-automation-tips.md` for patterns.
 
+## Formatting: descriptions and comments are rich text (HTML)
+
+Kanban Zone stores card **descriptions** and activity-log **comments** as rich-text HTML (the web UI uses a rich editor). Markdown or plain text pushed through the API is NOT rendered — it shows up as one unformatted blob.
+
+`kz.py` handles this automatically: `--description` (create-card, update-card, and the bulk-create CSV column) and `--text` (comment) accept markdown and convert it to KZ-flavored HTML before sending. Input that already starts with an HTML tag passes through untouched, so hand-crafted HTML still works.
+
+Conversion rules (house style, matches hand-formatted cards on the boards):
+
+- `## Heading` → `<p><strong><u>Heading</u></strong></p>` with a `<p><br/></p>` spacer between sections
+- `- item` / `* item` → `<ul>`; `1. item` → `<ol>`; `- [ ]` / `- [x]` checkboxes become plain list items (KZ descriptions have no checkbox rendering)
+- `**bold**` → `<strong>`, `*italic*` → `<em>`, `` `code` `` → `<code>`, `[text](url)` → `<a>`
+- ``` fenced blocks → `<pre>`; bare lines → `<p>` paragraphs; `<`, `>`, `&` are escaped
+
+When composing card content, just write markdown and let the CLI convert. Don't pre-wrap text in HTML unless you need something the converter doesn't cover.
+
 ## Core workflows
 
 ### 1. Discover boards

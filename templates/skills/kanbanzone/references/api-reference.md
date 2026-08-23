@@ -196,3 +196,9 @@ These operations still require the browser (see `references/browser-automation-t
 The spec doesn't document explicit rate limits; be polite. For batches, stagger calls (e.g., 200ms between writes for a loop of 20+ cards), and always use the array form of `POST /cards` for many-creates rather than one request per card.
 
 Standard HTTP codes apply: 401 (bad key), 403 (no access), 404 (card/board not found), 422 (invalid field), 5xx (server). The API occasionally returns HTTP 200 with a plain-text error body like `"Bad Request"` or `"Unauthorized"` — the helper detects this and surfaces the status, Content-Type, URL, and first 500 chars of the body. On a write failure, re-read the card before retrying.
+
+## Field formats: description and comment text
+
+`description` (on card create/update) and `text` (on `POST /cards/{id}/comments`) are stored as **rich-text HTML**, not markdown or plain text. The web UI's rich editor produces markup like `<p>`, `<strong><u>` (section headers), `<ol>/<ul>/<li>`, `<em>`, `<a>`. Plain text or markdown sent raw is displayed as a single unformatted blob.
+
+`scripts/kz.py` converts markdown to this HTML automatically via `to_kz_html()` before sending; anything already starting with an HTML tag is passed through unchanged. If calling the API directly (bypassing kz.py), send HTML.

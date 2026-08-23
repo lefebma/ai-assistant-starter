@@ -42,6 +42,7 @@ import base64
 import csv
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -526,6 +527,101 @@ def cmd_find(args):
               f"({c.get('columnTitle') or c.get('columnName') or c.get('columnId')})")
 
 
+# ---------- rich-text formatting ----------
+# Kanban Zone stores card descriptions AND activity-log comments as rich-text
+# HTML (the web UI uses a rich editor). Raw markdown or plain text sent through
+# the API renders as one unformatted blob. to_kz_html() converts markdown/plain
+# text into KZ-flavored HTML; input that already looks like HTML passes through
+# untouched.
+
+_KZ_HTML_RX = re.compile(
+    r"^\s*<(p|ul|ol|li|h[1-6]|strong|em|u|b|i|div|br|pre|blockquote|table|a|span|code)\b",
+    re.I,
+)
+
+
+def _kz_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _kz_inline(text: str) -> str:
+    """HTML-escape, then apply markdown inline styles (code, bold, italic, links)."""
+    text = _kz_escape(text)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"__([^_]+)__", r"<strong>\1</strong>", text)
+    text = re.sub(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])", r"<em>\1</em>", text)
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', text)
+    return text
+
+
+def to_kz_html(text: str) -> str:
+    """Convert markdown/plain text to Kanban Zone rich-text HTML.
+
+    House style: headings become <p><strong><u>...</u></strong></p> with a
+    <p><br/></p> spacer between sections; -/* bullets -> <ul>, "1." -> <ol>,
+    "- [ ]"/"- [x]" checkboxes are treated as list items; ``` fences -> <pre>.
+    Text already starting with an HTML tag is returned unchanged.
+    """
+    if not text or _KZ_HTML_RX.match(text):
+        return text
+    out: list[str] = []
+    list_tag: str | None = None
+    items: list[str] = []
+    in_fence = False
+    fence_buf: list[str] = []
+
+    def flush_list() -> None:
+        nonlocal list_tag, items
+        if list_tag:
+            lis = "".join(f"<li>{i}</li>" for i in items)
+            out.append(f"<{list_tag}>{lis}</{list_tag}>")
+        list_tag, items = None, []
+
+    for line in text.replace("\r\n", "\n").split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if in_fence:
+                out.append(f"<pre>{_kz_escape(chr(10).join(fence_buf))}</pre>")
+                fence_buf, in_fence = [], False
+            else:
+                flush_list()
+                in_fence = True
+            continue
+        if in_fence:
+            fence_buf.append(line)
+            continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if m:
+            flush_list()
+            if out:
+                out.append("<p><br/></p>")
+            out.append(f"<p><strong><u>{_kz_inline(m.group(2))}</u></strong></p>")
+            continue
+        m = re.match(r"^[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$", stripped)
+        if m:
+            if list_tag != "ul":
+                flush_list()
+                list_tag = "ul"
+            items.append(_kz_inline(m.group(1)))
+            continue
+        m = re.match(r"^\d+[.)]\s+(.*)$", stripped)
+        if m:
+            if list_tag != "ol":
+                flush_list()
+                list_tag = "ol"
+            items.append(_kz_inline(m.group(1)))
+            continue
+        flush_list()
+        if not stripped:
+            continue
+        out.append(f"<p>{_kz_inline(stripped)}</p>")
+    if in_fence and fence_buf:
+        out.append(f"<pre>{_kz_escape(chr(10).join(fence_buf))}</pre>")
+    flush_list()
+    return "".join(out)
+
+
 def _parse_due(due: str | None) -> str | None:
     if not due:
         return None
@@ -543,7 +639,7 @@ def cmd_create_card(args):
         "columnId": resolve_column(cache, args.stage),
     }
     if args.description:
-        body["description"] = args.description
+        body["description"] = to_kz_html(args.description)
     if args.label:
         body["label"] = args.label
     if args.owner:
@@ -592,7 +688,7 @@ def cmd_bulk_create(args):
             for k_csv, k_api in [("description", "description"), ("label", "label"), ("owner", "owner")]:
                 v = row.get(k_csv)
                 if v:
-                    item[k_api] = v
+                    item[k_api] = to_kz_html(v) if k_api == "description" else v
             cards.append(item)
     if not cards:
         sys.exit("No rows to create.")
@@ -618,7 +714,7 @@ def cmd_update_card(args):
     if args.title:
         body["title"] = args.title
     if args.description:
-        body["description"] = args.description
+        body["description"] = to_kz_html(args.description)
     if args.label:
         body["label"] = args.label
     if args.owner:
@@ -659,7 +755,7 @@ def cmd_dump(args):
 
 def cmd_comment(args):
     api_key, board_id = load_config(args.board)
-    body: dict[str, Any] = {"board": board_id, "text": args.text}
+    body: dict[str, Any] = {"board": board_id, "text": to_kz_html(args.text)}
     post(f"/cards/{args.id}/comments", api_key, body)
     print(f"Commented on #{args.id}: {args.text[:80]}")
 
@@ -670,7 +766,14 @@ def main():
     # Parent parser holds --board so subcommands inherit it. This means
     # both `kz --board ID list-cards` and `kz list-cards --board ID` work.
     board_parent = argparse.ArgumentParser(add_help=False)
-    board_parent.add_argument("--board", help="Board public ID (overrides KZ_DEFAULT_BOARD_ID/config)")
+    # default=SUPPRESS is load-bearing for the first form: the subparser parses
+    # into the same namespace after the main parser, and a plain default of None
+    # would silently overwrite the value the main parser already captured (the
+    # command would then run against the default board, not the requested one).
+    # SUPPRESS leaves the namespace untouched when the flag is absent, so
+    # whichever position supplied it wins.
+    board_parent.add_argument("--board", default=argparse.SUPPRESS,
+                              help="Board public ID (overrides KZ_DEFAULT_BOARD_ID/config)")
 
     p = argparse.ArgumentParser(prog="kz", description="Kanban Zone CLI (multi-board)",
                                 parents=[board_parent])
@@ -740,6 +843,9 @@ def main():
     cm.set_defaults(func=cmd_comment)
 
     args = p.parse_args()
+    # With SUPPRESS, args.board does not exist when the flag was never given
+    # anywhere; the command handlers expect None then (env/config fallback).
+    args.board = getattr(args, "board", None)
     args.func(args)
 
 
