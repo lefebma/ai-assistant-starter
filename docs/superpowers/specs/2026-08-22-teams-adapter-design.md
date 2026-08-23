@@ -1,6 +1,6 @@
 # Microsoft Teams platform adapter — design
 
-Date: 2026-08-22. Status: approved design, pre-implementation. Kanban: Havn
+Date: 2026-08-22. Status: implemented on `feat/teams-adapter` (2026-08-23); amendments from execution are marked **[amended]**. Kanban: Havn
 board #104 (build), #100 (validate on a hosted box). Pilot-critical for the
 law-firm deal (projects/els-partners/marina-lawfirm).
 
@@ -66,15 +66,18 @@ export function registerHttpRoute(method: string, path: string, handler: RouteHa
 
 Registered routes are matched before the existing if-chain and are **exempt
 from the `HTTP_BEARER_TOKEN` check** (the Teams route authenticates with the
-Bot Framework JWT). Registration is order-independent: the adapter registers
-during `createAdapter()`/`start()`, which runs before `startHttpServer()`.
+Bot Framework JWT). Registration is order-independent because the registry is
+consulted at request time. **[amended]** `adapter.start()` actually runs
+*after* `startHttpServer()` (`src/index.ts`), which is fine for that reason.
 `TeamsAdapter.start()` registers `POST /api/teams/messages`.
 
 ### Edge on the box
 
-`scripts/hosted/enable-teams.sh <hostname>` (run as root over SSH once the
-server exists; the sslip.io name depends on the IP, so this cannot live in
-cloud-init):
+**[amended]** The repo forbids shell scripts (`tests/no-bash.test.ts`), so this
+is TypeScript: `sudo node dist/scripts/hosted/enable-teams.js <hostname>` with
+the pure Caddyfile/hostname helpers in `src/deploy/teams-edge.ts` (run as root
+over SSH once the server exists; the sslip.io name depends on the IP, so this
+cannot live in cloud-init):
 
 1. `apt-get install -y caddy` (Ubuntu 24.04 universe).
 2. Write `/etc/caddy/Caddyfile`:
@@ -113,9 +116,9 @@ push-based and needs no change there.
 
 `POST /api/teams/messages`:
 
-1. Reject bodies over 1 MB (413). Read JSON.
-2. Validate the `Authorization: Bearer` JWT. Failure → 401, empty body,
-   logged at most once per minute.
+1. **[amended]** Validate the `Authorization: Bearer` JWT first (it needs only
+   the header). Failure → 401, empty body, logged at most once per minute.
+2. Then read the body, capped at 1 MB (413), and parse JSON (400).
 3. Respond `200` immediately, then process asynchronously. Teams expects a
    response within 15 s and our agent turns run longer. Any error after the
    200 is logged with the activity id and not retried.
@@ -134,8 +137,8 @@ push-based and needs no change there.
    - `message` with text → `{ type: 'text', chatId: conversation.id,
      userId: from.aadObjectId, text, messageId: activity.id, updateId: activity.id }`.
    - `conversationUpdate` where `membersAdded` includes the bot → store the
-     reference and send the same "send /chatid to finish setup" hint an
-     unauthorised Telegram chat receives.
+     reference and dispatch a synthetic `/chatid` **[amended]**, so the user
+     sees the id to put in `ALLOWED_CHAT_ID` the moment the app is added.
    - `invoke`, `messageReaction`, `typing`, anything else → ignored.
 
 `chatId` is the Teams conversation id (stable per user–bot pair in personal
@@ -184,7 +187,8 @@ hosted box.
 
 ### Registration
 
-`scripts/teams-register.sh <name> <hostname> [--tenant <id>] [--resource-group havn-bots]`
+**[amended]** `npm run teams-register -- <name> <hostname> [--tenant <id>] [--resource-group havn-bots]`
+(TypeScript, `scripts/teams-register.ts`, pure planning in `src/deploy/teams-register.ts`)
 using the `az` CLI (authenticated once by the operator):
 
 1. `az ad app create` — display name "Havn – <name>", sign-in audience
@@ -202,9 +206,9 @@ re-prints (secret reset only with `--rotate-secret`).
 
 `npm run teams-manifest -- --app-id <id> --name "<assistant>" [--out path]`
 renders `deploy/teams/manifest.json.template` (schema 1.16, `bots[0].scopes
-= ["personal"]`, no additional permissions, `validDomains` empty) plus the
+= ["personal"]`, no additional permissions, `validDomains` empty, `permissions: []`) plus the
 two icons (`deploy/teams/color.png`, `deploy/teams/outline.png`) into
-`deploy/rendered/<name>-teams.zip`. The user installs it in Teams → Apps →
+`deploy/rendered/<slug>-teams.zip` (name lowercased, dashes) **[amended]**. The user installs it in Teams → Apps →
 Manage your apps → Upload a custom app. If the tenant blocks custom uploads,
 the Teams admin publishes it to the org catalog; both paths in the runbook.
 

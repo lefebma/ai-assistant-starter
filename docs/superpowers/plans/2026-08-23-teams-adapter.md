@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-22-teams-adapter-design.md`
 
+> **Execution note (2026-08-23):** Tasks 13 and 14 below specify bash scripts. The repo forbids `.sh` files (`tests/no-bash.test.ts`), so they were built as TypeScript: `scripts/hosted/enable-teams.ts` (+ `src/deploy/teams-edge.ts`) and `scripts/teams-register.ts` (+ `src/deploy/teams-register.ts`, `npm run teams-register`). Task 9's handler validates the JWT before reading the body. Task 17's commands are updated accordingly. The SDD ledger in `.superpowers/sdd/` (not committed) holds every ruling.
+
 ## Global Constraints
 
 - Only one new runtime dependency: `jose`. Nothing else is added to `package.json`.
@@ -3543,7 +3545,7 @@ git commit -m "Docs: Teams setup, env example, changelog"
 
 ```bash
 ssh havn@178.156.205.93 'cd ~/havn && git pull --ff-only origin main && npm ci --no-audit --no-fund && npm run build'
-ssh havn@178.156.205.93 'sudo bash ~/havn/scripts/hosted/enable-teams.sh 178-156-205-93.sslip.io'
+ssh havn@178.156.205.93 'sudo node ~/havn/dist/scripts/hosted/enable-teams.js 178-156-205-93.sslip.io'
 curl -si https://178-156-205-93.sslip.io/api/teams/messages -X POST | head -1   # expect HTTP/2 401 once the cert is issued
 curl -si https://178-156-205-93.sslip.io/api/cockpit/usage | head -1            # expect 404
 ```
@@ -3552,7 +3554,7 @@ curl -si https://178-156-205-93.sslip.io/api/cockpit/usage | head -1            
 
 ```bash
 az login
-scripts/teams-register.sh test 178-156-205-93.sslip.io      # prints TEAMS_APP_ID / TEAMS_APP_SECRET
+npm run teams-register -- test 178-156-205-93.sslip.io      # prints TEAMS_APP_ID / TEAMS_APP_SECRET
 npm run teams-manifest -- --app-id <TEAMS_APP_ID> --name Nami
 ```
 
@@ -3573,7 +3575,7 @@ Upload `deploy/rendered/nami-teams.zip` in Marc's Teams (Apps → Manage your ap
 - [ ] `/secret set OPENAI_API_KEY` round trip; the bot tells you to delete your message
 - [ ] A scheduled task (`/schedule create "say hi" "<cron for now+2min>" --once`) delivers proactively
 - [ ] `sudo systemctl restart havn` mid-conversation; next message still works (reference survived)
-- [ ] `scripts/teams-register.sh test 178-156-205-93.sslip.io --rotate-secret`, update `.env`, restart; messages still flow
+- [ ] `npm run teams-register -- test 178-156-205-93.sslip.io --rotate-secret`, update `.env`, restart; messages still flow
 - [ ] `logs/service.log` shows no `invalid Bot Framework token` lines from legitimate traffic
 
 - [ ] **Step 5: Record and restore**
