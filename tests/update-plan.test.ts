@@ -5,6 +5,8 @@ import {
   planUpdate,
   pickReleaseAsset,
   BUNDLE_PAYLOAD_PATHS,
+  SOURCE_ENGINE_PATHS,
+  SOURCE_INSTALL_ARGS,
   PRESERVED_PATHS,
 } from '../src/update/plan.js'
 
@@ -66,6 +68,29 @@ describe('bundle swap path lists', () => {
     for (const p of ['.env', 'store', 'projects', 'skills', 'CLAUDE.md', 'PERSONALITY.md']) {
       expect(PRESERVED_PATHS).toContain(p)
     }
+  })
+})
+
+describe('source update', () => {
+  // havn-test, 2026-08-22: /update from 1.16.0 ran `npm install --production`,
+  // which pruned devDependencies (typescript), then `npm run build` died with
+  // "tsc: not found" and the rollback died the same way.
+  it('installs with the build toolchain: never prunes devDependencies', () => {
+    const pruning = SOURCE_INSTALL_ARGS.filter((a) => /production|omit=dev|only=prod/.test(a))
+    expect(pruning).toEqual([])
+    expect(SOURCE_INSTALL_ARGS[0]).toBe('ci')
+  })
+
+  it('swaps the lockfile with package.json so the install is the one the new version was built with', () => {
+    expect(SOURCE_ENGINE_PATHS).toContain('package.json')
+    expect(SOURCE_ENGINE_PATHS).toContain('package-lock.json')
+    expect(SOURCE_ENGINE_PATHS).toContain('src')
+    expect(SOURCE_ENGINE_PATHS).toContain('VERSION')
+  })
+
+  it('never replaces a path the user owns', () => {
+    const collisions = SOURCE_ENGINE_PATHS.filter((p) => PRESERVED_PATHS.includes(p))
+    expect(collisions).toEqual([])
   })
 })
 

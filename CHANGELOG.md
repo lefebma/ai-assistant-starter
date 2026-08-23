@@ -11,6 +11,8 @@
   characters. `/secret list` and `/secret rm` round it out. Primary chat only;
   a pending request expires after 3 minutes. Details in docs/VAULT.md.
 
+- **Fixed: `/update` on a source install no longer deletes its own build tools.** The reinstall step ran `npm install --production`, which removes TypeScript, and the rebuild right after it then failed with "tsc: not found", as did the rollback's rebuild, leaving a tree that reported the old version with a half-applied update underneath. Found on the first real `/update` of a hosted box (1.16.0 to 1.17.0). The update now reinstalls with `npm ci` against the lockfile that arrives with it, dev dependencies included. Installs already on the old updater need one manual `git pull && npm ci && npm run build` to get past it; see docs/HOSTED-VPS.md.
+
 ## 1.17.0 - 2026-08-20
 
 Two doors open: Microsoft shops can run the assistant under their own Azure agreement, and the writing skill now works with whatever AI you already pay for instead of demanding its own. Also, browser automation has been listed as a capability since the first release; this is the release where that starts being true.
