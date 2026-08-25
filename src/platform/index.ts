@@ -59,6 +59,13 @@ export async function createAdapter(): Promise<PlatformAdapter> {
       }
       const { TeamsAdapter } = await import('./teams/adapter.js')
       const { isAuthorizedSender } = await import('../access.js')
+      // Dynamic, not static: a static top-level import here made config.ts's
+      // eager readEnvFile() run during teams-wiring.test.ts's own static-import
+      // graph resolution, before vi.mock('../env.js')'s hoisted factory had
+      // initialized its closed-over state. PRIMARY_CHAT_ID is still a
+      // module-level const either way (evaluated once, frozen for the
+      // process's lifetime, same as every other consumer) - this only changes
+      // *when* that first evaluation happens, not whether it can refresh.
       const { PRIMARY_CHAT_ID } = await import('../config.js')
       const { isAuthorizedChat } = await import('../db.js')
       return new TeamsAdapter({

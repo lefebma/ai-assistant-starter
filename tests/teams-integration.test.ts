@@ -92,6 +92,7 @@ describe('Teams end to end (HTTP in, connector out)', () => {
       validator: new InboundTokenValidator({ appId: APP_ID, fetchImpl: metaFetch, openIdConfigUrl: 'https://login.example/openid' }),
       tokens,
       connector: new BotConnector({ tokens }), // real fetch, against the local fake connector
+      isAuthorizedChat: () => true,
     })
     const received: IncomingMessage[] = []
     adapter.onMessage(async (m) => {
