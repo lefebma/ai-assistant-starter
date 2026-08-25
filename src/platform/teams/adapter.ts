@@ -40,6 +40,11 @@ export const TEAMS_WEBHOOK_PATH = '/api/teams/messages'
 const MAX_BODY_BYTES = 1_000_000
 const AUTH_LOG_INTERVAL_MS = 60_000
 const EDIT_INTERVAL_MS = 1000
+// Bounds for cardTexts and edits: without a cap, a long-running bot across
+// many conversations grows both maps forever, since entries are only ever
+// removed one at a time on a button click or a coalesced edit landing.
+export const MAX_CARD_TEXTS = 500
+export const MAX_EDIT_STATES = 500
 
 export interface TeamsAdapterOptions extends TeamsCredentials {
   validator?: Pick<InboundTokenValidator, 'validate'>
@@ -210,7 +215,7 @@ export class TeamsAdapter implements PlatformAdapter {
     const buttons = options?.buttons?.filter((b) => b.trim()) ?? []
     const activity = buttons.length ? buildCardActivity(text, buttons) : buildTextActivity(text)
     const id = await this.connector.sendActivity(ref, activity)
-    if (buttons.length && id) this.cardTexts.set(id, text)
+    if (buttons.length && id) this.rememberCardText(id, text)
     return id
   }
 
@@ -223,9 +228,10 @@ export class TeamsAdapter implements PlatformAdapter {
     const ref = this.reference(chatId)
     const buttons = options?.buttons?.filter((b) => b.trim()) ?? []
     const activity = buttons.length ? buildCardActivity(text, buttons) : buildTextActivity(text)
-    if (buttons.length) this.cardTexts.set(messageId, text)
+    if (buttons.length) this.rememberCardText(messageId, text)
     const state = this.edits.get(chatId) ?? { lastSentAt: 0 }
     this.edits.set(chatId, state)
+    this.evictStaleEdits()
     const elapsed = this.now() - state.lastSentAt
     if (elapsed >= EDIT_INTERVAL_MS && !state.timer) {
       state.lastSentAt = this.now()
@@ -261,6 +267,24 @@ export class TeamsAdapter implements PlatformAdapter {
 
   async answerCallback(_callbackId: string, _text?: string): Promise<void> {
     // messageBack clicks arrive as ordinary messages; nothing to acknowledge.
+  }
+
+  private rememberCardText(messageId: string, text: string): void {
+    this.cardTexts.set(messageId, text)
+    if (this.cardTexts.size > MAX_CARD_TEXTS) {
+      const oldest = this.cardTexts.keys().next().value
+      if (oldest !== undefined) this.cardTexts.delete(oldest)
+    }
+  }
+
+  /** Never evicts a conversation with a live coalescing timer: dropping its state would strand the pending edit. */
+  private evictStaleEdits(): void {
+    if (this.edits.size <= MAX_EDIT_STATES) return
+    for (const [key, s] of this.edits) {
+      if (s.timer) continue
+      this.edits.delete(key)
+      if (this.edits.size <= MAX_EDIT_STATES) return
+    }
   }
 
   async clearButtons(chatId: string, messageId: string): Promise<void> {

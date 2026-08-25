@@ -11,7 +11,7 @@ const STORE = vi.hoisted(() => {
 })
 rmSync(STORE, { recursive: true, force: true })
 
-import { TeamsAdapter, TEAMS_WEBHOOK_PATH } from '../src/platform/teams/adapter.js'
+import { TeamsAdapter, TEAMS_WEBHOOK_PATH, MAX_CARD_TEXTS, MAX_EDIT_STATES } from '../src/platform/teams/adapter.js'
 import type { Activity } from '../src/platform/teams/types.js'
 import type { IncomingMessage } from '../src/platform/types.js'
 import { getConversation } from '../src/platform/teams/conversations.js'
@@ -401,5 +401,36 @@ describe('TeamsAdapter outbound', () => {
       else expect(squash(chunks.join(' '))).toBe(squash(text))
     }
     expect(adapter.splitMessage('short')).toEqual(['short'])
+  })
+
+  it('bounds cardTexts so a long-running bot cannot grow it forever', async () => {
+    const { adapter } = makeAdapter(sent)
+    let firstId = ''
+    for (let i = 0; i <= MAX_CARD_TEXTS; i++) {
+      const id = await adapter.sendMessage('a:out', `msg ${i}`, { buttons: ['Yes'] })
+      if (i === 0) firstId = id
+    }
+    // The oldest entry was evicted to stay under the cap, so clearing its
+    // (now-forgotten) card is a no-op instead of calling updateActivity.
+    await adapter.clearButtons('a:out', firstId)
+    expect(sent.filter((s) => s.kind === 'update')).toHaveLength(0)
+  })
+
+  it('bounds the edits map across many distinct conversations, evicting the oldest once past the cap', async () => {
+    const CLOCK = 100_000
+    const { adapter } = makeAdapter(sent, { now: () => CLOCK })
+    const firstConv = 'a:conv-0'
+    for (let i = 0; i <= MAX_EDIT_STATES; i++) {
+      const conv = `a:conv-${i}`
+      upsertConversation({ ...REF, conversationId: conv })
+      await adapter.editMessage(conv, `msg-${i}`, 'hello')
+    }
+    sent.length = 0
+    // If the first conversation's coalescing state had survived, editing it
+    // again at the same clock tick would fall inside the 1s throttle window
+    // and coalesce instead of sending immediately. Eviction resets it to a
+    // brand-new conversation, so this send goes out right away.
+    await adapter.editMessage(firstConv, 'msg-0', 'hello again')
+    expect(sent.filter((s) => s.kind === 'update')).toHaveLength(1)
   })
 })
