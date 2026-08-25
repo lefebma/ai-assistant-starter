@@ -433,4 +433,24 @@ describe('TeamsAdapter outbound', () => {
     await adapter.editMessage(firstConv, 'msg-0', 'hello again')
     expect(sent.filter((s) => s.kind === 'update')).toHaveLength(1)
   })
+
+  it('protects a card that keeps getting re-edited from eviction, even though it was the first one sent', async () => {
+    const { adapter } = makeAdapter(sent)
+    const activeId = await adapter.sendMessage('a:out', 'active card', { buttons: ['Yes'] })
+    // Fill up to (but not over) the cap with other distinct cards, so
+    // activeId is the map's oldest entry going into the next step.
+    for (let i = 0; i < MAX_CARD_TEXTS - 1; i++) {
+      await adapter.sendMessage('a:out', `msg ${i}`, { buttons: ['Yes'] })
+    }
+    // A genuine re-edit of the active card, not a fresh insert. FIFO
+    // (Map.set on an existing key doesn't reorder it) would leave it at the
+    // oldest position despite this touch; touch-refreshes-position moves it
+    // to the back instead.
+    await adapter.editMessage('a:out', activeId, 'active card updated', { buttons: ['Yes'] })
+    // One more distinct card pushes the map over cap, forcing an eviction.
+    await adapter.sendMessage('a:out', 'tipping card', { buttons: ['Yes'] })
+    sent.length = 0
+    await adapter.clearButtons('a:out', activeId)
+    expect(sent.filter((s) => s.kind === 'update')).toHaveLength(1)
+  })
 })

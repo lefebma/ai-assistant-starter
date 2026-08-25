@@ -230,6 +230,10 @@ export class TeamsAdapter implements PlatformAdapter {
     const activity = buttons.length ? buildCardActivity(text, buttons) : buildTextActivity(text)
     if (buttons.length) this.rememberCardText(messageId, text)
     const state = this.edits.get(chatId) ?? { lastSentAt: 0 }
+    // Same reasoning as rememberCardText: re-inserting moves this
+    // conversation to the newest position instead of leaving it wherever it
+    // was first inserted.
+    this.edits.delete(chatId)
     this.edits.set(chatId, state)
     this.evictStaleEdits()
     const elapsed = this.now() - state.lastSentAt
@@ -270,6 +274,11 @@ export class TeamsAdapter implements PlatformAdapter {
   }
 
   private rememberCardText(messageId: string, text: string): void {
+    // Re-inserting (delete then set) moves an existing key to the newest
+    // position; Map.set() alone leaves it wherever it was first inserted,
+    // which would let a card that's actively being re-edited get evicted
+    // for looking stale by first-touch order.
+    this.cardTexts.delete(messageId)
     this.cardTexts.set(messageId, text)
     if (this.cardTexts.size > MAX_CARD_TEXTS) {
       const oldest = this.cardTexts.keys().next().value
