@@ -32,9 +32,11 @@ export function referenceFrom(activity: Activity): ConversationReference | null 
 /** Teams wraps the bot mention as <at>Name</at>; drop it, tidy the spaces it leaves, keep every newline. */
 function stripMentions(text: string): string {
   return text
-    .replace(/<at>[^<]*<\/at>/g, '')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/^[ \t]+|[ \t]+$/gm, '')
+    // Consume the one space Teams inserts after the mention tag along with
+    // the tag itself, instead of collapsing whitespace everywhere: a global
+    // collapse also eats the leading spaces of pasted, indented code.
+    .replace(/<at>[^<]*<\/at>\s?/g, '')
+    .replace(/\r\n/g, '\n')
     .trim()
 }
 

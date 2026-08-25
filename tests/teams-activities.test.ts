@@ -68,6 +68,16 @@ describe('mapInbound', () => {
     expect(m.message.text).toBe('line one\nline two\n\n- bullet\n- bullet2')
   })
 
+  it('preserves indentation and inner whitespace in pasted code, only normalizing CRLF and the mention artifact', () => {
+    const m = mapInbound(
+      activity({ text: '<at>Nami</at> ```\n    function foo() {\r\n        return 1\r\n    }\n```' }),
+      BOT_ID
+    )
+    expect(m.kind).toBe('message')
+    if (m.kind !== 'message') return
+    expect(m.message.text).toBe('```\n    function foo() {\n        return 1\n    }\n```')
+  })
+
   it('maps a messageBack button click to the callback shape the bot already handles', () => {
     const m = mapInbound(
       activity({ text: 'Send', value: { btn: 'Send' }, replyToId: '1724400000000' }),
