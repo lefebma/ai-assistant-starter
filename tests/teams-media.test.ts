@@ -40,6 +40,35 @@ describe('downloadToUploads', () => {
     ).rejects.toThrow(/too large/)
   })
 
+  it('stops reading the body once the streamed size exceeds the cap, without draining the whole response', async () => {
+    const CHUNK_BYTES = 10 * 1024 * 1024 // 10MB
+    const TOTAL_CHUNKS = 20 // 200MB if fully drained
+    let pulls = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++
+        if (pulls > TOTAL_CHUNKS) {
+          controller.close()
+          return
+        }
+        controller.enqueue(new Uint8Array(CHUNK_BYTES))
+      },
+    })
+    await expect(
+      downloadToUploads(
+        'https://files.example/big.bin',
+        'big.bin',
+        undefined,
+        async () => new Response(body, { status: 200 }),
+        50 * 1024 * 1024
+      )
+    ).rejects.toThrow(/too large/)
+    // 50MB cap / 10MB chunks: exceeded partway through the 6th pull, nowhere
+    // near draining all 20 (200MB) the old arrayBuffer()-first code would
+    // have buffered in full before ever checking the size.
+    expect(pulls).toBeLessThan(10)
+  })
+
   it('rejects an oversized body against an explicit maxBytes even without a Content-Length hint', async () => {
     await expect(
       downloadToUploads(

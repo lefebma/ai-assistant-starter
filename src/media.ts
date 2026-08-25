@@ -135,10 +135,19 @@ export async function downloadToUploads(
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     throw new Error(`Download too large (${declaredLength} bytes) for ${url}`)
   }
-  const buffer = Buffer.from(await resp.arrayBuffer())
-  if (buffer.length > maxBytes) {
-    throw new Error(`Download too large (${buffer.length} bytes) for ${url}`)
+  // Enforce the cap as bytes arrive instead of buffering the whole response
+  // first: a server that omits or understates Content-Length could otherwise
+  // put an unbounded amount of data in memory before the size check ever ran.
+  const chunks: Buffer[] = []
+  let total = 0
+  if (resp.body) {
+    for await (const chunk of resp.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.length
+      if (total > maxBytes) throw new Error(`Download too large (>${maxBytes} bytes) for ${url}`)
+      chunks.push(Buffer.from(chunk))
+    }
   }
+  const buffer = Buffer.concat(chunks)
   const ext = extname(filename)
   const base = sanitizeFilename(basename(filename, ext))
   const destPath = resolve(UPLOADS_DIR, `${Date.now()}_${base}${ext}`)
