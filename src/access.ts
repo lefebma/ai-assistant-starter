@@ -19,19 +19,33 @@ import { commandWord } from './infra/command-text.js'
 /** Commands an unconfigured install will still answer. */
 const BOOTSTRAP_COMMANDS = new Set(['/chatid', '/start', '/help'])
 
-export interface AccessQuery {
+export interface SenderQuery {
   chatId: string
-  text: string
   /** ALLOWED_CHAT_ID, empty when the install has not been locked down yet. */
   primaryChatId: string
   /** Additional chats authorized via /authorize add. */
   isExtraChat(chatId: string): boolean
 }
 
+export interface AccessQuery extends SenderQuery {
+  text: string
+}
+
 export interface AccessDecision {
   allow: boolean
   /** What to send back when refusing. Absent when allowed. */
   reply?: string
+}
+
+/**
+ * Whether chatId is a sender decideAccess would ever grant content-bearing
+ * access to. Ignores the bootstrap-command carve-out, which only applies to
+ * a handful of setup text commands and never to media - a platform adapter
+ * deciding whether it is safe to download an attachment on this chat's
+ * behalf wants this check, not the full decideAccess text-routing decision.
+ */
+export function isAuthorizedSender(q: SenderQuery): boolean {
+  return !!q.primaryChatId && (q.chatId === q.primaryChatId || q.isExtraChat(q.chatId))
 }
 
 export function decideAccess(q: AccessQuery): AccessDecision {
@@ -52,7 +66,7 @@ export function decideAccess(q: AccessQuery): AccessDecision {
     }
   }
 
-  if (q.chatId === q.primaryChatId || q.isExtraChat(q.chatId)) return { allow: true }
+  if (isAuthorizedSender(q)) return { allow: true }
 
   return {
     allow: false,

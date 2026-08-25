@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decideAccess } from '../src/access.js'
+import { decideAccess, isAuthorizedSender } from '../src/access.js'
 
 const PRIMARY = '123456789'
 const allowNone = () => false
@@ -59,5 +59,23 @@ describe('decideAccess before ALLOWED_CHAT_ID is set', () => {
   it('does not hand a stranger the owner chat id', () => {
     const d = decideAccess({ chatId: '999', text: 'hello', ...unconfigured })
     expect(d.reply).not.toMatch(/authorize add/)
+  })
+})
+
+describe('isAuthorizedSender', () => {
+  it('is true for the primary chat', () => {
+    expect(isAuthorizedSender({ chatId: PRIMARY, primaryChatId: PRIMARY, isExtraChat: allowNone })).toBe(true)
+  })
+
+  it('is true for an explicitly authorized extra chat', () => {
+    expect(isAuthorizedSender({ chatId: '999', primaryChatId: PRIMARY, isExtraChat: allowAny })).toBe(true)
+  })
+
+  it('is false for a stranger', () => {
+    expect(isAuthorizedSender({ chatId: '999', primaryChatId: PRIMARY, isExtraChat: allowNone })).toBe(false)
+  })
+
+  it('is false for everyone on an unconfigured install, unlike decideAccess for bootstrap commands', () => {
+    expect(isAuthorizedSender({ chatId: '999', primaryChatId: '', isExtraChat: allowAny })).toBe(false)
   })
 })

@@ -53,6 +53,13 @@ export interface TeamsAdapterOptions extends TeamsCredentials {
   download?: typeof downloadToUploads
   registerRoute?: typeof registerHttpRoute
   now?: () => number
+  /**
+   * Whether chatId is authorized to have the assistant act on its behalf.
+   * Required, not defaulted: an attachment's contentUrl is attacker-
+   * influenced, so downloading it is only safe once this has been checked -
+   * there is no safe default to fall back to silently.
+   */
+  isAuthorizedChat: (chatId: string) => boolean
 }
 
 export class TeamsAdapter implements PlatformAdapter {
@@ -67,6 +74,7 @@ export class TeamsAdapter implements PlatformAdapter {
   private readonly tokens: OutboundTokenProvider
   private readonly download: typeof downloadToUploads
   private readonly registerRoute: typeof registerHttpRoute
+  private readonly isAuthorizedChat: (chatId: string) => boolean
   private readonly now: () => number
   private unregister: (() => void) | null = null
   private messageHandler: ((msg: IncomingMessage) => Promise<void>) | null = null
@@ -83,6 +91,7 @@ export class TeamsAdapter implements PlatformAdapter {
     this.connector = opts.connector ?? new BotConnector({ tokens: this.tokens })
     this.download = opts.download ?? downloadToUploads
     this.registerRoute = opts.registerRoute ?? registerHttpRoute
+    this.isAuthorizedChat = opts.isAuthorizedChat
     // Tables exist from construction so processActivity works in tests that
     // never call start(); CREATE IF NOT EXISTS makes this idempotent.
     initTeamsTables()
@@ -174,6 +183,16 @@ export class TeamsAdapter implements PlatformAdapter {
         await this.messageHandler?.(mapped.message)
         return
       case 'attachment': {
+        // contentUrl is attacker-influenced (it comes straight off the inbound
+        // activity), so fetching it is only safe once we know we would act on
+        // this chat's behalf at all. Skip the download for an unauthorized
+        // chat, but still hand the message to bot.ts (without a filePath) so
+        // its own access check runs and sends the normal refusal reply.
+        if (!this.isAuthorizedChat(mapped.base.chatId)) {
+          logger.warn({ chatId: mapped.base.chatId }, 'Teams: skipping attachment download for an unauthorized chat')
+          await this.messageHandler?.(mapped.base)
+          return
+        }
         const allowedHost = isMicrosoftAttachmentHost(mapped.download.url)
         if (mapped.download.needsAuth && !allowedHost) {
           logger.warn({ hostname: safeHostname(mapped.download.url) }, 'Teams: attachment host is not a Microsoft domain; downloading without the bot token')

@@ -58,7 +58,15 @@ export async function createAdapter(): Promise<PlatformAdapter> {
         throw new Error('TEAMS_APP_ID and TEAMS_APP_SECRET must both be set in .env')
       }
       const { TeamsAdapter } = await import('./teams/adapter.js')
-      return new TeamsAdapter({ appId, appSecret, tenantId: env['TEAMS_TENANT_ID'] || undefined })
+      const { isAuthorizedSender } = await import('../access.js')
+      const { PRIMARY_CHAT_ID } = await import('../config.js')
+      const { isAuthorizedChat } = await import('../db.js')
+      return new TeamsAdapter({
+        appId,
+        appSecret,
+        tenantId: env['TEAMS_TENANT_ID'] || undefined,
+        isAuthorizedChat: (chatId) => isAuthorizedSender({ chatId, primaryChatId: PRIMARY_CHAT_ID, isExtraChat: isAuthorizedChat }),
+      })
     }
 
     default:

@@ -64,6 +64,7 @@ function makeAdapter(sent: Sent[], extra: Partial<ConstructorParameters<typeof T
       routes.push({ method, path })
       return () => routes.pop()
     },
+    isAuthorizedChat: () => true,
     ...extra,
   })
   return { adapter, routes }
@@ -150,6 +151,27 @@ describe('TeamsAdapter inbound', () => {
     )
     expect(downloads[0].headers).toEqual({ Authorization: 'Bearer bot-token' })
     expect(received[0]).toMatchObject({ type: 'voice', filePath: expect.stringMatching(/\.m4a$/) })
+  })
+
+  it('does not download an attachment for an unauthorized chat, but still hands it off (unfetched) so the normal access reply still fires', async () => {
+    const downloads: Array<{ url: string }> = []
+    const { adapter } = makeAdapter(sent, {
+      download: async (url, name) => {
+        downloads.push({ url })
+        return `/tmp/uploads/${name}`
+      },
+      isAuthorizedChat: () => false,
+    })
+    adapter.onMessage(async (m) => {
+      received.push(m)
+    })
+    await adapter.processActivity(
+      inbound({ attachments: [{ contentType: 'image/png', contentUrl: 'https://attacker.example/whatever' }] })
+    )
+    expect(downloads).toHaveLength(0)
+    expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({ type: 'photo' })
+    expect(received[0]).not.toHaveProperty('filePath')
   })
 
   it('turns the bot being added into a /chatid so the owner learns the id to allow', async () => {
