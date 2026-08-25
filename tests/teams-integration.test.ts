@@ -52,6 +52,18 @@ afterAll(async () => {
   await new Promise<void>((r) => connectorServer.close(() => r()))
 })
 
+// Waits for a condition instead of a fixed sleep: how long processActivity's
+// background work (typing + reply, each a real HTTP round trip to the fake
+// connector) takes to land varies with machine load, so a fixed delay is
+// either too short (flaky failure) or wastefully long.
+async function waitFor(predicate: () => boolean, timeoutMs = 2000, intervalMs = 10): Promise<void> {
+  const start = Date.now()
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor: timed out waiting for condition')
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
 async function signed(): Promise<string> {
   const nowSec = Math.floor(Date.now() / 1000)
   return new SignJWT({})
@@ -109,7 +121,10 @@ describe('Teams end to end (HTTP in, connector out)', () => {
     expect(resp.status).toBe(200)
     expect(Date.now() - t0).toBeLessThan(2000)
 
-    await new Promise((r) => setTimeout(r, 200))
+    // received flips to length 1 synchronously, before the handler's two
+    // awaited connector calls (typing, then message) land - wait on the
+    // actual state the assertions below depend on.
+    await waitFor(() => connectorCalls.length >= 2)
     expect(received).toHaveLength(1)
     expect(connectorCalls.map((c) => (c.body as { type: string }).type)).toEqual(['typing', 'message'])
     expect(connectorCalls[1].url).toBe('/v3/conversations/a%3Ae2e/activities')
@@ -121,6 +136,9 @@ describe('Teams end to end (HTTP in, connector out)', () => {
       body: JSON.stringify(activity),
     })
     expect(dup.status).toBe(200)
+    // Dedup is a synchronous check before any network I/O; unlike the wait
+    // above there's no later-arriving state to poll for, so this stays a
+    // short fixed buffer rather than a condition wait.
     await new Promise((r) => setTimeout(r, 100))
     expect(received).toHaveLength(1)
 
