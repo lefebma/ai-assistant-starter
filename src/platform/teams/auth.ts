@@ -91,6 +91,11 @@ export class InboundTokenValidator {
   }
 
   private async load(refresh: boolean): Promise<ReturnType<typeof createLocalJWKSet>> {
+    // Stamp the cap on the attempt, not the success: a refetch that fails
+    // (endpoint down, bad response) still counts against the once-per-60s
+    // budget, otherwise repeated bad-kid requests can retrigger it as fast
+    // as the caller likes just by making every attempt fail.
+    if (refresh) this.lastRefetchAt = this.now().getTime()
     if (!this.jwksUri) {
       const resp = await this.fetchImpl(this.openIdConfigUrl)
       if (!resp.ok) throw new Error(`OpenID configuration fetch failed: ${resp.status}`)
@@ -102,7 +107,6 @@ export class InboundTokenValidator {
     if (!resp.ok) throw new Error(`JWKS fetch failed: ${resp.status}`)
     const jwks = (await resp.json()) as JSONWebKeySet
     this.keySet = createLocalJWKSet(jwks)
-    if (refresh) this.lastRefetchAt = this.now().getTime()
     logger.debug({ keys: jwks.keys.length, refresh }, 'Teams: Bot Framework signing keys loaded')
     return this.keySet
   }

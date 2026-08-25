@@ -95,6 +95,40 @@ describe('InboundTokenValidator', () => {
     expect(counter.jwks).toBe(3)
   })
 
+  it('stamps the refetch cap even when the refetch itself fails, so a bad kid cannot retrigger it faster than once per 60s', async () => {
+    let clock = Date.now()
+    let jwksShouldFail = false
+    const counter = { jwks: 0 }
+    const v = new InboundTokenValidator({
+      appId: APP_ID,
+      fetchImpl: async (url: string) => {
+        if (url === OPENID) return new Response(JSON.stringify({ jwks_uri: JWKS }), { status: 200 })
+        if (url === JWKS) {
+          counter.jwks++
+          if (jwksShouldFail) return new Response('unavailable', { status: 503 })
+          return new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 })
+        }
+        return new Response('not found', { status: 404 })
+      },
+      openIdConfigUrl: OPENID,
+      now: () => new Date(clock),
+    })
+    expect(await v.validate(`Bearer ${await sign(privateKey, 'key-1', {})}`)).toBe(true)
+    expect(counter.jwks).toBe(1)
+
+    // Unknown kid triggers a refetch, but the endpoint is down.
+    jwksShouldFail = true
+    const stranger = await generateKeyPair('RS256')
+    expect(await v.validate(`Bearer ${await sign(stranger.privateKey, 'key-9', {})}`)).toBe(false)
+    expect(counter.jwks).toBe(2)
+
+    // A second unknown-kid request 1s later must not refetch again: the
+    // failed attempt above should already have stamped the 60s cap.
+    clock += 1_000
+    expect(await v.validate(`Bearer ${await sign(stranger.privateKey, 'key-9', {})}`)).toBe(false)
+    expect(counter.jwks).toBe(2)
+  })
+
   it('shares one JWKS fetch across concurrent validate() calls on a cold validator', async () => {
     const counter = { jwks: 0 }
     const v = new InboundTokenValidator({ appId: APP_ID, fetchImpl: fakeFetch(() => [publicJwk], counter), openIdConfigUrl: OPENID })
