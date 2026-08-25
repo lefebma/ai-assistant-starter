@@ -284,4 +284,21 @@ describe('isMicrosoftAttachmentHost', () => {
   it('rejects unparseable input', () => {
     expect(isMicrosoftAttachmentHost('not a url')).toBe(false)
   })
+
+  it('rejects a self-service Azure Traffic Manager host that only shares the trafficmanager.net suffix', () => {
+    // Any Azure customer can provision "<anything>.trafficmanager.net"; only
+    // the specific host Bot Framework actually serves Teams attachments from
+    // should be trusted, not the whole self-service suffix.
+    expect(isMicrosoftAttachmentHost('https://attacker-owned.trafficmanager.net/x')).toBe(false)
+  })
+
+  it('rejects a customer-claimable sharepoint.com tenant', () => {
+    // Any Microsoft 365 tenant (including a free/trial one an attacker
+    // controls) gets its own "<tenant>.sharepoint.com". Teams file-share
+    // attachments (TEAMS_FILE_INFO) use a pre-authorized downloadUrl and
+    // never reach this check, and SharePoint rejects the bot's bearer token
+    // outright if it were ever sent - there is no host under this suffix
+    // this check should trust with it.
+    expect(isMicrosoftAttachmentHost('https://attacker-tenant.sharepoint.com/x')).toBe(false)
+  })
 })

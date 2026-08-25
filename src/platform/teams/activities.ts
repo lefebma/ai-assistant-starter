@@ -40,7 +40,21 @@ function stripMentions(text: string): string {
     .trim()
 }
 
-const MICROSOFT_ATTACHMENT_HOSTS = ['.botframework.com', '.trafficmanager.net', '.skype.com', '.sharepoint.com', '.office.net', '.microsoft.com']
+const MICROSOFT_ATTACHMENT_HOST_SUFFIXES = ['.botframework.com', '.skype.com', '.office.net', '.microsoft.com']
+
+// smba.trafficmanager.net is Bot Framework's own Teams-attachment proxy
+// (region is a path segment, e.g. /amer/, never part of the hostname), so an
+// exact match is both correct and tighter: trafficmanager.net itself is
+// Azure Traffic Manager, a self-service product any customer (including an
+// attacker) can provision a hostname under.
+const MICROSOFT_ATTACHMENT_EXACT_HOSTS = ['smba.trafficmanager.net']
+
+// sharepoint.com is deliberately not in either list above. Teams file-share
+// attachments (TEAMS_FILE_INFO, needsAuth: false) carry a pre-authorized
+// downloadUrl and never reach this check at all; sending the bot's bearer
+// token to a SharePoint host gets the request rejected outright, and
+// "<tenant>.sharepoint.com" is self-service per Microsoft 365 tenant, so
+// there is no host under that suffix this check should ever trust with it.
 
 /** Only these hosts should ever see the bot's bearer token in a download request. */
 export function isMicrosoftAttachmentHost(url: string): boolean {
@@ -51,7 +65,8 @@ export function isMicrosoftAttachmentHost(url: string): boolean {
     return false
   }
   if (parsed.protocol !== 'https:') return false
-  return MICROSOFT_ATTACHMENT_HOSTS.some((suffix) => parsed.hostname.endsWith(suffix))
+  if (MICROSOFT_ATTACHMENT_EXACT_HOSTS.includes(parsed.hostname)) return true
+  return MICROSOFT_ATTACHMENT_HOST_SUFFIXES.some((suffix) => parsed.hostname.endsWith(suffix))
 }
 
 function buttonLabel(value: unknown): string | null {
