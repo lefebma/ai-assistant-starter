@@ -239,6 +239,29 @@ describe('TeamsAdapter.handleRequest', () => {
     expect(unauth.out.status).toBe(401)
   })
 
+  it('drains the oversized body instead of destroying the socket immediately (avoids an RST)', async () => {
+    const { adapter } = makeAdapter([])
+    const big = '{"type":"message","text":"' + 'x'.repeat(1_100_000) + '"}'
+    const { req, res, out } = request(big, 'Bearer good')
+    const resOnceSpy = vi.spyOn(res, 'once')
+    await adapter.handleRequest(req, res)
+    expect(out.status).toBe(413)
+    // The old code destroyed the socket the instant the response finished
+    // writing (res.once('finish', () => req.destroy())): fine when the body
+    // is already fully buffered like this fake stream, but on a real slow
+    // client there can still be unread inbound bytes when that fires, and
+    // destroying a socket with unread bytes pending makes the OS send RST
+    // instead of a graceful FIN - which can drop the still-unacked 413
+    // response before the client reads it. The fix drains instead, so
+    // nothing hooks 'finish' on the response at all any more.
+    expect(resOnceSpy).not.toHaveBeenCalled()
+    // The internal body reader must detach its own 'data' listener on
+    // rejection, or resuming the stream to drain it would immediately
+    // re-trigger the same oversize rejection instead of just discarding the
+    // remaining bytes.
+    expect(req.listenerCount('data')).toBe(0)
+  })
+
   it('logs auth failures at most once per minute and counts the rest', async () => {
     let clock = 1_000_000
     const { adapter } = makeAdapter([], { now: () => clock })

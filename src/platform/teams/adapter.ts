@@ -121,7 +121,18 @@ export class TeamsAdapter implements PlatformAdapter {
     } catch {
       res.writeHead(413)
       res.end()
-      res.once('finish', () => req.destroy())
+      // Destroying the socket on `res` 'finish' can RST it: there is still
+      // unread inbound data buffered when the size check fails, and closing
+      // a socket with unread bytes pending makes the OS send RST instead of
+      // a graceful FIN - which can drop the still-unacked 413 response
+      // before a slow client reads it. Drain and discard the rest of the
+      // body instead, so the socket closes cleanly once the client finishes
+      // sending. A timeout backstops a client that never finishes.
+      req.resume()
+      const drainTimeout = setTimeout(() => req.destroy(), 5_000)
+      drainTimeout.unref?.()
+      req.once('end', () => clearTimeout(drainTimeout))
+      req.once('error', () => clearTimeout(drainTimeout))
       return
     }
     let activity: Activity
@@ -295,19 +306,35 @@ function readBodyLimited(req: HttpRequest, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
-    req.on('data', (chunk: Buffer) => {
+    const cleanup = () => {
+      req.off('data', onData)
+      req.off('end', onEnd)
+      req.off('error', onError)
+    }
+    const onData = (chunk: Buffer) => {
       size += chunk.length
       if (size > maxBytes) {
         // Reject but don't destroy the socket: the caller still needs to
-        // write the 413 response on it. Pause so no more data piles up.
+        // write the 413 response on it, then drain and discard whatever is
+        // left. Detach these listeners first so the caller's drain doesn't
+        // immediately re-trigger this same rejection.
+        cleanup()
         reject(new Error('body too large'))
-        req.pause()
         return
       }
       chunks.push(chunk)
-    })
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
-    req.on('error', reject)
+    }
+    const onEnd = () => {
+      cleanup()
+      resolve(Buffer.concat(chunks).toString('utf-8'))
+    }
+    const onError = (err: Error) => {
+      cleanup()
+      reject(err)
+    }
+    req.on('data', onData)
+    req.on('end', onEnd)
+    req.on('error', onError)
   })
 }
 
