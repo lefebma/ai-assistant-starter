@@ -1,7 +1,8 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
-import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, PRIMARY_CHAT_ID } from './config.js'
+import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, PRIMARY_CHAT_ID } from './config.js'
+import { transcribeAudio } from './voice.js'
 import { runAgent } from './agent.js'
 import { sendPlatformMessage } from './bot.js'
 import { logger } from './logger.js'
@@ -217,6 +218,41 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   }
 }
 
+async function handleTranscribe(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireAuth(req, res)) return
+  if (!OPENAI_API_KEY) {
+    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'openai_not_configured' }))
+    return
+  }
+
+  const chunks: Buffer[] = []
+  for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+  const body = Buffer.concat(chunks)
+
+  if (body.length === 0) {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'empty_body' }))
+    return
+  }
+
+  const tmpDir = resolve(PROJECT_ROOT, 'store')
+  mkdirSync(tmpDir, { recursive: true })
+  const tmpPath = resolve(tmpDir, `voice_${Date.now()}.webm`)
+  try {
+    writeFileSync(tmpPath, body)
+    const text = await transcribeAudio(tmpPath)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ text }))
+  } catch (err) {
+    logger.error({ err }, 'transcribe failed')
+    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'transcription_failed' }))
+  } finally {
+    try { unlinkSync(tmpPath) } catch {}
+  }
+}
+
 async function handleSignedUrl(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!requireAuth(req, res)) return
   if (!ELEVENLABS_API_KEY || !ELEVENLABS_AGENT_ID) {
@@ -325,6 +361,10 @@ export function startHttpServer(port: number = HTTP_PORT): void {
 
     if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
       void handleChatCompletions(req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/transcribe') {
+      void handleTranscribe(req, res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/signed-url') {
