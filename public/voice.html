@@ -276,7 +276,7 @@
     async function transcribeAudio(blob) {
       const resp = await fetch('/api/transcribe', {
         method: 'POST',
-        headers: { ...authHeaders() },
+        headers: { 'Content-Type': blob.type || 'audio/webm', ...authHeaders() },
         body: blob,
       })
       if (!resp.ok) throw new Error('Transcribe failed: ' + resp.status)
@@ -357,7 +357,9 @@
 
     // iOS Safari drops speechSynthesis.speak() unless the FIRST call on the page
     // originates inside a user gesture. Everything here speaks from an async
-    // promise chain, so prime the engine from every click/keydown handler.
+    // promise chain, so prime the engine from a gesture instead. Never prime on
+    // the tap that opens the mic: iOS switches the audio session to playback and
+    // the getUserMedia capture that follows records silence.
     function unlockSpeech() {
       if (speechUnlocked || !window.speechSynthesis) return
       try {
@@ -546,6 +548,14 @@
       audioChunks = []
       mediaRecorder = null
 
+      // Whisper invents canned phrases ("MBC 뉴스...", "Thanks for watching")
+      // when given silence, so drop clips too small to hold speech.
+      if (blob.size < 2000) {
+        setMode('')
+        addMessage('system', '(no speech detected - mic captured ' + blob.size + ' bytes)')
+        return
+      }
+
       // Transcribe via server
       setMode('transcribing')
       livePreview.textContent = 'Sending to Whisper...'
@@ -575,10 +585,9 @@
         busy = false
         return
       }
-      unlockSpeech()
       if (busy) return
 
-      if (recording) stopRecording()
+      if (recording) { unlockSpeech(); stopRecording() }
       else startRecording()
     })
 
@@ -607,9 +616,8 @@
           busy = false
           return
         }
-        unlockSpeech()
         if (busy) return
-        if (recording) stopRecording()
+        if (recording) { unlockSpeech(); stopRecording() }
         else startRecording()
       }
     })

@@ -218,6 +218,29 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   }
 }
 
+/** Whisper picks its decoder from the filename, so the extension must match
+ *  what the browser actually recorded. Safari records MP4, Chrome WebM. */
+export function audioExtension(contentType: string | undefined): string {
+  const base = (contentType ?? '').split(';')[0]!.trim().toLowerCase()
+  const map: Record<string, string> = {
+    'audio/webm': 'webm',
+    'audio/ogg': 'ogg',
+    'audio/oga': 'oga',
+    'audio/mp4': 'mp4',
+    'audio/x-m4a': 'm4a',
+    'audio/m4a': 'm4a',
+    'audio/aac': 'm4a',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/wave': 'wav',
+    'audio/flac': 'flac',
+    'audio/x-flac': 'flac',
+  }
+  return map[base] ?? 'webm'
+}
+
 async function handleTranscribe(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!requireAuth(req, res)) return
   if (!OPENAI_API_KEY) {
@@ -238,7 +261,9 @@ async function handleTranscribe(req: IncomingMessage, res: ServerResponse): Prom
 
   const tmpDir = resolve(PROJECT_ROOT, 'store')
   mkdirSync(tmpDir, { recursive: true })
-  const tmpPath = resolve(tmpDir, `voice_${Date.now()}.webm`)
+  const ext = audioExtension(req.headers['content-type'])
+  logger.info({ bytes: body.length, contentType: req.headers['content-type'], ext }, 'transcribe request')
+  const tmpPath = resolve(tmpDir, `voice_${Date.now()}.${ext}`)
   try {
     writeFileSync(tmpPath, body)
     const text = await transcribeAudio(tmpPath)
