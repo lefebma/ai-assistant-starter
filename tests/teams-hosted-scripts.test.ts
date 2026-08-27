@@ -32,6 +32,30 @@ describe('teams edge (Caddy) config', () => {
     expect(sslipHostname('5.161.197.79')).toBe('5-161-197-79.sslip.io')
     expect(() => sslipHostname('not-an-ip')).toThrow(/IPv4/)
   })
+
+  it('generates voice routes when voiceToken is provided', () => {
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { voiceToken: 'abc123' })
+    expect(c).toContain('handle /api/teams/* {')
+    expect(c).toContain('not query token=abc123')
+    expect(c).toContain('query token=abc123')
+    expect(c).toContain('rewrite * /voice.html')
+    expect(c).toContain('/api/transcribe')
+    expect(c).toContain('respond 403')
+    expect(c).toContain('respond 404')
+  })
+
+  it('omits Teams routes when teams is false', () => {
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { teams: false, voiceToken: 'tok' })
+    expect(c).not.toContain('handle /api/teams/*')
+    expect(c).toContain('query token=tok')
+  })
+
+  it('generates teams-only config when no options are passed (backward compat)', () => {
+    const c = buildCaddyfile('5-161-197-79.sslip.io')
+    expect(c).toContain('handle /api/teams/* {')
+    expect(c).not.toContain('voice')
+    expect(c).toContain('respond 404')
+  })
 })
 
 describe('enable-teams script', () => {
@@ -43,6 +67,13 @@ describe('enable-teams script', () => {
     expect(t).not.toMatch(/allow.*3030/)
     expect(t).not.toMatch(/\bexecSync\(|\bexec\(|shell:\s*true/)
     expect(t).toContain('/api/teams/messages')
+  })
+
+  it('supports --voice flag and reads bearer token from .env', () => {
+    const t = readFileSync(ENABLE, 'utf-8')
+    expect(t).toContain("'--voice'")
+    expect(t).toContain('HTTP_BEARER_TOKEN')
+    expect(t).toContain('voiceToken')
   })
 })
 

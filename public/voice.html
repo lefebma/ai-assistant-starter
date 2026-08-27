@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Havn · Voice</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0a0a0b; color: #e8e8ea; font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; padding: 2rem 1rem; }
+    .wrap { width: min(600px, 95vw); display: flex; flex-direction: column; align-items: center; flex: 1; }
+    h1 { font-weight: 500; letter-spacing: 0.02em; margin: 0 0 0.15rem; font-size: 1.6rem; }
+    p.sub { margin: 0 0 1.2rem; opacity: 0.45; font-size: 0.85rem; }
+
+    /* Device selectors */
+    .device-bar {
+      width: 100%; display: flex; gap: 0.5rem; margin-bottom: 1.2rem;
+      flex-wrap: wrap; justify-content: center;
+    }
+    .device-bar label { font-size: 0.72rem; opacity: 0.45; text-transform: uppercase; letter-spacing: 0.05em; }
+    .device-bar .device-group { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 180px; }
+    .device-bar select {
+      background: #111118; border: 1px solid #2a2a30; border-radius: 6px;
+      color: #c8c8cc; padding: 0.4rem 0.5rem; font-size: 0.8rem; outline: none;
+      width: 100%; cursor: pointer;
+    }
+    .device-bar select:focus { border-color: #4a7aff; }
+
+    /* Orb */
+    .orb-wrap { position: relative; width: 140px; height: 140px; margin-bottom: 1.5rem; cursor: pointer; user-select: none; }
+    .orb {
+      width: 100%; height: 100%; border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%, #2a2a3a, #111118);
+      border: 2px solid #222230;
+      transition: all 0.3s ease;
+      display: grid; place-items: center;
+    }
+    .orb svg { width: 36px; height: 36px; opacity: 0.5; transition: opacity 0.2s; }
+    .orb:hover { border-color: #3a3a50; }
+    .orb:hover svg { opacity: 0.7; }
+
+    .orb-wrap.recording .orb {
+      border-color: #e04a4a;
+      box-shadow: 0 0 30px rgba(224, 74, 74, 0.3);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    .orb-wrap.recording .orb svg { opacity: 1; }
+
+    .orb-wrap.thinking .orb {
+      border-color: #a577e0;
+      box-shadow: 0 0 25px rgba(165, 119, 224, 0.2);
+      animation: think-spin 1.5s linear infinite;
+    }
+
+    .orb-wrap.speaking .orb {
+      border-color: #4ae0a0;
+      box-shadow: 0 0 25px rgba(74, 224, 160, 0.2);
+      animation: speak-pulse 0.8s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.06); }
+    }
+    @keyframes think-spin {
+      0% { box-shadow: 0 0 25px rgba(165, 119, 224, 0.15); }
+      50% { box-shadow: 0 0 35px rgba(165, 119, 224, 0.35); }
+      100% { box-shadow: 0 0 25px rgba(165, 119, 224, 0.15); }
+    }
+    @keyframes speak-pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+    }
+
+    .status { font-size: 0.82rem; opacity: 0.5; margin-bottom: 0.3rem; min-height: 1.2em; }
+    .hint { font-size: 0.72rem; opacity: 0.3; margin-bottom: 1.5rem; }
+
+    /* Live transcript preview */
+    .live-preview {
+      width: 100%; min-height: 1.5em; margin-bottom: 0.75rem;
+      font-size: 0.85rem; color: #8ab4ff; opacity: 0.7;
+      font-style: italic; text-align: center;
+      transition: opacity 0.2s;
+    }
+    .live-preview:empty { opacity: 0; }
+
+    /* Transcript */
+    .transcript {
+      width: 100%; flex: 1; overflow-y: auto; font-size: 0.88rem;
+      display: flex; flex-direction: column-reverse; gap: 0.75rem;
+      max-height: 48vh; padding: 0.5rem 0;
+    }
+    .msg { padding: 0.6rem 0.8rem; border-radius: 10px; max-width: 88%; line-height: 1.45; }
+    .msg.user { align-self: flex-end; background: #1a2a4a; color: #b0cfff; border-bottom-right-radius: 3px; }
+    .msg.assistant { align-self: flex-start; background: #1a2a1a; color: #a8dca0; border-bottom-left-radius: 3px; }
+    .msg.system { align-self: center; background: transparent; color: #555; font-size: 0.78rem; font-style: italic; }
+
+    /* Text input fallback */
+    .input-bar {
+      width: 100%; display: flex; gap: 0.5rem; margin-top: 1rem; padding-top: 0.75rem;
+      border-top: 1px solid #1a1a20;
+    }
+    .input-bar input {
+      flex: 1; background: #111118; border: 1px solid #2a2a30; border-radius: 8px;
+      color: #e8e8ea; padding: 0.6rem 0.8rem; font-size: 0.9rem; outline: none;
+    }
+    .input-bar input:focus { border-color: #4a7aff; }
+    .input-bar button {
+      background: #1a2a4a; border: 1px solid #2a3a5a; color: #b0cfff; border-radius: 8px;
+      padding: 0.6rem 1rem; cursor: pointer; font-size: 0.85rem;
+    }
+    .input-bar button:hover { background: #243560; }
+    .input-bar button:disabled { opacity: 0.4; cursor: default; }
+
+    .no-speech { text-align: center; color: #776; font-size: 0.82rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Havn</h1>
+    <p class="sub">Voice assistant</p>
+
+    <div class="device-bar">
+      <div class="device-group">
+        <label>Microphone</label>
+        <select id="mic-select"><option value="">Loading devices...</option></select>
+      </div>
+      <div class="device-group">
+        <label>Speaker</label>
+        <select id="speaker-select"><option value="">Loading devices...</option></select>
+      </div>
+    </div>
+
+    <div class="orb-wrap" id="orb-wrap" title="Click to start/stop recording">
+      <div class="orb">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="status" id="status">Click the orb to start recording</div>
+    <div class="hint" id="hint">Click again when done speaking. Space bar works too.</div>
+    <div class="live-preview" id="live-preview"></div>
+    <div class="transcript" id="transcript"></div>
+
+    <div class="input-bar">
+      <input type="text" id="text-input" placeholder="Type a message..." autocomplete="off" />
+      <button id="send-btn">Send</button>
+    </div>
+    <div id="no-speech"></div>
+  </div>
+
+  <script>
+    // --- Auth ---
+    const params = new URLSearchParams(window.location.search)
+    const TOKEN = params.get('token') || ''
+    if (!TOKEN) {
+      document.getElementById('status').textContent = 'Missing ?token= parameter'
+      document.getElementById('orb-wrap').style.pointerEvents = 'none'
+      document.getElementById('send-btn').disabled = true
+    }
+    function authHeaders() {
+      return TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}
+    }
+
+    // --- State ---
+    const orbWrap = document.getElementById('orb-wrap')
+    const statusEl = document.getElementById('status')
+    const hintEl = document.getElementById('hint')
+    const livePreview = document.getElementById('live-preview')
+    const transcript = document.getElementById('transcript')
+    const textInput = document.getElementById('text-input')
+    const sendBtn = document.getElementById('send-btn')
+    const micSelect = document.getElementById('mic-select')
+    const speakerSelect = document.getElementById('speaker-select')
+    let busy = false
+    let recording = false
+    let recognition = null
+    let activeMicStream = null
+    let accumulatedText = '' // collects all interim + final results during one recording session
+    const conversationHistory = []
+
+    // --- Device enumeration ---
+    const STORAGE_MIC = 'havn_mic_id'
+    const STORAGE_SPEAKER = 'havn_speaker_id'
+
+    async function enumerateDevices() {
+      try {
+        // Use the saved mic if we have one, so the browser doesn't prime
+        // a different default device (e.g. phone via Continuity).
+        const savedMic = localStorage.getItem(STORAGE_MIC)
+        const constraints = savedMic
+          ? { audio: { deviceId: { exact: savedMic } } }
+          : { audio: true }
+        let tempStream
+        try {
+          tempStream = await navigator.mediaDevices.getUserMedia(constraints)
+        } catch {
+          // Saved device may have vanished; fall back to any mic for permission grant
+          tempStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        }
+        tempStream.getTracks().forEach(t => t.stop())
+      } catch {}
+
+      const devices = await navigator.mediaDevices.enumerateDevices()
+
+      const mics = devices.filter(d => d.kind === 'audioinput')
+      micSelect.innerHTML = ''
+      if (mics.length === 0) {
+        micSelect.innerHTML = '<option value="">No microphones found</option>'
+      } else {
+        mics.forEach((d, i) => {
+          const opt = document.createElement('option')
+          opt.value = d.deviceId
+          opt.textContent = d.label || ('Microphone ' + (i + 1))
+          micSelect.appendChild(opt)
+        })
+      }
+      const savedMic = localStorage.getItem(STORAGE_MIC)
+      if (savedMic && mics.some(m => m.deviceId === savedMic)) micSelect.value = savedMic
+
+      const speakers = devices.filter(d => d.kind === 'audiooutput')
+      speakerSelect.innerHTML = ''
+      if (speakers.length === 0) {
+        speakerSelect.innerHTML = '<option value="">Default (browser controlled)</option>'
+      } else {
+        speakers.forEach((d, i) => {
+          const opt = document.createElement('option')
+          opt.value = d.deviceId
+          opt.textContent = d.label || ('Speaker ' + (i + 1))
+          speakerSelect.appendChild(opt)
+        })
+      }
+      const savedSpeaker = localStorage.getItem(STORAGE_SPEAKER)
+      if (savedSpeaker && speakers.some(s => s.deviceId === savedSpeaker)) speakerSelect.value = savedSpeaker
+    }
+
+    micSelect.addEventListener('change', () => localStorage.setItem(STORAGE_MIC, micSelect.value))
+    speakerSelect.addEventListener('change', () => localStorage.setItem(STORAGE_SPEAKER, speakerSelect.value))
+    navigator.mediaDevices?.addEventListener('devicechange', enumerateDevices)
+    enumerateDevices()
+
+    function setMode(mode) {
+      orbWrap.className = 'orb-wrap' + (mode ? ' ' + mode : '')
+      if (mode === 'recording') {
+        statusEl.textContent = 'Recording... click orb when done'
+        hintEl.textContent = 'Take your time. Click or press Space to finish.'
+      } else if (mode === 'transcribing') {
+        statusEl.textContent = 'Transcribing...'
+        hintEl.textContent = ''
+      } else if (mode === 'thinking') {
+        statusEl.textContent = 'Thinking...'
+        hintEl.textContent = ''
+      } else if (mode === 'speaking') {
+        statusEl.textContent = 'Speaking...'
+        hintEl.textContent = 'Click orb to interrupt.'
+      } else {
+        statusEl.textContent = 'Click the orb to start recording'
+        hintEl.textContent = 'Click again when done speaking. Space bar works too.'
+      }
+    }
+
+    function addMessage(role, text) {
+      const div = document.createElement('div')
+      div.className = 'msg ' + role
+      div.textContent = text
+      transcript.prepend(div)
+    }
+
+    // --- Transcribe audio via server-side Whisper ---
+    async function transcribeAudio(blob) {
+      const resp = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type || 'audio/webm', ...authHeaders() },
+        body: blob,
+      })
+      if (!resp.ok) throw new Error('Transcribe failed: ' + resp.status)
+      const data = await resp.json()
+      return data.text || ''
+    }
+
+    // --- LLM call (streaming) ---
+    async function sendToLLM(userText) {
+      conversationHistory.push({ role: 'user', content: userText })
+      addMessage('user', userText)
+      setMode('thinking')
+      busy = true
+
+      try {
+        const resp = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({
+            messages: conversationHistory.slice(-10),
+            stream: true,
+          }),
+        })
+
+        if (!resp.ok) {
+          const errText = await resp.text()
+          throw new Error(resp.status + ': ' + errText)
+        }
+
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let fullText = ''
+        let buffer = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+
+          const lines = buffer.split('\n')
+          buffer = lines.pop()
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6).trim()
+            if (data === '[DONE]') continue
+            try {
+              const chunk = JSON.parse(data)
+              const delta = chunk.choices?.[0]?.delta?.content
+              if (delta) fullText += delta
+            } catch {}
+          }
+        }
+
+        if (fullText) {
+          const clean = fullText.replace(/\[\[buttons:.*?\]\]/g, '').trim()
+          conversationHistory.push({ role: 'assistant', content: clean })
+          addMessage('assistant', clean)
+          await speak(clean)
+        } else {
+          addMessage('system', '(empty response)')
+        }
+      } catch (err) {
+        addMessage('system', 'Error: ' + err.message)
+      } finally {
+        busy = false
+        setMode('')
+      }
+    }
+
+    // --- TTS (browser) with speaker selection ---
+    let ttsAudioCtx = null
+    let currentlySpeaking = false
+    let speechUnlocked = false
+    let ttsKeepAlive = null
+    let resolveSpeak = null
+    let liveUtterances = []  // strong refs: browsers GC utterances mid-speech
+
+    // iOS Safari drops speechSynthesis.speak() unless the FIRST call on the page
+    // originates inside a user gesture. Everything here speaks from an async
+    // promise chain, so prime the engine from a gesture instead. Never prime on
+    // the tap that opens the mic: iOS switches the audio session to playback and
+    // the getUserMedia capture that follows records silence.
+    function unlockSpeech() {
+      if (speechUnlocked || !window.speechSynthesis) return
+      try {
+        const u = new SpeechSynthesisUtterance(' ')
+        u.volume = 0
+        window.speechSynthesis.speak(u)
+        speechUnlocked = true
+      } catch (e) { console.warn('Could not unlock speech:', e) }
+    }
+
+    function pickVoice() {
+      const voices = window.speechSynthesis.getVoices()
+      return voices.find(v => /samantha|karen|moira|daniel|google uk/i.test(v.name))
+        || voices.find(v => v.lang.startsWith('en') && v.localService)
+        || voices[0]
+        || null
+    }
+
+    // Firefox and Chrome truncate a single long utterance after roughly 15s.
+    // Split on sentence boundaries so each utterance stays short.
+    function chunkForSpeech(text, max = 180) {
+      const parts = text.match(/[^.!?\n]+[.!?]*\s*|\n+/g) || [text]
+      const chunks = []
+      let cur = ''
+      for (const part of parts) {
+        if (cur && (cur + part).length > max) { chunks.push(cur.trim()); cur = '' }
+        if (part.length > max) {
+          let rest = part
+          while (rest.length > max) {
+            let cut = rest.lastIndexOf(' ', max)
+            if (cut <= 0) cut = max
+            chunks.push(rest.slice(0, cut).trim())
+            rest = rest.slice(cut)
+          }
+          cur = rest
+        } else {
+          cur += part
+        }
+      }
+      if (cur.trim()) chunks.push(cur.trim())
+      return chunks.filter(Boolean)
+    }
+
+    function startKeepAlive() {
+      stopKeepAlive()
+      // Chrome and Firefox stall a queued utterance list after ~15s. A
+      // pause/resume nudge keeps the queue moving; it is a no-op when idle.
+      ttsKeepAlive = setInterval(() => {
+        if (!currentlySpeaking) { stopKeepAlive(); return }
+        try {
+          window.speechSynthesis.pause()
+          window.speechSynthesis.resume()
+        } catch (e) { console.warn('TTS keepalive failed:', e) }
+      }, 10000)
+    }
+
+    function stopKeepAlive() {
+      if (ttsKeepAlive) { clearInterval(ttsKeepAlive); ttsKeepAlive = null }
+    }
+
+    // Idempotent: resolves the pending speak() exactly once, whoever calls it.
+    function finishSpeaking() {
+      stopKeepAlive()
+      liveUtterances = []
+      currentlySpeaking = false
+      const done = resolveSpeak
+      resolveSpeak = null
+      if (done) { setMode(''); done() }
+    }
+
+    function speak(text) {
+      return new Promise(async (resolve) => {
+        if (!window.speechSynthesis) { resolve(); return }
+        window.speechSynthesis.cancel()
+        finishSpeaking()
+
+        const speakText = text.length > 1500 ? text.slice(0, 1500) + '... (truncated)' : text
+        const chunks = chunkForSpeech(speakText)
+        if (chunks.length === 0) { resolve(); return }
+
+        const selectedSpeaker = speakerSelect.value
+        if (selectedSpeaker) {
+          try {
+            if (!ttsAudioCtx || ttsAudioCtx.state === 'closed') ttsAudioCtx = new AudioContext()
+            if (ttsAudioCtx.setSinkId) await ttsAudioCtx.setSinkId(selectedSpeaker)
+          } catch (e) { console.warn('Could not set speaker output:', e) }
+        }
+
+        const voice = pickVoice()
+        setMode('speaking')
+        currentlySpeaking = true
+        resolveSpeak = resolve
+        liveUtterances = []
+
+        let remaining = chunks.length
+        for (const chunk of chunks) {
+          const utter = new SpeechSynthesisUtterance(chunk)
+          utter.rate = 1.05
+          utter.pitch = 1.0
+          if (voice) utter.voice = voice
+          utter.onend = () => { if (--remaining <= 0) finishSpeaking() }
+          utter.onerror = () => { finishSpeaking() }
+          liveUtterances.push(utter)
+          window.speechSynthesis.speak(utter)
+        }
+
+        startKeepAlive()
+      })
+    }
+
+    function stopSpeaking() {
+      if (!window.speechSynthesis) return
+      window.speechSynthesis.cancel()
+      finishSpeaking()
+    }
+
+    window.speechSynthesis?.getVoices()
+    window.speechSynthesis?.addEventListener?.('voiceschanged', () => {})
+
+    // --- MediaRecorder: records from selected mic, sends to Whisper ---
+    let mediaRecorder = null
+    let audioChunks = []
+
+    async function startRecording() {
+      if (busy || recording) return
+      stopSpeaking()
+
+      const selectedMic = micSelect.value
+      try {
+        const constraints = selectedMic
+          ? { audio: { deviceId: { exact: selectedMic } } }
+          : { audio: true }
+        activeMicStream = await navigator.mediaDevices.getUserMedia(constraints)
+      } catch (err) {
+        addMessage('system', 'Mic access denied: ' + err.message)
+        return
+      }
+
+      recording = true
+      audioChunks = []
+      livePreview.textContent = ''
+
+      // Pick a supported mime type
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4'
+
+      mediaRecorder = new MediaRecorder(activeMicStream, { mimeType })
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.push(e.data)
+      }
+      mediaRecorder.start(250) // collect chunks every 250ms for responsive UI
+
+      setMode('recording')
+      livePreview.textContent = 'Recording from: ' + (micSelect.selectedOptions[0]?.textContent || 'default mic')
+    }
+
+    async function stopRecording() {
+      if (!recording) return
+      recording = false
+
+      livePreview.textContent = ''
+
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        // Wait for final data
+        await new Promise((resolve) => {
+          mediaRecorder.onstop = resolve
+          mediaRecorder.stop()
+        })
+      }
+
+      if (activeMicStream) {
+        activeMicStream.getTracks().forEach(t => t.stop())
+        activeMicStream = null
+      }
+
+      if (audioChunks.length === 0) {
+        setMode('')
+        addMessage('system', '(no audio recorded)')
+        return
+      }
+
+      const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || 'audio/webm' })
+      audioChunks = []
+      mediaRecorder = null
+
+      // Whisper invents canned phrases ("MBC 뉴스...", "Thanks for watching")
+      // when given silence, so drop clips too small to hold speech.
+      if (blob.size < 2000) {
+        setMode('')
+        addMessage('system', '(no speech detected - mic captured ' + blob.size + ' bytes)')
+        return
+      }
+
+      // Transcribe via server
+      setMode('transcribing')
+      livePreview.textContent = 'Sending to Whisper...'
+      try {
+        const text = await transcribeAudio(blob)
+        livePreview.textContent = ''
+        if (text.trim()) {
+          await sendToLLM(text.trim())
+        } else {
+          setMode('')
+          addMessage('system', '(no speech detected)')
+        }
+      } catch (err) {
+        livePreview.textContent = ''
+        setMode('')
+        addMessage('system', 'Transcription error: ' + err.message)
+      }
+    }
+
+    // --- Orb click ---
+    orbWrap.addEventListener('click', () => {
+      if (busy && currentlySpeaking) {
+        // Interrupt TTS
+        stopSpeaking()
+        unlockSpeech()
+        setMode('')
+        busy = false
+        return
+      }
+      if (busy) return
+
+      if (recording) { unlockSpeech(); stopRecording() }
+      else startRecording()
+    })
+
+    // --- Text input ---
+    function handleSend() {
+      unlockSpeech()
+      const text = textInput.value.trim()
+      if (!text || busy) return
+      textInput.value = ''
+      sendToLLM(text)
+    }
+    sendBtn.addEventListener('click', handleSend)
+    textInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+    })
+
+    // --- Keyboard shortcut: Space to toggle recording ---
+    document.addEventListener('keydown', (e) => {
+      if (e.target === textInput) return
+      if (e.code === 'Space') {
+        e.preventDefault()
+        if (busy && currentlySpeaking) {
+          stopSpeaking()
+          unlockSpeech()
+          setMode('')
+          busy = false
+          return
+        }
+        if (busy) return
+        if (recording) { unlockSpeech(); stopRecording() }
+        else startRecording()
+      }
+    })
+  </script>
+</body>
+</html>

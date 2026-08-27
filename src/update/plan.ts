@@ -77,10 +77,17 @@ export const PRESERVED_PATHS = ['.env', 'CLAUDE.md', 'PERSONALITY.md', 'skills',
  * agree with each other. `templates/` ships new always-on skills; the user's
  * own skills/ are in PRESERVED_PATHS. package-lock.json rides along with
  * package.json so the reinstall is the one the new version was built with.
+ *
+ * `public/` is engine, not user content: it is the voice UI the HTTP server
+ * serves, versioned with the endpoints it calls. It was absent from every path
+ * list until 2026-08-27, so no update of either kind could deliver it and the
+ * page reached havn-test only by hand copy. Anything a user owns lives in
+ * PRESERVED_PATHS, so replacing this wholesale costs them nothing.
  */
 export const SOURCE_ENGINE_PATHS = [
   'src',
   'scripts',
+  'public',
   'package.json',
   'package-lock.json',
   'tsconfig.json',
@@ -102,6 +109,7 @@ export const BUNDLE_PAYLOAD_PATHS = [
   'dist',
   'node_modules',
   'templates',
+  'public',
   'docs',
   'package.json',
   'package-lock.json',
