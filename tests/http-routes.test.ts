@@ -42,8 +42,10 @@ describe('audioExtension', () => {
   it('maps Safari MP4 recordings to an extension Whisper accepts', () => {
     // Safari cannot record WebM. Writing its MP4 as .webm made Whisper 400
     // with "Invalid file format" on every iPhone recording.
-    expect(audioExtension('audio/mp4')).toBe('mp4')
-    expect(audioExtension('audio/mp4;codecs=mp4a.40.2')).toBe('mp4')
+    // Verified against the live API: audio-only ISO-BMFF is rejected as .mp4
+    // and accepted as .m4a, regardless of the declared part content type.
+    expect(audioExtension('audio/mp4')).toBe('m4a')
+    expect(audioExtension('audio/mp4;codecs=mp4a.40.2')).toBe('m4a')
     expect(audioExtension('audio/x-m4a')).toBe('m4a')
   })
 
@@ -68,5 +70,7 @@ describe('audioExtension', () => {
       'audio/aac', 'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/wave',
       'audio/flac', 'audio/x-flac', 'nonsense', undefined]
     for (const t of types) expect(supported).toContain(audioExtension(t))
+    // Never emit .mp4: OpenAI rejects audio-only MP4 under that extension.
+    for (const t of types) expect(audioExtension(t)).not.toBe('mp4')
   })
 })

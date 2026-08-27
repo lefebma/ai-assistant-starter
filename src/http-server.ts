@@ -226,7 +226,9 @@ export function audioExtension(contentType: string | undefined): string {
     'audio/webm': 'webm',
     'audio/ogg': 'ogg',
     'audio/oga': 'oga',
-    'audio/mp4': 'mp4',
+    // Safari records audio-only ISO-BMFF. OpenAI rejects that named .mp4
+    // ("Invalid file format") but accepts the identical bytes as .m4a.
+    'audio/mp4': 'm4a',
     'audio/x-m4a': 'm4a',
     'audio/m4a': 'm4a',
     'audio/aac': 'm4a',
