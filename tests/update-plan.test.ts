@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   detectInstallKind,
   bundleAssetName,
@@ -134,5 +136,40 @@ describe('planUpdate', () => {
     })
     expect(plan.action).toBe('none')
     expect(plan.message).toMatch(/503/)
+  })
+})
+
+describe('public/ is deliverable by an update', () => {
+  // The voice UI shipped to havn-test by hand copy because public/ was in
+  // none of the three path lists: no update of either kind could deliver it,
+  // and merging alone would not have put the page on any box.
+  it('is replaced by a source update', () => {
+    expect(SOURCE_ENGINE_PATHS).toContain('public')
+  })
+
+  it('is swapped in by a bundle update', () => {
+    expect(BUNDLE_PAYLOAD_PATHS).toContain('public')
+  })
+
+  it('is engine, not user content, so it is not preserved', () => {
+    expect(PRESERVED_PATHS).not.toContain('public')
+  })
+
+  // A path the updater swaps but the installer never stages is a path no
+  // bundle can deliver: the swap silently skips what is missing from the
+  // payload, so the gap looks like a working update that changes nothing.
+  it('keeps the installer payload in lockstep with the bundle swap list', () => {
+    const installer = readFileSync(resolve(__dirname, '../scripts/build-installer.ts'), 'utf-8')
+    const appFiles = installer.match(/const APP_FILES = \[(.*?)\]/s)?.[1]
+    expect(appFiles).toBeDefined()
+    const staged = [...appFiles!.matchAll(/'([^']+)'/g)].map((m) => m[1]!)
+    expect(staged).toContain('public')
+
+    // node_modules is deliberately swapped but not staged by APP_FILES: the
+    // installer builds it separately against the pinned runtime.
+    const swappedButNeverStaged = BUNDLE_PAYLOAD_PATHS
+      .filter((p) => p !== 'node_modules')
+      .filter((p) => !staged.includes(p))
+    expect(swappedButNeverStaged).toEqual([])
   })
 })
