@@ -21,15 +21,20 @@ export function sslipHostname(ip: string): string {
 export interface CaddyfileOptions {
   /** Enable /api/teams/* webhook proxy (default: true) */
   teams?: boolean
-  /** Enable voice UI with token-in-URL auth. Pass the bearer token value. */
-  voiceToken?: string
+  /**
+   * Expose the voice UI. The edge does not hold the credential: it proxies
+   * /voice and the app validates the per-chat link token (src/voice-links.ts).
+   * Embedding a token here made every Caddyfile a copy of the box-wide secret
+   * and meant rotating it required a redeploy.
+   */
+  voice?: boolean
 }
 
 export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): string {
   if (!isValidHostname(hostname)) throw new Error(`Not a valid hostname: ${hostname}`)
 
   const teams = options?.teams !== false
-  const voiceToken = options?.voiceToken
+  const voice = options?.voice === true
 
   const lines: string[] = [
     `# Havn edge config. Written by scripts/hosted/enable-teams.ts.`,
@@ -47,29 +52,16 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
     )
   }
 
-  // Voice UI: token-in-URL gates page access, bearer auth on API calls
-  if (voiceToken) {
+  // Voice UI. The app checks the link token on /voice and the bearer on the
+  // API routes, so nothing secret lives in this file.
+  if (voice) {
     lines.push(
       '',
-      '\t# Voice UI: token-in-URL gates page load.',
-      '\t# API calls carry the token as Authorization: Bearer (set by the UI JS).',
-      '',
-      '\t# Block voice page without valid token',
+      '\t# Voice UI page. The app validates ?token= and 403s a bad or expired link.',
       '\t@voice_page {',
       '\t\tpath /voice /voice/',
-      `\t\tnot query token=${voiceToken}`,
       '\t}',
       '\thandle @voice_page {',
-      '\t\trespond 403',
-      '\t}',
-      '',
-      '\t# Proxy voice page with valid token',
-      '\t@voice_ok {',
-      '\t\tpath /voice /voice/',
-      `\t\tquery token=${voiceToken}`,
-      '\t}',
-      '\thandle @voice_ok {',
-      '\t\trewrite * /voice.html',
       `\t\treverse_proxy ${APP_UPSTREAM}`,
       '\t}',
       '',

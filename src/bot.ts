@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME } from './config.js'
 import { getSession, setSession, clearSession, getMemoriesForChat } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
@@ -19,6 +19,7 @@ import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.j
 import { saveConversationTurn } from './memory.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
+import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, UPLOADS_DIR } from './media.js'
 import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
@@ -400,6 +401,50 @@ async function handleBrowserCommand(adapter: PlatformAdapter, chatId: string, te
   }
 
   await adapter.sendMessage(chatId, 'Usage: /browser [start|stop|status]\n  --default: use your real Chrome profile')
+}
+
+/**
+ * `/voice ui` mints this chat's own link to the voice page. The operator never
+ * handles it: previously the only way in was HTTP_BEARER_TOKEN pasted into a
+ * URL, which meant whoever set the box up held a working key to every user's
+ * assistant. See src/voice-links.ts.
+ */
+async function handleVoiceUiCommand(
+  adapter: PlatformAdapter,
+  chatId: string,
+  action: string | undefined
+): Promise<void> {
+  if (action === 'revoke') {
+    const n = revokeVoiceLinks(chatId)
+    await adapter.sendMessage(
+      chatId,
+      n > 0 ? 'Voice link revoked. It will not open again.' : 'No active voice link to revoke.'
+    )
+    return
+  }
+  if (action) {
+    await adapter.sendMessage(chatId, 'Usage: /voice ui, or /voice ui revoke')
+    return
+  }
+  if (!PUBLIC_HOSTNAME) {
+    await adapter.sendMessage(
+      chatId,
+      [
+        'This box has no public address, so there is no voice page to link to.',
+        '',
+        'Operator: run',
+        '  sudo node dist/scripts/hosted/enable-teams.js <hostname> --voice',
+        'then restart the service.',
+      ].join('\n')
+    )
+    return
+  }
+  const link = mintVoiceLink(chatId)
+  const parts = [voiceLinkMessage(voiceLinkUrl(PUBLIC_HOSTNAME, link.token), link.expiresAt)]
+  if (!voiceCapabilities().stt) {
+    parts.push('', 'Heads up: speech-to-text is off (no OPENAI_API_KEY), so the page will only accept typed input.')
+  }
+  await adapter.sendMessage(chatId, parts.join('\n'))
 }
 
 async function handleSkillCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
@@ -806,6 +851,15 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
     if (cmd === '/voice') {
+      const sub = trimmed.split(/\s+/).slice(1).map((w) => w.toLowerCase())
+      if (sub[0] === 'ui') {
+        await handleVoiceUiCommand(adapter, chatId, sub[1])
+        return
+      }
+      if (sub.length > 0) {
+        await adapter.sendMessage(chatId, 'Usage: /voice (toggle voice replies), /voice ui (link to the voice chat page), /voice ui revoke')
+        return
+      }
       if (voiceModeChats.has(chatId)) {
         voiceModeChats.delete(chatId)
         await adapter.sendMessage(chatId, 'Voice replies disabled.')
@@ -914,6 +968,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/newchat - Clear session, start fresh',
         '/memory - Show stored memories',
         '/voice - Toggle voice replies',
+        '/voice ui - Get your private link to the voice chat page',
         '/schedule - Manage scheduled tasks',
         '/dashboard - Dashboard (start/stop)',
         '/browser - Chrome CDP (start/stop/status)',

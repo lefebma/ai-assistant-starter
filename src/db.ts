@@ -103,6 +103,20 @@ export function initDatabase(): void {
     )
   `)
 
+  // Voice UI links (per-chat, expiring; see src/voice-links.ts)
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS voice_links (
+      token TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    )
+  `)
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_voice_links_chat
+    ON voice_links(chat_id)
+  `)
+
   // Migration: add columns for delivery mode, name, timezone
   const cols = d.pragma('table_info(scheduled_tasks)') as { name: string }[]
   const colNames = new Set(cols.map((c) => c.name))

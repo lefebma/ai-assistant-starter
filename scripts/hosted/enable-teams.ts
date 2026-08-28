@@ -5,8 +5,10 @@
  *   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname>
  *   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --voice
  *
- * --voice reads HTTP_BEARER_TOKEN from /home/havn/havn/.env and uses it as the
- * token-in-URL for the voice page. The same token is used for API bearer auth.
+ * --voice exposes the voice UI and records PUBLIC_HOSTNAME in .env so the
+ * assistant can build links for it. The page is not gated by a shared secret in
+ * this config: each user mints their own expiring link with `/voice ui` in
+ * chat, and the app validates it (src/voice-links.ts).
  *
  * What it does:
  *   - installs Caddy (Ubuntu 24.04 universe) for automatic Let's Encrypt TLS
@@ -40,16 +42,28 @@ function installed(cmd: string): boolean {
   }
 }
 
-/** Read HTTP_BEARER_TOKEN from the app .env file */
-function readBearerToken(): string {
+const ENV_PATH = '/home/havn/havn/.env'
+
+/**
+ * Record the edge hostname so `/voice ui` can build links. Rewrites the value
+ * in place if the key already exists (re-running with a new hostname should
+ * move the links, not leave two lines fighting).
+ */
+function writePublicHostname(hostname: string): void {
+  const envPath = resolve(ENV_PATH)
+  let content = ''
   try {
-    const envPath = resolve('/home/havn/havn/.env')
-    const content = readFileSync(envPath, 'utf-8')
-    const match = content.match(/^HTTP_BEARER_TOKEN=(.+)$/m)
-    return match?.[1]?.trim() ?? ''
+    content = readFileSync(envPath, 'utf-8')
   } catch {
-    return ''
+    console.error(`Cannot read ${ENV_PATH}; is the app installed?`)
+    process.exit(1)
   }
+  const line = `PUBLIC_HOSTNAME=${hostname}`
+  const updated = /^PUBLIC_HOSTNAME=.*$/m.test(content)
+    ? content.replace(/^PUBLIC_HOSTNAME=.*$/m, line)
+    : content.replace(/\n*$/, `\n${line}\n`)
+  // Truncating an existing file keeps its owner and mode; .env stays havn-owned.
+  writeFileSync(envPath, updated)
 }
 
 function main(): void {
@@ -70,21 +84,14 @@ function main(): void {
     process.exit(1)
   }
 
-  let voiceToken: string | undefined
-  if (enableVoice) {
-    voiceToken = readBearerToken()
-    if (!voiceToken) {
-      console.error('--voice requires HTTP_BEARER_TOKEN in /home/havn/havn/.env')
-      process.exit(1)
-    }
-  }
-
   if (!installed('caddy')) {
     run('apt-get', ['update', '-q'])
     run('apt-get', ['install', '-y', 'caddy'])
   }
 
-  writeFileSync('/etc/caddy/Caddyfile', buildCaddyfile(hostname, { teams: true, voiceToken }))
+  if (enableVoice) writePublicHostname(hostname)
+
+  writeFileSync('/etc/caddy/Caddyfile', buildCaddyfile(hostname, { teams: true, voice: enableVoice }))
   run('caddy', ['validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
 
   run('ufw', ['allow', '80/tcp'])
@@ -99,8 +106,11 @@ function main(): void {
 
   console.log('Edge configured.')
   console.log(`  Teams endpoint: https://${hostname}/api/teams/messages`)
-  if (voiceToken) {
-    console.log(`  Voice UI:       https://${hostname}/voice?token=${voiceToken}`)
+  if (enableVoice) {
+    console.log(`  Voice UI:       https://${hostname}/voice`)
+    console.log('                  Users get their own link by sending /voice ui in chat.')
+    console.log('                  Restart the service so it picks up PUBLIC_HOSTNAME:')
+    console.log('                    sudo systemctl restart havn')
   }
   console.log('  Caddy obtains the certificate on first request; give it a minute.')
   console.log(`  Check: curl -si https://${hostname}/api/teams/messages -X POST | head -1`)

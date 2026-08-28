@@ -34,6 +34,14 @@ export const HTTP_BEARER_TOKEN = getSecret('HTTP_BEARER_TOKEN') ?? ''
 export const ELEVENLABS_API_KEY = getSecret('ELEVENLABS_API_KEY') ?? ''
 export const ELEVENLABS_AGENT_ID = env['ELEVENLABS_AGENT_ID'] ?? ''
 
+// Public hostname of the edge (Caddy), written by scripts/hosted/enable-teams.ts.
+// Empty on a box with no public edge: /voice ui then explains how to enable one
+// rather than handing out a URL that resolves to nothing.
+export const PUBLIC_HOSTNAME = env['PUBLIC_HOSTNAME']?.trim() ?? ''
+// Voice UI links double as the API credential, so the TTL is a session length,
+// not a click window.
+export const VOICE_LINK_TTL_HOURS = parseInt(env['VOICE_LINK_TTL_HOURS'] ?? '12', 10) || 12
+
 // Support requests (/support). Destination inbox for drafted support emails.
 // Non-secret, so plain .env like other addresses.
 export const SUPPORT_EMAIL = env['SUPPORT_EMAIL']?.trim() || 'support@els-partners.com'
