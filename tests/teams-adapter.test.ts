@@ -341,6 +341,17 @@ describe('TeamsAdapter outbound', () => {
     upsertConversation(REF)
   })
 
+  it('does not advertise edit support, so replies are sent rather than streamed', async () => {
+    // Teams desktop renders an activity as first sent and only picks up
+    // updateActivity on resync, so a streamed reply (whose final text is
+    // delivered as an edit of the preview) stayed invisible there until the
+    // user quit and reopened Teams. Mobile and web were fine, and the Bot
+    // Connector accepted every edit, which is why nothing showed up in the
+    // logs. bot.ts gates streaming on this flag.
+    const { adapter } = makeAdapter(sent)
+    expect(adapter.supportsEdit).toBe(false)
+  })
+
   it('sends markdown text and returns the activity id', async () => {
     const { adapter } = makeAdapter(sent)
     const id = await adapter.sendMessage('a:out', 'hi **there**')

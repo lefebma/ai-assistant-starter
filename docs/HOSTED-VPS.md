@@ -380,8 +380,13 @@ the credentials blank).
 5. **Claim the chat.** Adding the app makes the bot announce the chat id (the adapter treats the install event as `/chatid`; sending `/chatid` shows it again). Put that id in
    `ALLOWED_CHAT_ID` in `.env` and restart the service.
 
-What works: text with Markdown, typing indicator, streaming replies,
-approval buttons, and files and images sent to the assistant. Voice: Teams
+What works: text with Markdown, typing indicator, approval buttons, and
+files and images sent to the assistant. Replies arrive as one message rather
+than streaming in: Teams desktop renders an activity as first sent and only
+picks up later edits when the client resyncs, so a streamed reply stayed
+invisible there (mobile and web were fine) until the user quit and reopened
+Teams. Sending each reply whole is reliable everywhere, and Teams throttles
+bot edits to one per second anyway, so little was lost. Voice: Teams
 offers no voice-memo mic in bot chats (a product limitation, not policy), so
 tell users to dictate with the keyboard mic and send text. An audio file
 shared into the chat does get transcribed (needs OPENAI_API_KEY), but
