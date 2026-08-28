@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=240,initial-scale=1,user-scalable=no" />
+  <title>Umi</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 240px; height: 282px;
+      background: #0a0a0b; color: #e8e8ea;
+      font-family: -apple-system, "Inter", sans-serif;
+      overflow: hidden;
+      touch-action: manipulation;
+    }
+    #app { display: flex; flex-direction: column; height: 100%; }
+    #log {
+      flex: 1; overflow-y: auto; padding: 6px 8px;
+      font-size: 11px; line-height: 1.35;
+      scrollbar-width: none;
+    }
+    #log::-webkit-scrollbar { display: none; }
+    .msg { margin: 4px 0; word-wrap: break-word; }
+    .msg.u { color: #8ab4ff; }
+    .msg.a { color: #a1d6a0; }
+    .msg.sys { color: #c43d3d; font-style: italic; font-size: 10px; }
+    .who { font-weight: 600; margin-right: 3px; opacity: 0.7; }
+    #form {
+      display: flex; gap: 4px; padding: 4px;
+      border-top: 1px solid #1e1e23; background: #111114;
+    }
+    #input {
+      flex: 1; min-width: 0;
+      background: #16161a; color: #e8e8ea;
+      border: 1px solid #2a2a2e; border-radius: 4px;
+      padding: 4px 6px; font-size: 12px; font-family: inherit;
+      outline: none;
+    }
+    #input:focus { border-color: #8ab4ff; }
+    #send {
+      background: #2a4a8a; color: #fff; border: none;
+      border-radius: 4px; padding: 0 8px; font-size: 12px;
+      cursor: pointer;
+    }
+    #send:disabled { background: #2a2a2e; color: #777; }
+    #mic {
+      background: #1e1e23; color: #e8e8ea; border: 1px solid #2a2a2e;
+      border-radius: 4px; padding: 0 6px; font-size: 13px; cursor: pointer;
+    }
+    #mic.live { background: #c43d3d; border-color: #c43d3d; }
+    #mic:disabled { opacity: 0.4; }
+    #setup {
+      position: absolute; inset: 0;
+      background: #0a0a0b; padding: 12px;
+      display: flex; flex-direction: column; gap: 8px;
+      font-size: 11px;
+    }
+    #setup input { width: 100%; padding: 4px 6px; font-size: 11px;
+      background: #16161a; color: #e8e8ea;
+      border: 1px solid #2a2a2e; border-radius: 4px; }
+    #setup button { padding: 6px; font-size: 12px;
+      background: #2a4a8a; color: #fff; border: none; border-radius: 4px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="setup" class="hidden">
+    <div style="font-weight:600;">Umi setup</div>
+    <input id="setup-host" placeholder="Host (e.g. abc.ngrok.io)" />
+    <input id="setup-token" placeholder="Bearer token" />
+    <button id="setup-save">Save</button>
+  </div>
+
+  <div id="app">
+    <div id="log">
+      <div class="msg sys">Umi ready. Hold side button to talk. <span id="tts-badge" style="float:right;font-size:9px;opacity:0.6;cursor:pointer;" title="Tap to toggle voice">&#128266; on</span></div>
+    </div>
+    <form id="form">
+      <button id="mic" type="button" title="Hold to talk">&#127908;</button>
+      <input id="input" autocomplete="off" placeholder="Message..." />
+      <button id="send" type="submit">&rarr;</button>
+    </form>
+  </div>
+
+<script>
+(function () {
+  var LS_HOST = 'umi.host'
+  var LS_TOKEN = 'umi.token'
+  var LS_CONVO = 'umi.convo'
+
+  var log = document.getElementById('log')
+  var form = document.getElementById('form')
+  var input = document.getElementById('input')
+  var send = document.getElementById('send')
+  var setup = document.getElementById('setup')
+  var mic = document.getElementById('mic')
+
+  var url = new URL(location.href)
+  var qToken = url.searchParams.get('token')
+  var qHost = url.searchParams.get('host')
+  if (qToken) localStorage.setItem(LS_TOKEN, qToken)
+  if (qHost) localStorage.setItem(LS_HOST, qHost)
+  if (qToken || qHost) history.replaceState({}, '', url.pathname)
+
+  // Server-injected boot config (used when page is served from /r1 endpoint)
+  var boot = window.__UMI_BOOT__
+  if (boot && boot.token) localStorage.setItem(LS_TOKEN, boot.token)
+  if (boot && boot.host) localStorage.setItem(LS_HOST, boot.host)
+
+  function host() { return localStorage.getItem(LS_HOST) || location.host }
+  function token() { return localStorage.getItem(LS_TOKEN) || '' }
+  function convoId() {
+    var c = localStorage.getItem(LS_CONVO)
+    if (!c) { c = 'r1-' + Math.random().toString(36).slice(2, 10); localStorage.setItem(LS_CONVO, c) }
+    return c
+  }
+
+  function endpoint() {
+    var h = host()
+    var proto = h.includes('localhost') || h.startsWith('127.') || h.startsWith('10.') || h.startsWith('192.168.') ? 'http' : 'https'
+    return proto + '://' + h + '/v1/chat/completions'
+  }
+
+  function append(who, text, cls) {
+    var row = document.createElement('div')
+    row.className = 'msg ' + cls
+    var w = document.createElement('span'); w.className = 'who'; w.textContent = who
+    var body = document.createElement('span'); body.textContent = text
+    row.appendChild(w); row.appendChild(body)
+    log.appendChild(row)
+    log.scrollTop = log.scrollHeight
+    return body
+  }
+
+  // ---- Sending messages to Umi ----
+
+  var busy = false
+
+  // ---- TTS: speak Umi's response aloud ----
+  // Try Web Speech API (speechSynthesis) first. R1's WebView is Chromium-based,
+  // so it may support it. If not, responses are text-only on screen.
+  var hasTTS = typeof speechSynthesis !== 'undefined'
+  var ttsEnabled = true  // user can toggle with scroll wheel click
+  var speaking = false
+
+  function speak(text) {
+    if (!hasTTS || !ttsEnabled || !text) return
+    // Cancel any in-progress speech
+    speechSynthesis.cancel()
+    // Clean text for speech: strip markdown bold, code blocks, URLs
+    var clean = text
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/`[^`]+`/g, '')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .trim()
+    if (!clean) return
+    // Cap at ~500 chars for R1 speaker (long responses get truncated for voice)
+    if (clean.length > 500) clean = clean.slice(0, 497) + '...'
+    var utt = new SpeechSynthesisUtterance(clean)
+    utt.rate = 1.05
+    utt.pitch = 1.0
+    utt.volume = 1.0
+    utt.lang = 'en-US'
+    speaking = true
+    utt.onend = function () { speaking = false }
+    utt.onerror = function () { speaking = false }
+    speechSynthesis.speak(utt)
+  }
+
+  function stopSpeaking() {
+    if (hasTTS) { speechSynthesis.cancel(); speaking = false }
+  }
+
+  function sendMessage(text) {
+    if (busy) return
+    busy = true
+    stopSpeaking()
+    append('you', text, 'u')
+    var slot = append('umi', '...', 'a')
+    var firstChunk = true
+    var fullResponse = ''
+    send.disabled = true; input.disabled = true
+
+    fetch(endpoint(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token(),
+        'ngrok-skip-browser-warning': '1'
+      },
+      body: JSON.stringify({
+        model: 'umi',
+        stream: true,
+        conversation_id: convoId(),
+        messages: [{ role: 'user', content: text }]
+      })
+    }).then(function (res) {
+      if (!res.ok) {
+        slot.textContent = '[err ' + res.status + ']'
+        slot.parentElement.className = 'msg sys'
+        if (res.status === 401) setup.classList.remove('hidden')
+        busy = false; send.disabled = false; input.disabled = false
+        return
+      }
+
+      var reader = res.body.getReader()
+      var decoder = new TextDecoder()
+      var buf = ''
+
+      function pump() {
+        reader.read().then(function (result) {
+          if (result.done) {
+            if (firstChunk) slot.textContent = '(empty)'
+            // Speak the complete response
+            speak(fullResponse)
+            busy = false; send.disabled = false; input.disabled = false; input.focus()
+            return
+          }
+          buf += decoder.decode(result.value, { stream: true })
+          var idx
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            var event = buf.slice(0, idx); buf = buf.slice(idx + 2)
+            var lines = event.split('\n')
+            for (var i = 0; i < lines.length; i++) {
+              var line = lines[i]
+              if (line.indexOf('data:') !== 0) continue
+              var data = line.slice(5).trim()
+              if (data === '[DONE]' || !data) continue
+              try {
+                var obj = JSON.parse(data)
+                var delta = obj && obj.choices && obj.choices[0] && obj.choices[0].delta && obj.choices[0].delta.content
+                if (delta) {
+                  if (firstChunk) { slot.textContent = ''; firstChunk = false }
+                  slot.textContent += delta
+                  fullResponse += delta
+                  log.scrollTop = log.scrollHeight
+                }
+              } catch (e) { /* skip non-JSON keepalives */ }
+            }
+          }
+          pump()
+        }).catch(function (err) {
+          slot.textContent = '[stream err: ' + (err.message || err) + ']'
+          slot.parentElement.className = 'msg sys'
+          busy = false; send.disabled = false; input.disabled = false
+        })
+      }
+      pump()
+    }).catch(function (err) {
+      slot.textContent = '[network err: ' + (err.message || err) + ']'
+      slot.parentElement.className = 'msg sys'
+      busy = false; send.disabled = false; input.disabled = false; input.focus()
+    })
+  }
+
+  // ---- R1 Native Hardware Events (Creations SDK) ----
+  // Side button fires sideClick, longPressStart, longPressEnd as custom DOM events.
+  // Voice input uses CreationVoiceHandler.postMessage('start'/'stop') and the
+  // transcript arrives via window.onPluginMessage with data.type === 'sttEnded'.
+
+  var isListening = false
+  var hasNativeVoice = typeof CreationVoiceHandler !== 'undefined'
+
+  // Long press = hold-to-talk (primary voice input)
+  window.addEventListener('longPressStart', function () {
+    if (isListening || busy) return
+    if (!hasNativeVoice) { append('sys', '[no voice handler]', 'sys'); return }
+    isListening = true
+    mic.classList.add('live')
+    CreationVoiceHandler.postMessage('start')
+  })
+
+  window.addEventListener('longPressEnd', function () {
+    if (!isListening) return
+    if (hasNativeVoice) CreationVoiceHandler.postMessage('stop')
+    mic.classList.remove('live')
+    // isListening resets in onPluginMessage when sttEnded arrives
+  })
+
+  // Short press = could be used for other things, but for now also toggle voice
+  window.addEventListener('sideClick', function () {
+    if (busy) return
+    if (isListening) {
+      // Stop listening on a short click if somehow still active
+      if (hasNativeVoice) CreationVoiceHandler.postMessage('stop')
+      mic.classList.remove('live')
+      return
+    }
+    // Focus the text input on short click so the R1 keyboard appears
+    input.focus()
+  })
+
+  // Scroll wheel navigation
+  window.addEventListener('scrollUp', function () {
+    log.scrollTop -= 40
+  })
+  window.addEventListener('scrollDown', function () {
+    log.scrollTop += 40
+  })
+
+  // onPluginMessage receives both STT results and LLM responses from the R1 SDK.
+  // We only care about STT results here (we use our own HTTP backend, not the R1 LLM).
+  window.onPluginMessage = function (data) {
+    // Ignore STT status events (only care about the final transcript)
+    if (data && data.type && data.type !== 'sttEnded') {
+      // sttStarted, sttProgress, etc. — swallow silently
+      if (data.type.indexOf('stt') === 0 || data.type.indexOf('STT') === 0) return
+    }
+
+    // STT result
+    if (data && data.type === 'sttEnded') {
+      isListening = false
+      mic.classList.remove('live')
+      var transcript = (data.transcript || '').trim()
+      if (transcript) {
+        input.value = transcript
+        form.dispatchEvent(new Event('submit', { cancelable: true }))
+      } else {
+        append('sys', '[no speech detected]', 'sys')
+      }
+      return
+    }
+
+    // Legacy/fallback: some firmware may pass plain text
+    if (typeof data === 'string') {
+      var clean = data.trim()
+      if (clean) {
+        input.value = clean
+        form.dispatchEvent(new Event('submit', { cancelable: true }))
+      }
+      return
+    }
+
+    // Other message formats (data.message, data.data, data.text)
+    // Skip anything that looks like a status event (has a .type field)
+    if (data && !data.type && (data.message || data.data || data.text)) {
+      var t = String(data.message || data.data || data.text).trim()
+      if (t) {
+        input.value = t
+        form.dispatchEvent(new Event('submit', { cancelable: true }))
+      }
+    }
+  }
+
+  // PostMessage listener (some firmware dispatches this way)
+  window.addEventListener('message', function (e) {
+    if (e.data && (e.data.message || e.data.transcript)) {
+      var t = String(e.data.message || e.data.transcript).trim()
+      if (t) { input.value = t; form.dispatchEvent(new Event('submit', { cancelable: true })) }
+    }
+  })
+
+  // ---- On-screen mic button (Web Speech API fallback for desktop/browser testing) ----
+
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (hasNativeVoice) {
+    // On the actual R1, the on-screen mic triggers the native voice handler
+    mic.addEventListener('click', function () {
+      if (isListening) {
+        CreationVoiceHandler.postMessage('stop')
+        mic.classList.remove('live')
+        return
+      }
+      if (busy) return
+      isListening = true
+      mic.classList.add('live')
+      CreationVoiceHandler.postMessage('start')
+    })
+  } else if (SR) {
+    // Browser fallback: Web Speech API
+    var rec = null
+    var wsListening = false
+
+    function stopWS() {
+      if (rec) { try { rec.stop() } catch (e) {} }
+      wsListening = false
+      mic.classList.remove('live')
+    }
+
+    mic.addEventListener('click', function () {
+      if (wsListening) { stopWS(); return }
+      rec = new SR()
+      rec.lang = 'en-US'
+      rec.interimResults = true
+      rec.continuous = false
+      rec.maxAlternatives = 1
+      rec.onstart = function () { wsListening = true; mic.classList.add('live'); input.value = '' }
+      rec.onresult = function (e) {
+        var transcript = ''
+        var isFinal = false
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          transcript += e.results[i][0].transcript
+          if (e.results[i].isFinal) isFinal = true
+        }
+        input.value = transcript.trim()
+        if (isFinal && input.value) {
+          stopWS()
+          form.dispatchEvent(new Event('submit', { cancelable: true }))
+        }
+      }
+      rec.onerror = function (e) {
+        stopWS()
+        append('mic', '[err: ' + e.error + ']', 'sys')
+      }
+      rec.onend = function () { wsListening = false; mic.classList.remove('live') }
+      try { rec.start() } catch (err) { append('mic', '[start err: ' + err.message + ']', 'sys') }
+    })
+  } else {
+    mic.disabled = true
+    mic.title = 'Speech recognition not supported'
+  }
+
+  // ---- Form submit ----
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault()
+    var text = input.value.trim()
+    if (!text) return
+    input.value = ''
+    sendMessage(text)
+  })
+
+  // ---- Long-press log area to show setup ----
+
+  var pressT
+  function startPress() { pressT = setTimeout(function () { setup.classList.remove('hidden') }, 1200) }
+  function endPress() { clearTimeout(pressT) }
+  log.addEventListener('touchstart', startPress)
+  log.addEventListener('touchend', endPress)
+  log.addEventListener('mousedown', startPress)
+  log.addEventListener('mouseup', endPress)
+
+  document.getElementById('setup-host').value = localStorage.getItem(LS_HOST) || ''
+  document.getElementById('setup-token').value = localStorage.getItem(LS_TOKEN) || ''
+  document.getElementById('setup-save').addEventListener('click', function () {
+    localStorage.setItem(LS_HOST, document.getElementById('setup-host').value.trim())
+    localStorage.setItem(LS_TOKEN, document.getElementById('setup-token').value.trim())
+    setup.classList.add('hidden')
+  })
+
+  // ---- TTS toggle badge ----
+  var ttsBadge = document.getElementById('tts-badge')
+  if (ttsBadge) {
+    if (!hasTTS) {
+      ttsBadge.textContent = '\uD83D\uDD07 n/a'
+      ttsBadge.title = 'TTS not supported in this browser'
+    }
+    ttsBadge.addEventListener('click', function () {
+      if (!hasTTS) return
+      ttsEnabled = !ttsEnabled
+      ttsBadge.textContent = ttsEnabled ? '\uD83D\uDD0A on' : '\uD83D\uDD07 off'
+      if (!ttsEnabled) stopSpeaking()
+    })
+  }
+
+  if (!token()) setup.classList.remove('hidden')
+})()
+</script>
+</body>
+</html>

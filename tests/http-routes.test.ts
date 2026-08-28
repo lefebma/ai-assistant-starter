@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { registerHttpRoute, startHttpServer, stopHttpServer, audioExtension } from '../src/http-server.js'
 
 const PORT = 3900 + Math.floor(Math.random() * 100)
@@ -72,5 +74,14 @@ describe('audioExtension', () => {
     for (const t of types) expect(supported).toContain(audioExtension(t))
     // Never emit .mp4: OpenAI rejects audio-only MP4 under that extension.
     for (const t of types) expect(audioExtension(t)).not.toBe('mp4')
+  })
+})
+
+describe('pages the server serves by fixed path', () => {
+  // /r1 and / resolve to specific files in public/. The route for /r1 shipped
+  // without its page: it degraded to a clean 404 on every install, and the
+  // page existed only as an untracked hand-copy on one box.
+  it.each(['voice.html', 'r1.html'])('public/%s exists', (name) => {
+    expect(existsSync(resolve(__dirname, '../public', name))).toBe(true)
   })
 })
