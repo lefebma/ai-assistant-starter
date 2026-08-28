@@ -25,8 +25,21 @@ beforeAll(async () => {
   voiceLinkMessage = mod.voiceLinkMessage
 })
 
-afterAll(() => {
-  rmSync(STORE, { recursive: true, force: true })
+afterAll(async () => {
+  // Windows will not unlink an open SQLite file, so close the handle before
+  // removing the directory. Even after close it can hold the -wal/-shm briefly,
+  // so a failed cleanup of a temp dir is not worth failing the suite over.
+  try {
+    const { getDb } = await import('../src/db.js')
+    getDb().close()
+  } catch {
+    // no handle to close
+  }
+  try {
+    rmSync(STORE, { recursive: true, force: true })
+  } catch {
+    // the OS reaps its own temp directory
+  }
 })
 
 describe('voice links', () => {
