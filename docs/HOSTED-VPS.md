@@ -386,9 +386,46 @@ offers no voice-memo mic in bot chats (a product limitation, not policy), so
 tell users to dictate with the keyboard mic and send text. An audio file
 shared into the chat does get transcribed (needs OPENAI_API_KEY), but
 getting a recording into Teams is clunky enough that dictation is the story
-to sell. What does not, yet: the assistant replying with voice (Teams has no
+to sell. For a real voice conversation, point them at the voice page: with
+the edge enabled for it (`--voice`), the user sends `/voice ui` in the chat
+and gets their own expiring link. See "Voice UI" below.
+
+Note that `/voice` on its own is a different feature (spoken replies) and is
+not worth enabling on Teams: there is no bot voice bubble, so the audio comes
+back as a line of text saying where the file was saved, and turning it on
+also disables streaming. What does not, yet: the assistant replying with voice (Teams has no
 bot voice bubble), sending files back (it says where it saved them), group
 chats and channels.
+
+## Voice UI
+
+The voice page is a browser UI for talking to the assistant: hold to speak,
+it transcribes, answers, and reads the answer back. Enable it on the edge:
+
+```
+sudo node dist/scripts/hosted/enable-teams.js <hostname> --voice
+sudo systemctl restart havn
+```
+
+That opens `/voice` through Caddy and records `PUBLIC_HOSTNAME` in `.env`.
+The restart is what makes the assistant aware of its own address.
+
+**Nothing in the edge config is a credential.** Each user mints their own
+link by sending `/voice ui` in their chat; the app validates it. Links
+expire (`VOICE_LINK_TTL_HOURS`, default 12), minting a new one cancels the
+previous, and `/voice ui revoke` kills it immediately. The link is scoped to
+the chat that minted it, so it opens that assistant and no other.
+
+This exists because the earlier design put `HTTP_BEARER_TOKEN` in the URL
+and in `/etc/caddy/Caddyfile`, which made whoever provisioned the box a
+permanent key-holder for every user's assistant, and made rotating the token
+a redeploy. It does not make the operator powerless: root can read `.env` and
+the SQLite database either way. What it removes is the standing key that sat
+in a file the operator already had open, so reaching a user's assistant now
+takes a deliberate act.
+
+Tell users plainly that the link is a password. Anyone holding it can talk to
+their assistant, so it should not be forwarded or pasted into a chat.
 
 ## Updates, snapshots, backups
 

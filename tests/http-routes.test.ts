@@ -38,6 +38,30 @@ describe('registerHttpRoute', () => {
   })
 })
 
+describe('the /voice page gate', () => {
+  // The Caddy edge no longer inspects the token, so this route is the only
+  // thing standing between a stranger and the voice UI on a hosted box.
+  afterEach(async () => {
+    await stopHttpServer()
+  })
+
+  it('refuses a link nobody minted, and says how to get a real one', async () => {
+    startHttpServer(PORT)
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const resp = await fetch(`http://127.0.0.1:${PORT}/voice?token=not-a-real-token`)
+    expect(resp.status).toBe(403)
+    expect(await resp.text()).toMatch(/\/voice ui/)
+  })
+
+  it('refuses a request with no token at all', async () => {
+    startHttpServer(PORT)
+    await new Promise(resolve => setTimeout(resolve, 10))
+    const resp = await fetch(`http://127.0.0.1:${PORT}/voice`)
+    expect(resp.status).toBe(403)
+  })
+
+})
+
 describe('audioExtension', () => {
   it('maps Safari MP4 recordings to an extension Whisper accepts', () => {
     // Safari cannot record WebM. Writing its MP4 as .webm made Whisper 400

@@ -4,6 +4,21 @@
 
 - **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, streaming replies, approval buttons as Adaptive Cards, and files sent to the assistant audio files shared into the chat (transcribed like Telegram voice notes, needs OPENAI_API_KEY; Teams offers no voice-memo mic in bot chats, so keyboard dictation is the practical voice input), all work in 1:1 chat. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: the assistant speaking back (Teams has no bot voice bubble), sending files back, channels, laptop installs.
 
+- **New: `/voice ui` gives each person their own link to the voice page.** The
+  voice UI used to be reached with the box-wide `HTTP_BEARER_TOKEN` in the
+  URL, baked into the Caddy config at deploy time. That made whoever set the
+  box up a permanent key-holder for every user's assistant, and made rotating
+  the token a redeploy. Now the user sends `/voice ui` in their own chat and
+  gets a link scoped to that chat, which expires (`VOICE_LINK_TTL_HOURS`,
+  default 12), is cancelled by minting a new one, and can be killed with
+  `/voice ui revoke`. Nothing secret remains in `/etc/caddy/Caddyfile`; the
+  app validates the link and fails closed. Voice sessions are also namespaced
+  per chat now, so on a box serving several authorized chats one client can no
+  longer land on another's conversation by supplying its id. Operators enable
+  the page with `enable-teams --voice` as before, then restart so the app
+  learns its own hostname. Re-run `enable-teams` on any box that already had
+  `--voice`; the old config keeps checking a token the app no longer issues.
+
 - **New: add API keys from the chat with `/secret`.** On a hosted box there is
   no terminal, so until now getting a key into the vault meant the operator
   SSHing in. `/secret set OPENAI_API_KEY` asks for the key as your next

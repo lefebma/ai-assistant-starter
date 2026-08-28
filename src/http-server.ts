@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from '
 import { resolve, extname } from 'node:path'
 import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, PRIMARY_CHAT_ID } from './config.js'
 import { transcribeAudio } from './voice.js'
+import { resolveVoiceToken } from './voice-links.js'
 import { runAgent } from './agent.js'
 import { sendPlatformMessage } from './bot.js'
 import { logger } from './logger.js'
@@ -65,10 +66,30 @@ function readBody(req: IncomingMessage): Promise<string> {
   })
 }
 
-function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!HTTP_BEARER_TOKEN) return true
+/** Bare token from an `Authorization: Bearer <token>` header, or ''. */
+function bearerFrom(req: IncomingMessage): string {
   const h = req.headers.authorization ?? ''
-  if (h === `Bearer ${HTTP_BEARER_TOKEN}`) return true
+  return h.startsWith('Bearer ') ? h.slice(7) : ''
+}
+
+/**
+ * Who is calling. Two credentials are accepted:
+ *   - HTTP_BEARER_TOKEN, the box-wide operator credential (no chat identity)
+ *   - a per-chat voice link minted by `/voice ui` (carries the chat id)
+ * With no HTTP_BEARER_TOKEN configured the server is unauthenticated, which is
+ * the loopback-only default; the hosted edge always sets one.
+ */
+function authContext(req: IncomingMessage): { ok: boolean; chatId: string | null } {
+  const token = bearerFrom(req)
+  if (HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN) return { ok: true, chatId: null }
+  const chatId = resolveVoiceToken(token)
+  if (chatId) return { ok: true, chatId }
+  if (!HTTP_BEARER_TOKEN) return { ok: true, chatId: null }
+  return { ok: false, chatId: null }
+}
+
+function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
+  if (authContext(req).ok) return true
   res.writeHead(401, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify({ error: 'unauthorized' }))
   return false
@@ -103,6 +124,7 @@ function openaiComplete(id: string, model: string, content: string) {
 
 async function handleChatCompletions(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!requireAuth(req, res)) return
+  const auth = authContext(req)
 
   let payload: {
     messages: Msg[]
@@ -127,11 +149,15 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
     return
   }
 
-  const convoKey =
+  // A caller holding a voice link gets its own namespace. Without this, a
+  // client-supplied conversation_id is enough to land on another chat's Claude
+  // session on a box serving more than one authorized chat.
+  const clientKey =
     payload.conversation_id ??
     (payload.metadata as any)?.conversation_id ??
     payload.user ??
-    'voice-default'
+    'default'
+  const convoKey = auth.chatId ? `voice:${auth.chatId}:${clientKey}` : clientKey === 'default' ? 'voice-default' : clientKey
   const existingSession = conversationSessions.get(convoKey)
   const completionId = `chatcmpl-${Date.now()}`
   const model = payload.model ?? 'umi'
@@ -396,6 +422,20 @@ export function startHttpServer(port: number = HTTP_PORT): void {
     }
     if (req.method === 'GET' && url.pathname === '/api/signed-url') {
       void handleSignedUrl(req, res)
+      return
+    }
+    if (req.method === 'GET' && (url.pathname === '/voice' || url.pathname === '/voice/')) {
+      // The edge proxies this path without inspecting the token, so the check
+      // lives here. Serving the shell to an unauthenticated caller would leak
+      // nothing (it is inert without a token), but a 403 keeps the box quiet.
+      const token = url.searchParams.get('token') ?? ''
+      const ok = resolveVoiceToken(token) !== null || (!!HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN)
+      if (!ok) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' })
+        res.end('This voice link is not valid or has expired. Send /voice ui in your chat for a new one.')
+        return
+      }
+      serveStatic(req, res, '/voice.html')
       return
     }
     if (req.method === 'GET' && url.pathname === '/r1') {

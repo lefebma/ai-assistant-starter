@@ -33,21 +33,28 @@ describe('teams edge (Caddy) config', () => {
     expect(() => sslipHostname('not-an-ip')).toThrow(/IPv4/)
   })
 
-  it('generates voice routes when voiceToken is provided', () => {
-    const c = buildCaddyfile('5-161-197-79.sslip.io', { voiceToken: 'abc123' })
+  it('generates voice routes when voice is enabled', () => {
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { voice: true })
     expect(c).toContain('handle /api/teams/* {')
-    expect(c).toContain('not query token=abc123')
-    expect(c).toContain('query token=abc123')
-    expect(c).toContain('rewrite * /voice.html')
+    expect(c).toContain('path /voice /voice/')
     expect(c).toContain('/api/transcribe')
-    expect(c).toContain('respond 403')
     expect(c).toContain('respond 404')
   })
 
+  it('keeps every credential out of the generated config', () => {
+    // The edge used to embed HTTP_BEARER_TOKEN in a query matcher, which put a
+    // copy of the box-wide secret in /etc/caddy/Caddyfile and made rotating it
+    // a redeploy. The app validates per-chat link tokens instead.
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { voice: true })
+    expect(c).not.toMatch(/query token=/)
+    // No token is ever assigned a value here; the word only survives in a comment.
+    expect(c).not.toMatch(/token=\S/)
+  })
+
   it('omits Teams routes when teams is false', () => {
-    const c = buildCaddyfile('5-161-197-79.sslip.io', { teams: false, voiceToken: 'tok' })
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { teams: false, voice: true })
     expect(c).not.toContain('handle /api/teams/*')
-    expect(c).toContain('query token=tok')
+    expect(c).toContain('path /voice /voice/')
   })
 
   it('generates teams-only config when no options are passed (backward compat)', () => {
@@ -69,11 +76,13 @@ describe('enable-teams script', () => {
     expect(t).toContain('/api/teams/messages')
   })
 
-  it('supports --voice flag and reads bearer token from .env', () => {
+  it('supports --voice and records the hostname instead of copying a secret', () => {
     const t = readFileSync(ENABLE, 'utf-8')
     expect(t).toContain("'--voice'")
-    expect(t).toContain('HTTP_BEARER_TOKEN')
-    expect(t).toContain('voiceToken')
+    expect(t).toContain('PUBLIC_HOSTNAME')
+    // Reading the bearer token out of .env to paste into a URL is the thing
+    // this replaced; if it comes back, so does the operator's standing key.
+    expect(t).not.toContain('HTTP_BEARER_TOKEN')
   })
 })
 
