@@ -103,6 +103,18 @@ export function initDatabase(): void {
     )
   `)
 
+  // One-click-per-card guard for inline approval buttons. Keyed by the card's
+  // message id so a second click on the same card is refused.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS consumed_buttons (
+      chat_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      consumed_at INTEGER NOT NULL,
+      PRIMARY KEY (chat_id, message_id)
+    )
+  `)
+
   // Voice UI links (per-chat, expiring; see src/voice-links.ts)
   d.exec(`
     CREATE TABLE IF NOT EXISTS voice_links (
@@ -391,4 +403,41 @@ export function markUpdateProcessed(updateId: number): void {
   )
   // Opportunistic cleanup: drop entries older than 7 days
   d.prepare('DELETE FROM processed_updates WHERE processed_at < ?').run(now() - 7 * 86400)
+}
+
+// --- Inline button clicks (one action per card) ---
+
+/**
+ * Claim a card's single allowed click, atomically.
+ *
+ * Approval buttons gate things that cannot be taken back: sending an email,
+ * posting a newsletter. Clearing the keyboard after a click is what used to
+ * prevent a second one, and that is a visual change the client may not apply.
+ * Teams desktop in particular renders a card as first sent and ignores the
+ * edit that removes the buttons, so they stay clickable; a fast double-tap can
+ * also beat the edit on any platform. INSERT OR IGNORE decides the winner in
+ * one statement, so two clicks racing cannot both proceed.
+ *
+ * Returns the label already recorded when the claim is refused, so the caller
+ * can say what the card was answered with rather than going silent.
+ */
+export function claimButtonClick(
+  chatId: string,
+  messageId: string,
+  label: string
+): { claimed: boolean; existingLabel?: string } {
+  const d = getDb()
+  const info = d
+    .prepare(
+      'INSERT OR IGNORE INTO consumed_buttons (chat_id, message_id, label, consumed_at) VALUES (?, ?, ?, ?)'
+    )
+    .run(chatId, messageId, label, now())
+  if (info.changes === 1) {
+    d.prepare('DELETE FROM consumed_buttons WHERE consumed_at < ?').run(now() - 7 * 86400)
+    return { claimed: true }
+  }
+  const row = d
+    .prepare('SELECT label FROM consumed_buttons WHERE chat_id = ? AND message_id = ?')
+    .get(chatId, messageId) as { label: string } | undefined
+  return { claimed: false, existingLabel: row?.label }
 }

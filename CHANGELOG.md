@@ -4,6 +4,16 @@
 
 - **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, approval buttons as Adaptive Cards, and files sent to the assistant audio files shared into the chat (transcribed like Telegram voice notes, needs OPENAI_API_KEY; Teams offers no voice-memo mic in bot chats, so keyboard dictation is the practical voice input), all work in 1:1 chat. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: the assistant speaking back (Teams has no bot voice bubble), sending files back, channels, laptop installs.
 
+- **Fixed: an approval button can no longer fire twice.** Clicking Send on a
+  draft ran the action and then cleared the keyboard, and that clearing was
+  the only thing stopping a second click. It is a visual change the chat client
+  may not apply: Teams desktop leaves the buttons on screen, and a fast
+  double-tap can beat the clear anywhere. So a second click could send the same
+  email or post the same newsletter again. Each card now records its one
+  answer, in a single atomic write so two clicks racing cannot both win, and a
+  later click gets told what the card was already answered with instead of
+  quietly running again.
+
 - **Fixed: Teams replies no longer go missing on the desktop app.** Replies
   streamed in by editing a placeholder message, and Teams desktop renders an
   activity as first sent, picking up edits only when the client resyncs. So an
