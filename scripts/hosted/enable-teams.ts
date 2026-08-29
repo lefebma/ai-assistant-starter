@@ -22,9 +22,9 @@
  * execFileSync with an argument array: no shell, nothing interpolated.
  */
 import { execFileSync } from 'node:child_process'
-import { writeFileSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { buildCaddyfile, isValidHostname } from '../../src/deploy/teams-edge.js'
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { ACCESS_LOG_PATH, buildCaddyfile, isValidHostname } from '../../src/deploy/teams-edge.js'
 
 const USAGE = 'Usage: sudo node dist/scripts/hosted/enable-teams.js <hostname> [--voice]   (e.g. 5-161-197-79.sslip.io)'
 const ENV = { ...process.env, DEBIAN_FRONTEND: 'noninteractive', NEEDRESTART_MODE: 'a' }
@@ -90,6 +90,15 @@ function main(): void {
   }
 
   if (enableVoice) writePublicHostname(hostname)
+
+  // The apt package creates this, but a box where Caddy was installed another
+  // way would otherwise fail to start on a log path it cannot write.
+  mkdirSync(dirname(ACCESS_LOG_PATH), { recursive: true })
+  try {
+    run('chown', ['caddy:caddy', dirname(ACCESS_LOG_PATH)])
+  } catch {
+    // No caddy user (unusual install); Caddy will report the real problem.
+  }
 
   writeFileSync('/etc/caddy/Caddyfile', buildCaddyfile(hostname, { teams: true, voice: enableVoice }))
   run('caddy', ['validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
