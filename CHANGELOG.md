@@ -2,63 +2,23 @@
 
 ## Unreleased
 
-- **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, approval buttons as Adaptive Cards, and files sent to the assistant audio files shared into the chat (transcribed like Telegram voice notes, needs OPENAI_API_KEY; Teams offers no voice-memo mic in bot chats, so keyboard dictation is the practical voice input), all work in 1:1 chat. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: the assistant speaking back (Teams has no bot voice bubble), sending files back, channels, laptop installs.
+## 1.18.0 - 2026-08-29
 
-- **New: the hosted edge keeps an access log, with credentials redacted as they
-  are written.** Boxes kept no record of who reached them, so "did anything
-  else fetch that link" had no answer. Caddy now writes one JSON line per
-  request to `/var/log/caddy/access.log`, rotated and capped at about 50MB.
-  Because a voice link carries its credential in the query string and the page
-  replays it as a bearer header, logging it plainly would have put working
-  credentials on disk twice over: `?token=` is replaced, `Authorization` and
-  `Cookie` are dropped, and client addresses are masked to the network rather
-  than the host. Existing boxes pick it up on the next `enable-teams` run.
+Two new ways to reach your assistant. Microsoft Teams, for people whose working day already lives there, and a voice interface in the browser, for when typing is the wrong tool. Both were built against a real pilot box rather than in theory, which is where most of the smaller fixes here came from.
 
-- **Fixed: an approval button can no longer fire twice.** Clicking Send on a
-  draft ran the action and then cleared the keyboard, and that clearing was
-  the only thing stopping a second click. It is a visual change the chat client
-  may not apply: Teams desktop leaves the buttons on screen, and a fast
-  double-tap can beat the clear anywhere. So a second click could send the same
-  email or post the same newsletter again. Each card now records its one
-  answer, in a single atomic write so two clicks racing cannot both win, and a
-  later click gets told what the card was already answered with instead of
-  quietly running again.
+- **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root: Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, a typing indicator, approval buttons as Adaptive Cards, files and images sent to the assistant, and audio files shared into the chat (transcribed like Telegram voice notes; needs `OPENAI_API_KEY`) all work in 1:1 chat. Replies arrive as one message rather than streaming in, because Teams desktop renders a message as first sent and does not reliably show later edits. Teams offers no voice-memo mic in bot chats, so dictate with the keyboard mic or use the voice page below. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: the assistant speaking back (Teams has no bot voice bubble), sending files back, channels, laptop installs.
 
-- **Fixed: Teams replies no longer go missing on the desktop app.** Replies
-  streamed in by editing a placeholder message, and Teams desktop renders an
-  activity as first sent, picking up edits only when the client resyncs. So an
-  answer could sit invisible on desktop while showing normally on phone and
-  web, appearing only after quitting and reopening Teams. Nothing looked wrong
-  from the assistant's side: the Bot Connector accepted every edit. Replies now
-  go out as whole messages on Teams. The typing indicator still shows work in
-  progress, and Teams throttles bot edits to one per second, so the streaming
-  it replaces was a once-a-second repaint rather than live text.
+- **New: talk to your assistant in a browser.** A voice page: press to talk, and it transcribes what you said, answers, and reads the answer back. Works on iPhone, iPad, and desktop Safari, Chrome, and Firefox. On a hosted box, enable it with `enable-teams --voice` and restart; each person then sends `/voice ui` in their own chat to get their own link. That link is scoped to the chat that asked for it, expires (`VOICE_LINK_TTL_HOURS`, default 12), is cancelled by minting a new one, and can be killed with `/voice ui revoke`. It is deliberately not one shared address: the link is a credential, so each person holds only their own, nothing secret sits in the web server config, and the app refuses a link it cannot validate. Treat the link like a password and do not forward it. Needs `OPENAI_API_KEY` for transcription.
 
-- **New: `/voice ui` gives each person their own link to the voice page.** The
-  voice UI used to be reached with the box-wide `HTTP_BEARER_TOKEN` in the
-  URL, baked into the Caddy config at deploy time. That made whoever set the
-  box up a permanent key-holder for every user's assistant, and made rotating
-  the token a redeploy. Now the user sends `/voice ui` in their own chat and
-  gets a link scoped to that chat, which expires (`VOICE_LINK_TTL_HOURS`,
-  default 12), is cancelled by minting a new one, and can be killed with
-  `/voice ui revoke`. Nothing secret remains in `/etc/caddy/Caddyfile`; the
-  app validates the link and fails closed. Voice sessions are also namespaced
-  per chat now, so on a box serving several authorized chats one client can no
-  longer land on another's conversation by supplying its id. Operators enable
-  the page with `enable-teams --voice` as before, then restart so the app
-  learns its own hostname. Re-run `enable-teams` on any box that already had
-  `--voice`; the old config keeps checking a token the app no longer issues.
+- **New: add API keys from the chat with `/secret`.** On a hosted box there is no terminal, so until now getting a key into the vault meant the operator SSHing in. `/secret set OPENAI_API_KEY` asks for the key as your next message and handles the whole exchange in bot code: the value never reaches the AI model, a key the provider rejects is not saved, your message is deleted from the chat, and the confirmation shows only the last four characters. `/secret list` and `/secret rm` round it out. Primary chat only; a pending request expires after 3 minutes. Details in docs/VAULT.md.
 
-- **New: add API keys from the chat with `/secret`.** On a hosted box there is
-  no terminal, so until now getting a key into the vault meant the operator
-  SSHing in. `/secret set OPENAI_API_KEY` asks for the key as your next
-  message and handles the whole exchange in bot code: the value never reaches
-  the AI model, a key the provider rejects is not saved, your message is
-  deleted from the chat, and the confirmation shows only the last four
-  characters. `/secret list` and `/secret rm` round it out. Primary chat only;
-  a pending request expires after 3 minutes. Details in docs/VAULT.md.
+- **New: the hosted edge keeps an access log, with credentials redacted as they are written.** Boxes kept no record of who reached them, so "did anything else fetch that link" had no answer. Caddy now writes one JSON line per request to `/var/log/caddy/access.log`, rotated and capped at about 50MB. Because a voice link carries its credential in the query string and the page replays it as a bearer header, logging it plainly would have put working credentials on disk twice over: `?token=` is replaced, `Authorization` and `Cookie` are dropped, and client addresses are masked to the network rather than the host. Existing boxes pick it up on the next `enable-teams` run.
 
-- **Fixed: `/update` on a source install no longer deletes its own build tools.** The reinstall step ran `npm install --production`, which removes TypeScript, and the rebuild right after it then failed with "tsc: not found", as did the rollback's rebuild, leaving a tree that reported the old version with a half-applied update underneath. Found on the first real `/update` of a hosted box (1.16.0 to 1.17.0). The update now reinstalls with `npm ci` against the lockfile that arrives with it, dev dependencies included. Installs already on the old updater need one manual `git pull && npm ci && npm run build` to get past it; see docs/HOSTED-VPS.md.
+- **New: `TTS_VOICE` picks the voice that reads replies aloud.** It was fixed at `fable` in engine code, so an install that wanted a different one had to patch the source, and the next update silently changed it back. Set `TTS_VOICE` in `.env` (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`); `.env` survives updates.
+
+- **Fixed: an approval button can no longer fire twice.** Clicking Send on a draft ran the action and then cleared the keyboard, and that clearing was the only thing stopping a second click. It is a visual change the chat client may not apply, and a fast double-tap can beat it anywhere, so a second click could send the same email or post the same newsletter again. Each card now records its one answer, in a single atomic write so two clicks racing cannot both win, and a later click is told what the card was already answered with instead of quietly running again.
+
+- **Fixed: `/update` on a source install no longer deletes its own build tools.** The reinstall step ran `npm install --production`, which removes TypeScript, and the rebuild right after it then failed with "tsc: not found", as did the rollback's rebuild, leaving a tree that reported the old version with a half-applied update underneath. Found on the first real `/update` of a hosted box (1.16.0 to 1.17.0). The update now reinstalls with `npm ci` against the lockfile that arrives with it, dev dependencies included. Installs still on the old updater need one manual `git pull && npm ci && npm run build` to get past it; see docs/HOSTED-VPS.md.
 
 - **Changed: the hosted-VPS generator no longer demands a GitHub deploy token.** The repository is public again, so a fresh box clones it anonymously and `/update` needs no `GITHUB_TOKEN`. `make-cloud-init` treats `GITHUB_DEPLOY_TOKEN` as optional (give one only for a private fork; it still rides only in the clone URL and is reset out of the git remote right after), and the docs stop describing the repo as private.
 

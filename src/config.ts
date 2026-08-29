@@ -41,6 +41,10 @@ export const PUBLIC_HOSTNAME = env['PUBLIC_HOSTNAME']?.trim() ?? ''
 // Voice UI links double as the API credential, so the TTL is a session length,
 // not a click window.
 export const VOICE_LINK_TTL_HOURS = parseInt(env['VOICE_LINK_TTL_HOURS'] ?? '12', 10) || 12
+// Which OpenAI TTS voice speaks replies. Hardcoded until 2026-08-29, which
+// meant an install that wanted a different one had to patch engine code, and
+// the next update silently reverted it.
+export const TTS_VOICE = env['TTS_VOICE']?.trim() || 'fable'
 
 // Support requests (/support). Destination inbox for drafted support emails.
 // Non-secret, so plain .env like other addresses.

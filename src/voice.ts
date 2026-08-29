@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { mkdirSync, existsSync } from 'node:fs'
 import FormData from 'form-data'
-import { OPENAI_API_KEY } from './config.js'
+import { OPENAI_API_KEY, TTS_VOICE } from './config.js'
 import { logger } from './logger.js'
 
 /** Check if macOS `say` command is available */
@@ -121,7 +121,7 @@ async function synthesizeOpenAI(text: string): Promise<Buffer> {
   const body = JSON.stringify({
     model: 'tts-1',
     input: text,
-    voice: 'fable',
+    voice: TTS_VOICE,
     response_format: 'mp3',
   })
 
