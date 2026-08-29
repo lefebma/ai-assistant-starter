@@ -37,7 +37,7 @@ describe('Teams platform wiring', () => {
       platform: 'Teams', engine: 'later', personalityVibe: 'Direct', ownerBio: 'x',
       emailProvider: 'Skip for now', gmailAddress: '', gmailAddress2: '', outlookAddress: '', outlookAddress2: '',
       emailSignature: '', latitude: '0', longitude: '0', tempUnit: 'celsius',
-      keys: {}, skills: { webResearch: false, apollo: false, wordsmith: false, antilibrary: false, notion: false, kanbanzone: false, wordpress: false },
+      keys: {}, skills: { webResearch: false, apollo: false, antilibrary: false, notion: false, kanbanzone: false, wordpress: false },
     } as never)
     for (const k of ['TEAMS_APP_ID=', 'TEAMS_APP_SECRET=', 'TEAMS_TENANT_ID=', 'ALLOWED_CHAT_ID=']) expect(env).toContain(k)
   })

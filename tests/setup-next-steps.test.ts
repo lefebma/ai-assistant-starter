@@ -7,7 +7,7 @@ const BASE: NextStepsInput = {
   gmailAddress2: '',
   gogMissing: false,
   outlookAddress: '',
-  wordsmith: false,
+ 
   serviceInstalled: false,
   nodeBin: '"/app/runtime/bin/node"',
   appEntry: '"/app/dist/src/index.js"',
@@ -69,7 +69,7 @@ describe('buildNextSteps', () => {
       gmailAddress2: 'b@g.com',
       gogMissing: true,
       outlookAddress: 'a@o.com',
-      wordsmith: true,
+     
       serviceInstalled: true,
     })
     expect(everything).toEqual(Array.from({ length: everything.length }, (_, n) => n + 1))

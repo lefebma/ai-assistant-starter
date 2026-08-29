@@ -283,7 +283,7 @@ Skills are drop-in folders under `skills/`. Each has a `manifest.json` (triggers
 
 ### Ships in the box
 
-All optional except `weather`. Setup prompts you per skill.
+Always installed, no key and no prompt: `weather`, `decision-log`, `daily-briefing`, `wordsmith`. Setup prompts you for the rest.
 
 | Skill | What it does | What you need |
 |-------|-------------|---------------|
@@ -293,7 +293,7 @@ All optional except `weather`. Setup prompts you per skill.
 | `outlook` | M365 email + calendar via Graph | Azure app registration |
 | `web-research` | Three-tier Perplexity research | [Perplexity API key](https://www.perplexity.ai/settings/api) |
 | `apollo` | Apollo.io company/person/sequence intel | [Apollo API key](https://app.apollo.io/#/settings/integrations/api) |
-| `wordsmith` | Delegate prose drafting to Gemini 2.5 | [Google AI Studio key](https://aistudio.google.com/app/apikey) |
+| `wordsmith` | Drafts prose in a focused writing call on your configured provider | Nothing (always on) |
 | `antilibrary` | LLM-maintained Obsidian knowledge base | Obsidian vault path |
 | `notion` | Pages, databases, search via Notion API | [Notion integration token](https://www.notion.so/profile/integrations) |
 | `kanbanzone` | Generic Kanban Zone board CLI | Kanban Zone API key (Settings → API) |
@@ -305,7 +305,7 @@ All optional except `weather`. Setup prompts you per skill.
 
 **apollo** — Setup writes your key to `~/.apollo-api-key` (chmod 600). Test with `bash skills/apollo/apollo-lookup.sh company "Acme Inc"`.
 
-**wordsmith** — Setup adds `GOOGLE_API_KEY=` to your project `.env`. For best results, drop 2-5 real writing samples (recent emails, Slack messages, LinkedIn posts) into `skills/wordsmith/voice-samples/` as plain `.md` files. `wordsmith.sh` reads them automatically and appends them to the voice block as concrete examples — Gemini mirrors real samples far better than abstract style rules. See `skills/wordsmith/voice-samples/README.md` for what makes a good sample.
+**wordsmith** — Always installed, no key of its own. It writes with whatever provider your install already uses (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `AZURE_API_KEY`, preferring `AI_PROVIDER`), so there is no second bill and nothing to configure. On a subscription-only install, where there is no API key at all, the script says so and your assistant writes the copy itself using the same voice rules. For best results, drop 2-5 real writing samples (recent emails, Slack messages, LinkedIn posts) into `skills/wordsmith/voice-samples/` as plain `.md` files. `wordsmith.mjs` reads them automatically and appends them to the voice block as concrete examples, which constrains a writing model far better than abstract style rules do. See `skills/wordsmith/voice-samples/README.md` for what makes a good sample.
 
 **antilibrary** — Setup records your vault path in the skill. Open the vault in Obsidian and ask the assistant to "set up the vault" — it will scaffold `wiki/`, `sources/`, and `CLAUDE.md` inside it.
 

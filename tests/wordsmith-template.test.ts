@@ -16,7 +16,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFile } from 'node:child_process'
-import { cpSync, mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -195,5 +195,32 @@ describe('wordsmith error paths (dry-run CLI)', () => {
     })
     expect(r.code).toBe(1)
     expect(r.stderr).toContain('cohere')
+  })
+})
+
+describe('wordsmith no longer tells the assistant it is a Gemini skill', () => {
+  // The manifest is the part the ContextEngine injects when the skill matches,
+  // so a stale line there is not a documentation problem: it is an instruction.
+  // It went on naming Gemini and demanding GOOGLE_API_KEY for two releases
+  // after the skill became provider-agnostic.
+  const read = (f: string) => readFileSync(join(process.cwd(), 'templates', 'skills', 'wordsmith', f), 'utf-8')
+
+  it('does not name one provider as the writer', () => {
+    const manifest = JSON.parse(read('manifest.json'))
+    expect(manifest.description).not.toMatch(/gemini/i)
+    expect(manifest.context).not.toMatch(/gemini/i)
+  })
+
+  it('does not present any single provider key as a requirement', () => {
+    const manifest = JSON.parse(read('manifest.json'))
+    // Naming the keys it can reuse is fine; "<KEY> in .env" as a prerequisite
+    // is what was wrong, because the skill has no key of its own.
+    expect(manifest.context).not.toMatch(/(Gemini|Google) API key/i)
+  })
+
+  it('says what happens on an install with no provider key at all', () => {
+    // A subscription-only install cannot call anything. Silence here is how
+    // the assistant ends up reporting a normal condition as a failure.
+    expect(read('SKILL.md')).toMatch(/subscription-only/i)
   })
 })

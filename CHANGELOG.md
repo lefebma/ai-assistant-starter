@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the writing skill still introduced itself as a Gemini skill.** Wordsmith became provider-agnostic in 1.17.0, but its manifest went on describing it as "delegate prose generation to Gemini 2.5" and listing a Google API key as a prerequisite. That file is not documentation: it is the text injected into the assistant's context whenever the skill matches, so for two releases the assistant was told to look for a key it does not need. The manifest, README, and setup guide now say what the skill actually does, and a test fails if a provider name gets written back into either field. Also documented, for the first time, what happens on a subscription-only install with no API key at all: the script says so and the assistant writes the copy itself, which is a normal outcome rather than the failure it was previously reported as. The last of Wordsmith's opt-in plumbing, a settings field the wizard stopped writing in 1.17.0, is gone with it.
+
 ## 1.18.0 - 2026-08-29
 
 Two new ways to reach your assistant. Microsoft Teams, for people whose working day already lives there, and a voice interface in the browser, for when typing is the wrong tool. Both were built against a real pilot box rather than in theory, which is where most of the smaller fixes here came from.

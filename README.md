@@ -16,7 +16,7 @@ Built and maintained by [ELS Partners](https://www.els-partners.com).
 
 ### Skill matrix
 
-Ships with these skills (all opt-in at setup time except weather, which is always on):
+Ships with these skills. The always-on ones need no key and no decision at setup; the rest are opt-in:
 
 | Skill | What it does | What you need |
 |---|---|---|
@@ -26,7 +26,7 @@ Ships with these skills (all opt-in at setup time except weather, which is alway
 | **outlook** | M365 email + calendar via Microsoft Graph | Azure app registration (up to 2 accounts) |
 | **web-research** | Three-tier Perplexity research with citations | Perplexity API key |
 | **apollo** | Apollo.io lookups + sequence reports | Apollo API key |
-| **wordsmith** | Delegate prose drafting to Gemini 2.5 | Google AI Studio API key |
+| **wordsmith** | Drafts prose in a focused writing call on your configured provider | Nothing (always on) |
 | **antilibrary** | LLM-maintained Obsidian knowledge base | Obsidian vault path |
 | **notion** | Read/search/create pages and databases | Notion integration token |
 | **kanbanzone** | Generic Kanban Zone board CLI | Kanban Zone API key |
