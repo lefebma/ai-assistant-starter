@@ -14,6 +14,7 @@ import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBL
 import { getSession, setSession, clearSession, getMemoriesForChat } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
+import { claimButtonClick } from './db.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
 import { saveConversationTurn } from './memory.js'
@@ -728,6 +729,21 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       const data = msg.callbackData ?? ''
       if (!data.startsWith('btn:')) return
       const label = data.slice(4)
+      // Claim the card's one allowed click BEFORE doing anything with it.
+      // Clearing the keyboard is a visual change the client may not apply
+      // (Teams desktop ignores the edit and leaves the buttons live), so it
+      // cannot be what stops a second click on a card that sends an email.
+      if (msg.messageId) {
+        const claim = claimButtonClick(chatId, msg.messageId, label)
+        if (!claim.claimed) {
+          const already =
+            claim.existingLabel && claim.existingLabel !== label
+              ? `Already answered that one with "${claim.existingLabel}", so I ignored "${label}".`
+              : `Already handled "${label}" on that one.`
+          await adapter.sendMessage(chatId, already)
+          return
+        }
+      }
       // Clear the keyboard
       if (msg.messageId) {
         await adapter.clearButtons(chatId, msg.messageId)

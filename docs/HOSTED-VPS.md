@@ -380,8 +380,10 @@ the credentials blank).
 5. **Claim the chat.** Adding the app makes the bot announce the chat id (the adapter treats the install event as `/chatid`; sending `/chatid` shows it again). Put that id in
    `ALLOWED_CHAT_ID` in `.env` and restart the service.
 
-What works: text with Markdown, typing indicator, approval buttons, and
-files and images sent to the assistant. Replies arrive as one message rather
+What works: text with Markdown, typing indicator, approval buttons (a card
+takes one answer; a second click is refused, which matters on desktop where
+the buttons stay on screen after a click), and files and images sent to the
+assistant. Replies arrive as one message rather
 than streaming in: Teams desktop renders an activity as first sent and only
 picks up later edits when the client resyncs, so a streamed reply stayed
 invisible there (mobile and web were fine) until the user quit and reopened

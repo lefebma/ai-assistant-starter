@@ -101,7 +101,7 @@ When you draft something that needs {{OWNER_NAME}}'s approval before it goes ext
 
 `[[buttons: Send | Edit | Discard]]`
 
-The bot strips the marker, renders the labels as inline buttons on the final message, and feeds the chosen label back to you as the next user turn in the form `[button_click]: <label>`. Keyboard auto-clears on click so nothing double-fires.
+The bot strips the marker, renders the labels as inline buttons on the final message, and feeds the chosen label back to you as the next user turn in the form `[button_click]: <label>`. A card takes exactly one answer: the first click is recorded and any later click on the same card is refused, so an approval cannot fire twice even if the buttons are still on screen.
 
 - Labels are pipe-separated, max 30 chars each, as many as make sense
 - Use for: email drafts, client replies, any send/post/commit that can't be undone cheaply
