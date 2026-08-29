@@ -32,12 +32,18 @@ function makeFlow(opts: {
   validate?: (name: string, value: string) => Promise<ValidationResult>
   now?: () => number
   ttlMs?: number
+  envFile?: Record<string, string>
+  processEnv?: Record<string, string | undefined>
 } = {}) {
   return new SecretFlow({
     vault: () => vault,
     validate: opts.validate ?? ok,
     now: opts.now,
     ttlMs: opts.ttlMs,
+    // Empty by default: without this the flow would read the real .env of
+    // whatever checkout the suite runs in.
+    readEnvFile: () => opts.envFile ?? {},
+    processEnv: () => opts.processEnv ?? {},
   })
 }
 
@@ -93,16 +99,26 @@ describe('SecretFlow.handleCommand', () => {
     expect(flow.hasPending(CHAT)).toBe(false)
   })
 
-  it('list shows vault names only, never values', async () => {
+  it('list shows vault names, never values', async () => {
     vault.set('OPENAI_API_KEY', 'sk-secret-value')
     const { reply } = await makeFlow().handleCommand(CHAT, '/secret list')
     expect(reply).toContain('OPENAI_API_KEY')
     expect(reply).not.toContain('sk-secret-value')
   })
 
-  it('list on an empty vault says so', async () => {
+  it('list shows keys that live in .env, not only the vault', async () => {
+    const { reply } = await makeFlow({ envFile: { TELEGRAM_BOT_TOKEN: '77:tok-abcd' } }).handleCommand(
+      CHAT,
+      '/secret list'
+    )
+    expect(reply).toContain('TELEGRAM_BOT_TOKEN')
+    expect(reply).toContain('.env')
+    expect(reply).not.toContain('77:tok-abcd')
+  })
+
+  it('list with nothing configured anywhere says so', async () => {
     const { reply } = await makeFlow().handleCommand(CHAT, '/secret list')
-    expect(reply.toLowerCase()).toContain('no secrets')
+    expect(reply.toLowerCase()).toContain('no api keys are configured')
   })
 
   it('rm removes a stored secret', async () => {

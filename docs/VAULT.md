@@ -25,10 +25,18 @@ the model conversation.
 
 ```
 /secret set OPENAI_API_KEY   - the bot asks for the key as your next message
-/secret list                 - stored key names (values are never shown)
+/secret list                 - what is set, and where it comes from (values masked)
 /secret rm OPENAI_API_KEY    - remove a key
 /secret cancel               - abort a pending set
 ```
+
+`list` answers the question you actually have, which is "is this thing
+configured": it reports every key the engine reads plus any secret-looking name
+in your `.env` or vault, grouped by where the value comes from (vault, `.env`,
+service environment), each shown as a masked four-character tail. Keys set in
+more than one place say which copy wins, and keys set nowhere are listed by
+name. It reads the same three sources in the same order as the engine, so what
+it shows is what the assistant is using.
 
 What happens on `set`: your next message is captured directly into the
 encrypted vault, the key is checked against its provider (a rejected key is
