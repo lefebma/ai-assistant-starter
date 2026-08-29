@@ -434,6 +434,31 @@ takes a deliberate act.
 Tell users plainly that the link is a password. Anyone holding it can talk to
 their assistant, so it should not be forwarded or pasted into a chat.
 
+## Edge access log
+
+Caddy writes one JSON line per HTTPS request to `/var/log/caddy/access.log`,
+rotating at 10MiB and keeping five files (roughly 50MB, capped). Useful for
+"who is hitting this box" and for confirming what did or did not fetch a
+voice link.
+
+Three fields are redacted as they are written, and all three matter:
+
+- **`?token=` becomes `REDACTED`.** A voice link carries its credential in the
+  query string; logging it verbatim would put working links on disk.
+- **`Authorization` and `Cookie` are dropped.** The voice page replays the same
+  token as a bearer header on every API call, so redacting only the query
+  string would leak it through the other door.
+- **Client addresses are masked** to /24 (IPv4) and /48 (IPv6). Enough to tell
+  a datacentre crawler from a person, not enough to follow one around.
+
+Reading it:
+
+```
+sudo tail -n 50 /var/log/caddy/access.log | jq -c '{ts,status,uri:.request.uri,ua:.request.headers["User-Agent"][0]}'
+```
+
+Existing boxes pick this up on the next `enable-teams` run.
+
 ## Updates, snapshots, backups
 
 - **OS:** unattended-upgrades applies security patches automatically. Kernel

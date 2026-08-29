@@ -4,6 +4,16 @@
 
 - **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, approval buttons as Adaptive Cards, and files sent to the assistant audio files shared into the chat (transcribed like Telegram voice notes, needs OPENAI_API_KEY; Teams offers no voice-memo mic in bot chats, so keyboard dictation is the practical voice input), all work in 1:1 chat. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: the assistant speaking back (Teams has no bot voice bubble), sending files back, channels, laptop installs.
 
+- **New: the hosted edge keeps an access log, with credentials redacted as they
+  are written.** Boxes kept no record of who reached them, so "did anything
+  else fetch that link" had no answer. Caddy now writes one JSON line per
+  request to `/var/log/caddy/access.log`, rotated and capped at about 50MB.
+  Because a voice link carries its credential in the query string and the page
+  replays it as a bearer header, logging it plainly would have put working
+  credentials on disk twice over: `?token=` is replaced, `Authorization` and
+  `Cookie` are dropped, and client addresses are masked to the network rather
+  than the host. Existing boxes pick it up on the next `enable-teams` run.
+
 - **Fixed: an approval button can no longer fire twice.** Clicking Send on a
   draft ran the action and then cleared the keyboard, and that clearing was
   the only thing stopping a second click. It is a visual change the chat client

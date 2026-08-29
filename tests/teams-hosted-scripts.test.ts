@@ -51,6 +51,26 @@ describe('teams edge (Caddy) config', () => {
     expect(c).not.toMatch(/token=\S/)
   })
 
+  it('logs access with the credential-bearing fields redacted at write time', () => {
+    // A voice link carries its token in the query string and the page replays
+    // it as a bearer header, so an unfiltered access log would put working
+    // credentials on disk twice over. Client addresses are masked to the
+    // network: enough to tell a datacentre crawler from a person, not enough
+    // to follow one around.
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { voice: true })
+    expect(c).toContain('log {')
+    expect(c).toContain('replace token REDACTED')
+    expect(c).toContain('request>headers>Authorization delete')
+    expect(c).toContain('request>headers>Cookie delete')
+    expect(c).toContain('ip_mask')
+    // Rotation, so a long-lived box does not fill its disk with request lines.
+    expect(c).toContain('roll_keep')
+  })
+
+  it('logs even without the voice UI, so a Teams-only box still has request history', () => {
+    expect(buildCaddyfile('5-161-197-79.sslip.io')).toContain('/var/log/caddy/access.log')
+  })
+
   it('omits Teams routes when teams is false', () => {
     const c = buildCaddyfile('5-161-197-79.sslip.io', { teams: false, voice: true })
     expect(c).not.toContain('handle /api/teams/*')
@@ -60,7 +80,7 @@ describe('teams edge (Caddy) config', () => {
   it('generates teams-only config when no options are passed (backward compat)', () => {
     const c = buildCaddyfile('5-161-197-79.sslip.io')
     expect(c).toContain('handle /api/teams/* {')
-    expect(c).not.toContain('voice')
+    expect(c).not.toContain('/voice')
     expect(c).toContain('respond 404')
   })
 })

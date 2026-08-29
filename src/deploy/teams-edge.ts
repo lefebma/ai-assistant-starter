@@ -5,6 +5,7 @@
  */
 export const TEAMS_WEBHOOK_PREFIX = '/api/teams/*'
 export const APP_UPSTREAM = '127.0.0.1:3030'
+export const ACCESS_LOG_PATH = '/var/log/caddy/access.log'
 
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
 
@@ -39,6 +40,34 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
   const lines: string[] = [
     `# Havn edge config. Written by scripts/hosted/enable-teams.ts.`,
     `${hostname} {`,
+    '',
+    // Two redactions are load-bearing, not hygiene. A voice link carries its
+    // credential in the query string, and the page sends the same value as a
+    // bearer header on every API call, so an unfiltered access log would write
+    // working credentials to disk in two places at once. Client addresses are
+    // masked to the network: enough to tell a datacentre crawler from a person,
+    // not enough to track one.
+    '\tlog {',
+    `\t\toutput file ${ACCESS_LOG_PATH} {`,
+    '\t\t\troll_size 10MiB',
+    '\t\t\troll_keep 5',
+    '\t\t\troll_keep_for 720h',
+    '\t\t}',
+    '\t\tformat filter {',
+    '\t\t\twrap json',
+    '\t\t\tfields {',
+    '\t\t\t\trequest>uri query {',
+    '\t\t\t\t\treplace token REDACTED',
+    '\t\t\t\t}',
+    '\t\t\t\trequest>remote_ip ip_mask {',
+    '\t\t\t\t\tipv4 24',
+    '\t\t\t\t\tipv6 48',
+    '\t\t\t\t}',
+    '\t\t\t\trequest>headers>Authorization delete',
+    '\t\t\t\trequest>headers>Cookie delete',
+    '\t\t\t}',
+    '\t\t}',
+    '\t}',
   ]
 
   // Teams webhook: no auth (adapter handles its own verification)
