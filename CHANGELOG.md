@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Removed: the `/r1` route.** It came across when this product was split out
+  of the assistant it was built from, where it serves a tiny page sized for a
+  Rabbit R1 handheld. The page itself never came with it, so the route answered
+  404 on every install that has ever existed, and it built its response by
+  injecting `HTTP_BEARER_TOKEN` into HTML served with no auth check. Nothing
+  here used it. The original assistant keeps its own copy, unaffected.
+
 ## 1.18.0 - 2026-08-29
 
 Two new ways to reach your assistant. Microsoft Teams, for people whose working day already lives there, and a voice interface in the browser, for when typing is the wrong tool. Both were built against a real pilot box rather than in theory, which is where most of the smaller fixes here came from.

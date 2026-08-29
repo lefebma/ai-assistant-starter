@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { registerHttpRoute, startHttpServer, stopHttpServer, audioExtension } from '../src/http-server.js'
+import { PROJECT_ROOT } from '../src/config.js'
+import { existsSync, writeFileSync, rmSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 // A fresh port per test. Reusing one port across start/stop cycles raced on
 // Windows CI: rebinding a just-closed port intermittently reset the next
@@ -52,6 +55,33 @@ describe('registerHttpRoute', () => {
     const other = await fetch(`http://127.0.0.1:${PORT}/api/teams/other`, { method: 'POST', body: '{}' })
     expect(other.status).toBe(405)
     unregister()
+  })
+})
+
+describe('routes the product does not serve', () => {
+  afterEach(async () => {
+    await stopHttpServer()
+  })
+
+  it('has no /r1 route, even with the page present', async () => {
+    // Inherited from the assistant this product was built out of, where it
+    // serves a screen-sized page for a Rabbit R1. The HTML never came with it,
+    // so the route 404d on every install that has existed, and it injected
+    // HTTP_BEARER_TOKEN into a page served with no auth check.
+    //
+    // The page has to exist for this to prove anything: without it a re-added
+    // route would 404 on its own and the test would pass while the route was
+    // back. So plant it, and assert /r1 is still not served.
+    const planted = resolve(PROJECT_ROOT, 'public', 'r1.html')
+    const preexisting = existsSync(planted)
+    if (!preexisting) writeFileSync(planted, '<html><head></head><body>r1</body></html>')
+    try {
+      const PORT = await startServer()
+      const resp = await fetch(`http://127.0.0.1:${PORT}/r1`)
+      expect(resp.status).not.toBe(200)
+    } finally {
+      if (!preexisting) rmSync(planted, { force: true })
+    }
   })
 })
 

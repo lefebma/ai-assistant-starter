@@ -438,19 +438,6 @@ export function startHttpServer(port: number = HTTP_PORT): void {
       serveStatic(req, res, '/voice.html')
       return
     }
-    if (req.method === 'GET' && url.pathname === '/r1') {
-      const filePath = resolve(PUBLIC_DIR, 'r1.html')
-      if (!existsSync(filePath)) {
-        res.writeHead(404); res.end('not found'); return
-      }
-      const html = readFileSync(filePath, 'utf-8').replace(
-        '</head>',
-        `<script>window.__UMI_BOOT__={token:${JSON.stringify(HTTP_BEARER_TOKEN ?? '')},host:${JSON.stringify(req.headers.host ?? '')}}</script></head>`,
-      )
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      res.end(html)
-      return
-    }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       if (!requireAuth(req, res)) return
       res.writeHead(200, { 'Content-Type': 'application/json' })
