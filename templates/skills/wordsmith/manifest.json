@@ -1,7 +1,7 @@
 {
   "id": "wordsmith",
   "name": "Wordsmith",
-  "description": "Delegate prose generation to Gemini 2.5 (emails, newsletters, marketing copy, rewrites). You orchestrate, Gemini writes.",
+  "description": "Draft prose (emails, newsletters, marketing copy, rewrites) in a focused writing call on the provider this install already uses. You orchestrate, the writing model writes.",
   "enabled": true,
   "triggers": [
     "draft",
@@ -22,5 +22,5 @@
     "rephrase"
   ],
   "priority": 70,
-  "context": "Gemini API key: GOOGLE_API_KEY in .env (or set in env).\nScript: {{PROJECT_PATH}}/skills/wordsmith/wordsmith.mjs\nSee SKILL.md for when to invoke, model selection, voice rules, and post-processing protocol."
+  "context": "Script: {{PROJECT_PATH}}/skills/wordsmith/wordsmith.mjs\nNo key of its own: it reuses whatever provider key is already in .env (ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, or AZURE_API_KEY), preferring AI_PROVIDER. A subscription-only install has no API key at all, so the script exits saying so - write the copy yourself in that case, following the voice block in SKILL.md.\nSee SKILL.md for when to invoke, tiers, the voice block, and the post-processing protocol."
 }

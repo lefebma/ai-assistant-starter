@@ -35,7 +35,7 @@ const BASE: Answers = {
   latitude: '43.65',
   longitude: '-79.38',
   tempUnit: 'celsius',
-  skills: { webResearch: false, apollo: false, wordsmith: false, antilibrary: false, notion: false, kanbanzone: false, wordpress: false },
+  skills: { webResearch: false, apollo: false, antilibrary: false, notion: false, kanbanzone: false, wordpress: false },
   keys: {},
   projectPath: '/repo',
 }
