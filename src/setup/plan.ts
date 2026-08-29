@@ -47,7 +47,6 @@ export interface Answers {
   skills: {
     webResearch: boolean
     apollo: boolean
-    wordsmith: boolean
     antilibrary: boolean
     notion: boolean
     kanbanzone: boolean

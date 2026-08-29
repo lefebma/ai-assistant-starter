@@ -30,7 +30,7 @@ function answers(over: Partial<Answers> = {}): Answers {
     longitude: '-79.38',
     tempUnit: 'celsius',
     skills: {
-      webResearch: false, apollo: false, wordsmith: false,
+      webResearch: false, apollo: false,
       antilibrary: false, notion: false, kanbanzone: false, wordpress: false,
     },
     keys: {},

@@ -180,7 +180,6 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
   const skills: Answers['skills'] = {
     webResearch: false,
     apollo: false,
-    wordsmith: false,
     antilibrary: false,
     notion: false,
     kanbanzone: false,

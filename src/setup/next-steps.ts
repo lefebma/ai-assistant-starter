@@ -31,7 +31,6 @@ export interface NextStepsInput {
   /** gog is not installed and setup could not install it. */
   gogMissing: boolean
   outlookAddress: string
-  wordsmith: boolean
   /** The background service was installed and is running now. */
   serviceInstalled: boolean
   /** Quoted absolute path to the interpreter to use. */

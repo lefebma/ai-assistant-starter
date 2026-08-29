@@ -287,7 +287,6 @@ async function main(): Promise<void> {
       gmailAddress2: answers.gmailAddress2,
       gogMissing,
       outlookAddress: answers.outlookAddress,
-      wordsmith: answers.skills.wordsmith,
       serviceInstalled,
       nodeBin: `"${process.execPath}"`,
       appEntry: `"${resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')}"`,

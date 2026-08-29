@@ -1,6 +1,6 @@
 # Wordsmith Skill
 
-Delegate prose generation to a dedicated writing call on the install's configured LLM provider (anthropic, openai, google, or azure; no separate API key). You orchestrate (intent, context, voice, post-processing, send/no-send), the writing model writes. A focused single-purpose call with voice samples produces more human-sounding prose than drafting inline mid-conversation, so for any externally bound copy reach for this skill.
+Delegate prose generation to a dedicated writing call on the install's configured LLM provider (anthropic, openai, google, or azure). It has no key of its own: it reuses whatever provider key is already in `.env`. You orchestrate (intent, context, voice, post-processing, send/no-send), the writing model writes. A focused single-purpose call with voice samples produces more human-sounding prose than drafting inline mid-conversation, so for any externally bound copy reach for this skill.
 
 ## When to invoke
 
@@ -100,7 +100,8 @@ For anything externally bound (email, newsletter, public post, support reply), p
 
 ## Error handling
 
-- If `wordsmith.mjs` exits non-zero, report the error verbatim and offer to fall back to native writing.
+- **No provider key at all.** A subscription-only install (`AGENT_RUNTIME=claude`, no `ANTHROPIC_API_KEY`) has nothing for wordsmith to call, and the script says so and exits. That is expected, not a fault: write the copy yourself, following the voice block above and the post-processing rules below, and do not report the error to {{OWNER_NAME}} as a failure.
+- If `wordsmith.mjs` exits non-zero for any other reason, report the error verbatim and offer to fall back to native writing.
 - 429 / 5xx: wait 5s and retry once. If it still fails, fall back.
 - Empty response: retry once with the tier upgraded (fast → quality). If still empty, fall back.
 
