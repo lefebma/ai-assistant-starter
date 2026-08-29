@@ -22,7 +22,7 @@ import { PROJECT_ROOT } from '../env.js'
 
 // Skills that should ship with every install, no opt-in required.
 // Keep this list short — these run on every startup.
-const ALWAYS_ON_SKILLS = ['weather', 'decision-log', 'daily-briefing'] as const
+export const ALWAYS_ON_SKILLS = ['weather', 'decision-log', 'daily-briefing', 'exec-interview'] as const
 
 export interface SyncResult {
   installed: string[]
