@@ -14,28 +14,15 @@
  */
 import { SecretVault } from '../vault/store.js'
 import { defaultVault } from '../vault/index.js'
+import { readEnvFile } from '../env.js'
 import { createValidator, type ValidateFn, type ValidationResult } from './validate.js'
+import { buildSecretInventory, formatSecretInventory, KNOWN_SECRET_NAMES, maskSecret } from './inventory.js'
 
 export type { ValidationResult, ValidateFn } from './validate.js'
-
-/** Names the engine actually resolves through the vault (see docs/VAULT.md). */
-export const KNOWN_SECRET_NAMES = [
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
-  'GOOGLE_API_KEY',
-  'ELEVENLABS_API_KEY',
-  'TELEGRAM_BOT_TOKEN',
-  'HTTP_BEARER_TOKEN',
-] as const
+export { KNOWN_SECRET_NAMES, maskSecret } from './inventory.js'
 
 const NAME_RE = /^[A-Z][A-Z0-9_]{2,63}$/
 const DEFAULT_TTL_MS = 3 * 60_000
-
-export function maskSecret(value: string): string {
-  const v = value.trim()
-  if (v.length < 9) return '••••••'
-  return `••••${v.slice(-4)}`
-}
 
 export interface CommandOutcome {
   reply: string
@@ -59,13 +46,16 @@ export interface SecretFlowOpts {
   validate?: ValidateFn
   now?: () => number
   ttlMs?: number
+  /** The other two sources getSecret() reads. Injected so tests never touch the real .env. */
+  readEnvFile?: () => Record<string, string>
+  processEnv?: () => Record<string, string | undefined>
 }
 
 const USAGE = [
   'Manage API keys (stored in the encrypted vault, never shown to the AI model):',
   '',
   '/secret set <NAME> - store a key; I ask for the value as your next message',
-  '/secret list - show stored key names (values are never shown)',
+  '/secret list - show which keys are set and where they come from (values stay masked)',
   '/secret rm <NAME> - remove a key',
   '/secret cancel - abort a pending /secret set',
   '',
@@ -77,6 +67,8 @@ export class SecretFlow {
   private readonly validate: ValidateFn
   private readonly now: () => number
   private readonly ttlMs: number
+  private readonly readEnv: () => Record<string, string>
+  private readonly processEnv: () => Record<string, string | undefined>
   private readonly pending = new Map<string, Pending>()
 
   constructor(opts: SecretFlowOpts = {}) {
@@ -84,6 +76,8 @@ export class SecretFlow {
     this.validate = opts.validate ?? createValidator()
     this.now = opts.now ?? Date.now
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS
+    this.readEnv = opts.readEnvFile ?? (() => readEnvFile())
+    this.processEnv = opts.processEnv ?? (() => process.env)
   }
 
   hasPending(chatId: string): boolean {
@@ -101,15 +95,25 @@ export class SecretFlow {
     return this.pending.delete(chatId)
   }
 
+  /**
+   * The resolver's view of what is configured. The vault is read name by name
+   * because SecretVault deliberately exposes list() and get() rather than the
+   * whole decrypted map.
+   */
+  private inventory() {
+    const v = this.vault()
+    const vaultMap: Record<string, string> = {}
+    for (const name of v.list()) vaultMap[name] = v.get(name) ?? ''
+    return buildSecretInventory({ vault: vaultMap, envFile: this.readEnv(), processEnv: this.processEnv() })
+  }
+
   /** Handle a '/secret ...' command message. */
   async handleCommand(chatId: string, text: string): Promise<CommandOutcome> {
     const parts = text.trim().split(/\s+/)
     const sub = (parts[1] ?? '').toLowerCase()
 
     if (sub === 'list') {
-      const names = this.vault().list()
-      if (names.length === 0) return { reply: 'No secrets in the vault yet. Add one with /secret set <NAME>.' }
-      return { reply: `Stored keys (values are never shown):\n${names.map((n) => `- ${n}`).join('\n')}` }
+      return { reply: formatSecretInventory(this.inventory()) }
     }
 
     if (sub === 'cancel') {

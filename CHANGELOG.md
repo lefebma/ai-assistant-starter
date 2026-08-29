@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: `/secret list` now shows every key you have, not just vaulted ones.** It read the vault and nothing else, so an install whose keys were written to `.env` at setup time (which is most of them) was told "No secrets in the vault yet" while the assistant was busy using those exact keys. It now reports the same three sources the engine resolves through, in the same order: vault, `.env`, service environment. Each key shows a masked four-character tail so you can match it against a provider dashboard, keys set in two places say which copy wins, and keys the engine reads but cannot find anywhere are listed by name. Secret-looking names your skills use (`PERPLEXITY_API_KEY`, `NOTION_TOKEN`) are included and marked as not read by the engine; ordinary `.env` config is not, so the list stays a list of keys.
+
 ## 1.18.0 - 2026-08-29
 
 Two new ways to reach your assistant. Microsoft Teams, for people whose working day already lives there, and a voice interface in the browser, for when typing is the wrong tool. Both were built against a real pilot box rather than in theory, which is where most of the smaller fixes here came from.
