@@ -115,13 +115,29 @@ describe('voice link presentation', () => {
 describe('the /voice page gate, end to end', () => {
   // The 403 cases live in http-routes.test.ts; these need a real minted link,
   // so they run here where AGENT_STORE_DIR points at a temp database.
-  const PORT = 3800 + Math.floor(Math.random() * 100)
+  // Fresh port per start, and wait until it answers: see the note in
+  // http-routes.test.ts about rebinding a just-closed port on Windows.
+  let nextPort = 3800 + Math.floor(Math.random() * 100) * 10
+  async function startServer(): Promise<number> {
+    const { startHttpServer } = await import('../src/http-server.js')
+    const port = nextPort++
+    startHttpServer(port)
+    const deadline = Date.now() + 5000
+    for (;;) {
+      try {
+        await fetch(`http://127.0.0.1:${port}/__ready__`)
+        return port
+      } catch (err) {
+        if (Date.now() > deadline) throw err
+        await new Promise((r) => setTimeout(r, 25))
+      }
+    }
+  }
 
   it('serves the page to a minted link and stops once it is revoked', async () => {
-    const { startHttpServer, stopHttpServer } = await import('../src/http-server.js')
+    const { stopHttpServer } = await import('../src/http-server.js')
     const link = mintVoiceLink('route-chat')
-    startHttpServer(PORT)
-    await new Promise((r) => setTimeout(r, 10))
+    const PORT = await startServer()
     try {
       const ok = await fetch(`http://127.0.0.1:${PORT}/voice?token=${encodeURIComponent(link.token)}`)
       expect(ok.status).toBe(200)
@@ -136,16 +152,15 @@ describe('the /voice page gate, end to end', () => {
   })
 
   it('will not open one chat\'s page with another chat\'s link revoked out from under it', async () => {
-    const { startHttpServer, stopHttpServer } = await import('../src/http-server.js')
+    const { stopHttpServer } = await import('../src/http-server.js')
     const mine = mintVoiceLink('chat-mine')
     const theirs = mintVoiceLink('chat-theirs')
     revokeVoiceLinks('chat-theirs')
-    startHttpServer(PORT + 1)
-    await new Promise((r) => setTimeout(r, 10))
+    const PORT = await startServer()
     try {
-      const a = await fetch(`http://127.0.0.1:${PORT + 1}/voice?token=${encodeURIComponent(mine.token)}`)
+      const a = await fetch(`http://127.0.0.1:${PORT}/voice?token=${encodeURIComponent(mine.token)}`)
       expect(a.status).toBe(200)
-      const b = await fetch(`http://127.0.0.1:${PORT + 1}/voice?token=${encodeURIComponent(theirs.token)}`)
+      const b = await fetch(`http://127.0.0.1:${PORT}/voice?token=${encodeURIComponent(theirs.token)}`)
       expect(b.status).toBe(403)
     } finally {
       await stopHttpServer()

@@ -2,7 +2,17 @@
 
 ## Unreleased
 
-- **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, streaming replies, approval buttons as Adaptive Cards, and files sent to the assistant audio files shared into the chat (transcribed like Telegram voice notes, needs OPENAI_API_KEY; Teams offers no voice-memo mic in bot chats, so keyboard dictation is the practical voice input), all work in 1:1 chat. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: the assistant speaking back (Teams has no bot voice bubble), sending files back, channels, laptop installs.
+- **New: Microsoft Teams as a chat surface.** Choose Teams in setup, register one Azure Bot per install with `npm run teams-register`, expose the webhook on a hosted box with `enable-teams` (a Node script run once as root) (Caddy, one path, Bot Framework tokens checked on every request), and upload the app package `npm run teams-manifest` builds. Text with Markdown, typing, approval buttons as Adaptive Cards, and files sent to the assistant audio files shared into the chat (transcribed like Telegram voice notes, needs OPENAI_API_KEY; Teams offers no voice-memo mic in bot chats, so keyboard dictation is the practical voice input), all work in 1:1 chat. Registrations are single-tenant (Azure no longer creates multi-tenant bots), so the app installs in the tenant it was registered in. Not yet: the assistant speaking back (Teams has no bot voice bubble), sending files back, channels, laptop installs.
+
+- **Fixed: Teams replies no longer go missing on the desktop app.** Replies
+  streamed in by editing a placeholder message, and Teams desktop renders an
+  activity as first sent, picking up edits only when the client resyncs. So an
+  answer could sit invisible on desktop while showing normally on phone and
+  web, appearing only after quitting and reopening Teams. Nothing looked wrong
+  from the assistant's side: the Bot Connector accepted every edit. Replies now
+  go out as whole messages on Teams. The typing indicator still shows work in
+  progress, and Teams throttles bot edits to one per second, so the streaming
+  it replaces was a once-a-second repaint rather than live text.
 
 - **New: `/voice ui` gives each person their own link to the voice page.** The
   voice UI used to be reached with the box-wide `HTTP_BEARER_TOKEN` in the

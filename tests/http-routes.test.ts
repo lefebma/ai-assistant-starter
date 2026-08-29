@@ -1,7 +1,26 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { registerHttpRoute, startHttpServer, stopHttpServer, audioExtension } from '../src/http-server.js'
 
-const PORT = 3900 + Math.floor(Math.random() * 100)
+// A fresh port per test. Reusing one port across start/stop cycles raced on
+// Windows CI: rebinding a just-closed port intermittently reset the next
+// connection (ECONNRESET), which looked like a route bug and was not one.
+let nextPort = 3900 + Math.floor(Math.random() * 100) * 10
+
+/** Start the server and wait until it actually answers, rather than guessing at a sleep. */
+async function startServer(): Promise<number> {
+  const port = nextPort++
+  startHttpServer(port)
+  const deadline = Date.now() + 5000
+  for (;;) {
+    try {
+      await fetch(`http://127.0.0.1:${port}/__ready__`)
+      return port
+    } catch (err) {
+      if (Date.now() > deadline) throw err
+      await new Promise((r) => setTimeout(r, 25))
+    }
+  }
+}
 
 describe('registerHttpRoute', () => {
   afterEach(async () => {
@@ -13,8 +32,7 @@ describe('registerHttpRoute', () => {
       res.writeHead(200, { 'Content-Type': 'text/plain' })
       res.end('routed')
     })
-    startHttpServer(PORT)
-    await new Promise(resolve => setTimeout(resolve, 10))
+    const PORT = await startServer()
     const resp = await fetch(`http://127.0.0.1:${PORT}/api/teams/messages`, { method: 'POST', body: '{}' })
     expect(resp.status).toBe(200)
     expect(await resp.text()).toBe('routed')
@@ -28,8 +46,7 @@ describe('registerHttpRoute', () => {
       res.writeHead(200)
       res.end('routed')
     })
-    startHttpServer(PORT)
-    await new Promise(resolve => setTimeout(resolve, 10))
+    const PORT = await startServer()
     const get = await fetch(`http://127.0.0.1:${PORT}/api/teams/messages`)
     expect(get.status).not.toBe(200)
     const other = await fetch(`http://127.0.0.1:${PORT}/api/teams/other`, { method: 'POST', body: '{}' })
@@ -46,16 +63,14 @@ describe('the /voice page gate', () => {
   })
 
   it('refuses a link nobody minted, and says how to get a real one', async () => {
-    startHttpServer(PORT)
-    await new Promise(resolve => setTimeout(resolve, 10))
+    const PORT = await startServer()
     const resp = await fetch(`http://127.0.0.1:${PORT}/voice?token=not-a-real-token`)
     expect(resp.status).toBe(403)
     expect(await resp.text()).toMatch(/\/voice ui/)
   })
 
   it('refuses a request with no token at all', async () => {
-    startHttpServer(PORT)
-    await new Promise(resolve => setTimeout(resolve, 10))
+    const PORT = await startServer()
     const resp = await fetch(`http://127.0.0.1:${PORT}/voice`)
     expect(resp.status).toBe(403)
   })

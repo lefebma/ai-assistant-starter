@@ -65,7 +65,20 @@ export interface TeamsAdapterOptions extends TeamsCredentials {
 export class TeamsAdapter implements PlatformAdapter {
   readonly name = 'teams' as const
   readonly maxMessageLength = 8000
-  readonly supportsEdit = true
+  /**
+   * False on purpose, and not because editing is unsupported: the Bot
+   * Connector accepts every updateActivity we send (2xx, no retries), and
+   * Teams mobile and web render them live. Teams *desktop* does not. It shows
+   * the activity as first sent and only picks up edits when the client
+   * resyncs, so a streamed reply, whose final text is delivered as an edit of
+   * the preview, stays invisible on desktop until the user quits and reopens
+   * Teams. Plain sends render everywhere, so replies go out as new messages.
+   *
+   * Streaming bought little here anyway: Teams throttles bot edits to one per
+   * second (EDIT_INTERVAL_MS), so the "stream" was a once-a-second repaint,
+   * and the typing indicator already signals that work is happening.
+   */
+  readonly supportsEdit = false
   readonly supportsButtons = true
 
   private readonly appId: string
