@@ -1,0 +1,19 @@
+<!--
+  What your assistant knows about you and your business. The discovery
+  interview writes this file; you can also edit it by hand at any time.
+  Setup re-runs and product updates never overwrite it. CLAUDE.md pulls it in
+  with an @PROFILE.md line, so whatever is here is in front of your assistant
+  on every turn.
+-->
+
+No profile yet.
+
+{{OWNER_NAME}} has not been through the discovery interview. Until they have,
+you are working from the short bio above and whatever you pick up in
+conversation.
+
+Offer the interview once, early, when there is a natural opening: it takes 15
+to 20 minutes, it covers their business, role, key people, priorities and how
+they want to be worked with, and it is the difference between an assistant that
+answers questions and one that knows which questions matter. Offer it once. If
+they decline or ignore it, drop it and learn from the work instead.

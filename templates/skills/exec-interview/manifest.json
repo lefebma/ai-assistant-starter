@@ -1,0 +1,23 @@
+{
+  "id": "exec-interview",
+  "name": "Business Discovery Interview",
+  "description": "Guided 15-20 minute interview that teaches the assistant {{OWNER_NAME}}'s business, role, people, priorities, and working preferences. Writes PROFILE.md and wires it into CLAUDE.md.",
+  "enabled": true,
+  "triggers": [
+    "discovery interview",
+    "exec interview",
+    "executive interview",
+    "onboarding interview",
+    "business discovery",
+    "interview me",
+    "get to know me",
+    "learn about my business",
+    "learn about me",
+    "my profile",
+    "update my profile",
+    "set up my profile",
+    "what do you know about me"
+  ],
+  "priority": 65,
+  "context": "The profile lives at {{PROJECT_PATH}}/PROFILE.md and reaches the system prompt through an @PROFILE.md import in CLAUDE.md. See SKILL.md for the question set, the interaction rules, and the file format."
+}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **New: a discovery interview, so your assistant knows your business before you have to explain it.** Say "interview me" and it walks you through nine short sections in about fifteen minutes: what the company does, what you are actually accountable for, the people whose names will keep coming up, your priorities for the next quarter, where your week goes, what you want taken off your plate, how much you want it to push back, what tools you live in, and what would make you unwilling to work without it after thirty days. It asks two or three questions at a time and follows the answers rather than reading a list, skips what does not apply, and takes voice notes. What it learns goes to `PROFILE.md`, which `CLAUDE.md` imports, so the profile is in the system prompt from the next fresh session onward. `PROFILE.md` is yours to edit and no update overwrites it. Always installed: fresh installs get it from setup, existing boxes on the next update.
+
 ## 1.18.0 - 2026-08-29
 
 Two new ways to reach your assistant. Microsoft Teams, for people whose working day already lives there, and a voice interface in the browser, for when typing is the wrong tool. Both were built against a real pilot box rather than in theory, which is where most of the smaller fixes here came from.

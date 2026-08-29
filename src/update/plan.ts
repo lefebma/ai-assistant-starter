@@ -56,7 +56,7 @@ export function pickReleaseAsset(assets: ReleaseAsset[], wantedName: string): st
 /**
  * Files and directories the user owns. Never overwritten by any update path.
  */
-export const PRESERVED_PATHS = ['.env', 'CLAUDE.md', 'PERSONALITY.md', 'skills', 'projects', 'store', 'seed-jobs.json']
+export const PRESERVED_PATHS = ['.env', 'CLAUDE.md', 'PERSONALITY.md', 'PROFILE.md', 'skills', 'projects', 'store', 'seed-jobs.json']
 
 /**
  * What a bundle update swaps in: the app payload from build-installer's

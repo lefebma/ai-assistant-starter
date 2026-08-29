@@ -289,6 +289,8 @@ All optional except `weather`. Setup prompts you per skill.
 |-------|-------------|---------------|
 | `weather` | Current weather + short forecast | Coordinates (Open-Meteo, no key) |
 | `decision-log` | Append-only record of decisions with Why / Alternatives / What-would-change-my-mind | Nothing (always on) |
+| `daily-briefing` | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
+| `exec-interview` | 15-20 minute discovery interview that writes your PROFILE.md | Nothing (always on) |
 | `gmail` | Gmail + Google Calendar via `gog` CLI | Gmail address(es) |
 | `outlook` | M365 email + calendar via Graph | Azure app registration |
 | `web-research` | Three-tier Perplexity research | [Perplexity API key](https://www.perplexity.ai/settings/api) |
@@ -302,6 +304,8 @@ All optional except `weather`. Setup prompts you per skill.
 ### Per-skill setup notes
 
 **decision-log** — Always installed, no key. Setup creates `decisions/log.md` at the project root. To use it in chat: say "log a decision" or "we decided X" and the assistant drafts an entry, asks one quick question to capture the *why*, and appends to the top of the file. Ask "what did I decide about Y" later to search the history.
+
+**exec-interview** — Always installed, no key. Run it once after setup: say "interview me" or "let's do the discovery interview" and the assistant walks you through your business, your role, the people who matter, your priorities for the next quarter, and how you want to be worked with. It writes what it learns to `PROFILE.md` at the project root, which `CLAUDE.md` imports, so the profile is in front of the assistant on every future turn. `PROFILE.md` is yours: edit it by hand whenever you like, and no update overwrites it. Answers can be voice notes, and you can stop partway and pick it up later.
 
 **apollo** — Setup writes your key to `~/.apollo-api-key` (chmod 600). Test with `bash skills/apollo/apollo-lookup.sh company "Acme Inc"`.
 

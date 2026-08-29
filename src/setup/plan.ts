@@ -158,7 +158,7 @@ export function buildEnvContent(a: Answers): string {
 }
 
 export function installedSkillsList(a: Answers): string {
-  const list = ['weather', 'decision-log', 'skill-builder']
+  const list = ['weather', 'decision-log', 'daily-briefing', 'exec-interview', 'skill-builder']
   if (a.gmailAddress) list.push('gmail')
   if (a.gmailAddress2) list.push('gmail-secondary')
   if (a.outlookAddress) list.push('outlook')
@@ -230,6 +230,9 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
     vars: { OWNER_NAME: a.ownerName },
     onlyIfMissing: true,
   })
+  p.push({ type: 'copy', from: 'templates/skills/exec-interview', to: 'skills/exec-interview' })
+  p.push({ type: 'edit', file: 'skills/exec-interview/SKILL.md', vars: identity })
+  p.push({ type: 'edit', file: 'skills/exec-interview/manifest.json', vars: identity })
   p.push({ type: 'copy', from: 'templates/skills/skill-builder', to: 'skills/skill-builder' })
   p.push({ type: 'copy', from: 'templates/skills/daily-briefing', to: 'skills/daily-briefing' })
   // OWNER_NAME only: the same file is installed on existing machines by
@@ -359,6 +362,18 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
       OWNER_NAME: a.ownerName,
       PERSONALITY_VIBE: a.personalityVibe,
     },
+    onlyIfMissing: true,
+  })
+
+  // The profile the discovery interview writes. Scaffolded as a stub so the
+  // @PROFILE.md import in CLAUDE.md resolves to something from day one, and
+  // onlyIfMissing for the same reason PERSONALITY.md is: once the interview
+  // has run, this file is the owner's, and nothing regenerates it.
+  p.push({
+    type: 'template',
+    from: 'templates/PROFILE.md.template',
+    to: 'PROFILE.md',
+    vars: { OWNER_NAME: a.ownerName },
     onlyIfMissing: true,
   })
 

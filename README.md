@@ -22,6 +22,8 @@ Ships with these skills (all opt-in at setup time except weather, which is alway
 |---|---|---|
 | **weather** | Current conditions + short forecast | Coordinates (setup asks) |
 | **decision-log** | Append-only record of decisions — captures Why, Alternatives, What would change my mind | Nothing (always on) |
+| **daily-briefing** | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
+| **exec-interview** | Discovery interview that teaches the assistant your business, role, priorities and preferences | Nothing (always on) |
 | **gmail** | Read inbox, search, calendar via `gog` CLI | Gmail address (up to 2 accounts) |
 | **outlook** | M365 email + calendar via Microsoft Graph | Azure app registration (up to 2 accounts) |
 | **web-research** | Three-tier Perplexity research with citations | Perplexity API key |
