@@ -97,7 +97,12 @@ export function buildNextSteps(i: NextStepsInput): NextStep[] {
     steps.push({ text: 'Install as a service so it runs on its own:', commands: [`${i.nodeBin} ${i.serviceEntry} install`] })
   }
 
-  steps.push({ text: 'Message your bot and say hello!' })
+  // Card 106: the interview only helps if the owner knows it is coming. The
+  // app raises it itself (src/onboarding/interview-offer.ts), so this line is
+  // about expectation, not instruction.
+  steps.push({
+    text: 'Message your bot and say hello. It will offer to interview you about your work so it knows who it is helping (15 to 20 minutes, whenever suits you).',
+  })
   return steps
 }
 

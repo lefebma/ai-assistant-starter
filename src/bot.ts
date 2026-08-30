@@ -31,6 +31,8 @@ import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './ski
 import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog } from './updater.js'
 import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
+import { PROJECT_ROOT } from './env.js'
+import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import {
   collectDiagnostics,
   buildSupportDraft,
@@ -143,7 +145,15 @@ async function handleMessage(
 
   // Build memory context via ContextEngine
   const memoryContext = await contextEngine.buildContext(chatId, rawText)
-  const fullMessage = [skillIndex, memoryContext, rawText]
+
+  // An install that has never run the discovery interview gets told about it
+  // once, folded into this reply. The startup greeting covers platforms that
+  // can open a conversation; this covers the ones that cannot, and any install
+  // whose service was already running when the offer shipped.
+  const offerInterview = isPrimaryChat(chatId) && shouldOfferInterview(PROJECT_ROOT)
+  const onboardingNudge = offerInterview ? interviewNudge() : ''
+
+  const fullMessage = [skillIndex, memoryContext, onboardingNudge, rawText]
     .filter(Boolean)
     .join('\n\n')
 
@@ -278,6 +288,11 @@ async function handleMessage(
         })
       }
     }
+
+    // The reply carrying the offer reached the client, so it is spent. Marked
+    // here rather than at the top: a turn that throws before delivery would
+    // otherwise burn the one offer this install gets.
+    if (offerInterview) markInterviewOffered()
   } finally {
     if (pendingEditTimer) clearTimeout(pendingEditTimer)
     clearInterval(typingInterval)
