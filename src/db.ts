@@ -129,6 +129,17 @@ export function initDatabase(): void {
     ON voice_links(chat_id)
   `)
 
+  // Small key/value store for one-shot install state that must outlive a
+  // restart (see src/onboarding/interview-offer.ts). A table rather than a
+  // marker file so it travels with store/, which updates already preserve.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS app_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+
   // Migration: add columns for delivery mode, name, timezone
   const cols = d.pragma('table_info(scheduled_tasks)') as { name: string }[]
   const colNames = new Set(cols.map((c) => c.name))
@@ -145,6 +156,24 @@ export function initDatabase(): void {
   if (!colNames.has('run_once')) {
     d.exec('ALTER TABLE scheduled_tasks ADD COLUMN run_once INTEGER NOT NULL DEFAULT 0')
   }
+}
+
+// --- App state (one-shot install flags) ---
+
+export function getAppState(key: string): string | null {
+  const row = getDb().prepare('SELECT value FROM app_state WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined
+  return row?.value ?? null
+}
+
+export function setAppState(key: string, value: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, unixepoch())
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    )
+    .run(key, value)
 }
 
 // --- Sessions ---

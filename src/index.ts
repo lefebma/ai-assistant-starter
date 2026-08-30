@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { STORE_DIR, SCHEDULER_ENABLED } from './config.js'
+import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID } from './config.js'
 import { initDatabase } from './db.js'
 import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
@@ -11,6 +11,8 @@ import { stopChrome, isCdpAvailable } from './browser.js'
 import { runBestEffortCleanup, withTimeout } from './infra/cleanup.js'
 import { createAdapter, detectPlatform } from './platform/index.js'
 import { syncAlwaysOnSkills } from './skills/sync.js'
+import { interviewGreeting, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
+import { PROJECT_ROOT } from './env.js'
 import { logger } from './logger.js'
 
 const PID_FILE = resolve(STORE_DIR, 'assistant.pid')
@@ -101,6 +103,22 @@ async function main(): Promise<void> {
 
   // Create bot (wires adapter to core logic)
   const bot = createBot(adapter)
+
+  // Introduce the discovery interview, once, to an install that has never run
+  // one. The flag is set only on a successful send: Teams cannot send into a
+  // conversation it has never heard from, and treating that failure as
+  // "offered" would leave the client with no way to learn the interview
+  // exists. Those installs get the offer on their first inbound message
+  // instead (see handleMessage in bot.ts).
+  if (PRIMARY_CHAT_ID && shouldOfferInterview(PROJECT_ROOT)) {
+    try {
+      await adapter.sendMessage(PRIMARY_CHAT_ID, interviewGreeting())
+      markInterviewOffered()
+      logger.info('Offered the discovery interview on startup')
+    } catch (err) {
+      logger.info({ err }, 'Could not greet on startup; the offer rides the first inbound message')
+    }
+  }
 
   // Initialize scheduler
   if (SCHEDULER_ENABLED) {

@@ -14,9 +14,10 @@ Budget 15 to 20 minutes. That is the deal you are offering, so keep it.
 
 Read `PROFILE.md` if it exists.
 
-- **No file, or the placeholder stub:** this is the first run. Say what the
-  next 15 to 20 minutes are for, that answers can come in chunks or as voice
-  notes, and that they can stop at any point and pick up later.
+- **No file, or the placeholder stub** (the stub carries a `havn:profile-stub`
+  marker on its first line): this is the first run. Say what the next 15 to 20
+  minutes are for, that answers can come in chunks or as voice notes, and that
+  they can stop at any point and pick up later.
 - **A real profile already there:** do not start over. Say what you already
   know in three or four lines, and ask what has changed. Then work only the
   sections that moved.
@@ -183,6 +184,11 @@ setting up.
 ## What success looks like
 Their answer to the 30-day question, in their words.
 ```
+
+Replace the file completely, marker comment and all. The `havn:profile-stub`
+marker on the scaffolded file is what tells the rest of the install that no
+interview has run yet, so leaving it in place means the assistant goes on
+offering an interview it has already done.
 
 Two rules for this file:
 
