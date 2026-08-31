@@ -11,6 +11,7 @@ import { stopChrome, isCdpAvailable } from './browser.js'
 import { runBestEffortCleanup, withTimeout } from './infra/cleanup.js'
 import { createAdapter, detectPlatform } from './platform/index.js'
 import { syncAlwaysOnSkills } from './skills/sync.js'
+import { reloadSkills } from './skills/index.js'
 import { interviewGreeting, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { PROJECT_ROOT } from './env.js'
 import { logger } from './logger.js'
@@ -92,7 +93,18 @@ async function main(): Promise<void> {
   try {
     const syncResult = syncAlwaysOnSkills()
     if (syncResult.installed.length > 0) {
-      logger.info({ installed: syncResult.installed }, 'Installed missing always-on skills')
+      // The skill registry is built while bot.js is being imported, which
+      // happens before main() runs, so a skill installed one line ago is on
+      // disk and absent from the registry. Without this reload it stays
+      // invisible until the NEXT restart: /skill list omits it, its triggers
+      // never match, and the skill index does not mention it. That is exactly
+      // what a client sees on the first boot after an update that adds an
+      // always-on skill, which is the boot where they go looking for it.
+      const skills = reloadSkills()
+      logger.info(
+        { installed: syncResult.installed, count: skills.length },
+        'Installed missing always-on skills and reloaded the registry'
+      )
     }
   } catch (err) {
     logger.warn({ err }, 'Always-on skill sync at boot failed; continuing')
