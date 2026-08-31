@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.19.1 - 2026-08-31
+
+A same-day fix for 1.19.0. The discovery interview shipped a few hours earlier and then failed to show up on the first box that installed it, for a reason that had nothing to do with the interview: a skill an update installs is not visible until the restart after the one that installed it. Any always-on skill in any future release would have hit the same wall.
+
 - **Fixed: a skill installed by an update was invisible until the second restart.** The assistant builds its list of skills as it starts, and installs any always-on skills the update added a moment later, in that order. So on the first boot after an update, the new skill was on disk and missing from the list: `/skill list` did not show it, its trigger words did nothing, and asked directly, the assistant said it did not have it. That is the boot where you go looking for whatever the update added. Found on havn-test, where 1.19.0's own discovery interview was the skill that went missing. The list is now rebuilt after anything is installed.
 
 - **Fixed: `/version` reported the version on disk, not the one running.** `/update` writes the new files and tells you to restart, and until you do, the old code keeps serving. `/version` was reading the file, so it answered with the new number from a process still running the old one, for as long as the restart was outstanding. It now reports what is actually running and says which version is waiting. `/update check` says the same rather than "You're on the latest version", which was true of the files and false of the assistant answering you.
