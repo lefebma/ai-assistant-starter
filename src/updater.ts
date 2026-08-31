@@ -96,6 +96,30 @@ export function getCurrentVersion(): string {
   }
 }
 
+/**
+ * The version whose code is actually executing.
+ *
+ * getCurrentVersion() reads the VERSION file, and an applied update rewrites
+ * that file while the old process keeps running: /update says so ("Restart the
+ * service to activate"), but every later /version then reports the new number
+ * from a process still running the old code. On havn-test that gap read as
+ * "v1.19.0" for two days while 1.18.0 was serving, and the version report was
+ * the thing that made a missing skill look like a broken skill.
+ *
+ * Captured at module load, which is process start: nothing can rewrite VERSION
+ * before this line runs.
+ */
+const BOOT_VERSION = getCurrentVersion()
+
+export function getBootVersion(): string {
+  return BOOT_VERSION
+}
+
+/** An update is on disk but not yet running. readVersion is injected in tests. */
+export function restartPending(readVersion: () => string = getCurrentVersion): boolean {
+  return readVersion() !== BOOT_VERSION
+}
+
 function parseVersion(v: string): [number, number, number] {
   const parts = v.split('.').map(Number)
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0]

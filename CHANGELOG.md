@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: a skill installed by an update was invisible until the second restart.** The assistant builds its list of skills as it starts, and installs any always-on skills the update added a moment later, in that order. So on the first boot after an update, the new skill was on disk and missing from the list: `/skill list` did not show it, its trigger words did nothing, and asked directly, the assistant said it did not have it. That is the boot where you go looking for whatever the update added. Found on havn-test, where 1.19.0's own discovery interview was the skill that went missing. The list is now rebuilt after anything is installed.
+
+- **Fixed: `/version` reported the version on disk, not the one running.** `/update` writes the new files and tells you to restart, and until you do, the old code keeps serving. `/version` was reading the file, so it answered with the new number from a process still running the old one, for as long as the restart was outstanding. It now reports what is actually running and says which version is waiting. `/update check` says the same rather than "You're on the latest version", which was true of the files and false of the assistant answering you.
+
 ## 1.19.0 - 2026-08-31
 
 One onboarding session produced this entire release. Watching a new client set the assistant up made the same gap obvious three times over: it arrives knowing a one-line bio and nothing else, and nothing in the product did anything about that. So this is a release about the first day. The assistant now runs a real discovery interview, keeps what it learns somewhere that survives updates, and brings the interview up itself rather than waiting to be asked by someone who has no way of knowing it exists. The two fixes are the other things that session turned up.

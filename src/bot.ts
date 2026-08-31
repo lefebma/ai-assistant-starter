@@ -28,7 +28,7 @@ import { commandWord } from './infra/command-text.js'
 import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
 import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
-import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog } from './updater.js'
+import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog, getBootVersion, restartPending } from './updater.js'
 import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT } from './env.js'
@@ -677,6 +677,15 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
       }
       msg += '\n\nRun /update apply to install.'
       await adapter.sendMessage(chatId, msg)
+    } else if (restartPending()) {
+      // "You're on the latest version" is true of the files and false of the
+      // process, and the difference is the whole reason the last update has
+      // not taken effect.
+      await adapter.sendMessage(
+        chatId,
+        `v${status.currentVersion} is installed, but this process is still running v${getBootVersion()}.\n` +
+        'Restart the service to pick it up.'
+      )
     } else {
       await adapter.sendMessage(chatId, `You're on the latest version (v${status.currentVersion}).`)
     }
@@ -986,7 +995,14 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
     if (cmd === '/version') {
-      await adapter.sendMessage(chatId, `AI Assistant v${getCurrentVersion()}`)
+      // Report what is running, not what is on disk. Those differ for exactly
+      // as long as an applied update waits for a restart, which is the window
+      // where someone is most likely to be asking.
+      const msg = restartPending()
+        ? `AI Assistant v${getBootVersion()} (running)\n` +
+          `v${getCurrentVersion()} is installed and starts on the next restart.`
+        : `AI Assistant v${getBootVersion()}`
+      await adapter.sendMessage(chatId, msg)
       return
     }
     if (cmd === '/update') {
