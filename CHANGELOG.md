@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- **Changed: the voice page speaks in your assistant's voice, not your laptop's.** It used to hand the reply to the browser's own speech engine, so the same assistant sounded like a different one on a Mac, an iPhone, and a Windows laptop, and on a phone it often sounded like nothing anyone would choose. The server now speaks the reply, with the same voice Telegram already uses (`TTS_VOICE`), and the page just plays it. Hosted boxes get the new route through the edge automatically on the next `enable-teams --voice`.
+## 1.20.0 - 2026-09-01
+
+The voice page stops borrowing the client's operating system to talk. It now speaks in the voice the box is configured with, the same one Telegram has always used, and the speaker picker that has been decorative since the page shipped does what it says.
+
+- **Changed: the voice page speaks in your assistant's voice, not your laptop's.** It used to hand the reply to the browser's own speech engine, so the same assistant sounded like a different one on a Mac, an iPhone, and a Windows laptop, and on a phone it often sounded like nothing anyone would choose. The server now speaks the reply, with the same voice Telegram already uses (`TTS_VOICE`), and the page just plays it. **Hosted boxes need one command after updating:** re-run `enable-teams --voice` as root and restart, so the edge knows about the new route. Until you do, the page answers in text and says it could not speak.
 
 - **Fixed: the speaker picker on the voice page did nothing.** It listed your output devices and remembered which one you picked, and the browser went on playing wherever it liked, because the old speech engine's audio never passed through anything a page can redirect. Real audio does, so the choice is honoured now. On Safari and Firefox, which do not let a page choose an output device at all, the picker says so and is greyed out rather than pretending. Three workarounds went with the old engine: replies are no longer chopped into 180-character pieces to dodge a 15-second cutoff, there is no timer nudging a stalled queue, and the reply is no longer clipped at 1500 characters (the limit is now 4000, set by what the speech service itself accepts).
 
