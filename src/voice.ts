@@ -70,15 +70,45 @@ export async function transcribeAudio(filePath: string): Promise<string> {
   })
 }
 
-export async function synthesizeSpeech(text: string): Promise<Buffer> {
+/** Spoken audio plus the type it actually is, which differs by engine. */
+export interface SpokenAudio {
+  audio: Buffer
+  contentType: string
+}
+
+/**
+ * OpenAI's tts-1 rejects input past 4096 characters, and macOS `say` will
+ * happily read for ten minutes. Neither is a good answer to a long reply, so
+ * cap here rather than in each caller.
+ */
+export const MAX_TTS_CHARS = 4000
+
+export function truncateForSpeech(text: string): string {
+  const t = text.trim()
+  return t.length > MAX_TTS_CHARS ? `${t.slice(0, MAX_TTS_CHARS)}...` : t
+}
+
+/**
+ * Speak text, and say what came back.
+ *
+ * Callers that write the bytes to an HTTP response need the content type: the
+ * two engines do not agree on one (OpenAI returns MP3, the macOS path converts
+ * to AAC in an MP4 container), and a browser handed the wrong type plays
+ * nothing with no error worth reading.
+ */
+export async function synthesizeSpeechAudio(text: string): Promise<SpokenAudio> {
   // Prefer OpenAI TTS if available, fall back to macOS `say`
   if (OPENAI_API_KEY) {
-    return synthesizeOpenAI(text)
+    return { audio: await synthesizeOpenAI(truncateForSpeech(text)), contentType: 'audio/mpeg' }
   }
   if (macSayAvailable) {
-    return synthesizeMacSay(text)
+    return { audio: await synthesizeMacSay(truncateForSpeech(text)), contentType: 'audio/mp4' }
   }
   throw new Error('No TTS engine available. Set OPENAI_API_KEY or run on macOS.')
+}
+
+export async function synthesizeSpeech(text: string): Promise<Buffer> {
+  return (await synthesizeSpeechAudio(text)).audio
 }
 
 /**
