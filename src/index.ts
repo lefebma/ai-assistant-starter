@@ -14,6 +14,8 @@ import { syncAlwaysOnSkills } from './skills/sync.js'
 import { reloadSkills } from './skills/index.js'
 import { interviewGreeting, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { PROJECT_ROOT } from './env.js'
+import { shutdownExitCode } from './infra/restart.js'
+import { RESTART_EXIT_CODE } from './service/supervisor.js'
 import { logger } from './logger.js'
 
 const PID_FILE = resolve(STORE_DIR, 'assistant.pid')
@@ -177,7 +179,9 @@ async function main(): Promise<void> {
     }
     await runBestEffortCleanup({ name: 'lock.release', cleanup: async () => releaseLock() })
 
-    process.exit(0)
+    // Non-zero when a command asked for a restart, so a Restart=on-failure unit
+    // brings us back rather than treating this as a clean stop.
+    process.exit(shutdownExitCode())
   }
 
   process.on('SIGINT', () => void shutdown())
@@ -210,7 +214,7 @@ async function main(): Promise<void> {
           { silenceMs, threshold: WATCHDOG_TIMEOUT_MS },
           'Polling watchdog: no activity, exiting for restart.'
         )
-        process.exit(43)
+        process.exit(RESTART_EXIT_CODE)
       }
     }, 60_000)
     watchdogTimer.unref()

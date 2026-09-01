@@ -29,6 +29,8 @@ import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
 import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
 import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog, getBootVersion, restartPending } from './updater.js'
+import { canSelfRestart } from './service/supervisor.js'
+import { requestRestart } from './infra/restart.js'
 import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT } from './env.js'
@@ -706,7 +708,9 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
         chatId,
         `This will update the engine from v${status.currentVersion} to v${status.latestVersion}.\n` +
         'Your .env, CLAUDE.md, PERSONALITY.md, skills, and data are preserved.\n' +
-        'The service will need a restart after.\n\n' +
+        (canSelfRestart()
+          ? 'I restart myself when it is done and go quiet for a minute or so.\n\n'
+          : 'The service will need a restart after.\n\n') +
         'Run /update apply again to confirm.'
       )
       // Auto-expire confirmation after 2 minutes
@@ -718,6 +722,24 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
     await adapter.sendMessage(chatId, 'Downloading and applying update... this may take a minute.')
 
     const result = await applyUpdate()
+
+    // New files under a running process do nothing until it restarts, and on a
+    // hosted box the client has no terminal to do that from. Where a supervisor
+    // will bring us back, take the restart rather than leaving an instruction
+    // nobody can act on. Where one will not, exiting would end the assistant,
+    // so say what has to happen instead.
+    if (result.success && canSelfRestart()) {
+      await adapter.sendMessage(
+        chatId,
+        `Updated from v${result.fromVersion} to v${result.toVersion}.\n` +
+        'Restarting now. Give me a minute, then say hello.'
+      )
+      requestRestart()
+      logger.info({ to: result.toVersion }, 'Restarting to activate the update')
+      process.kill(process.pid, 'SIGTERM')
+      return
+    }
+
     await adapter.sendMessage(chatId, result.message)
     return
   }
