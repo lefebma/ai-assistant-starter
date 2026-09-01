@@ -66,6 +66,37 @@ function writePublicHostname(hostname: string): void {
   writeFileSync(envPath, updated)
 }
 
+const RESTART_OVERRIDE_DIR = '/etc/systemd/system/havn.service.d'
+const RESTART_OVERRIDE_PATH = `${RESTART_OVERRIDE_DIR}/restart-delay.conf`
+
+/**
+ * A Teams box does not poll, so the unit's 70-second restart delay buys it
+ * nothing and costs it messages. Teams pushes each message once; while the app
+ * is down the edge has no upstream, and a message sent in that window is gone
+ * rather than late. The 70 seconds exists for Telegram, where a poller starting
+ * inside Telegram's ~60s getUpdates conflict window gets a 409, so drop it here
+ * rather than in the unit template every platform shares.
+ *
+ * Five seconds puts a restart inside the window Caddy will hold a webhook for
+ * (see lb_try_duration in the Caddyfile), which is what turns a lost message
+ * into a slow one.
+ */
+function writeRestartOverride(): void {
+  mkdirSync(RESTART_OVERRIDE_DIR, { recursive: true })
+  writeFileSync(
+    RESTART_OVERRIDE_PATH,
+    [
+      '# Written by enable-teams. A webhook box has no poller to collide with,',
+      "# so it does not need the unit's Telegram-shaped restart delay.",
+      '[Service]',
+      'RestartSec=5',
+      '',
+    ].join('\n')
+  )
+  run('systemctl', ['daemon-reload'])
+  console.log(`  Restart delay lowered to 5s (${RESTART_OVERRIDE_PATH}).`)
+}
+
 function main(): void {
   const args = process.argv.slice(2)
   const hostname = args.find(a => !a.startsWith('--'))
@@ -112,6 +143,8 @@ function main(): void {
   } catch {
     run('systemctl', ['restart', 'caddy'])
   }
+
+  writeRestartOverride()
 
   console.log('Edge configured.')
   console.log(`  Teams endpoint: https://${hostname}/api/teams/messages`)

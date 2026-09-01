@@ -30,7 +30,7 @@ import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './br
 import { getSkills, setSkillEnabled, reloadSkills, buildSkillIndex } from './skills/index.js'
 import { checkForUpdate, applyUpdate, getCurrentVersion, getChangelog, getBootVersion, restartPending } from './updater.js'
 import { canSelfRestart } from './service/supervisor.js'
-import { requestRestart } from './infra/restart.js'
+import { requestRestart, rememberRestartNotice } from './infra/restart.js'
 import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT } from './env.js'
@@ -729,10 +729,15 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
     // nobody can act on. Where one will not, exiting would end the assistant,
     // so say what has to happen instead.
     if (result.success && canSelfRestart()) {
+      // Do not invite a message into the gap. On a webhook platform the process
+      // being down is not a delay, it is a lost message: Teams pushes once, the
+      // edge answers 502 with nothing behind it, and that turn never happens.
+      // So ask them to wait, and speak first when we are back (see index.ts).
+      rememberRestartNotice({ chatId, toVersion: result.toVersion })
       await adapter.sendMessage(
         chatId,
         `Updated from v${result.fromVersion} to v${result.toVersion}.\n` +
-        'Restarting now. Give me a minute, then say hello.'
+        'Restarting now. Anything you send in the next minute will not reach me, so hold on and I will tell you when I am back.'
       )
       requestRestart()
       logger.info({ to: result.toVersion }, 'Restarting to activate the update')
