@@ -466,13 +466,27 @@ Existing boxes pick this up on the next `enable-teams` run.
   the service starts on boot once enabled.
 - **App:** the `/update` command works as on any install; the repo is public,
   so no token is involved (a private fork would need a fine-grained PAT with
-  Contents: read in `.env` as `GITHUB_TOKEN`). After "Updated ... Restart the
-  service to activate", restart over SSH: `sudo systemctl restart havn`.
-  Manual equivalent: `git pull && npm ci && npm run build && sudo systemctl
-  restart havn`. **Boxes provisioned before 2026-08-23** run an updater that
-  prunes its own build tools (`npm install --production`, then `tsc: not
-  found`); do the manual update once to get past it, after which `/update`
-  works.
+  Contents: read in `.env` as `GITHUB_TOKEN`). The unit is `Restart=always`, so
+  from 1.19.2 the assistant restarts itself once the files are in place: it goes
+  quiet for about 70 seconds (`RestartSec`) and comes back on the new version.
+  Nothing to do over SSH. On an older box, `/update` ends with "Restart the
+  service to activate" and means it: `sudo systemctl restart havn`.
+- **Do not update a hosted box with `git pull`.** The updater replaces engine
+  files in place rather than pulling, so git on a box that has ever run
+  `/update` still points at whatever commit was cloned and reports a long list
+  of modified files. `git pull` fights that working tree, and `git reset --hard`
+  would take the client's `CLAUDE.md` with it. To force an update without the
+  chat, run the same code path the command uses and then restart:
+
+  ```bash
+  cd ~/havn
+  node -e "import('./dist/src/updater.js').then(m=>m.applyUpdate()).then(r=>console.log(r.message))"
+  sudo systemctl restart havn
+  ```
+
+  **Boxes provisioned before 2026-08-23** run an updater that prunes its own
+  build tools (`npm install --production`, then `tsc: not found`); run the
+  commands above once to get past it, after which `/update` works.
 - **Snapshot before app updates.** Every provider above does whole-disk
   snapshots (Hetzner/DO/Vultr one click or one CLI call; OVH via the manager).
   A snapshot taken while the service runs is fine for this workload — SQLite

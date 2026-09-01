@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Changed: `/update` now restarts the assistant itself.** It used to end with "Restart the service to activate", which is fine on a laptop with a Restart shortcut and impossible on a hosted box, where there is no terminal to restart anything from. So the update did not take effect, and the only sign of it was that nothing had changed. It now goes quiet for a minute after applying and comes back on the new version. Where nothing would bring it back (a Windows logon task, or the app run by hand in a terminal) it does not exit and still asks for the restart, because ending the assistant with no way to start it again is worse than an instruction. `/update apply` says which of the two will happen before you confirm.
+
 ## 1.19.1 - 2026-08-31
 
 A same-day fix for 1.19.0. The discovery interview shipped a few hours earlier and then failed to show up on the first box that installed it, for a reason that had nothing to do with the interview: a skill an update installs is not visible until the restart after the one that installed it. Any always-on skill in any future release would have hit the same wall.
