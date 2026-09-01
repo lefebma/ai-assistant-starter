@@ -417,6 +417,12 @@ sudo systemctl restart havn
 That opens `/voice` through Caddy and records `PUBLIC_HOSTNAME` in `.env`.
 The restart is what makes the assistant aware of its own address.
 
+**Run those two commands again after any update that adds an API route.**
+The edge proxies an explicit list of paths, so a box whose Caddyfile predates a
+route gets a 404 from Caddy for something that works perfectly in local
+development. 1.20.0 added `/api/speak`, so every box updating into it needs this
+once; the page answers in text and says it could not speak until you do.
+
 **Nothing in the edge config is a credential.** Each user mints their own
 link by sending `/voice ui` in their chat; the app validates it. Links
 expire (`VOICE_LINK_TTL_HOURS`, default 12), minting a new one cancels the
