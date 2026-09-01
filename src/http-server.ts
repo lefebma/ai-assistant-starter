@@ -2,7 +2,7 @@ import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
 import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, PRIMARY_CHAT_ID } from './config.js'
-import { transcribeAudio } from './voice.js'
+import { transcribeAudio, synthesizeSpeechAudio, voiceCapabilities } from './voice.js'
 import { resolveVoiceToken } from './voice-links.js'
 import { runAgent } from './agent.js'
 import { sendPlatformMessage } from './bot.js'
@@ -306,6 +306,65 @@ async function handleTranscribe(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
+/**
+ * Speak a reply for the voice page.
+ *
+ * The page used to do this itself with the browser's speechSynthesis, which
+ * meant the assistant sounded like whatever the client's operating system had
+ * lying around, and meant the page's speaker picker could not work: that output
+ * never passes through an element with a sink to set. Synthesising here gives
+ * one voice per box (TTS_VOICE), the same one Telegram already speaks with, and
+ * hands the browser an ordinary audio file it can route wherever it likes.
+ */
+async function handleSpeak(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireAuth(req, res)) return
+
+  const chunks: Buffer[] = []
+  for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+
+  // Shape before capability: a malformed request is malformed on every box,
+  // and answering that first is what makes these paths testable without a TTS
+  // engine, an API key, or a bill.
+  let text = ''
+  try {
+    text = (JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { text?: string }).text ?? ''
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'bad_json' }))
+    return
+  }
+
+  if (!text.trim()) {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'empty_text' }))
+    return
+  }
+
+  if (!voiceCapabilities().tts) {
+    // Not an error the client can fix, so name it: the page says replies stay
+    // in text rather than failing silently.
+    res.writeHead(503, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'tts_not_configured' }))
+    return
+  }
+
+  try {
+    const { audio, contentType } = await synthesizeSpeechAudio(text)
+    logger.info({ chars: text.length, bytes: audio.length, contentType }, 'speak request')
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': audio.length,
+      // A spoken reply is one turn of a conversation, not a document.
+      'Cache-Control': 'no-store',
+    })
+    res.end(audio)
+  } catch (err) {
+    logger.error({ err }, 'speak failed')
+    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'tts_failed' }))
+  }
+}
+
 async function handleSignedUrl(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!requireAuth(req, res)) return
   if (!ELEVENLABS_API_KEY || !ELEVENLABS_AGENT_ID) {
@@ -418,6 +477,10 @@ export function startHttpServer(port: number = HTTP_PORT): void {
     }
     if (req.method === 'POST' && url.pathname === '/api/transcribe') {
       void handleTranscribe(req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/speak') {
+      void handleSpeak(req, res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/signed-url') {

@@ -189,6 +189,12 @@
     const STORAGE_MIC = 'havn_mic_id'
     const STORAGE_SPEAKER = 'havn_speaker_id'
 
+    // Safari and Firefox do not implement setSinkId, so a speaker chosen here
+    // could never be honoured on those browsers. Say so rather than offering a
+    // control that silently does nothing, which is what this page shipped with.
+    const SINK_SUPPORTED =
+      typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
+
     async function enumerateDevices() {
       try {
         // Use the saved mic if we have one, so the browser doesn't prime
@@ -226,7 +232,11 @@
 
       const speakers = devices.filter(d => d.kind === 'audiooutput')
       speakerSelect.innerHTML = ''
-      if (speakers.length === 0) {
+      if (!SINK_SUPPORTED) {
+        speakerSelect.innerHTML = '<option value="">Chosen by this browser</option>'
+        speakerSelect.disabled = true
+        speakerSelect.title = 'This browser does not let a page choose the output device.'
+      } else if (speakers.length === 0) {
         speakerSelect.innerHTML = '<option value="">Default (browser controlled)</option>'
       } else {
         speakers.forEach((d, i) => {
@@ -237,7 +247,9 @@
         })
       }
       const savedSpeaker = localStorage.getItem(STORAGE_SPEAKER)
-      if (savedSpeaker && speakers.some(s => s.deviceId === savedSpeaker)) speakerSelect.value = savedSpeaker
+      if (SINK_SUPPORTED && savedSpeaker && speakers.some(s => s.deviceId === savedSpeaker)) {
+        speakerSelect.value = savedSpeaker
+      }
     }
 
     micSelect.addEventListener('change', () => localStorage.setItem(STORAGE_MIC, micSelect.value))
@@ -347,137 +359,119 @@
       }
     }
 
-    // --- TTS (browser) with speaker selection ---
-    let ttsAudioCtx = null
+    // --- TTS (server) with speaker selection ---
+    //
+    // The server speaks (POST /api/speak) and this page plays the file it sends
+    // back. The browser's speechSynthesis used to do it, which is why this file
+    // once carried a sentence chunker, a pause/resume keepalive, a voice picker
+    // and a list of strong references: all four existed to work around engine
+    // limits (utterances truncated near 15s, queues that stall, utterances
+    // garbage collected mid-sentence) that an audio file simply does not have.
+    // Playing through an <audio> element is also the only way the speaker
+    // picker can mean anything, since setSinkId lives on media elements and
+    // speechSynthesis output never passes through one.
+    let ttsAudio = null
+    let ttsUrl = null
     let currentlySpeaking = false
-    let speechUnlocked = false
-    let ttsKeepAlive = null
+    let audioUnlocked = false
     let resolveSpeak = null
-    let liveUtterances = []  // strong refs: browsers GC utterances mid-speech
+    let ttsUnavailableNoted = false
 
-    // iOS Safari drops speechSynthesis.speak() unless the FIRST call on the page
-    // originates inside a user gesture. Everything here speaks from an async
-    // promise chain, so prime the engine from a gesture instead. Never prime on
-    // the tap that opens the mic: iOS switches the audio session to playback and
-    // the getUserMedia capture that follows records silence.
-    function unlockSpeech() {
-      if (speechUnlocked || !window.speechSynthesis) return
+    // One sample of silence. iOS refuses audio that did not begin in a user
+    // gesture, and every speak() here begins in an async chain, so play this
+    // once from a gesture to open the audio session. Never on the tap that
+    // opens the mic: iOS switches the session to playback and the capture that
+    // follows records silence. That rule is inherited from the speechSynthesis
+    // version and was learned the hard way; it still applies.
+    const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA='
+
+    function unlockAudio() {
+      if (audioUnlocked) return
       try {
-        const u = new SpeechSynthesisUtterance(' ')
-        u.volume = 0
-        window.speechSynthesis.speak(u)
-        speechUnlocked = true
-      } catch (e) { console.warn('Could not unlock speech:', e) }
-    }
-
-    function pickVoice() {
-      const voices = window.speechSynthesis.getVoices()
-      return voices.find(v => /samantha|karen|moira|daniel|google uk/i.test(v.name))
-        || voices.find(v => v.lang.startsWith('en') && v.localService)
-        || voices[0]
-        || null
-    }
-
-    // Firefox and Chrome truncate a single long utterance after roughly 15s.
-    // Split on sentence boundaries so each utterance stays short.
-    function chunkForSpeech(text, max = 180) {
-      const parts = text.match(/[^.!?\n]+[.!?]*\s*|\n+/g) || [text]
-      const chunks = []
-      let cur = ''
-      for (const part of parts) {
-        if (cur && (cur + part).length > max) { chunks.push(cur.trim()); cur = '' }
-        if (part.length > max) {
-          let rest = part
-          while (rest.length > max) {
-            let cut = rest.lastIndexOf(' ', max)
-            if (cut <= 0) cut = max
-            chunks.push(rest.slice(0, cut).trim())
-            rest = rest.slice(cut)
-          }
-          cur = rest
-        } else {
-          cur += part
-        }
-      }
-      if (cur.trim()) chunks.push(cur.trim())
-      return chunks.filter(Boolean)
-    }
-
-    function startKeepAlive() {
-      stopKeepAlive()
-      // Chrome and Firefox stall a queued utterance list after ~15s. A
-      // pause/resume nudge keeps the queue moving; it is a no-op when idle.
-      ttsKeepAlive = setInterval(() => {
-        if (!currentlySpeaking) { stopKeepAlive(); return }
-        try {
-          window.speechSynthesis.pause()
-          window.speechSynthesis.resume()
-        } catch (e) { console.warn('TTS keepalive failed:', e) }
-      }, 10000)
-    }
-
-    function stopKeepAlive() {
-      if (ttsKeepAlive) { clearInterval(ttsKeepAlive); ttsKeepAlive = null }
+        const probe = new Audio(SILENT_WAV)
+        probe.volume = 0
+        const started = probe.play()
+        if (started && started.catch) started.catch(() => {})
+        audioUnlocked = true
+      } catch (e) { console.warn('Could not unlock audio:', e) }
     }
 
     // Idempotent: resolves the pending speak() exactly once, whoever calls it.
     function finishSpeaking() {
-      stopKeepAlive()
-      liveUtterances = []
+      if (ttsUrl) { URL.revokeObjectURL(ttsUrl); ttsUrl = null }
+      ttsAudio = null
       currentlySpeaking = false
       const done = resolveSpeak
       resolveSpeak = null
       if (done) { setMode(''); done() }
     }
 
-    function speak(text) {
-      return new Promise(async (resolve) => {
-        if (!window.speechSynthesis) { resolve(); return }
-        window.speechSynthesis.cancel()
-        finishSpeaking()
-
-        const speakText = text.length > 1500 ? text.slice(0, 1500) + '... (truncated)' : text
-        const chunks = chunkForSpeech(speakText)
-        if (chunks.length === 0) { resolve(); return }
-
-        const selectedSpeaker = speakerSelect.value
-        if (selectedSpeaker) {
-          try {
-            if (!ttsAudioCtx || ttsAudioCtx.state === 'closed') ttsAudioCtx = new AudioContext()
-            if (ttsAudioCtx.setSinkId) await ttsAudioCtx.setSinkId(selectedSpeaker)
-          } catch (e) { console.warn('Could not set speaker output:', e) }
+    async function fetchSpeech(text) {
+      const resp = await fetch('/api/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ text }),
+      })
+      if (resp.status === 503) {
+        // The box has no TTS engine at all. Say so once and stay quiet after,
+        // rather than reporting the same permanent fact on every reply.
+        if (!ttsUnavailableNoted) {
+          ttsUnavailableNoted = true
+          addMessage('system', 'This assistant has no voice configured, so replies stay in text.')
         }
+        return null
+      }
+      if (!resp.ok) throw new Error('speak failed: ' + resp.status)
+      return await resp.blob()
+    }
 
-        const voice = pickVoice()
+    async function speak(text) {
+      stopSpeaking()
+      const speakText = text.trim()
+      if (!speakText) return
+
+      let blob
+      try {
+        blob = await fetchSpeech(speakText)
+      } catch (e) {
+        console.warn('TTS request failed:', e)
+        addMessage('system', 'Could not speak that one. The reply is above.')
+        return
+      }
+      if (!blob) return
+
+      return new Promise((resolve) => {
+        ttsUrl = URL.createObjectURL(blob)
+        const audio = new Audio(ttsUrl)
+        ttsAudio = audio
         setMode('speaking')
         currentlySpeaking = true
         resolveSpeak = resolve
-        liveUtterances = []
+        audio.onended = finishSpeaking
+        audio.onerror = finishSpeaking
 
-        let remaining = chunks.length
-        for (const chunk of chunks) {
-          const utter = new SpeechSynthesisUtterance(chunk)
-          utter.rate = 1.05
-          utter.pitch = 1.0
-          if (voice) utter.voice = voice
-          utter.onend = () => { if (--remaining <= 0) finishSpeaking() }
-          utter.onerror = () => { finishSpeaking() }
-          liveUtterances.push(utter)
-          window.speechSynthesis.speak(utter)
+        const play = () => {
+          const started = audio.play()
+          if (started && started.catch) {
+            started.catch((e) => { console.warn('Playback blocked:', e); finishSpeaking() })
+          }
         }
 
-        startKeepAlive()
+        // Route to the chosen speaker first, then play. Selecting a sink after
+        // playback starts is allowed but audibly switches mid-word.
+        const sink = speakerSelect.value
+        if (sink && audio.setSinkId) {
+          audio.setSinkId(sink).then(play, (e) => { console.warn('Could not set speaker output:', e); play() })
+        } else {
+          play()
+        }
       })
     }
 
     function stopSpeaking() {
-      if (!window.speechSynthesis) return
-      window.speechSynthesis.cancel()
+      if (ttsAudio) { try { ttsAudio.pause() } catch (e) {} }
       finishSpeaking()
     }
-
-    window.speechSynthesis?.getVoices()
-    window.speechSynthesis?.addEventListener?.('voiceschanged', () => {})
 
     // --- MediaRecorder: records from selected mic, sends to Whisper ---
     let mediaRecorder = null
@@ -580,20 +574,20 @@
       if (busy && currentlySpeaking) {
         // Interrupt TTS
         stopSpeaking()
-        unlockSpeech()
+        unlockAudio()
         setMode('')
         busy = false
         return
       }
       if (busy) return
 
-      if (recording) { unlockSpeech(); stopRecording() }
+      if (recording) { unlockAudio(); stopRecording() }
       else startRecording()
     })
 
     // --- Text input ---
     function handleSend() {
-      unlockSpeech()
+      unlockAudio()
       const text = textInput.value.trim()
       if (!text || busy) return
       textInput.value = ''
@@ -611,13 +605,13 @@
         e.preventDefault()
         if (busy && currentlySpeaking) {
           stopSpeaking()
-          unlockSpeech()
+          unlockAudio()
           setMode('')
           busy = false
           return
         }
         if (busy) return
-        if (recording) { unlockSpeech(); stopRecording() }
+        if (recording) { unlockAudio(); stopRecording() }
         else startRecording()
       }
     })
