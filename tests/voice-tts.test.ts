@@ -38,7 +38,12 @@ const PAGE = readFileSync(join(REPO, 'public', 'voice.html'), 'utf-8')
 /** The page's script, without the comments that explain what it used to do. */
 const PAGE_CODE = PAGE.replace(/^\s*\/\/.*$/gm, '')
 
-let nextPort = 3960 + Math.floor(Math.random() * 30) * 10
+// 5100-5300. Two constraints, both learned from this file failing CI: stay off
+// the band tests/http-routes.test.ts draws from (3900-4890) so parallel workers
+// cannot collide, and stay off fetch's blocked-port list, which includes 4045
+// and 4190. A blocked port fails as "bad port" from fetch rather than as
+// anything resembling a bind error, and only when the random draw lands on it.
+let nextPort = 5100 + Math.floor(Math.random() * 20) * 10
 
 async function startServer(): Promise<number> {
   const port = nextPort++
