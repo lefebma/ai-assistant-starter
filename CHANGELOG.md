@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.19.2 - 2026-08-31
+
+The last piece of the same thread. 1.19.1 made an update's new skills visible on the boot that installed them; this makes the boot happen. An update that tells a client to restart a service they have no terminal to reach is an update that does not take effect, which is how a box ran two-day-old code with the new version sitting on disk beside it.
+
 - **Changed: `/update` now restarts the assistant itself.** It used to end with "Restart the service to activate", which is fine on a laptop with a Restart shortcut and impossible on a hosted box, where there is no terminal to restart anything from. So the update did not take effect, and the only sign of it was that nothing had changed. It now goes quiet for a minute after applying and comes back on the new version. Where nothing would bring it back (a Windows logon task, or the app run by hand in a terminal) it does not exit and still asks for the restart, because ending the assistant with no way to start it again is worse than an instruction. `/update apply` says which of the two will happen before you confirm.
 
 ## 1.19.1 - 2026-08-31
