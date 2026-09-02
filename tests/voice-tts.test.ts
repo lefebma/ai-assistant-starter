@@ -151,7 +151,58 @@ describe('the voice page', () => {
   })
 
   it('routes playback through an element that can honour the speaker choice', () => {
-    expect(PAGE_CODE).toContain('audio.setSinkId')
+    expect(PAGE_CODE).toContain('player.setSinkId')
+  })
+
+  it('speaks every reply through one element, because iOS permits elements not pages', () => {
+    // The bug this replaced: a fresh Audio() per reply, primed by a throwaway
+    // probe. iOS clears the gesture requirement on the element that played, so
+    // the element that spoke had never been granted anything. Every reply
+    // reached the iPhone (200s from /api/speak in the access log) and none of
+    // them played. One construction, at page scope, is the whole fix.
+    expect(PAGE_CODE.match(/new Audio\(/g) ?? []).toHaveLength(1)
+    expect(PAGE_CODE).toContain('const player = new Audio()')
+    expect(PAGE_CODE).toContain('player.src = ttsUrl')
+  })
+
+  it('primes the element that actually speaks, not a throwaway', () => {
+    const unlock = PAGE_CODE.slice(
+      PAGE_CODE.indexOf('function unlockAudio'),
+      PAGE_CODE.indexOf('function audioSession'),
+    )
+    expect(unlock).toContain('player.src = SILENT_WAV')
+    expect(unlock).toContain('player.play()')
+  })
+
+  it('asks iOS for a playback session, and hands it back for capture', () => {
+    // The ringer switch mutes an <audio> element and never muted
+    // speechSynthesis, so the engine swap could leave a phone silent even with
+    // playback permitted. Capture has to have the session back or the mic
+    // records nothing.
+    expect(PAGE_CODE).toContain("audioSession('playback')")
+    expect(PAGE_CODE).toContain("audioSession('play-and-record')")
+    expect(PAGE_CODE).toContain('navigator.audioSession')
+
+    const startRec = PAGE_CODE.indexOf('async function startRecording')
+    const body = PAGE_CODE.slice(startRec, PAGE_CODE.indexOf('getUserMedia', startRec))
+    expect(body).toContain("audioSession('play-and-record')")
+  })
+
+  it('offers a tap when playback is refused, rather than going quiet', () => {
+    // A phone has no console. Without this, a blocked reply is indistinguishable from a broken assistant.
+    expect(PAGE_CODE).toContain('offerTap()')
+    expect(PAGE_CODE).toContain('Tap here to hear that reply.')
+  })
+
+  it('keeps the audio alive for that tap, and releases it on the next reply', () => {
+    // finishSpeaking used to revoke the object URL, which would hand the retry
+    // tap a dead src. One blob stays alive until the reply after it.
+    const finish = PAGE_CODE.slice(
+      PAGE_CODE.indexOf('function finishSpeaking'),
+      PAGE_CODE.indexOf('async function fetchSpeech'),
+    )
+    expect(finish).not.toContain('revokeObjectURL')
+    expect(PAGE_CODE).toContain('if (ttsUrl) URL.revokeObjectURL(ttsUrl)')
   })
 
   it('disables the speaker picker where the browser cannot honour it', () => {

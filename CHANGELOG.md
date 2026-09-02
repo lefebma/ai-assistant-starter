@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the voice page was silent on an iPhone.** 1.20.0 moved the spoken reply from the browser's own speech engine to the assistant's voice, and on a phone the result was a page that answered in text and said nothing, which is the surface voice exists for. The replies were arriving: the box's log shows the audio built and sent for every one of them. iPhones grant permission to speak to a single audio player, earned the first time you tap something, and the page was politely getting permission for one player and then handing each reply to a brand new one that had never been granted anything. It now uses one player for the whole conversation. Two more things went in with it: the reply now plays even with the ringer switch off, which the old speech engine did for free and an audio file does not, and a reply the browser still refuses to play leaves a line you can tap to hear it instead of silence you have to guess at. Desktop browsers were never affected, which is why this shipped.
+
 ## 1.20.2 - 2026-09-01
 
 The 1.20.1 fix did not work. It held the message and then dropped it anyway, which is the same lost message with a five-second pause in front of it. This is what actually delivers it, found by running it against a restarting box instead of reading the config.

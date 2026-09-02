@@ -282,6 +282,7 @@
       div.className = 'msg ' + role
       div.textContent = text
       transcript.prepend(div)
+      return div
     }
 
     // --- Transcribe audio via server-side Whisper ---
@@ -370,7 +371,16 @@
     // Playing through an <audio> element is also the only way the speaker
     // picker can mean anything, since setSinkId lives on media elements and
     // speechSynthesis output never passes through one.
-    let ttsAudio = null
+    // One element, for the life of the page. iOS grants playback permission to
+    // an element rather than to the page: an element that played once inside a
+    // user gesture may be given a new src and played from an async chain later,
+    // and an element that never did may not. The first cut of this built a
+    // fresh Audio() per reply and primed a throwaway probe, so on an iPhone
+    // every reply was fetched (200s from /api/speak sit in the access log) and
+    // none of them played. Desktop Safari and Chrome are lenient enough about
+    // gesture history to hide the bug completely.
+    const player = new Audio()
+    player.preload = 'auto'
     let ttsUrl = null
     let currentlySpeaking = false
     let audioUnlocked = false
@@ -387,19 +397,36 @@
 
     function unlockAudio() {
       if (audioUnlocked) return
+      audioUnlocked = true
       try {
-        const probe = new Audio(SILENT_WAV)
-        probe.volume = 0
-        const started = probe.play()
+        // On the element that speaks, not a throwaway: see the note above.
+        player.onended = null
+        player.onerror = null
+        player.src = SILENT_WAV
+        const started = player.play()
         if (started && started.catch) started.catch(() => {})
-        audioUnlocked = true
       } catch (e) { console.warn('Could not unlock audio:', e) }
     }
 
+    // An iPhone's ringer switch mutes an <audio> element. It did not mute
+    // speechSynthesis, so swapping the engine quietly made the phone the one
+    // surface that cannot be heard, on a page whose whole point is being used
+    // away from a desk. Safari 16.4+ lets a page say what the audio is for:
+    // 'playback' is heard through the switch, and capture has to have it back
+    // at 'play-and-record' or the mic records silence. Absent elsewhere, which
+    // is why every call is guarded.
+    function audioSession(type) {
+      try {
+        if (navigator.audioSession) navigator.audioSession.type = type
+      } catch (e) { console.warn('Could not set audio session:', e) }
+    }
+
     // Idempotent: resolves the pending speak() exactly once, whoever calls it.
+    // The object URL deliberately outlives it. A reply the browser refused to
+    // play leaves a tap-to-hear offer behind, and revoking here would hand that
+    // tap a dead src. The next speak() releases it, so one blob is alive at a
+    // time.
     function finishSpeaking() {
-      if (ttsUrl) { URL.revokeObjectURL(ttsUrl); ttsUrl = null }
-      ttsAudio = null
       currentlySpeaking = false
       const done = resolveSpeak
       resolveSpeak = null
@@ -441,35 +468,60 @@
       if (!blob) return
 
       return new Promise((resolve) => {
+        if (ttsUrl) URL.revokeObjectURL(ttsUrl)
         ttsUrl = URL.createObjectURL(blob)
-        const audio = new Audio(ttsUrl)
-        ttsAudio = audio
+        player.src = ttsUrl
         setMode('speaking')
         currentlySpeaking = true
         resolveSpeak = resolve
-        audio.onended = finishSpeaking
-        audio.onerror = finishSpeaking
+        player.onended = finishSpeaking
+        player.onerror = finishSpeaking
 
         const play = () => {
-          const started = audio.play()
+          audioSession('playback')
+          const started = player.play()
           if (started && started.catch) {
-            started.catch((e) => { console.warn('Playback blocked:', e); finishSpeaking() })
+            started.catch((e) => { console.warn('Playback blocked:', e); offerTap() })
           }
         }
 
         // Route to the chosen speaker first, then play. Selecting a sink after
         // playback starts is allowed but audibly switches mid-word.
         const sink = speakerSelect.value
-        if (sink && audio.setSinkId) {
-          audio.setSinkId(sink).then(play, (e) => { console.warn('Could not set speaker output:', e); play() })
+        if (sink && player.setSinkId) {
+          player.setSinkId(sink).then(play, (e) => { console.warn('Could not set speaker output:', e); play() })
         } else {
           play()
         }
       })
     }
 
+    // The last resort, and the only symptom a phone can show: there is no
+    // console to read on one. A refused reply becomes a line you can tap
+    // instead of a silence you have to guess at, and the offer itself says
+    // which failure this is, since a reply muted by the ringer switch plays
+    // through without ever landing here.
+    function offerTap() {
+      const line = addMessage('system', 'Tap here to hear that reply.')
+      line.style.cursor = 'pointer'
+      line.style.textDecoration = 'underline'
+      line.addEventListener('click', () => {
+        audioSession('playback')
+        const started = player.play()
+        if (started && started.then) {
+          started.then(
+            () => line.remove(),
+            () => { line.textContent = 'This browser will not play audio here.' },
+          )
+        } else {
+          line.remove()
+        }
+      }, { once: true })
+      finishSpeaking()
+    }
+
     function stopSpeaking() {
-      if (ttsAudio) { try { ttsAudio.pause() } catch (e) {} }
+      try { player.pause() } catch (e) {}
       finishSpeaking()
     }
 
@@ -482,6 +534,7 @@
       stopSpeaking()
 
       const selectedMic = micSelect.value
+      audioSession('play-and-record')
       try {
         const constraints = selectedMic
           ? { audio: { deviceId: { exact: selectedMic } } }
