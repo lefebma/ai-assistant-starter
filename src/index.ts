@@ -14,7 +14,7 @@ import { syncAlwaysOnSkills } from './skills/sync.js'
 import { reloadSkills } from './skills/index.js'
 import { interviewGreeting, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { PROJECT_ROOT } from './env.js'
-import { shutdownExitCode } from './infra/restart.js'
+import { clearRestartNotice, pendingRestartNotice, restartNoticeMessage, shutdownExitCode } from './infra/restart.js'
 import { RESTART_EXIT_CODE } from './service/supervisor.js'
 import { logger } from './logger.js'
 
@@ -124,6 +124,22 @@ async function main(): Promise<void> {
   // "offered" would leave the client with no way to learn the interview
   // exists. Those installs get the offer on their first inbound message
   // instead (see handleMessage in bot.ts).
+  // If we restarted to finish an update, the client was asked to wait. Tell
+  // them it is over before anything else: they are holding a message.
+  const notice = pendingRestartNotice()
+  if (notice) {
+    try {
+      await adapter.sendMessage(notice.chatId, restartNoticeMessage(notice))
+      logger.info({ to: notice.toVersion }, 'Told the client the restart is done')
+    } catch (err) {
+      logger.warn({ err }, 'Could not announce the restart; carrying on')
+    } finally {
+      // Cleared either way. A notice that outlived a failed send would be
+      // announced on every boot from here on.
+      clearRestartNotice()
+    }
+  }
+
   if (PRIMARY_CHAT_ID && shouldOfferInterview(PROJECT_ROOT)) {
     try {
       await adapter.sendMessage(PRIMARY_CHAT_ID, interviewGreeting())

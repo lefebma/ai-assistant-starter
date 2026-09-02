@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: a message sent while the assistant was restarting could vanish.** `/update` restarts the assistant to finish the job, and the message announcing it said "give me a minute, then say hello". On Teams, saying hello during that minute meant losing it: Teams delivers each message once, and while the app is down there is nothing to deliver it to. Two hellos were lost that way on the test box, nine seconds before it came back, and the only symptom was an assistant that appeared to ignore them. It now asks you to hold off and messages you itself when it is back, so there is no guessing. Telegram was never affected: it holds anything sent while the bot is away.
+
+- **Changed: hosted Teams boxes come back faster, and the edge waits for them.** Re-running `enable-teams` sets two things that turn a lost message into a slow one: the web server now holds an incoming message for up to 15 seconds while the assistant is restarting instead of rejecting it, and the restart delay drops from 70 seconds to 5. The 70 seconds exists so a Telegram connection does not collide with itself on restart; a Teams box has no such connection, so the wait was buying nothing and costing messages. Run `enable-teams` once on any existing box (see docs/HOSTED-VPS.md).
+
 ## 1.20.0 - 2026-09-01
 
 The voice page stops borrowing the client's operating system to talk. It now speaks in the voice the box is configured with, the same one Telegram has always used, and the speaker picker that has been decorative since the page shipped does what it says.

@@ -473,10 +473,22 @@ Existing boxes pick this up on the next `enable-teams` run.
 - **App:** the `/update` command works as on any install; the repo is public,
   so no token is involved (a private fork would need a fine-grained PAT with
   Contents: read in `.env` as `GITHUB_TOKEN`). The unit is `Restart=always`, so
-  from 1.19.2 the assistant restarts itself once the files are in place: it goes
-  quiet for about 70 seconds (`RestartSec`) and comes back on the new version.
-  Nothing to do over SSH. On an older box, `/update` ends with "Restart the
-  service to activate" and means it: `sudo systemctl restart havn`.
+  from 1.19.2 the assistant restarts itself once the files are in place, and
+  from 1.20.1 it tells the client to hold off and then messages them when it is
+  back. Nothing to do over SSH. On an older box, `/update` ends with "Restart
+  the service to activate" and means it: `sudo systemctl restart havn`.
+- **A restart is a gap, and on Teams the gap loses messages.** Teams pushes
+  each message once, so anything sent while the app is down gets a 502 from
+  Caddy and is gone rather than late (Telegram is fine: it polls, and holds the
+  backlog). Two things narrow the gap on a Teams box, both applied by
+  `enable-teams`: the Caddyfile holds a webhook for up to 15 seconds waiting for
+  the app to come back, and a drop-in at
+  `/etc/systemd/system/havn.service.d/restart-delay.conf` lowers `RestartSec`
+  from 70 to 5. The 70 seconds in the shared unit is there so a new Telegram
+  poller does not start inside Telegram's ~60s `getUpdates` conflict window; a
+  webhook box has no poller, and every one of those seconds is a message it
+  cannot receive. **Re-run `enable-teams` on any box provisioned before
+  1.20.1** to pick both up.
 - **Do not update a hosted box with `git pull`.** The updater replaces engine
   files in place rather than pulling, so git on a box that has ever run
   `/update` still points at whatever commit was cloned and reports a long list

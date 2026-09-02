@@ -4,7 +4,12 @@ import { registerHttpRoute, startHttpServer, stopHttpServer, audioExtension } fr
 // A fresh port per test. Reusing one port across start/stop cycles raced on
 // Windows CI: rebinding a just-closed port intermittently reset the next
 // connection (ECONNRESET), which looked like a route bug and was not one.
-let nextPort = 3900 + Math.floor(Math.random() * 100) * 10
+// The band matters as much as the freshness. 3900-4890, where this used to
+// draw from, contains 4045 and 4190, both on fetch's blocked-port list: a draw
+// that landed on either failed the readiness loop for five seconds and then
+// threw "fetch failed", which reads exactly like a hung server and is not one.
+// 5400-5600 is clear of that list and of the band tests/voice-tts.test.ts uses.
+let nextPort = 5400 + Math.floor(Math.random() * 20) * 10
 
 /** Start the server and wait until it actually answers, rather than guessing at a sleep. */
 async function startServer(): Promise<number> {

@@ -76,7 +76,16 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       '',
       `\t# Teams webhook (adapter handles verification)`,
       `\thandle ${TEAMS_WEBHOOK_PREFIX} {`,
-      `\t\treverse_proxy ${APP_UPSTREAM}`,
+      `\t\treverse_proxy ${APP_UPSTREAM} {`,
+      '\t\t\t# Hold the request while the app restarts rather than 502ing it.',
+      '\t\t\t# Teams pushes each message exactly once: a 502 is not a retry',
+      '\t\t\t# later, it is that message gone. Telegram is forgiving here',
+      '\t\t\t# because it polls and holds anything sent while the bot is away.',
+      '\t\t\t# 15s because the Bot Framework stops waiting around there, so a',
+      '\t\t\t# longer hold would just fail more slowly.',
+      '\t\t\tlb_try_duration 15s',
+      '\t\t\tlb_try_interval 500ms',
+      '\t\t}',
       '\t}',
     )
   }
