@@ -29,7 +29,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startHttpServer, stopHttpServer } from '../src/http-server.js'
-import { MAX_TTS_CHARS, truncateForSpeech } from '../src/voice.js'
+import {
+  MAX_TTS_CHARS, truncateForSpeech,
+  effectiveVoice, setEffectiveVoice, isOpenAIVoice, OPENAI_VOICES, VOICE_STATE_KEY,
+} from '../src/voice.js'
 import { buildCaddyfile } from '../src/deploy/teams-edge.js'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -99,11 +102,96 @@ describe('POST /api/speak', () => {
   })
 })
 
+describe('the voice a box speaks in', () => {
+  it('uses TTS_VOICE when nothing has been chosen', () => {
+    expect(effectiveVoice(() => null)).toBe('fable')
+  })
+
+  it('prefers a choice made in the UI', () => {
+    expect(effectiveVoice(() => 'nova')).toBe('nova')
+  })
+
+  it('falls back rather than throwing on a value that is not a voice', () => {
+    // It would take a hand-edited database to get one. A box speaking in its
+    // default voice beats a box that cannot speak.
+    expect(effectiveVoice(() => 'margaret')).toBe('fable')
+    expect(effectiveVoice(() => '')).toBe('fable')
+  })
+
+  it('stores a chosen voice where an update will not reset it', () => {
+    const written: Array<[string, string]> = []
+    setEffectiveVoice('shimmer', (k, v) => written.push([k, v]))
+    expect(written).toEqual([[VOICE_STATE_KEY, 'shimmer']])
+  })
+
+  it('refuses a voice the engine does not have', () => {
+    expect(() => setEffectiveVoice('morgan-freeman', () => {})).toThrow(/Unknown voice/)
+    expect(isOpenAIVoice('fable')).toBe(true)
+    expect(isOpenAIVoice('Fable')).toBe(false)
+  })
+})
+
+describe('the voice routes', () => {
+  afterEach(async () => {
+    await stopHttpServer()
+  })
+
+  it('reports what this box can speak in, whatever engine it has', async () => {
+    const port = await startServer()
+    const resp = await fetch(`http://127.0.0.1:${port}/api/voices`)
+    expect(resp.status).toBe(200)
+
+    // CI has no OpenAI key, and macOS `say` exists on exactly one of the three
+    // runners, so the engine is genuinely platform-dependent here. What must
+    // hold everywhere: a box that cannot offer a choice offers an empty list
+    // rather than names that would do nothing.
+    const body = await resp.json()
+    if (body.engine === 'openai') {
+      expect(body.voices).toContain('fable')
+      expect(typeof body.current).toBe('string')
+    } else {
+      expect(body.voices).toEqual([])
+      expect(body.current).toBeNull()
+    }
+  })
+
+  it('rejects a voice that does not exist, and says what does', async () => {
+    const port = await startServer()
+    const resp = await fetch(`http://127.0.0.1:${port}/api/voice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice: 'david-attenborough' }),
+    })
+    expect(resp.status).toBe(400)
+    const body = await resp.json()
+    expect(body.error).toBe('unknown_voice')
+    expect(body.voices).toEqual([...OPENAI_VOICES])
+  })
+
+  it('rejects a body that is not JSON', async () => {
+    const port = await startServer()
+    const resp = await fetch(`http://127.0.0.1:${port}/api/voice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'not json',
+    })
+    expect(resp.status).toBe(400)
+    expect((await resp.json()).error).toBe('bad_json')
+  })
+})
+
 describe('the hosted edge proxies the route', () => {
   it('lists /api/speak, so a hosted box does not 404 what works locally', () => {
     const caddy = buildCaddyfile('havn.example.com', { voice: true })
     expect(caddy).toContain('/api/speak')
     expect(caddy).toContain('/api/transcribe')
+  })
+
+  it('lists the voice routes too, or the picker 404s on every hosted box', () => {
+    const caddy = buildCaddyfile('havn.example.com', { voice: true })
+    // Both, and as separate paths: /api/voices alone would leave the picker
+    // able to list voices and unable to change one.
+    expect(caddy).toMatch(/\/api\/voices \/api\/voice$/m)
   })
 
   it('does not expose it when the voice UI is off', () => {
@@ -210,6 +298,12 @@ describe('the voice page', () => {
     // does nothing is worse than one that says it cannot.
     expect(PAGE_CODE).toContain('SINK_SUPPORTED')
     expect(PAGE_CODE).toContain('speakerSelect.disabled = true')
+  })
+
+  it('offers the voice next to the two hardware pickers', () => {
+    expect(PAGE).toContain('id="voice-select"')
+    expect(PAGE_CODE).toContain("fetch('/api/voices'")
+    expect(PAGE_CODE).toContain("fetch('/api/voice'")
   })
 
   it('still primes audio on a gesture, and never on the one that opens the mic', () => {
