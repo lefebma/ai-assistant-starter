@@ -130,6 +130,10 @@
         <label>Speaker</label>
         <select id="speaker-select"><option value="">Loading devices...</option></select>
       </div>
+      <div class="device-group">
+        <label>Voice</label>
+        <select id="voice-select"><option value="">Loading voices...</option></select>
+      </div>
     </div>
 
     <div class="orb-wrap" id="orb-wrap" title="Click to start/stop recording">
@@ -178,6 +182,7 @@
     const sendBtn = document.getElementById('send-btn')
     const micSelect = document.getElementById('mic-select')
     const speakerSelect = document.getElementById('speaker-select')
+    const voiceSelect = document.getElementById('voice-select')
     let busy = false
     let recording = false
     let recognition = null
@@ -524,6 +529,77 @@
       try { player.pause() } catch (e) {}
       finishSpeaking()
     }
+
+    // --- Voice: which voice the assistant speaks in ---
+    // The odd one out in that row of dropdowns. The other two pick hardware on
+    // this device; this one picks the assistant's own voice, so choosing here
+    // changes what Telegram sounds like too. A per-browser setting was the
+    // alternative and would rebuild the exact problem this page was changed to
+    // fix: one assistant with a different voice on every screen it reaches.
+    async function loadVoices() {
+      let info
+      try {
+        const resp = await fetch('/api/voices', { headers: authHeaders() })
+        if (!resp.ok) throw new Error('voices failed: ' + resp.status)
+        info = await resp.json()
+      } catch (e) {
+        console.warn('Could not load voices:', e)
+        voiceSelect.innerHTML = '<option value="">Unavailable</option>'
+        voiceSelect.disabled = true
+        return
+      }
+
+      const voices = (info && info.voices) || []
+      if (voices.length === 0) {
+        // A box on macOS `say`, or one with no TTS at all. Offering names that
+        // cannot be selected is the speaker-picker mistake over again.
+        voiceSelect.innerHTML = '<option value="">Set by this assistant</option>'
+        voiceSelect.disabled = true
+        voiceSelect.title = info && info.engine
+          ? 'This assistant speaks with its own system voice.'
+          : 'This assistant has no voice configured.'
+        return
+      }
+
+      voiceSelect.innerHTML = ''
+      voices.forEach((name) => {
+        const opt = document.createElement('option')
+        opt.value = name
+        opt.textContent = name.charAt(0).toUpperCase() + name.slice(1)
+        voiceSelect.appendChild(opt)
+      })
+      voiceSelect.disabled = false
+      if (info.current) voiceSelect.value = info.current
+    }
+
+    voiceSelect.addEventListener('change', async () => {
+      const chosen = voiceSelect.value
+      if (!chosen) return
+
+      // Changing a dropdown is a user gesture, and not the one that opens the
+      // mic, so it is a safe place to earn playback permission. On a phone it
+      // is often the first gesture the page gets.
+      unlockAudio()
+
+      try {
+        const resp = await fetch('/api/voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ voice: chosen }),
+        })
+        if (!resp.ok) throw new Error('set voice failed: ' + resp.status)
+      } catch (e) {
+        console.warn('Could not change voice:', e)
+        addMessage('system', 'Could not change the voice.')
+        return
+      }
+
+      // Names like fable and onyx mean nothing until you have heard them, so
+      // the picker answers in the voice you just picked.
+      speak('This is how I sound now.')
+    })
+
+    loadVoices()
 
     // --- MediaRecorder: records from selected mic, sends to Whisper ---
     let mediaRecorder = null
