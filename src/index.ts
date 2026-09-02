@@ -181,15 +181,24 @@ async function main(): Promise<void> {
 
     clearInterval(decayTimer)
 
+    // The listener closes first, and the order is load-bearing on a hosted box.
+    // While it stays open, a webhook arriving mid-shutdown is accepted and then
+    // dropped, and the edge cannot retry a POST whose connection it already
+    // established: it answers 502 and that message is gone. Closed first, the
+    // same webhook is refused outright, which the edge does retry
+    // (lb_try_duration in the Caddyfile), so it arrives late instead of never.
+    // Measured on havn-test: mid-flight close gave up after 3s with a 502,
+    // refused connection held the full 15s and was answered by the new process.
+    // close() lets requests already in flight finish; it only stops new ones.
+    await runBestEffortCleanup({
+      name: 'http.stop',
+      cleanup: () => withTimeout(stopHttpServer(), 2000, 'http.stop'),
+    })
     await runBestEffortCleanup({
       name: 'adapter.stop',
       cleanup: () => withTimeout(adapter.stop(), 3000, 'adapter.stop'),
     })
     await runBestEffortCleanup({ name: 'scheduler.stop', cleanup: () => stopScheduler() })
-    await runBestEffortCleanup({
-      name: 'http.stop',
-      cleanup: () => withTimeout(stopHttpServer(), 2000, 'http.stop'),
-    })
     if (await isCdpAvailable()) {
       await runBestEffortCleanup({ name: 'chrome.stop', cleanup: async () => stopChrome() })
     }

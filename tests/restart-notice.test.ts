@@ -26,7 +26,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildCaddyfile } from '../src/deploy/teams-edge.js'
+import { buildCaddyfile, bufferStyleFor } from '../src/deploy/teams-edge.js'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -138,6 +138,15 @@ describe('the edge holds a webhook across a restart', () => {
     expect(caddy).toContain('lb_try_interval 500ms')
   })
 
+  it('keeps the body, without which the retry waits and then fails anyway', () => {
+    // Retrying a POST means sending its body twice, and Caddy can only do that
+    // if it kept a copy. Measured on havn-test against a restarting app: 502
+    // after 5.5s without buffering, 401 (the app answering) after 5.0s with it.
+    // The first is worse than failing fast, since the caller waited for nothing.
+    expect(buildCaddyfile('havn.example.com', { teams: true, caddyVersion: 'v2.6.2' }))
+      .toContain('buffer_requests')
+  })
+
   it('waits no longer than the Bot Framework does', () => {
     // Holding past the caller's patience does not save the message, it just
     // fails more slowly, so the number is a real bound rather than a guess.
@@ -162,5 +171,75 @@ describe('enable-teams', () => {
     expect(script).toContain('RestartSec=5')
     expect(script).toContain('/etc/systemd/system/havn.service.d')
     expect(script).toContain("run('systemctl', ['daemon-reload'])")
+  })
+})
+
+describe('bufferStyleFor', () => {
+  // The spelling moved in Caddy 2.7: `buffer_requests` inside reverse_proxy
+  // became the global `servers { request_buffers <size> }`. Boxes run whatever
+  // apt gave them, so the config has to match the binary. A wrong guess is
+  // caught by the `caddy validate` enable-teams already runs, which is why this
+  // is allowed to be a guess at all.
+  it('uses the reverse_proxy directive on 2.6 and earlier', () => {
+    expect(bufferStyleFor('v2.6.2 h1:abc')).toBe('directive')
+    expect(bufferStyleFor('v2.5.0')).toBe('directive')
+  })
+
+  it('uses the global block on 2.7 and later', () => {
+    expect(bufferStyleFor('v2.7.0')).toBe('global')
+    expect(bufferStyleFor('v2.8.4 h1:abc')).toBe('global')
+    expect(bufferStyleFor('v3.0.0')).toBe('global')
+  })
+
+  it('assumes modern when caddy will not say', () => {
+    expect(bufferStyleFor(undefined)).toBe('global')
+    expect(bufferStyleFor('')).toBe('global')
+    expect(bufferStyleFor('unknown')).toBe('global')
+  })
+})
+
+describe('the generated config matches the binary', () => {
+  const legacy = buildCaddyfile('havn.example.com', { teams: true, caddyVersion: 'v2.6.2' })
+  const modern = buildCaddyfile('havn.example.com', { teams: true, caddyVersion: 'v2.8.4' })
+
+  it('does not mix the two spellings', () => {
+    expect(legacy).toContain('buffer_requests')
+    expect(legacy).not.toContain('request_buffers')
+    expect(modern).toContain('request_buffers 1MB')
+    expect(modern).not.toContain('buffer_requests')
+  })
+
+  it('puts the global block first, where Caddy requires it', () => {
+    const lines = modern.split('\n').filter((l) => l.trim())
+    expect(lines[1]).toBe('{')
+    expect(modern.indexOf('request_buffers')).toBeLessThan(modern.indexOf('havn.example.com {'))
+  })
+
+  it('buffers nothing when there is no webhook to retry', () => {
+    const off = buildCaddyfile('havn.example.com', { teams: false, caddyVersion: 'v2.8.4' })
+    expect(off).not.toContain('request_buffers')
+    expect(off).not.toContain('buffer_requests')
+  })
+})
+
+describe('shutdown closes the listener first', () => {
+  const index = readFileSync(join(REPO, 'src', 'index.ts'), 'utf-8')
+  const httpServer = readFileSync(join(REPO, 'src', 'http-server.ts'), 'utf-8')
+
+  it('stops accepting before it stops anything else', () => {
+    // While the listener is open, a webhook arriving mid-shutdown is accepted
+    // and then dropped, and the edge will not retry a POST whose connection it
+    // already had. Refused outright, the same webhook is retried.
+    const shutdown = index.slice(index.indexOf('const shutdown = async'))
+    const http = shutdown.indexOf("name: 'http.stop'")
+    const adapter = shutdown.indexOf("name: 'adapter.stop'")
+    const scheduler = shutdown.indexOf("name: 'scheduler.stop'")
+    expect(http).toBeGreaterThan(-1)
+    expect(adapter).toBeGreaterThan(http)
+    expect(scheduler).toBeGreaterThan(http)
+  })
+
+  it('drops idle keep-alive sockets, which close() leaves open', () => {
+    expect(httpServer).toContain('closeIdleConnections()')
   })
 })

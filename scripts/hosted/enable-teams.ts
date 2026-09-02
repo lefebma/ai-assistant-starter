@@ -66,6 +66,21 @@ function writePublicHostname(hostname: string): void {
   writeFileSync(envPath, updated)
 }
 
+/**
+ * The installed Caddy's version, or undefined if it will not say.
+ *
+ * It decides how request buffering is spelled (see bufferStyleFor), and getting
+ * it wrong is caught by the `caddy validate` run below rather than shipping a
+ * broken edge, so a wrong guess costs a clear error and not an outage.
+ */
+function caddyVersion(): string | undefined {
+  try {
+    return execFileSync('caddy', ['version'], { encoding: 'utf-8', env: ENV }).trim()
+  } catch {
+    return undefined
+  }
+}
+
 const RESTART_OVERRIDE_DIR = '/etc/systemd/system/havn.service.d'
 const RESTART_OVERRIDE_PATH = `${RESTART_OVERRIDE_DIR}/restart-delay.conf`
 
@@ -131,7 +146,10 @@ function main(): void {
     // No caddy user (unusual install); Caddy will report the real problem.
   }
 
-  writeFileSync('/etc/caddy/Caddyfile', buildCaddyfile(hostname, { teams: true, voice: enableVoice }))
+  writeFileSync(
+    '/etc/caddy/Caddyfile',
+    buildCaddyfile(hostname, { teams: true, voice: enableVoice, caddyVersion: caddyVersion() })
+  )
   run('caddy', ['validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
 
   run('ufw', ['allow', '80/tcp'])

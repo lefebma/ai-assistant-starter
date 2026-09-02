@@ -417,8 +417,17 @@ let httpServer: Server | undefined
 export function stopHttpServer(): Promise<void> {
   return new Promise((resolve) => {
     if (!httpServer) return resolve()
-    httpServer.close(() => resolve())
+    const server = httpServer
     httpServer = undefined
+    server.close(() => resolve())
+    // close() stops new connections and waits for existing ones, and an idle
+    // keep-alive socket counts as existing. The edge keeps pooled connections
+    // to us, so without this the next webhook is written onto a socket into a
+    // dying process: accepted, then dropped, and the edge will not retry a POST
+    // whose connection it already had. Dropping the idle sockets makes it dial
+    // again, get refused, and retry, which is what turns a lost message into a
+    // late one. In-flight requests are untouched.
+    server.closeIdleConnections()
   })
 }
 
