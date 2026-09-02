@@ -2,7 +2,10 @@ import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
 import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, PRIMARY_CHAT_ID } from './config.js'
-import { transcribeAudio, synthesizeSpeechAudio, voiceCapabilities } from './voice.js'
+import {
+  transcribeAudio, synthesizeSpeechAudio, voiceCapabilities,
+  ttsEngine, effectiveVoice, setEffectiveVoice, isOpenAIVoice, OPENAI_VOICES,
+} from './voice.js'
 import { resolveVoiceToken } from './voice-links.js'
 import { runAgent } from './agent.js'
 import { sendPlatformMessage } from './bot.js'
@@ -365,6 +368,64 @@ async function handleSpeak(req: IncomingMessage, res: ServerResponse): Promise<v
   }
 }
 
+/**
+ * What this box can speak in, and what it is speaking in now. The page needs
+ * both to render a picker honestly: a box on macOS `say`, or one with no TTS
+ * at all, gets an empty list and says so rather than offering names that would
+ * do nothing.
+ */
+function handleVoices(req: IncomingMessage, res: ServerResponse): void {
+  if (!requireAuth(req, res)) return
+
+  const engine = ttsEngine()
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify({
+    engine,
+    voices: engine === 'openai' ? OPENAI_VOICES : [],
+    current: engine === 'openai' ? effectiveVoice() : null,
+  }))
+}
+
+/**
+ * Changes the voice the assistant speaks in. Not just on this page: the choice
+ * is the box's, so Telegram picks it up on its next spoken reply. One
+ * assistant, one voice, which is the whole argument of #116.
+ */
+async function handleSetVoice(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireAuth(req, res)) return
+
+  const chunks: Buffer[] = []
+  for await (const chunk of req) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+
+  let voice = ''
+  try {
+    voice = (JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { voice?: string }).voice ?? ''
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'bad_json' }))
+    return
+  }
+
+  // Shape before capability, same order as /api/speak: a name that is not a
+  // voice is wrong on every box, and answering it first keeps these paths
+  // testable without an API key.
+  if (!isOpenAIVoice(voice)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'unknown_voice', voices: OPENAI_VOICES }))
+    return
+  }
+
+  if (ttsEngine() !== 'openai') {
+    res.writeHead(503, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'voice_choice_unavailable' }))
+    return
+  }
+
+  setEffectiveVoice(voice)
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify({ current: voice }))
+}
+
 async function handleSignedUrl(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!requireAuth(req, res)) return
   if (!ELEVENLABS_API_KEY || !ELEVENLABS_AGENT_ID) {
@@ -490,6 +551,14 @@ export function startHttpServer(port: number = HTTP_PORT): void {
     }
     if (req.method === 'POST' && url.pathname === '/api/speak') {
       void handleSpeak(req, res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/voices') {
+      handleVoices(req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/voice') {
+      void handleSetVoice(req, res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/signed-url') {

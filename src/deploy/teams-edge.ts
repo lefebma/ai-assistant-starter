@@ -156,7 +156,7 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       '',
       '\t# API endpoints (chat completions, transcribe, speak, signed-url, config)',
       '\t@api {',
-      '\t\tpath /v1/* /chat/* /api/signed-url /api/config /api/transcribe /api/speak',
+      '\t\tpath /v1/* /chat/* /api/signed-url /api/config /api/transcribe /api/speak /api/voices /api/voice',
       '\t}',
       '\thandle @api {',
       `\t\treverse_proxy ${APP_UPSTREAM}`,

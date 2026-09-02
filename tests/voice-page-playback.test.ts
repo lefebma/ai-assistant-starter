@@ -48,7 +48,7 @@ class FakeAudio {
 
 function stubElement(): any {
   const el: any = {
-    textContent: '', innerHTML: '', value: '', title: '', className: '',
+    textContent: '', value: '', title: '', className: '',
     disabled: false, removed: false, style: {} as Record<string, string>,
     children: [] as any[], selectedOptions: [] as any[],
     listeners: {} as Record<string, Array<(e: unknown) => void>>,
@@ -61,6 +61,14 @@ function stubElement(): any {
     remove() { el.removed = true },
     click() { for (const fn of el.listeners['click'] ?? []) fn({}) },
   }
+  // Assigning innerHTML replaces an element's children. The page relies on
+  // that to rebuild a dropdown, and a stub that only remembers the string lets
+  // options accumulate across reloads.
+  let html = ''
+  Object.defineProperty(el, 'innerHTML', {
+    get: () => html,
+    set: (value: string) => { html = value; el.children.length = 0 },
+  })
   return el
 }
 
@@ -69,14 +77,17 @@ interface Page {
   unlockAudio: () => void
   startRecording: () => Promise<void>
   stopSpeaking: () => void
+  loadVoices: () => Promise<void>
   player: FakeAudio
   transcript: any
+  voiceSelect: any
   session: { type: string }
   speakCalls: string[]
+  voiceSets: string[]
 }
 
 /** Runs public/voice.html's script against stubs and hands back its internals. */
-function loadPage(opts: { sinkSupported?: boolean } = {}): Page {
+function loadPage(opts: { sinkSupported?: boolean; voices?: unknown } = {}): Page {
   const elements = new Map<string, any>()
   const document = {
     getElementById(id: string) {
@@ -104,10 +115,23 @@ function loadPage(opts: { sinkSupported?: boolean } = {}): Page {
   }
 
   const speakCalls: string[] = []
+  const voiceSets: string[] = []
   const fetchStub = async (url: string, init: any) => {
-    if (String(url).includes('/api/speak')) {
+    const path = String(url)
+    if (path.includes('/api/speak')) {
       speakCalls.push(JSON.parse(init.body).text)
       return { ok: true, status: 200, blob: async () => ({ size: 64, type: 'audio/mpeg' }) }
+    }
+    if (path.includes('/api/voices')) {
+      return { ok: true, status: 200, json: async () => opts.voices ?? {
+        engine: 'openai',
+        voices: ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'],
+        current: 'fable',
+      } }
+    }
+    if (path.includes('/api/voice')) {
+      voiceSets.push(JSON.parse(init.body).voice)
+      return { ok: true, status: 200, json: async () => ({ current: voiceSets.at(-1) }) }
     }
     return { ok: true, status: 200, json: async () => ({ text: '' }) }
   }
@@ -137,13 +161,13 @@ function loadPage(opts: { sinkSupported?: boolean } = {}): Page {
   const run = new Function(
     'window', 'document', 'navigator', 'localStorage', 'fetch', 'Audio', 'URL',
     'HTMLMediaElement', 'MediaRecorder', '__expose',
-    `${SCRIPT}\n__expose({ speak, unlockAudio, startRecording, stopSpeaking, player, transcript })`,
+    `${SCRIPT}\n__expose({ speak, unlockAudio, startRecording, stopSpeaking, loadVoices, player, transcript, voiceSelect })`,
   )
   run(
     { location: { search: '?token=test-token' } },
     document, navigator, localStorage, fetchStub, FakeAudio, url,
     HTMLMediaElement, MediaRecorder,
-    (internals: any) => { captured = { ...internals, session, speakCalls } },
+    (internals: any) => { captured = { ...internals, session, speakCalls, voiceSets } },
   )
 
   if (!captured) throw new Error('page script did not expose its internals')
@@ -230,5 +254,42 @@ describe('the voice page, played the way an iPhone plays it', () => {
 
     await page.speak('on a desktop')
     expect(page.player.played).toContain('blob:reply-1')
+  })
+})
+
+describe('the voice picker', () => {
+  it('offers the box\'s voices and shows the one in use', async () => {
+    const page = loadPage()
+    await page.loadVoices()
+
+    expect(page.voiceSelect.disabled).toBe(false)
+    expect(page.voiceSelect.children.map((o: any) => o.value)).toEqual(
+      ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'],
+    )
+    expect(page.voiceSelect.value).toBe('fable')
+  })
+
+  it('changes the assistant\'s voice and answers in it, so the name means something', async () => {
+    const page = loadPage()
+    await page.loadVoices()
+
+    page.voiceSelect.value = 'nova'
+    gesture(() => page.voiceSelect.listeners['change'][0]({}))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(page.voiceSets).toEqual(['nova'])
+    expect(page.speakCalls).toEqual(['This is how I sound now.'])
+    // And it was audible: choosing a voice is a gesture, so it also earns the
+    // playback permission an iPhone withholds until one arrives.
+    expect(page.player.played.length).toBeGreaterThan(0)
+  })
+
+  it('says so rather than listing voices a box cannot use', async () => {
+    // macOS `say` has its own unrelated names, and a box with no TTS has none.
+    const page = loadPage({ voices: { engine: 'macos', voices: [], current: null } })
+    await page.loadVoices()
+
+    expect(page.voiceSelect.disabled).toBe(true)
+    expect(page.voiceSelect.innerHTML).toContain('Set by this assistant')
   })
 })

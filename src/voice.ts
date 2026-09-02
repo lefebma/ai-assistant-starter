@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { mkdirSync, existsSync } from 'node:fs'
 import FormData from 'form-data'
 import { OPENAI_API_KEY, TTS_VOICE } from './config.js'
+import { getAppState, setAppState } from './db.js'
 import { logger } from './logger.js'
 
 /** Check if macOS `say` command is available */
@@ -24,6 +25,52 @@ export function voiceCapabilities(): { stt: boolean; tts: boolean } {
     stt: !!OPENAI_API_KEY,
     tts: !!OPENAI_API_KEY || macSayAvailable,
   }
+}
+
+/**
+ * Which engine speaks. Only OpenAI has voices worth offering a choice between:
+ * macOS `say` has its own unrelated set of names, and a box with neither has
+ * nothing to choose from. Anything showing a voice picker must ask first.
+ */
+export function ttsEngine(): 'openai' | 'macos' | null {
+  if (OPENAI_API_KEY) return 'openai'
+  if (macSayAvailable) return 'macos'
+  return null
+}
+
+export const OPENAI_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'] as const
+export type OpenAIVoice = (typeof OPENAI_VOICES)[number]
+
+export function isOpenAIVoice(voice: string): voice is OpenAIVoice {
+  return (OPENAI_VOICES as readonly string[]).includes(voice)
+}
+
+/** Where a chosen voice lives. store/, so an update does not reset it. */
+export const VOICE_STATE_KEY = 'tts_voice'
+
+/**
+ * The voice this box speaks in, everywhere it speaks. TTS_VOICE in .env is the
+ * default and a choice made in the UI overrides it, so picking a voice on the
+ * voice page changes what Telegram sounds like too. That is the point: the
+ * assistant has one voice, and #116 exists because it used to have as many
+ * voices as it had client devices.
+ *
+ * An unrecognised stored value falls back rather than throwing. It would take
+ * a hand-edited database to get one, and a box that cannot speak at all is a
+ * worse answer than a box speaking in its default voice.
+ */
+export function effectiveVoice(read: (key: string) => string | null = getAppState): string {
+  const chosen = read(VOICE_STATE_KEY)
+  return chosen && isOpenAIVoice(chosen) ? chosen : TTS_VOICE
+}
+
+export function setEffectiveVoice(
+  voice: string,
+  write: (key: string, value: string) => void = setAppState,
+): void {
+  if (!isOpenAIVoice(voice)) throw new Error(`Unknown voice: ${voice}`)
+  write(VOICE_STATE_KEY, voice)
+  logger.info({ voice }, 'TTS voice changed')
 }
 
 export async function transcribeAudio(filePath: string): Promise<string> {
@@ -151,7 +198,7 @@ async function synthesizeOpenAI(text: string): Promise<Buffer> {
   const body = JSON.stringify({
     model: 'tts-1',
     input: text,
-    voice: TTS_VOICE,
+    voice: effectiveVoice(),
     response_format: 'mp3',
   })
 
