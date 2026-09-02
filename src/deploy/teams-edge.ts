@@ -29,6 +29,36 @@ export interface CaddyfileOptions {
    * and meant rotating it required a redeploy.
    */
   voice?: boolean
+  /**
+   * The `caddy version` string of the box this config is for, e.g. "v2.6.2".
+   * It decides how request-body buffering is spelled, which is not cosmetic:
+   * without buffering the retry below holds the request and then fails it.
+   * Unknown or missing means "assume modern".
+   */
+  caddyVersion?: string
+}
+
+/**
+ * Where request-body buffering is configured, which moved in Caddy 2.7.
+ *
+ * Retrying a POST means sending its body a second time, and Caddy can only do
+ * that if it kept a copy. Without buffering the retry loop still waits out the
+ * restart and then fails at the end, which is worse than failing fast: the
+ * caller has been kept waiting for nothing. Measured on havn-test, a webhook
+ * sent while the app was down came back 502 after 5.5s without buffering and
+ * 401 (the app answering) after 5.7s with it.
+ */
+export type BufferStyle = 'directive' | 'global'
+
+export function bufferStyleFor(caddyVersion?: string): BufferStyle {
+  const m = /(\d+)\.(\d+)/.exec(caddyVersion ?? '')
+  if (!m) return 'global'
+  const major = Number(m[1])
+  const minor = Number(m[2])
+  // 2.6 and earlier: `buffer_requests` inside reverse_proxy.
+  // 2.7 and later: the global `servers { request_buffers <size> }` block.
+  if (major < 2 || (major === 2 && minor <= 6)) return 'directive'
+  return 'global'
 }
 
 export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): string {
@@ -36,9 +66,15 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
 
   const teams = options?.teams !== false
   const voice = options?.voice === true
+  const bufferStyle = bufferStyleFor(options?.caddyVersion)
 
   const lines: string[] = [
     `# Havn edge config. Written by scripts/hosted/enable-teams.ts.`,
+    // Global options must come first, and only exist here to let a retried
+    // webhook be re-sent with its body (see BufferStyle).
+    ...(teams && bufferStyle === 'global'
+      ? ['{', '\tservers {', '\t\trequest_buffers 1MB', '\t}', '}', '']
+      : []),
     `${hostname} {`,
     '',
     // Two redactions are load-bearing, not hygiene. A voice link carries its
@@ -77,6 +113,13 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       `\t# Teams webhook (adapter handles verification)`,
       `\thandle ${TEAMS_WEBHOOK_PREFIX} {`,
       `\t\treverse_proxy ${APP_UPSTREAM} {`,
+      // Caddy 2.6 spelling. On 2.7+ the equivalent is the global block above.
+      ...(bufferStyle === 'directive'
+        ? [
+            '\t\t\t# Keep the body so a retried webhook can be sent again.',
+            '\t\t\tbuffer_requests',
+          ]
+        : []),
       '\t\t\t# Hold the request while the app restarts rather than 502ing it.',
       '\t\t\t# Teams pushes each message exactly once: a 502 is not a retry',
       '\t\t\t# later, it is that message gone. Telegram is forgiving here',

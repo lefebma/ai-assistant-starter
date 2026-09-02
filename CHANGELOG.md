@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the message held during a restart is now actually delivered.** 1.20.1 taught the web server to wait for the assistant instead of rejecting a message during a restart, and on a real box the wait ended in the same failure: it held the message for five seconds and then dropped it, which is worse than dropping it immediately. Two reasons, both found by testing it on hardware rather than reading the config. The server was not keeping a copy of the message, so when the assistant came back there was nothing left to hand it. And the assistant kept accepting connections for the first moments of its shutdown, so a message arriving right then was taken and then abandoned, which the web server will not retry. Measured on the test box: a message sent one second into a restart used to fail after 5.5 seconds and now arrives, answered by the assistant that just came back. Re-run `enable-teams` to pick it up.
+
 ## 1.20.1 - 2026-09-01
 
 A message you send while your assistant is restarting should arrive late, not never. On Teams it was arriving never, and the restart message 1.19.2 introduced was politely asking you to send one.
