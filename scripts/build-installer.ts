@@ -33,7 +33,7 @@ const OUT = resolve(PROJECT_ROOT, outIdx !== -1 ? process.argv[outIdx + 1] : 'di
 
 // Keep in lockstep with BUNDLE_PAYLOAD_PATHS in src/update/plan.ts: a path the
 // updater swaps but the installer never stages is a path no bundle can deliver.
-const APP_FILES = ['dist', 'templates', 'public', 'docs', 'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'VERSION', '.env.example']
+const APP_FILES = ['dist', 'templates', 'public', 'docs', 'package.json', 'package-lock.json', 'README.md', 'CHANGELOG.md', 'LICENSE', 'VERSION', '.env.example']
 
 async function main(): Promise<void> {
   if (!existsSync(resolve(PROJECT_ROOT, 'dist', 'src', 'index.js'))) {

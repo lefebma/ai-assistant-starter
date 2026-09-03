@@ -1,0 +1,172 @@
+Havn Software Licence
+Version 1.0, 2026-09-02
+
+Copyright (c) 2026 PM Tech Consulting Inc., carrying on business as ELS Partners
+("ELS"). All rights reserved.
+
+================================================================================
+THIS IS NOT OPEN SOURCE SOFTWARE.
+
+The source code in this repository is published so that customers, partners,
+auditors, and prospective buyers can read it. Publication is not a grant of
+rights. You may not run this software in production, redistribute it, or build
+a product on it without a written agreement with ELS.
+================================================================================
+
+
+1. DEFINITIONS
+
+   "Havn" or "the Software" means the software in this repository, including
+   source code, compiled output, installers, documentation, skill templates,
+   and configuration templates authored by ELS.
+
+   "Agreement" means a current written subscription, order form, reseller
+   agreement, or other written licence signed by ELS that covers your use of
+   Havn.
+
+   "Production Use" means running Havn, or any part of it, to do real work for
+   yourself or anyone else, whether or not you charge for it.
+
+
+2. WHAT YOU MAY DO WITHOUT AN AGREEMENT
+
+   Without any agreement with ELS, you may:
+
+   a) view, read, and search this repository;
+
+   b) quote from it for the purposes of review, commentary, journalism,
+      teaching, or academic study, with attribution;
+
+   c) conduct good-faith security research on your own copy, and report what
+      you find (see Section 8); and
+
+   d) run the Software locally for the sole purpose of evaluating it, for up
+      to thirty (30) days, where ELS has given you written permission to
+      evaluate it.
+
+   Nothing else is permitted by this Licence.
+
+
+3. WHAT REQUIRES AN AGREEMENT
+
+   Production Use of Havn requires a current Agreement with ELS. Your rights,
+   the number of Installs you may run, and the term of those rights are set by
+   that Agreement, not by this file. If your Agreement ends, your right to run
+   the Software ends with it.
+
+   If you received Havn from an ELS channel partner or reseller, your
+   commercial relationship is with that partner, but this Licence and the Havn
+   Terms of Service still govern your use of the Software.
+
+
+4. WHAT IS PROHIBITED
+
+   Except as Section 2 permits, or as your Agreement expressly permits, you may
+   not:
+
+   a) use Havn in production, or permit anyone else to;
+
+   b) copy, redistribute, publish, sell, rent, lease, sublicense, or otherwise
+      make Havn available to any third party;
+
+   c) host, operate, or offer Havn, or anything substantially derived from it,
+      as a service, whether or not for a fee;
+
+   d) create derivative works of Havn, or fork it for the purpose of
+      developing, maintaining, or distributing a product independently of ELS;
+
+   e) use Havn, or knowledge gained from its source, to develop a competing
+      product;
+
+   f) remove, obscure, or alter any copyright, licence, attribution, or
+      proprietary notice; or
+
+   g) misrepresent the origin of the Software or claim to have authored it.
+
+
+5. THIRD-PARTY COMPONENTS
+
+   Havn depends on third-party open-source software, which remains governed by
+   its own licences. Nothing in this Licence changes, restricts, or supersedes
+   those licences, and nothing in this Licence applies to those components.
+   Their terms are available through the dependency manifests in this
+   repository.
+
+
+6. CONTRIBUTIONS
+
+   ELS does not solicit outside contributions. If you send ELS a contribution,
+   including a pull request, patch, or suggestion, you grant ELS a perpetual,
+   worldwide, irrevocable, royalty-free, sublicensable licence to use, modify,
+   and distribute it as part of Havn, and you confirm that you have the right
+   to grant that licence. You retain your own copyright in what you wrote. ELS
+   is under no obligation to accept, use, or respond to a contribution.
+
+
+7. TRADE MARKS
+
+   "Havn" and "ELS Partners" are marks used by ELS. This Licence grants no
+   right to use them. You may state accurately that you are a customer, a
+   partner, or that you are describing Havn. You may not use the marks in a
+   product name, a domain name, or in a way that suggests ELS endorses or
+   authored something it did not.
+
+
+8. SECURITY RESEARCH
+
+   ELS welcomes good-faith security research. If you find a vulnerability,
+   report it to marc.l@els-partners.com and give ELS a reasonable
+   opportunity to fix it before disclosing it publicly. ELS will not pursue a
+   claim under this Licence against a researcher who acts in good faith, tests
+   only against their own copy, does not access anyone else's data, and does
+   not degrade anyone else's service. This paragraph does not permit Production
+   Use.
+
+
+9. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS,
+   IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING ANY IMPLIED WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+   NON-INFRINGEMENT. ELS DOES NOT WARRANT THAT THE SOFTWARE WILL BE
+   UNINTERRUPTED OR ERROR FREE, OR THAT ANY AI-GENERATED OUTPUT WILL BE
+   ACCURATE. AI OUTPUT IS UNVERIFIED AND IS NOT LEGAL, FINANCIAL, MEDICAL, OR
+   OTHER PROFESSIONAL ADVICE.
+
+   Customers with an Agreement: any warranty you have is in that Agreement,
+   and it prevails over this Section for you.
+
+
+10. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, ELS IS NOT LIABLE FOR ANY CLAIM,
+   DAMAGE, OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT, OR OTHERWISE,
+   ARISING FROM OR CONNECTED WITH THE SOFTWARE OR ITS USE, INCLUDING ANY
+   INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE
+   DAMAGES, OR ANY LOST PROFITS, REVENUE, BUSINESS, GOODWILL, OR DATA.
+
+   Customers with an Agreement: the limitation of liability in that Agreement
+   applies to you instead of this Section.
+
+   Nothing here excludes liability that cannot lawfully be excluded.
+
+
+11. TERMINATION
+
+   This Licence terminates automatically if you breach it. On termination you
+   must stop using the Software and destroy all copies in your possession.
+   Sections 5, 6, 7, 9, 10, and 12 survive.
+
+
+12. GOVERNING LAW
+
+   This Licence is governed by the laws of the Province of Ontario and the
+   federal laws of Canada applicable in it, without regard to conflict of laws
+   rules. Where you have an Agreement with ELS, that Agreement's governing law
+   clause prevails over this Section for you.
+
+
+13. CONTACT
+
+   Licensing, evaluation, and commercial enquiries: marc.l@els-partners.com
+   Security reports: marc.l@els-partners.com
