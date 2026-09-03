@@ -1,6 +1,6 @@
 # AI Assistant Starter
 
-A personal AI assistant powered by Claude Code. Connects to Telegram (or Slack, Discord, Teams), reads your email and calendar, runs scheduled tasks, and learns your preferences over time.
+A personal AI assistant that runs on Claude by default, or bring your own LLM (OpenAI, Gemini, Azure, self-hosted). Connects to Telegram (or Slack, Discord, Teams), reads your email and calendar, runs scheduled tasks, and learns your preferences over time.
 
 Built and maintained by [ELS Partners](https://www.els-partners.com).
 
