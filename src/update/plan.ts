@@ -92,6 +92,7 @@ export const SOURCE_ENGINE_PATHS = [
   'package-lock.json',
   'tsconfig.json',
   'templates',
+  'LICENSE',
   'VERSION',
 ]
 
@@ -115,6 +116,7 @@ export const BUNDLE_PAYLOAD_PATHS = [
   'package-lock.json',
   'README.md',
   'CHANGELOG.md',
+  'LICENSE',
   'VERSION',
   '.env.example',
 ]
