@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.22.1 - 2026-09-05
+
+One fix, found by asking a box what was in 1.22.0 and getting an answer about 1.19.
+
+- **Fixed: the update check described the wrong release.** `/update check` read the first entry of the changelog, which is the Unreleased heading, and right after a release that heading has nothing under it. Handed an empty changelog, the assistant filled the gap from memory and described the new version with features from three releases ago, confidently and wrong. The check now reads the entry for the exact version it is offering, falls back to the GitHub release notes for that tag, and when neither has anything it links the release page rather than leaving a blank for the model to fill. Boxes on 1.22.0 will see the old behaviour once more when they check for this one; from here on the notes match the version.
+
 ## 1.22.0 - 2026-09-04
 
 Context and coverage. Replying to an old message used to arrive as just your reply, with the assistant left to guess what you were pointing at; now it sees the message. Telegram file types it used to ignore are handled. And for installs that run long conversations on the Claude engine, there is an opt-in way to start fresh before the engine has to compact.
