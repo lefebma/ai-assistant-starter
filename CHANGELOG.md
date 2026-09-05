@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.22.0 - 2026-09-04
+
+Context and coverage. Replying to an old message used to arrive as just your reply, with the assistant left to guess what you were pointing at; now it sees the message. Telegram file types it used to ignore are handled. And for installs that run long conversations on the Claude engine, there is an opt-in way to start fresh before the engine has to compact.
+
 - **Added: replying to or quoting a message now carries that message along.** Reply to something the assistant said three messages ago, or quote one line of it, and the assistant sees what you are pointing at instead of guessing from your reply alone. Forwarded messages say where they came from. On Slack, a message posted inside a thread carries the thread's first message. Everything that arrives this way is marked as third-party text so a forwarded email cannot pass itself off as an instruction from you.
 - **Added: more file types on Telegram.** Audio files, GIFs, stickers, and round video notes are downloaded and handed to the assistant like photos and documents already were.
 - **Added: optional session rotation.** Long conversations eventually have to be compacted by the engine, which is where odd turns come from. Set `SESSION_MAX_MESSAGES` or `SESSION_MAX_AGE_HOURS` in `.env` and the assistant starts a fresh conversation at that budget, after writing itself a short handoff summary that lands in memory. Off unless you turn it on.
