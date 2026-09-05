@@ -96,6 +96,24 @@ export function buildVideoMessage(localPath: string, caption?: string): string {
   return parts.join('\n')
 }
 
+export type AttachmentKind = 'audio' | 'animation' | 'sticker' | 'video_note'
+
+const ATTACHMENT_HINTS: Record<AttachmentKind, string> = {
+  audio: 'Transcribe or analyze this audio file as appropriate.',
+  animation: 'This is a GIF / silent looping video (delivered as mp4). Describe it if useful.',
+  sticker: 'This is a Telegram sticker (.webp static, .tgs animated, .webm video). Describe it if useful.',
+  video_note: 'This is a round video note. Use the GOOGLE_API_KEY from this project\'s .env file and the Gemini API to analyze it if needed.',
+}
+
+/** Generic attachment message for the file types delivered outside photo/document/video. */
+export function buildAttachmentMessage(kind: AttachmentKind, localPath: string, caption?: string, filename?: string): string {
+  const label = kind.replace('_', ' ')
+  const parts = [filename ? `[${label} attached: ${filename} at ${localPath}]` : `[${label} attached: ${localPath}]`]
+  if (caption) parts.push(`User note: ${caption}`)
+  parts.push(ATTACHMENT_HINTS[kind])
+  return parts.join('\n')
+}
+
 export function cleanupOldUploads(maxAgeMs = 24 * 60 * 60 * 1000): void {
   try {
     const files = readdirSync(UPLOADS_DIR)

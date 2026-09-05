@@ -27,6 +27,16 @@ export function initDatabase(): void {
     )
   `)
 
+  // Session rotation metadata (additive migration; older DBs lack these columns).
+  const sessionCols = (d.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).map((c) => c.name)
+  if (!sessionCols.includes('created_at')) {
+    d.exec('ALTER TABLE sessions ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0')
+    d.exec('UPDATE sessions SET created_at = updated_at WHERE created_at = 0')
+  }
+  if (!sessionCols.includes('message_count')) {
+    d.exec('ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0')
+  }
+
   // Full memory system
   d.exec(`
     CREATE TABLE IF NOT EXISTS memories (
@@ -188,11 +198,35 @@ export function getSession(chatId: string): string | null {
 
 export function setSession(chatId: string, sessionId: string): void {
   const d = getDb()
+  const ts = now()
+  // A changed session id means a brand-new conversation (fresh start or
+  // compaction fork), so the rotation clock and message counter reset.
   d.prepare(
-    `INSERT INTO sessions (chat_id, session_id, updated_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT(chat_id) DO UPDATE SET session_id = ?, updated_at = ?`
-  ).run(chatId, sessionId, now(), sessionId, now())
+    `INSERT INTO sessions (chat_id, session_id, updated_at, created_at, message_count)
+     VALUES (?, ?, ?, ?, 0)
+     ON CONFLICT(chat_id) DO UPDATE SET
+       created_at = CASE WHEN sessions.session_id = excluded.session_id THEN sessions.created_at ELSE excluded.created_at END,
+       message_count = CASE WHEN sessions.session_id = excluded.session_id THEN sessions.message_count ELSE 0 END,
+       session_id = excluded.session_id,
+       updated_at = excluded.updated_at`
+  ).run(chatId, sessionId, ts, ts)
+}
+
+export type SessionMetaRow = { sessionId: string; createdAt: number; messageCount: number }
+
+export function getSessionMeta(chatId: string): SessionMetaRow | null {
+  const d = getDb()
+  const row = d
+    .prepare('SELECT session_id, created_at, message_count FROM sessions WHERE chat_id = ?')
+    .get(chatId) as { session_id: string; created_at: number; message_count: number } | undefined
+  if (!row) return null
+  return { sessionId: row.session_id, createdAt: row.created_at, messageCount: row.message_count }
+}
+
+/** Count one user turn against the chat's current session (no-op if none). */
+export function bumpSessionMessageCount(chatId: string): void {
+  const d = getDb()
+  d.prepare('UPDATE sessions SET message_count = message_count + 1 WHERE chat_id = ?').run(chatId)
 }
 
 export function clearSession(chatId: string): void {

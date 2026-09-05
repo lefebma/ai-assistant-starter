@@ -5,6 +5,7 @@
 
 import { logger } from '../logger.js'
 import type { PlatformAdapter, IncomingMessage, SendOptions } from './types.js'
+import type { ReplyContext } from '../prompt-safety.js'
 
 // Bolt is an optional dependency. Import dynamically so the app
 // doesn't crash at startup if @slack/bolt isn't installed.
@@ -36,6 +37,8 @@ export class SlackAdapter implements PlatformAdapter {
   private appToken: string
   private allowedUsers: Set<string>
   private messageHandler: ((msg: IncomingMessage) => Promise<void>) | null = null
+  /** Our own user id, learned at start; lets thread parents we wrote read as "your own earlier message". */
+  private botUserId: string | null = null
   private activityHandler: (() => void) | null = null
 
   constructor(botToken: string, appToken: string, allowedUsers?: string) {
@@ -78,6 +81,7 @@ export class SlackAdapter implements PlatformAdapter {
 
       // Use DM channel or thread for reply context
       const chatId = message.channel ?? ''
+      const replyContext = await this.threadReplyContext(message)
 
       // Handle file attachments
       if (message.files?.length > 0) {
@@ -92,6 +96,7 @@ export class SlackAdapter implements PlatformAdapter {
           filePath: localPath,
           fileName: file.name ?? 'file',
           caption: message.text ?? undefined,
+          replyContext,
         })
         return
       }
@@ -101,6 +106,7 @@ export class SlackAdapter implements PlatformAdapter {
         userId,
         text: message.text ?? '',
         type: 'text',
+        replyContext,
       })
     })
 
@@ -124,6 +130,12 @@ export class SlackAdapter implements PlatformAdapter {
     })
 
     await this.app.start()
+    try {
+      const auth: any = await this.app.client.auth.test()
+      this.botUserId = auth?.user_id ?? null
+    } catch (err) {
+      logger.debug({ err }, 'Slack auth.test failed; thread parents from the bot will not be labelled as self')
+    }
     logger.info('Slack adapter started (Socket Mode)')
   }
 
@@ -277,6 +289,32 @@ export class SlackAdapter implements PlatformAdapter {
     const localPath = resolve(UPLOADS_DIR, filename)
     writeFileSync(localPath, buffer)
     return localPath
+  }
+
+  /**
+   * A message posted inside a thread carries the thread parent as reply
+   * context, the closest Slack analogue to Telegram's reply-to. Best effort:
+   * any API failure just means no context.
+   */
+  private async threadReplyContext(message: any): Promise<ReplyContext | undefined> {
+    const threadTs: string | undefined = message.thread_ts
+    if (!threadTs || threadTs === message.ts || !message.channel || !this.app) return undefined
+    try {
+      const res: any = await this.app.client.conversations.replies({
+        channel: message.channel,
+        ts: threadTs,
+        limit: 1,
+        inclusive: true,
+      })
+      const parent = res?.messages?.[0]
+      const text: string = parent?.text ?? ''
+      if (!text) return undefined
+      const fromSelf = Boolean(parent.bot_id) || (this.botUserId != null && parent.user === this.botUserId)
+      return { replyTo: { text, fromSelf, ...(fromSelf ? {} : { fromName: parent.user ? `<@${parent.user}>` : undefined }) } }
+    } catch (err) {
+      logger.debug({ err }, 'Could not fetch Slack thread parent for reply context')
+      return undefined
+    }
   }
 
   private inferFileType(mimetype: string): IncomingMessage['type'] {

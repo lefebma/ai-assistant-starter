@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
 import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME } from './config.js'
-import { getSession, setSession, clearSession, getMemoriesForChat } from './db.js'
+import { getSession, setSession, clearSession, getMemoriesForChat, getSessionMeta, bumpSessionMessageCount } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
 import { claimButtonClick } from './db.js'
@@ -21,7 +21,9 @@ import { saveConversationTurn } from './memory.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
-import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, UPLOADS_DIR } from './media.js'
+import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
+import { applyReplyContext } from './prompt-safety.js'
+import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
 import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
 import { commandWord } from './infra/command-text.js'
@@ -44,6 +46,7 @@ import {
 } from './support/index.js'
 import type { SupportDraft } from './support/index.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
+import { MEDIA_MESSAGE_TYPES } from './platform/types.js'
 
 // Non-abort text patterns (OpenClaw v2026.5.18 -- /btw non-abort behavior).
 const NON_ABORT_PATTERNS = [
@@ -159,6 +162,23 @@ async function handleMessage(
     .filter(Boolean)
     .join('\n\n')
 
+  // Session auto-rotation: retire a session that has hit its message or age
+  // budget before compaction gets a chance to wreck the turn. Off unless
+  // SESSION_MAX_MESSAGES / SESSION_MAX_AGE_HOURS are set.
+  const rotation = rotationConfig()
+  if (needsRotation(getSessionMeta(chatId), rotation)) {
+    const { rotated, summary } = await rotateSession(chatId, rotation, async (prompt, oldSessionId) => {
+      const { text } = await runAgent(prompt, oldSessionId)
+      return text
+    })
+    if (rotated) {
+      contextEngine.invalidateCaches()
+      await adapter
+        .sendMessage(chatId, summary ? 'Session rotated. Handoff summary saved to memory.' : 'Session rotated.')
+        .catch(() => {})
+    }
+  }
+
   // Get existing session
   const sessionId = getSession(chatId) ?? undefined
 
@@ -234,6 +254,7 @@ async function handleMessage(
     if (newSessionId) {
       setSession(chatId, newSessionId)
     }
+    bumpSessionMessageCount(chatId)
 
     if (!response) {
       if (previewMessageId != null) {
@@ -810,7 +831,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     // rather than routed to the model: a voice note or caption sent mid-flow
     // could carry the key, and transcripts/captions must never reach the agent
     // in that window.
-    if (secretFlow.hasPending(chatId) && (type === 'voice' || type === 'photo' || type === 'document' || type === 'video')) {
+    if (secretFlow.hasPending(chatId) && (MEDIA_MESSAGE_TYPES as readonly string[]).includes(type)) {
       await adapter.sendMessage(chatId, 'I am waiting for a secret value. Send it as a plain text message, or /secret cancel.')
       return
     }
@@ -835,19 +856,25 @@ export function createBot(adapter: PlatformAdapter): BotCore {
 
     if (type === 'photo' && msg.filePath) {
       const message = buildPhotoMessage(msg.filePath, msg.caption)
-      await handleMessage(adapter, chatId, message)
+      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
       return
     }
 
     if (type === 'document' && msg.filePath) {
       const message = buildDocumentMessage(msg.filePath, msg.fileName ?? 'document', msg.caption)
-      await handleMessage(adapter, chatId, message)
+      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
       return
     }
 
     if (type === 'video' && msg.filePath) {
       const message = buildVideoMessage(msg.filePath, msg.caption)
-      await handleMessage(adapter, chatId, message)
+      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
+      return
+    }
+
+    if ((type === 'audio' || type === 'animation' || type === 'sticker' || type === 'video_note') && msg.filePath) {
+      const message = buildAttachmentMessage(type, msg.filePath, msg.caption, msg.fileName)
+      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
       return
     }
 
@@ -1059,8 +1086,9 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
 
-    // Regular text message -> agent
-    await handleMessage(adapter, chatId, text)
+    // Regular text message -> agent. Reply / quote / forward context rides
+    // along as clearly-bounded untrusted text.
+    await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, text))
   })
 
   return {
