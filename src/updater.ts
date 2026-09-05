@@ -67,6 +67,8 @@ function githubHeaders(extra: Record<string, string> = {}): Record<string, strin
   return { Authorization: `Bearer ${token}`, ...extra }
 }
 
+import { extractChangelogSection } from './update/changelog.js'
+
 // Files a source update replaces live in src/update/plan.ts (SOURCE_ENGINE_PATHS)
 // next to the bundle list, where the tests can see both.
 const ENGINE_PATHS = SOURCE_ENGINE_PATHS
@@ -491,19 +493,32 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
 
 // ── Changelog ──
 
-export async function getChangelog(): Promise<string | null> {
+/**
+ * Release notes for the version being offered. CHANGELOG.md on main first
+ * (the entry for exactly that version, never the Unreleased heading), then
+ * the GitHub release body for the tag. Null when neither has anything, which
+ * the caller must treat as "no notes", not as a blank to fill.
+ */
+export async function getChangelog(version: string): Promise<string | null> {
   try {
     const resp = await fetch(`${GITHUB_RAW_BASE}/CHANGELOG.md`, {
       headers: githubHeaders(),
     })
-    if (!resp.ok) return null
-    const text = await resp.text()
-    // Return just the latest entry (up to the second ## heading)
-    const sections = text.split(/^## /m)
-    if (sections.length >= 2) {
-      return `## ${sections[1].trim()}`
+    if (resp.ok) {
+      const section = extractChangelogSection(await resp.text(), version)
+      if (section) return section
     }
-    return text.slice(0, 1000)
+  } catch {
+    // fall through to the release body
+  }
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/tags/v${version.replace(/^v/, '')}`, {
+      headers: githubHeaders({ Accept: 'application/vnd.github+json' }),
+    })
+    if (!resp.ok) return null
+    const release = (await resp.json()) as { body?: string }
+    const body = release.body?.trim()
+    return body ? body : null
   } catch {
     return null
   }

@@ -693,10 +693,12 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
       return
     }
     if (status.updateAvailable && status.latestVersion) {
-      const changelog = await getChangelog()
+      const changelog = await getChangelog(status.latestVersion)
       let msg = `Update available: v${status.currentVersion} -> v${status.latestVersion}`
       if (changelog) {
         msg += `\n\n${changelog.slice(0, 800)}`
+      } else {
+        msg += `\n\nRelease notes: https://github.com/lefebma/ai-assistant-starter/releases/tag/v${status.latestVersion}`
       }
       msg += '\n\nRun /update apply to install.'
       await adapter.sendMessage(chatId, msg)
