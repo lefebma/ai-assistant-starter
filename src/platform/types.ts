@@ -4,11 +4,23 @@
  * Implement this interface for Telegram, Slack, Discord, Teams, etc.
  */
 
+import type { ReplyContext } from '../prompt-safety.js'
+
+/** Media kinds that arrive as a downloaded file. */
+export type MediaMessageType = 'voice' | 'photo' | 'document' | 'video' | 'audio' | 'animation' | 'sticker' | 'video_note'
+export const MEDIA_MESSAGE_TYPES: readonly MediaMessageType[] = ['voice', 'photo', 'document', 'video', 'audio', 'animation', 'sticker', 'video_note']
+
 export interface IncomingMessage {
   chatId: string
   userId: string
   text: string
-  type: 'text' | 'voice' | 'photo' | 'document' | 'video' | 'callback'
+  type: 'text' | 'callback' | MediaMessageType
+  /**
+   * What this message replies to, quotes, or was forwarded from. Filled by the
+   * adapter from its native fields; bot.ts folds it into the prompt as
+   * clearly-bounded untrusted text.
+   */
+  replyContext?: ReplyContext
   /** Local path to downloaded media file (set by adapter after download) */
   filePath?: string
   /** Original filename for documents */

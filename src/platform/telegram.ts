@@ -9,6 +9,50 @@ import { hasProcessedUpdate, markUpdateProcessed } from '../db.js'
 import { handlePollingTermination } from '../infra/telegram-conflict.js'
 import { logger } from '../logger.js'
 import type { PlatformAdapter, IncomingMessage, SendOptions } from './types.js'
+import type { ReplyContext } from '../prompt-safety.js'
+
+/** Minimal shape of the Telegram fields we read for reply / quote / forward context. */
+export type TelegramReplySource = {
+  reply_to_message?: {
+    from?: { id?: number; first_name?: string }
+    text?: string
+    caption?: string
+  }
+  quote?: { text?: string }
+  forward_origin?:
+    | { type: 'user'; sender_user?: { first_name?: string } }
+    | { type: 'hidden_user'; sender_user_name?: string }
+    | { type: 'chat'; sender_chat?: { title?: string } }
+    | { type: 'channel'; chat?: { title?: string } }
+}
+
+/**
+ * Map Telegram's reply_to_message / quote / forward_origin onto the neutral
+ * ReplyContext. Telegram puts the full original in reply_to_message; quote.text
+ * holds the highlighted excerpt when only part of a message was quoted.
+ */
+export function telegramReplyContext(message: TelegramReplySource, botId?: number): ReplyContext | undefined {
+  const ctx: ReplyContext = {}
+
+  const repliedText = message.reply_to_message?.text ?? message.reply_to_message?.caption
+  const excerpt = message.quote?.text
+  const text = excerpt ?? repliedText
+  if (text) {
+    const from = message.reply_to_message?.from
+    const fromSelf = botId != null && from?.id === botId
+    ctx.replyTo = { text, fromSelf, ...(fromSelf ? {} : { fromName: from?.first_name }) }
+  }
+
+  const origin = message.forward_origin
+  if (origin) {
+    if (origin.type === 'user') ctx.forwardedFrom = origin.sender_user?.first_name ?? 'a user'
+    else if (origin.type === 'hidden_user') ctx.forwardedFrom = origin.sender_user_name ?? 'a hidden user'
+    else if (origin.type === 'chat') ctx.forwardedFrom = origin.sender_chat?.title ?? 'a chat'
+    else if (origin.type === 'channel') ctx.forwardedFrom = origin.chat?.title ?? 'a channel'
+  }
+
+  return ctx.replyTo || ctx.forwardedFrom !== undefined ? ctx : undefined
+}
 
 /**
  * Builds a grammY API transformer that reports every completed `getUpdates`
@@ -93,6 +137,7 @@ export class TelegramAdapter implements PlatformAdapter {
         userId: String(ctx.from?.id ?? ctx.chat.id),
         text: ctx.message.text,
         type: 'text',
+        replyContext: telegramReplyContext(ctx.message, ctx.me.id),
         messageId: String(ctx.message.message_id),
         updateId: ctx.update.update_id,
       })
@@ -126,6 +171,7 @@ export class TelegramAdapter implements PlatformAdapter {
           type: 'photo',
           filePath: localPath,
           caption: ctx.message.caption ?? undefined,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
           updateId: ctx.update.update_id,
         })
       } catch (err) {
@@ -145,6 +191,7 @@ export class TelegramAdapter implements PlatformAdapter {
           filePath: localPath,
           fileName: doc.file_name ?? 'document',
           caption: ctx.message.caption ?? undefined,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
           updateId: ctx.update.update_id,
         })
       } catch (err) {
@@ -163,10 +210,93 @@ export class TelegramAdapter implements PlatformAdapter {
           type: 'video',
           filePath: localPath,
           caption: ctx.message.caption ?? undefined,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
           updateId: ctx.update.update_id,
         })
       } catch (err) {
         logger.error({ err }, 'Failed to download video')
+      }
+    })
+
+    // Remaining file types Telegram can send: audio files, GIFs/animations,
+    // stickers, and round video notes.
+    this.bot.on('message:audio', async (ctx) => {
+      const audio = ctx.message.audio
+      try {
+        const localPath = await downloadTelegramFile(this.token, audio.file_id, audio.file_name ?? undefined)
+        await this.messageHandler?.({
+          chatId: String(ctx.chat.id),
+          userId: String(ctx.from?.id ?? ctx.chat.id),
+          text: ctx.message.caption ?? '',
+          type: 'audio',
+          filePath: localPath,
+          fileName: audio.file_name ?? undefined,
+          caption: ctx.message.caption ?? undefined,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
+          updateId: ctx.update.update_id,
+        })
+      } catch (err) {
+        logger.error({ err }, 'Failed to download audio')
+      }
+    })
+
+    this.bot.on('message:animation', async (ctx) => {
+      const anim = ctx.message.animation
+      try {
+        const localPath = await downloadTelegramFile(this.token, anim.file_id, anim.file_name ?? 'animation.mp4')
+        await this.messageHandler?.({
+          chatId: String(ctx.chat.id),
+          userId: String(ctx.from?.id ?? ctx.chat.id),
+          text: ctx.message.caption ?? '',
+          type: 'animation',
+          filePath: localPath,
+          caption: ctx.message.caption ?? undefined,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
+          updateId: ctx.update.update_id,
+        })
+      } catch (err) {
+        logger.error({ err }, 'Failed to download animation')
+      }
+    })
+
+    this.bot.on('message:sticker', async (ctx) => {
+      const sticker = ctx.message.sticker
+      const ext = sticker.is_animated ? 'tgs' : sticker.is_video ? 'webm' : 'webp'
+      try {
+        const localPath = await downloadTelegramFile(this.token, sticker.file_id, `sticker.${ext}`)
+        const note = [sticker.emoji ? `Emoji: ${sticker.emoji}` : '', sticker.set_name ? `Set: ${sticker.set_name}` : '']
+          .filter(Boolean)
+          .join(', ')
+        await this.messageHandler?.({
+          chatId: String(ctx.chat.id),
+          userId: String(ctx.from?.id ?? ctx.chat.id),
+          text: '',
+          type: 'sticker',
+          filePath: localPath,
+          caption: note || undefined,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
+          updateId: ctx.update.update_id,
+        })
+      } catch (err) {
+        logger.error({ err }, 'Failed to download sticker')
+      }
+    })
+
+    this.bot.on('message:video_note', async (ctx) => {
+      const note = ctx.message.video_note
+      try {
+        const localPath = await downloadTelegramFile(this.token, note.file_id, 'video_note.mp4')
+        await this.messageHandler?.({
+          chatId: String(ctx.chat.id),
+          userId: String(ctx.from?.id ?? ctx.chat.id),
+          text: '',
+          type: 'video_note',
+          filePath: localPath,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
+          updateId: ctx.update.update_id,
+        })
+      } catch (err) {
+        logger.error({ err }, 'Failed to download video note')
       }
     })
 
