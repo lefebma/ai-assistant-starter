@@ -14,11 +14,24 @@ export function keyPathFor(name: string): string {
   return resolve(homedir(), '.ssh', `havn-workspace-${name}`)
 }
 
-export function readPrivatePatterns(root: string = PROJECT_ROOT): string[] {
+export function privatePatternsPath(root: string = PROJECT_ROOT): string {
+  return resolve(root, 'workspaces', '.private-patterns')
+}
+
+/**
+ * The private-pattern guard is the only content-level guard the owner
+ * controls, and an empty pattern list turns it into a no-op. Absent and empty
+ * are therefore different answers: `present` is false only when the file is
+ * missing, so the caller can say so out loud instead of syncing on with the
+ * guard quietly switched off.
+ */
+export function readPrivatePatterns(root: string = PROJECT_ROOT): { patterns: string[]; present: boolean } {
+  const p = privatePatternsPath(root)
+  if (!existsSync(p)) return { patterns: [], present: false }
   try {
-    return parsePrivatePatterns(readFileSync(resolve(root, 'workspaces', '.private-patterns'), 'utf-8'))
+    return { patterns: parsePrivatePatterns(readFileSync(p, 'utf-8')), present: true }
   } catch {
-    return []
+    return { patterns: [], present: false }
   }
 }
 

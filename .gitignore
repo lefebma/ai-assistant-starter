@@ -6,7 +6,11 @@ store/
 **/vault.key
 **/secrets.json
 /workspace/
-workspaces/
+workspaces/*
+# ... but the private-pattern list is config, not workspace content: it is a
+# plain list of strings the guard refuses to push, and losing it on a reinstall
+# silently disables that guard.
+!workspaces/.private-patterns
 docs/.obsidian/
 *.log
 *.pid

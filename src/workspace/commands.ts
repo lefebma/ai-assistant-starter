@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs'
 import { PROJECT_ROOT } from '../env.js'
 import { runJoin } from './join.js'
 import type { JoinIO } from './join.js'
-import { keyPathFor } from './io.js'
+import { keyPathFor, readPrivatePatterns } from './io.js'
 import { identity as readIdentity, loadRegistry, removeWorkspace, upsertWorkspace, workspaceDir, getWorkspace } from './registry.js'
 import { defaultSyncOne, syncNow } from './service.js'
 import type { Notify } from './service.js'
@@ -101,12 +101,17 @@ export async function workspaceCommand(args: string[], deps: CommandDeps): Promi
   if (sub === 'status' || sub === undefined) {
     const entries = loadRegistry(deps.storeDir)
     if (entries.length === 0) return 'No workspaces joined. ' + USAGE
+    const { patterns, present } = readPrivatePatterns(root)
+    const patternLine = present
+      ? `private patterns: ${patterns.length}`
+      : 'private patterns: none (workspaces/.private-patterns missing)'
     return entries
       .map((e) => [
         `${e.name} (${e.manifest?.sharedWith ?? 'unknown'}${e.enabled ? '' : ', disabled'})`,
         `  members: ${fmtMembers(e)}`,
         `  last sync: ${ago(e.lastSyncAt)}${e.lastSyncOk === false ? ` FAILED: ${e.lastSyncMessage ?? ''}` : ''}`,
       ].join('\n'))
+      .concat(patternLine)
       .join('\n')
   }
 

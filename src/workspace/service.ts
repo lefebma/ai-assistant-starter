@@ -5,7 +5,7 @@ import { logger } from '../logger.js'
 import { loadRegistry, upsertWorkspace, workspaceDir, identity, getWorkspace } from './registry.js'
 import { runWorkspaceSync } from './sync.js'
 import type { WorkspaceSyncResult } from './sync.js'
-import { makeSyncIO, readPrivatePatterns } from './io.js'
+import { makeSyncIO, privatePatternsPath, readPrivatePatterns } from './io.js'
 import { parseWorkspaceManifest } from './manifest.js'
 import type { WorkspaceEntry } from './types.js'
 
@@ -86,12 +86,22 @@ export function applySyncOutcome(
   return { entry: next, notice: lines.length ? lines.join('\n') : null }
 }
 
+/** Warn once per process, not once per sync, when the pattern file is absent. */
+let warnedNoPatterns = false
+
 /** Default syncOne: real git in the clone dir. */
 export async function defaultSyncOne(entry: WorkspaceEntry): Promise<WorkspaceSyncResult> {
   const dir = workspaceDir(entry)
   const { assistant } = identity()
   const io = makeSyncIO(dir, (l) => logLine(`[${entry.name}] ${l}`))
-  const result = await runWorkspaceSync(io, { assistant, privatePatterns: readPrivatePatterns() })
+  const { patterns, present } = readPrivatePatterns()
+  if (!present && !warnedNoPatterns) {
+    warnedNoPatterns = true
+    const msg = `workspaces/.private-patterns is missing, the private-pattern guard is doing nothing (${privatePatternsPath()})`
+    logger.warn(msg)
+    logLine(msg)
+  }
+  const result = await runWorkspaceSync(io, { assistant, privatePatterns: patterns })
   const raw = io.readFile('WORKSPACE.md')
   if (raw) entry.manifest = parseWorkspaceManifest(raw, entry.name)
   return result
