@@ -38,6 +38,7 @@ import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT } from './env.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { workspaceCommand, workspaceCommandArgs } from './workspace/commands.js'
+import { defaultSyncOne, scheduleWorkspace, unscheduleWorkspace } from './workspace/service.js'
 import { makeJoinIO } from './workspace/io.js'
 import {
   collectDiagnostics,
@@ -584,9 +585,12 @@ async function handleWorkspaceCommand(adapter: PlatformAdapter, chatId: string, 
     await adapter.sendMessage(chatId, 'Only the primary chat can manage workspaces.')
     return
   }
+  const notify = async (t: string): Promise<void> => { await adapter.sendMessage(chatId, t) }
   const reply = await workspaceCommand(workspaceCommandArgs(text), {
     joinIO: makeJoinIO(),
-    notify: async (t) => { await adapter.sendMessage(chatId, t) },
+    notify,
+    schedule: (entry) => scheduleWorkspace(entry, { syncOne: defaultSyncOne, notify }),
+    unschedule: unscheduleWorkspace,
   })
   await adapter.sendMessage(chatId, reply)
 }

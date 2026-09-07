@@ -17,6 +17,10 @@ export interface CommandDeps {
   syncOne?: (e: WorkspaceEntry) => Promise<WorkspaceSyncResult>
   notify?: Notify
   removeDir?: (dir: string) => void
+  /** Put a freshly joined workspace on its sync timer without a restart. */
+  schedule?: (entry: WorkspaceEntry) => void
+  /** Take a left workspace off its timer. */
+  unschedule?: (name: string) => void
 }
 
 const USAGE = [
@@ -83,6 +87,7 @@ export async function workspaceCommand(args: string[], deps: CommandDeps): Promi
         entry.manifest = outcome.manifest
         upsertWorkspace(entry, deps.storeDir)
         const first = await syncNow(a1, { syncOne, notify, storeDir: deps.storeDir })
+        deps.schedule?.(entry)
         const lines = [
           `Joined "${a1}" (${outcome.manifest.sharedWith}). Members: ${fmtMembers(entry)}.`,
           `Files under workspaces/${a1}/. First sync: ${first.message}.`,
@@ -122,6 +127,7 @@ export async function workspaceCommand(args: string[], deps: CommandDeps): Promi
     if (!entry) return `No workspace named "${a1}".`
     const dir = workspaceDir(entry, root)
     ;(deps.removeDir ?? ((d) => rmSync(d, { recursive: true, force: true })))(dir)
+    deps.unschedule?.(a1)
     removeWorkspace(a1, deps.storeDir)
     return `Left "${a1}". Removed ${dir} and the sync schedule. The SSH key ${keyPathFor(a1)} was left in place; delete it by hand if you will not rejoin.`
   }

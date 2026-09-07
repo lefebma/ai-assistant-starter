@@ -68,6 +68,30 @@ describe('workspaceCommand', () => {
     expect(out).toMatch(/last sync/i)
   })
 
+  it('join puts the new workspace on a timer without a restart', async () => {
+    const schedule = vi.fn()
+    await workspaceCommand(['join', 'havn', 'git@github.com:o/r.git'], {
+      joinIO: joinIO(), storeDir: store, identity: id, syncOne: okSync, root: '/r', schedule,
+    })
+    expect(schedule).toHaveBeenCalledTimes(1)
+    expect(schedule.mock.calls[0][0]).toMatchObject({ name: 'havn' })
+  })
+
+  it('join does not schedule when the join stopped at key-ready', async () => {
+    const schedule = vi.fn()
+    await workspaceCommand(['join', 'havn', 'git@github.com:o/r.git'], {
+      joinIO: joinIO({ keyExists: () => false }), storeDir: store, identity: id, syncOne: okSync, schedule,
+    })
+    expect(schedule).not.toHaveBeenCalled()
+  })
+
+  it('leave takes the workspace off its timer', async () => {
+    await workspaceCommand(['join', 'havn', 'git@github.com:o/r.git'], { joinIO: joinIO(), storeDir: store, identity: id, syncOne: okSync, root: '/r' })
+    const unschedule = vi.fn()
+    await workspaceCommand(['leave', 'havn'], { joinIO: joinIO(), storeDir: store, removeDir: () => {}, root: '/r', unschedule })
+    expect(unschedule).toHaveBeenCalledWith('havn')
+  })
+
   it('leave removes the entry and the clone, keeps the key', async () => {
     await workspaceCommand(['join', 'havn', 'git@github.com:o/r.git'], { joinIO: joinIO(), storeDir: store, identity: id, syncOne: okSync, root: '/r' })
     const removeDir = vi.fn()

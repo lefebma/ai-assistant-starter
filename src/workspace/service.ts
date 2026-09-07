@@ -20,7 +20,8 @@ export interface ServiceDeps {
 
 const FAILURE_THRESHOLD = 3
 type TimerHandle = ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>
-const timers: TimerHandle[] = []
+/** One entry per scheduled workspace, so join and leave can move one alone. */
+const timers = new Map<string, TimerHandle[]>()
 
 const LOG_DIR = resolve(PROJECT_ROOT, 'logs')
 const LOG_FILE = resolve(LOG_DIR, 'workspace-sync.log')
@@ -102,7 +103,23 @@ export async function syncNow(name: string, deps: ServiceDeps): Promise<Workspac
   return runOne(entry, deps)
 }
 
-async function runOne(entry: WorkspaceEntry, deps: ServiceDeps): Promise<WorkspaceSyncResult> {
+/**
+ * One sync at a time per workspace. A timer tick that lands while a manual
+ * /workspace sync is still running would otherwise drive two `git add -A` /
+ * `git reset` sequences through one index: index.lock contention at best, one
+ * run's guard drop racing the other's commit at worst.
+ */
+const inFlight = new Map<string, Promise<WorkspaceSyncResult>>()
+
+function runOne(entry: WorkspaceEntry, deps: ServiceDeps): Promise<WorkspaceSyncResult> {
+  const running = inFlight.get(entry.name)
+  if (running) return running
+  const p = runOneNow(entry, deps).finally(() => inFlight.delete(entry.name))
+  inFlight.set(entry.name, p)
+  return p
+}
+
+async function runOneNow(entry: WorkspaceEntry, deps: ServiceDeps): Promise<WorkspaceSyncResult> {
   const now = deps.now ? deps.now() : Date.now()
   let result: WorkspaceSyncResult
   try {
@@ -112,9 +129,50 @@ async function runOne(entry: WorkspaceEntry, deps: ServiceDeps): Promise<Workspa
   }
   logLine(`[${entry.name}] ${result.ok ? 'ok' : 'FAIL'}: ${result.message}`)
   const { entry: next, notice } = applySyncOutcome(entry, result, now)
+  // A `leave` that landed mid-sync must stay left: writing the outcome back
+  // would resurrect an entry pointing at a directory that no longer exists.
+  if (!getWorkspace(entry.name, deps.storeDir)) {
+    logLine(`[${entry.name}] left during sync, not writing the outcome back`)
+    return result
+  }
   upsertWorkspace(next, deps.storeDir)
   if (notice) await deps.notify(notice).catch((err) => logger.warn({ err }, 'workspace notify failed'))
   return result
+}
+
+/**
+ * Put one workspace on a timer: a first run after `delayMs`, then every
+ * syncMinutes. Re-scheduling the same name replaces its timers rather than
+ * doubling them. Both callbacks re-read the registry, so a workspace disabled
+ * or left in the meantime never syncs.
+ */
+export function scheduleWorkspace(entry: WorkspaceEntry, deps: ServiceDeps, delayMs = 15_000): void {
+  unscheduleWorkspace(entry.name)
+  const every = Math.max(1, entry.syncMinutes || 30) * 60_000
+  const handles: TimerHandle[] = []
+  timers.set(entry.name, handles)
+  const tick = (): void => {
+    const fresh = getWorkspace(entry.name, deps.storeDir)
+    if (!fresh || !fresh.enabled) return
+    runOne(fresh, deps).catch((err) => logger.error({ err }, 'workspace sync failed'))
+  }
+  handles.push(
+    setTimeout(() => {
+      tick()
+      handles.push(setInterval(tick, every))
+    }, delayMs)
+  )
+}
+
+/** Take a workspace off its timer. Safe to call for a name that is not on one. */
+export function unscheduleWorkspace(name: string): void {
+  const handles = timers.get(name)
+  if (!handles) return
+  for (const t of handles) {
+    clearTimeout(t)
+    clearInterval(t)
+  }
+  timers.delete(name)
 }
 
 /**
@@ -123,28 +181,10 @@ async function runOne(entry: WorkspaceEntry, deps: ServiceDeps): Promise<Workspa
  */
 export function initWorkspaceService(deps: ServiceDeps): void {
   const entries = loadRegistry(deps.storeDir).filter((w) => w.enabled)
-  entries.forEach((entry, i) => {
-    const every = Math.max(1, entry.syncMinutes || 30) * 60_000
-    const first = setTimeout(() => {
-      const fresh = getWorkspace(entry.name, deps.storeDir)
-      if (fresh && fresh.enabled) {
-        runOne(fresh, deps).catch((err) => logger.error({ err }, 'workspace sync failed'))
-      }
-      timers.push(setInterval(() => {
-        const fresh = getWorkspace(entry.name, deps.storeDir)
-        if (!fresh || !fresh.enabled) return
-        runOne(fresh, deps).catch((err) => logger.error({ err }, 'workspace sync failed'))
-      }, every))
-    }, i * 2 * 60_000 + 15_000)
-    timers.push(first)
-  })
+  entries.forEach((entry, i) => scheduleWorkspace(entry, deps, i * 2 * 60_000 + 15_000))
   if (entries.length) logger.info({ count: entries.length }, 'Workspace sync service started')
 }
 
 export function stopWorkspaceService(): void {
-  for (const t of timers) {
-    clearTimeout(t)
-    clearInterval(t)
-  }
-  timers.length = 0
+  for (const name of [...timers.keys()]) unscheduleWorkspace(name)
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mkdtempSync } from 'node:fs'
-import { applySyncOutcome, initWorkspaceService, stopWorkspaceService } from '../src/workspace/service.js'
-import { saveRegistry } from '../src/workspace/registry.js'
+import { applySyncOutcome, initWorkspaceService, stopWorkspaceService, syncNow } from '../src/workspace/service.js'
+import { loadRegistry, removeWorkspace, saveRegistry } from '../src/workspace/registry.js'
 import type { WorkspaceEntry } from '../src/workspace/types.js'
 
 const base: WorkspaceEntry = {
@@ -110,5 +110,44 @@ describe('initWorkspaceService', () => {
     vi.advanceTimersByTime(20_000)
 
     expect(syncOne).not.toHaveBeenCalled()
+  })
+})
+
+describe('one sync at a time per workspace', () => {
+  const entry: WorkspaceEntry = { ...base, name: 'solo' }
+
+  it('a second run while one is in flight returns the in-flight result', async () => {
+    const storeDir = mkdtempSync('/tmp/test-workspace-')
+    saveRegistry([entry], storeDir)
+    const releases: Array<() => void> = []
+    const syncOne = vi.fn(async () => {
+      await new Promise<void>((r) => releases.push(r))
+      return ok
+    })
+    const deps = { syncOne, notify: async () => {}, storeDir }
+
+    const a = syncNow('solo', deps)
+    const b = syncNow('solo', deps)
+    expect(syncOne).toHaveBeenCalledTimes(1)
+    releases[0]()
+    const [ra, rb] = await Promise.all([a, b])
+    expect(ra).toBe(rb)
+
+    // The lock is released once the run finishes, so a later run syncs again.
+    const c = syncNow('solo', deps)
+    expect(syncOne).toHaveBeenCalledTimes(2)
+    releases[1]()
+    await c
+  })
+
+  it('does not resurrect a workspace that was left mid-sync', async () => {
+    const storeDir = mkdtempSync('/tmp/test-workspace-')
+    saveRegistry([entry], storeDir)
+    const syncOne = vi.fn(async () => {
+      removeWorkspace('solo', storeDir)
+      return ok
+    })
+    await syncNow('solo', { syncOne, notify: async () => {}, storeDir })
+    expect(loadRegistry(storeDir)).toHaveLength(0)
   })
 })
