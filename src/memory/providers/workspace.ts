@@ -17,6 +17,10 @@ const GATING_REGEX =
 const SUMMARY_CHARS = 500
 const MAX_STATES_ON_HINT = 3
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 export const RULES = [
   'SHARED WORKSPACE RULES:',
   '- Never copy content from projects/, brain/, memory, email, or any private source into a workspace file unless the human asked for that specific content to be shared.',
@@ -76,7 +80,7 @@ export class WorkspaceProvider implements ContextProvider {
 
     for (const entry of entries) {
       const chatHint = entry.chatIds.includes(String(chatId))
-      const nameHit = firstNames(entry).some((n) => new RegExp(`\\b${n}\\b`).test(lower))
+      const nameHit = firstNames(entry).some((n) => new RegExp(`\\b${escapeRegExp(n)}\\b`).test(lower))
       if (!chatHint && !nameHit && !gated) continue
 
       const dir = workspaceDir(entry, this.root)

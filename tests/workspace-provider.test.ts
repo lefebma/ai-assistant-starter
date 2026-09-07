@@ -78,4 +78,26 @@ describe('WorkspaceProvider', () => {
     expect(text).toContain('(unknown)')
     expect(text).toContain('Do not write')
   })
+
+  it('escapes regex metacharacters in member and workspace names without throwing', async () => {
+    mkdirSync(join(root, 'workspaces', 'a-b', 'projects'), { recursive: true })
+    writeFileSync(join(root, 'workspaces', 'a-b', 'projects', 'STATE.md'), '---\nname: Test\n---\nSample state content.')
+    const special: WorkspaceEntry = {
+      name: 'a-b', repo: 'special', path: '', syncMinutes: 30, enabled: true, chatIds: ['-100888'], failures: 0,
+      manifest: { name: 'a-b', sharedWith: 'partner', boards: [], members: [
+        { human: 'John[Dev] Smith', assistant: 'K+Manager', role: 'partner' },
+      ] },
+    }
+    saveRegistry([special], store)
+    const p = new WorkspaceProvider({ storeDir: store, root })
+    // Should not throw when retrieving with a generic message (tests that escaping works without error)
+    const result1 = await p.retrieve('1', 'hello there')
+    expect(result1).toEqual([])
+    // Should return banner and state when using the chatId hint (tests the nameHit regex is properly escaped)
+    const result2 = await p.retrieve('-100888', 'hello there')
+    expect(result2.length).toBeGreaterThan(0)
+    const text = result2.map((f) => f.content).join('\n')
+    expect(text).toContain('SHARED WORKSPACE "a-b" (partner)')
+    expect(text).toContain('Sample state content')
+  })
 })
