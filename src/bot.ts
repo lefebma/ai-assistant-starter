@@ -37,6 +37,8 @@ import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT } from './env.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
+import { workspaceCommand, workspaceCommandArgs } from './workspace/commands.js'
+import { makeJoinIO } from './workspace/io.js'
 import {
   collectDiagnostics,
   buildSupportDraft,
@@ -577,6 +579,18 @@ async function handleAuthorizeCommand(adapter: PlatformAdapter, chatId: string, 
   await adapter.sendMessage(chatId, 'Usage: /authorize [add|remove|list]')
 }
 
+async function handleWorkspaceCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
+  if (!isPrimaryChat(chatId)) {
+    await adapter.sendMessage(chatId, 'Only the primary chat can manage workspaces.')
+    return
+  }
+  const reply = await workspaceCommand(workspaceCommandArgs(text), {
+    joinIO: makeJoinIO(),
+    notify: async (t) => { await adapter.sendMessage(chatId, t) },
+  })
+  await adapter.sendMessage(chatId, reply)
+}
+
 // --- Support requests (/support) ---
 // A drafted request waits here until the user confirms via the Send / Edit /
 // Discard buttons (or types one of those words on platforms without buttons).
@@ -1048,6 +1062,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await handleAuthorizeCommand(adapter, chatId, trimmed)
       return
     }
+    if (cmd === '/workspace') {
+      await handleWorkspaceCommand(adapter, chatId, trimmed)
+      return
+    }
     if (cmd === '/support') {
       await handleSupportCommand(adapter, chatId, trimmed)
       return
@@ -1081,6 +1099,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/skill - Manage skills (list/enable/disable/reload)',
         '/secret - Manage API keys in the encrypted vault (set/list/rm)',
         '/authorize - Manage multi-chat access (add/remove/list)',
+        '/workspace - Shared workspaces (join/status/sync/leave, primary only)',
         '/support - Draft and send a support request (confirms before sending)',
         '/update - Check for and apply updates (check/apply)',
         '/version - Show current version',
@@ -1109,6 +1128,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
           { command: 'secret', description: 'Manage API keys in the encrypted vault' },
           { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
+          { command: 'workspace', description: 'Shared workspaces (primary only)' },
           { command: 'support', description: 'Draft and send a support request' },
           { command: 'update', description: 'Check for and apply updates' },
           { command: 'version', description: 'Show current version' },
