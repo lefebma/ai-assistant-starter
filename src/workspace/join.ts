@@ -46,6 +46,14 @@ export function rewriteRepoUrl(repo: string, alias: string): string {
   return repo.replace(host, alias)
 }
 
+/**
+ * IdentityFile is cumulative: keys contributed by an earlier `Host *` stanza
+ * (the usual macOS one) accumulate, and IdentitiesOnly does not discard them,
+ * so the clone could authenticate with the owner's personal key rather than
+ * the scoped deploy key. This block therefore lives in its own file that an
+ * Include at the very top of ~/.ssh/config pulls in first, and IdentityAgent
+ * none stops a loaded agent key being offered either.
+ */
 export function sshConfigBlock(alias: string, keyPath: string, host = 'github.com'): string {
   return [
     '',
@@ -55,8 +63,20 @@ export function sshConfigBlock(alias: string, keyPath: string, host = 'github.co
     '  User git',
     `  IdentityFile ${keyPath}`,
     '  IdentitiesOnly yes',
+    '  IdentityAgent none',
     '',
   ].join('\n')
+}
+
+/**
+ * Pure: return `existing` with `includeLine` as its first line, or unchanged
+ * if that line is already somewhere in the file. Never duplicates it.
+ */
+export function ensureIncludeLine(existing: string, includeLine: string): string {
+  const wanted = includeLine.trim()
+  if (existing.split('\n').some((l) => l.trim() === wanted)) return existing
+  if (existing.trim() === '') return `${wanted}\n`
+  return `${wanted}\n\n${existing}`
 }
 
 /**

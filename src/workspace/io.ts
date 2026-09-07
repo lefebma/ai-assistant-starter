@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { PROJECT_ROOT } from '../env.js'
 import type { SyncIO } from '../sync/daily-sync.js'
+import { ensureIncludeLine } from './join.js'
 import type { JoinIO } from './join.js'
 import { parsePrivatePatterns } from './guards.js'
 
@@ -70,6 +71,10 @@ export function makeSyncIO(dir: string, log: (line: string) => void): SyncIO {
 
 export function makeJoinIO(): JoinIO {
   const sshConfig = resolve(homedir(), '.ssh', 'config')
+  // Our Host blocks live in their own file so they can be Included ahead of
+  // whatever the owner already has in ~/.ssh/config.
+  const wsConfig = resolve(homedir(), '.ssh', 'havn-workspaces.conf')
+  const includeLine = 'Include ~/.ssh/havn-workspaces.conf'
   return {
     keyExists: (keyPath) => existsSync(keyPath) && existsSync(`${keyPath}.pub`),
     generateKey: async (keyPath, comment) => {
@@ -77,10 +82,14 @@ export function makeJoinIO(): JoinIO {
       await execFileAsync('ssh-keygen', ['-t', 'ed25519', '-N', '', '-C', comment, '-f', keyPath])
     },
     readPublicKey: (keyPath) => readFileSync(`${keyPath}.pub`, 'utf-8'),
-    sshConfigHas: (alias) => existsSync(sshConfig) && readFileSync(sshConfig, 'utf-8').includes(`Host ${alias}\n`),
+    sshConfigHas: (alias) => existsSync(wsConfig) && readFileSync(wsConfig, 'utf-8').includes(`Host ${alias}\n`),
     appendSshConfig: (block) => {
-      mkdirSync(dirname(sshConfig), { recursive: true, mode: 0o700 })
-      appendFileSync(sshConfig, block, { mode: 0o600 })
+      mkdirSync(dirname(wsConfig), { recursive: true, mode: 0o700 })
+      appendFileSync(wsConfig, block, { mode: 0o600 })
+      chmodSync(wsConfig, 0o600)
+      const existing = existsSync(sshConfig) ? readFileSync(sshConfig, 'utf-8') : ''
+      const next = ensureIncludeLine(existing, includeLine)
+      if (next !== existing) writeFileSync(sshConfig, next, { mode: 0o600 })
     },
     gitLsRemote: async (url) => {
       try {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { runJoin, rewriteRepoUrl, sshConfigBlock } from '../src/workspace/join.js'
+import { ensureIncludeLine, runJoin, rewriteRepoUrl, sshConfigBlock } from '../src/workspace/join.js'
 import type { JoinIO } from '../src/workspace/join.js'
 
 function fakeIO(over: Partial<JoinIO> = {}): JoinIO & { config: string[] } {
@@ -36,6 +36,27 @@ describe('rewriteRepoUrl / sshConfigBlock', () => {
     expect(b).toContain('HostName github.com')
     expect(b).toContain('IdentityFile /k')
     expect(b).toContain('IdentitiesOnly yes')
+    expect(b).toContain('IdentityAgent none')
+  })
+})
+
+describe('ensureIncludeLine', () => {
+  const line = 'Include ~/.ssh/havn-workspaces.conf'
+
+  it('prepends the include ahead of an existing Host * stanza', () => {
+    const out = ensureIncludeLine('Host *\n  IdentityFile ~/.ssh/id_ed25519\n', line)
+    expect(out.split('\n')[0]).toBe(line)
+    expect(out).toContain('Host *')
+  })
+
+  it('creates the file content when there is nothing there yet', () => {
+    expect(ensureIncludeLine('', line)).toBe(`${line}\n`)
+  })
+
+  it('never duplicates an include that is already present', () => {
+    const existing = `${line}\n\nHost *\n`
+    expect(ensureIncludeLine(existing, line)).toBe(existing)
+    expect(ensureIncludeLine(`  ${line}  \nHost *\n`, line)).toBe(`  ${line}  \nHost *\n`)
   })
 })
 
