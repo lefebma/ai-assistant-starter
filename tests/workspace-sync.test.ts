@@ -60,7 +60,7 @@ describe('runWorkspaceSync', () => {
     expect(r.committed).toBe(true)
     expect(r.pushed).toBe(true)
     expect(calls).toContain('commit -m joy: update projects/gtm/STATE.md')
-    expect(calls).toContain('pull --rebase origin main')
+    expect(calls).toContain('pull --rebase --autostash origin main')
     expect(calls).toContain('push origin main')
     // Commit before pull, pull before the ahead count, ahead count before push.
     const at = (c: string): number => calls.findIndex((x) => x.startsWith(c))
@@ -159,6 +159,34 @@ describe('runWorkspaceSync', () => {
     expect(r.ok).toBe(false)
     expect(r.conflict).toBeUndefined()
     expect(r.message).toMatch(/could not read Username/)
+  })
+
+  it('drops a tracked, modified held-back file and still pulls and pushes with --autostash', async () => {
+    const { git, calls } = fakeGit({
+      'status --porcelain': { out: ' M f.md\n M b.md\n' },
+      'rev-list --count': { out: '1\n' },
+    }, ['f.md', 'b.md'])
+    const r = await runWorkspaceSync(io(git, { 'f.md': 'wholesale $649.35', 'b.md': 'fine' }), opts)
+    expect(r.unstaged).toEqual([{ path: 'f.md', reason: 'matches a private pattern' }])
+    expect(calls).toContain('reset -q -- f.md')
+    expect(calls).toContain('commit -m joy: update b.md')
+    expect(calls).toContain('pull --rebase --autostash origin main')
+    expect(r.ok).toBe(true)
+    expect(r.pushed).toBe(true)
+  })
+
+  it('reports a failed autostash pop as needing a human, not a phantom pull failure', async () => {
+    const { git } = fakeGit({
+      'pull --rebase --autostash': {
+        ok: false,
+        out: 'error: could not apply stash; conflict\nleaving changes in stash, run "git stash pop"',
+      },
+      'stash list': { out: 'stash@{0}: On main: autostash\n' },
+    })
+    const r = await runWorkspaceSync(io(git), opts)
+    expect(r.ok).toBe(false)
+    expect(r.conflict).toBeUndefined()
+    expect(r.message).toBe('autostash could not be reapplied after pull; the held-back edits are in git stash, needs a human')
   })
 
   it('treats a failed pull as a conflict when a rebase is left in progress', async () => {

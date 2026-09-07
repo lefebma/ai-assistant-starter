@@ -54,13 +54,19 @@ export function applySyncOutcome(
   const prevHeld = entry.lastHeldBack ?? []
   const heldChanged = held.length !== prevHeld.length || held.some((p, i) => p !== prevHeld[i])
 
+  // A run that aborted before reaching the pull (guard failure, pre-existing
+  // rebase with no unmerged file) never retested the conflict, so it must
+  // leave lastConflict untouched rather than reading "no conflict field" as
+  // "resolved".
+  const nextLastConflict = result.conflict ?? (result.ok ? undefined : entry.lastConflict)
+
   const next: WorkspaceEntry = {
     ...entry,
     failures,
     lastSyncAt: now,
     lastSyncOk: result.ok,
     lastSyncMessage: result.message,
-    lastConflict: result.conflict,
+    lastConflict: nextLastConflict,
     lastHeldBack: held,
   }
   const lines: string[] = []
@@ -69,7 +75,7 @@ export function applySyncOutcome(
     if (result.conflict !== entry.lastConflict) {
       lines.push(`Workspace "${entry.name}": merge conflict in ${result.conflict}. I left the markers in place; it needs a human.`)
     }
-  } else if (entry.lastConflict) {
+  } else if (entry.lastConflict && result.ok) {
     lines.push(`Workspace "${entry.name}": conflict resolved.`)
   }
 

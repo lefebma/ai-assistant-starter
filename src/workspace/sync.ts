@@ -49,6 +49,11 @@ function rebaseInProgress(io: SyncIO): boolean {
  * worktree. Pulling after the commit also means a pull failure with unmerged
  * paths is a real conflict rather than a dirty tree wearing a conflict's face.
  * Every guard still runs ahead of any network operation.
+ *
+ * A guard drop deliberately leaves a tracked, modified file unstaged, which is
+ * still a dirty worktree as far as `git pull --rebase` is concerned. `--autostash`
+ * stashes that held-back edit across the pull and restores it afterwards, so the
+ * workspace keeps syncing instead of stalling on the one held-back file.
  */
 export async function runWorkspaceSync(io: SyncIO, opts: WorkspaceSyncOptions): Promise<WorkspaceSyncResult> {
   const remote = opts.remote ?? 'origin'
@@ -117,7 +122,7 @@ export async function runWorkspaceSync(io: SyncIO, opts: WorkspaceSyncOptions): 
     }
   }
 
-  const pull = await io.git('pull', '--rebase', remote, branch)
+  const pull = await io.git('pull', '--rebase', '--autostash', remote, branch)
   if (!pull.ok) {
     const conflicted = await conflictedPaths(io)
     if (conflicted.length > 0 || rebaseInProgress(io)) {
@@ -125,6 +130,19 @@ export async function runWorkspaceSync(io: SyncIO, opts: WorkspaceSyncOptions): 
       io.log(`rebase conflict in ${conflict}, leaving markers for a human`)
       return { ...base, ok: false, message: `rebase conflict in ${conflict}`, conflict }
     }
+
+    // --autostash restores held-back edits into the worktree once the pull
+    // succeeds. When it cannot reapply them it leaves the stash behind instead
+    // of losing anything, but that needs a human: the edits are safe, not synced.
+    const stashList = await io.git('stash', 'list')
+    const autostashStuck =
+      stashList.out.includes('autostash') || (pull.out.includes('autostash') && pull.out.includes('conflict'))
+    if (autostashStuck) {
+      const message = 'autostash could not be reapplied after pull; the held-back edits are in git stash, needs a human'
+      io.log(message)
+      return { ...base, ok: false, message }
+    }
+
     const message = `git pull --rebase failed: ${pull.out.trim().slice(0, 200)}`
     io.log(message)
     return { ...base, ok: false, message }

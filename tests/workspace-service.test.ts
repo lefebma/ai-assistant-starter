@@ -56,6 +56,16 @@ describe('applySyncOutcome', () => {
     expect(third.notice).toBeNull()
   })
 
+  it('does not report a resolved conflict, or clear lastConflict, on a run that aborted before the pull', () => {
+    const first = applySyncOutcome(base, { ...bad, conflict: 'a.md' }, 1)
+    expect(first.entry.lastConflict).toBe('a.md')
+    // A guard abort: not ok, no conflict field, because the run never reached the pull.
+    const abort = { ok: false, message: 'could not unstage f.md, aborting sync', unstaged: [], committed: false, pushed: false }
+    const second = applySyncOutcome(first.entry, abort, 2)
+    expect(second.notice).toBeNull()
+    expect(second.entry.lastConflict).toBe('a.md')
+  })
+
   it('reports held-back files once, on the run that held them', () => {
     const r = { ...ok, unstaged: [{ path: 'a.md', reason: 'matches a private pattern' }] }
     const first = applySyncOutcome(base, r, 1)

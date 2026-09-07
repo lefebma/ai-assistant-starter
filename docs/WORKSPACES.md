@@ -91,7 +91,10 @@ Stage, run the guards, commit what survives them, then `git pull --rebase`,
 then push. Committing first is deliberate: the assistant writes plain files and
 they are committed by the next sync, so the working tree is normally dirty, and
 git refuses to rebase a dirty tree. It also means a failed pull with unmerged
-files is a real conflict rather than a dirty tree in disguise.
+files is a real conflict rather than a dirty tree in disguise. Any of the
+assistant's uncommitted, held-back edits still sitting in the working tree are
+stashed across the pull and restored afterwards, so one held-back file never
+stalls the workspace.
 
 Conflicts are left in the file with markers and reported to you once, and once
 more when they clear. A pull that fails for any other reason (auth, network) is
