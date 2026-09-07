@@ -33,6 +33,10 @@ export interface WorkspaceEntry {
   chatIds: string[]
   /** Consecutive sync failures, for the notify-once rule. */
   failures: number
+  /** Last conflict path the owner was told about, so ticks do not repeat it. */
+  lastConflict?: string
+  /** Last held-back path set the owner was told about, sorted. */
+  lastHeldBack?: string[]
   lastSyncAt?: number
   lastSyncOk?: boolean
   lastSyncMessage?: string

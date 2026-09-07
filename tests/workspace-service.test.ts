@@ -34,17 +34,49 @@ describe('applySyncOutcome', () => {
     expect(notice).toMatch(/havn.*recovered/)
   })
 
-  it('always notifies a conflict with the file name', () => {
+  it('notifies a conflict once, then stays quiet while it is the same file', () => {
     const r = { ...bad, message: 'rebase conflict', conflict: 'projects/gtm/STATE.md' }
-    const { notice } = applySyncOutcome(base, r, 1)
-    expect(notice).toContain('projects/gtm/STATE.md')
+    const first = applySyncOutcome(base, r, 1)
+    expect(first.notice).toContain('projects/gtm/STATE.md')
+    const second = applySyncOutcome(first.entry, r, 2)
+    expect(second.notice).toBeNull()
+  })
+
+  it('notifies again when the conflicting file changes', () => {
+    const first = applySyncOutcome(base, { ...bad, conflict: 'a.md' }, 1)
+    const second = applySyncOutcome(first.entry, { ...bad, conflict: 'b.md' }, 2)
+    expect(second.notice).toContain('b.md')
+  })
+
+  it('notifies once when a conflict clears', () => {
+    const first = applySyncOutcome(base, { ...bad, conflict: 'a.md' }, 1)
+    const second = applySyncOutcome(first.entry, ok, 2)
+    expect(second.notice).toMatch(/conflict resolved/)
+    const third = applySyncOutcome(second.entry, ok, 3)
+    expect(third.notice).toBeNull()
   })
 
   it('reports held-back files once, on the run that held them', () => {
     const r = { ...ok, unstaged: [{ path: 'a.md', reason: 'matches a private pattern' }] }
-    const { notice } = applySyncOutcome(base, r, 1)
-    expect(notice).toContain('a.md')
-    expect(notice).toContain('private pattern')
+    const first = applySyncOutcome(base, r, 1)
+    expect(first.notice).toContain('a.md')
+    expect(first.notice).toContain('private pattern')
+    expect(first.entry.lastHeldBack).toEqual(['a.md'])
+    const second = applySyncOutcome(first.entry, r, 2)
+    expect(second.notice).toBeNull()
+  })
+
+  it('reports held-back files again when the set changes', () => {
+    const one = { ...ok, unstaged: [{ path: 'a.md', reason: 'matches a private pattern' }] }
+    const two = { ...ok, unstaged: [
+      { path: 'a.md', reason: 'matches a private pattern' },
+      { path: 'b.pptx', reason: 'file type not allowed outside inbox/' },
+    ] }
+    const first = applySyncOutcome(base, one, 1)
+    const second = applySyncOutcome(first.entry, two, 2)
+    expect(second.notice).toContain('b.pptx')
+    const third = applySyncOutcome(second.entry, two, 3)
+    expect(third.notice).toBeNull()
   })
 })
 

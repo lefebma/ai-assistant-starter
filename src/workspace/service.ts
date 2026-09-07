@@ -33,7 +33,15 @@ function logLine(line: string): void {
   }
 }
 
-/** Pure: fold one result into the entry and decide whether the owner hears about it. */
+/**
+ * Pure: fold one result into the entry and decide whether the owner hears
+ * about it. Every notice is once-only. The failure counter notifies on the
+ * third failure and on recovery; a conflict notifies when the conflicting path
+ * changes and when it clears; held-back files notify when the set changes.
+ * Without that, one unresolved conflict or one private-pattern hit means a
+ * message every syncMinutes forever, because the file is re-staged and
+ * re-dropped on every run.
+ */
 export function applySyncOutcome(
   entry: WorkspaceEntry,
   result: WorkspaceSyncResult,
@@ -41,19 +49,38 @@ export function applySyncOutcome(
 ): { entry: WorkspaceEntry; notice: string | null } {
   const prevFailures = entry.failures ?? 0
   const failures = result.ok ? 0 : prevFailures + 1
-  const next: WorkspaceEntry = { ...entry, failures, lastSyncAt: now, lastSyncOk: result.ok, lastSyncMessage: result.message }
+  const held = [...new Set(result.unstaged.map((u) => u.path))].sort()
+  const prevHeld = entry.lastHeldBack ?? []
+  const heldChanged = held.length !== prevHeld.length || held.some((p, i) => p !== prevHeld[i])
+
+  const next: WorkspaceEntry = {
+    ...entry,
+    failures,
+    lastSyncAt: now,
+    lastSyncOk: result.ok,
+    lastSyncMessage: result.message,
+    lastConflict: result.conflict,
+    lastHeldBack: held,
+  }
   const lines: string[] = []
 
   if (result.conflict) {
-    lines.push(`Workspace "${entry.name}": merge conflict in ${result.conflict}. I left the markers in place; it needs a human.`)
-  } else if (!result.ok && failures === FAILURE_THRESHOLD) {
+    if (result.conflict !== entry.lastConflict) {
+      lines.push(`Workspace "${entry.name}": merge conflict in ${result.conflict}. I left the markers in place; it needs a human.`)
+    }
+  } else if (entry.lastConflict) {
+    lines.push(`Workspace "${entry.name}": conflict resolved.`)
+  }
+
+  if (!result.ok && failures === FAILURE_THRESHOLD) {
     lines.push(`Workspace "${entry.name}": sync has failed ${FAILURE_THRESHOLD} times in a row (${result.message}). I will stay quiet until it recovers.`)
   } else if (result.ok && prevFailures >= FAILURE_THRESHOLD) {
     lines.push(`Workspace "${entry.name}": sync recovered.`)
   }
-  if (result.unstaged.length > 0) {
-    const held = result.unstaged.map((u) => `${u.path} (${u.reason})`).join(', ')
-    lines.push(`Workspace "${entry.name}": held back ${held}. Not pushed.`)
+
+  if (held.length > 0 && heldChanged) {
+    const names = result.unstaged.map((u) => `${u.path} (${u.reason})`).join(', ')
+    lines.push(`Workspace "${entry.name}": held back ${names}. Not pushed.`)
   }
   return { entry: next, notice: lines.length ? lines.join('\n') : null }
 }
