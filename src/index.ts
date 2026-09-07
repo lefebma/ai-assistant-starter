@@ -6,6 +6,7 @@ import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
 import { createBot } from './bot.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
+import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './workspace/service.js'
 import { startHttpServer, stopHttpServer } from './http-server.js'
 import { stopChrome, isCdpAvailable } from './browser.js'
 import { runBestEffortCleanup, withTimeout } from './infra/cleanup.js'
@@ -166,6 +167,13 @@ async function main(): Promise<void> {
     logger.info('Scheduler enabled')
   }
 
+  initWorkspaceService({
+    syncOne: defaultSyncOne,
+    notify: async (text) => {
+      if (PRIMARY_CHAT_ID) await adapter.sendMessage(PRIMARY_CHAT_ID, text)
+    },
+  })
+
   // Graceful shutdown
   let shuttingDown = false
   const shutdown = async (): Promise<void> => {
@@ -199,6 +207,7 @@ async function main(): Promise<void> {
       cleanup: () => withTimeout(adapter.stop(), 3000, 'adapter.stop'),
     })
     await runBestEffortCleanup({ name: 'scheduler.stop', cleanup: () => stopScheduler() })
+    await runBestEffortCleanup({ name: 'workspace.stop', cleanup: () => stopWorkspaceService() })
     if (await isCdpAvailable()) {
       await runBestEffortCleanup({ name: 'chrome.stop', cleanup: async () => stopChrome() })
     }

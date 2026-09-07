@@ -6,6 +6,7 @@ store/
 **/vault.key
 **/secrets.json
 /workspace/
+workspaces/
 docs/.obsidian/
 *.log
 *.pid
