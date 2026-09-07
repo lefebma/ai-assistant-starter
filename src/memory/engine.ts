@@ -1,6 +1,7 @@
 import type { ContextProvider, ContextFragment } from './providers/base.js'
 import { EpisodicProvider } from './providers/episodic.js'
 import { SemanticProvider } from './providers/semantic.js'
+import { WorkspaceProvider } from './providers/workspace.js'
 import { ProjectProvider } from './providers/project.js'
 import { CalendarProvider } from './providers/calendar.js'
 import { skillsProvider } from './providers/skills.js'
@@ -183,6 +184,7 @@ export function createDefaultEngine(): ContextEngine {
   engine.register(new CalendarProvider())    // priority 70
   engine.register(new SemanticProvider())    // priority 60
   engine.register(new EpisodicProvider())    // priority 50
+  engine.register(new WorkspaceProvider())   // priority 45
   engine.register(new ProjectProvider())     // priority 40
   engine.register(new UpdateProvider())      // priority 30
 
