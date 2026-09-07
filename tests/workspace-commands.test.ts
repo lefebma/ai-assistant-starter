@@ -41,6 +41,17 @@ describe('workspaceCommand', () => {
     expect(out).toMatch(/lowercase/)
   })
 
+  it('rejects a non-ssh repo url before touching the ssh config', async () => {
+    const io = joinIO()
+    const spy = vi.fn()
+    const out = await workspaceCommand(['join', 'havn', 'https://github.com/o/r.git'], {
+      joinIO: { ...io, appendSshConfig: spy }, storeDir: store, identity: id, syncOne: okSync,
+    })
+    expect(out).toMatch(/SSH URLs only/)
+    expect(spy).not.toHaveBeenCalled()
+    expect(loadRegistry(store)).toHaveLength(0)
+  })
+
   it('first pass returns the public key and does not register', async () => {
     const out = await workspaceCommand(['join', 'havn', 'git@github.com:o/r.git'], {
       joinIO: joinIO({ keyExists: () => false }), storeDir: store, identity: id, syncOne: okSync,

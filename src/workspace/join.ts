@@ -33,12 +33,41 @@ export function sshAlias(name: string): string {
   return `havn-ws-${name}`
 }
 
-/** Extract the host of an scp-style or ssh:// git url. */
+const HOST_RE = /^[A-Za-z0-9.-]+$/
+const PATH_RE = /^[A-Za-z0-9._\-/]+$/
+export const REPO_URL_HELP = 'SSH URLs only, for example git@github.com:org/repo.git'
+
+/**
+ * The repo URL becomes a HostName in ~/.ssh/config, the file that governs
+ * every SSH authentication on this box, and an argv element for git. So it is
+ * an allowlist, not a sniff: scp-style or ssh://, a host of letters, digits,
+ * dots and dashes, a path of letters, digits, dots, dashes, underscores and
+ * slashes with no .. segment, no leading dash (which git would read as a flag),
+ * and no whitespace or control character (a newline would inject ssh config
+ * directives).
+ */
+export function validateRepoUrl(repo: string): { ok: true; host: string } | { ok: false; reason: string } {
+  const no = { ok: false as const, reason: REPO_URL_HELP }
+  if (typeof repo !== 'string' || repo.length === 0 || repo.length > 512) return no
+  if (repo.startsWith('-')) return no
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001f\u007f]/.test(repo)) return no
+
+  const scp = repo.match(/^git@([^:]+):(.+)$/)
+  const ssh = repo.match(/^ssh:\/\/git@([^/]+)\/(.+)$/)
+  const m = scp ?? ssh
+  if (!m) return no
+  const [, host, path] = m
+  if (!HOST_RE.test(host) || host.startsWith('-') || host.startsWith('.')) return no
+  if (!PATH_RE.test(path) || path.startsWith('-') || path.includes('//')) return no
+  if (path.split('/').some((seg) => seg === '..')) return no
+  return { ok: true, host }
+}
+
+/** Host of a validated scp-style or ssh:// git url. */
 function hostOf(repo: string): string {
-  const ssh = repo.match(/^ssh:\/\/[^@]+@([^/]+)\//)
-  if (ssh) return ssh[1]
-  const scp = repo.match(/^[^@]+@([^:]+):/)
-  return scp ? scp[1] : 'github.com'
+  const v = validateRepoUrl(repo)
+  return v.ok ? v.host : 'github.com'
 }
 
 export function rewriteRepoUrl(repo: string, alias: string): string {
@@ -85,6 +114,10 @@ export function ensureIncludeLine(existing: string, includeLine: string): string
  * Idempotent: every step checks before it acts.
  */
 export async function runJoin(io: JoinIO, opts: JoinOptions): Promise<JoinOutcome> {
+  // Defence in depth: commands.ts rejects a bad URL before we get here, but
+  // this function writes to ~/.ssh and builds git argv, so it checks too.
+  const valid = validateRepoUrl(opts.repo)
+  if (!valid.ok) return { stage: 'clone-failed', message: valid.reason }
   const alias = sshAlias(opts.name)
   let created = false
   if (!io.keyExists(opts.keyPath)) {

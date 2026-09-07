@@ -93,7 +93,7 @@ export function makeJoinIO(): JoinIO {
     },
     gitLsRemote: async (url) => {
       try {
-        await execFileAsync('git', ['ls-remote', '--exit-code', url, 'HEAD'], { timeout: 30_000 })
+        await execFileAsync('git', ['ls-remote', '--exit-code', '--', url, 'HEAD'], { timeout: 30_000 })
         return true
       } catch {
         return false
@@ -102,7 +102,7 @@ export function makeJoinIO(): JoinIO {
     gitClone: async (url, dir) => {
       try {
         mkdirSync(dirname(dir), { recursive: true })
-        const { stdout } = await execFileAsync('git', ['clone', url, dir], { timeout: 120_000 })
+        const { stdout } = await execFileAsync('git', ['clone', '--', url, dir], { timeout: 120_000 })
         return { ok: true, out: stdout }
       } catch (err) {
         const e = err as { stderr?: string }

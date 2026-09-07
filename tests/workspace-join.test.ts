@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ensureIncludeLine, runJoin, rewriteRepoUrl, sshConfigBlock } from '../src/workspace/join.js'
+import { ensureIncludeLine, runJoin, rewriteRepoUrl, sshConfigBlock, validateRepoUrl } from '../src/workspace/join.js'
 import type { JoinIO } from '../src/workspace/join.js'
 
 function fakeIO(over: Partial<JoinIO> = {}): JoinIO & { config: string[] } {
@@ -60,7 +60,44 @@ describe('ensureIncludeLine', () => {
   })
 })
 
+describe('validateRepoUrl', () => {
+  it('accepts scp-style and ssh:// urls', () => {
+    expect(validateRepoUrl('git@github.com:els-partners/havn-workspace.git')).toEqual({ ok: true, host: 'github.com' })
+    expect(validateRepoUrl('ssh://git@git.example.co.uk/org/repo.git')).toEqual({ ok: true, host: 'git.example.co.uk' })
+  })
+
+  it('rejects https, which used to be rewritten into a broken url and blamed on the deploy key', () => {
+    const r = validateRepoUrl('https://github.com/o/r.git')
+    expect(r).toMatchObject({ ok: false })
+    expect((r as { reason: string }).reason).toMatch(/SSH URLs only/)
+  })
+
+  it('rejects a newline, which would inject directives into ~/.ssh/config', () => {
+    expect(validateRepoUrl('git@github.com\nHost *\n  IdentityFile /etc/x:o/r.git').ok).toBe(false)
+    expect(validateRepoUrl('git@github.com:o/r.git\n  ProxyCommand touch /tmp/pwned').ok).toBe(false)
+  })
+
+  it('rejects a leading dash, which git would read as a flag', () => {
+    expect(validateRepoUrl('--upload-pack=touch /tmp/pwned').ok).toBe(false)
+    expect(validateRepoUrl('-git@github.com:o/r.git').ok).toBe(false)
+  })
+
+  it('rejects other shapes', () => {
+    expect(validateRepoUrl('').ok).toBe(false)
+    expect(validateRepoUrl('github.com:o/r.git').ok).toBe(false)
+    expect(validateRepoUrl('root@github.com:o/r.git').ok).toBe(false)
+    expect(validateRepoUrl('git@github.com:../../etc/passwd').ok).toBe(false)
+  })
+})
+
 describe('runJoin', () => {
+  it('refuses an invalid repo url even when called directly', async () => {
+    const io = fakeIO()
+    const r = await runJoin(io, { ...opts, repo: 'https://github.com/o/r.git' })
+    expect(r).toMatchObject({ stage: 'clone-failed' })
+    expect(io.config).toHaveLength(0)
+  })
+
   it('first run: creates key and config, returns key-ready without cloning', async () => {
     const clone = vi.fn(async () => ({ ok: true, out: '' }))
     const io = fakeIO({ gitClone: clone, gitLsRemote: async () => false })

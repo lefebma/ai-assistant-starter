@@ -1,6 +1,6 @@
 import { rmSync } from 'node:fs'
 import { PROJECT_ROOT } from '../env.js'
-import { runJoin } from './join.js'
+import { runJoin, validateRepoUrl } from './join.js'
 import type { JoinIO } from './join.js'
 import { keyPathFor, readPrivatePatterns } from './io.js'
 import { identity as readIdentity, loadRegistry, removeWorkspace, upsertWorkspace, workspaceDir, getWorkspace } from './registry.js'
@@ -53,6 +53,8 @@ export async function workspaceCommand(args: string[], deps: CommandDeps): Promi
   if (sub === 'join') {
     if (!a1 || !a2) return USAGE
     if (!NAME_RE.test(a1)) return 'Workspace name must be lowercase letters, digits, or dashes (max 32).'
+    const url = validateRepoUrl(a2)
+    if (!url.ok) return url.reason
     const id = deps.identity ?? readIdentity(root)
     const entry: WorkspaceEntry = getWorkspace(a1, deps.storeDir) ?? {
       name: a1, repo: a2, path: '', syncMinutes: 30, enabled: true, chatIds: [], failures: 0,
