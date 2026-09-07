@@ -82,6 +82,8 @@ export async function workspaceCommand(args: string[], deps: CommandDeps): Promi
           outcome.publicKey,
           '```',
         ].join('\n')
+      case 'host-unverified':
+        return `Could not verify the SSH host key for ${url.host}: ${outcome.message}. Nothing was cloned.`
       case 'clone-failed':
         return `Clone failed: ${outcome.message}`
       case 'joined': {

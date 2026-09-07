@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { PROJECT_ROOT } from '../env.js'
 import type { SyncIO } from '../sync/daily-sync.js'
-import { ensureIncludeLine } from './join.js'
+import { ensureIncludeLine, knownHostsHas } from './join.js'
 import type { JoinIO } from './join.js'
 import { parsePrivatePatterns } from './guards.js'
 
@@ -75,6 +75,7 @@ export function makeJoinIO(): JoinIO {
   // whatever the owner already has in ~/.ssh/config.
   const wsConfig = resolve(homedir(), '.ssh', 'havn-workspaces.conf')
   const includeLine = 'Include ~/.ssh/havn-workspaces.conf'
+  const knownHostsPath = resolve(homedir(), '.ssh', 'known_hosts')
   return {
     keyExists: (keyPath) => existsSync(keyPath) && existsSync(`${keyPath}.pub`),
     generateKey: async (keyPath, comment) => {
@@ -90,6 +91,42 @@ export function makeJoinIO(): JoinIO {
       const existing = existsSync(sshConfig) ? readFileSync(sshConfig, 'utf-8') : ''
       const next = ensureIncludeLine(existing, includeLine)
       if (next !== existing) writeFileSync(sshConfig, next, { mode: 0o600 })
+    },
+    ensureKnownHost: async (host) => {
+      try {
+        const existing = existsSync(knownHostsPath) ? readFileSync(knownHostsPath, 'utf-8') : ''
+        if (knownHostsHas(existing, host)) return { ok: true }
+
+        const appendLines = async (lines: string[]) => {
+          if (lines.length === 0) return
+          mkdirSync(dirname(knownHostsPath), { recursive: true, mode: 0o700 })
+          const body = lines.map((l) => l.trimEnd()).join('\n') + '\n'
+          if (!existsSync(knownHostsPath)) writeFileSync(knownHostsPath, '', { mode: 0o600 })
+          appendFileSync(knownHostsPath, body, { mode: 0o600 })
+          chmodSync(knownHostsPath, 0o600)
+        }
+
+        if (host === 'github.com') {
+          // GitHub publishes its host keys, so this pins them instead of
+          // trusting whatever the first SSH connection happens to offer.
+          const res = await fetch('https://api.github.com/meta')
+          if (!res.ok) return { ok: false, message: `GitHub meta API returned ${res.status}` }
+          const meta = (await res.json()) as { ssh_keys?: string[] }
+          const keys = meta.ssh_keys ?? []
+          if (keys.length === 0) return { ok: false, message: 'GitHub meta API returned no ssh_keys' }
+          await appendLines(keys.map((k) => `github.com ${k}`))
+          return { ok: true }
+        }
+
+        // Any other host: trust-on-first-use via ssh-keyscan.
+        const { stdout } = await execFileAsync('ssh-keyscan', ['-T', '10', host])
+        const lines = stdout.split('\n').filter((l) => l.trim() !== '' && !l.trim().startsWith('#'))
+        if (lines.length === 0) return { ok: false, message: `ssh-keyscan returned no keys for ${host}` }
+        await appendLines(lines)
+        return { ok: true, message: 'host key accepted on first use; verify it if the host is not yours' }
+      } catch (err) {
+        return { ok: false, message: err instanceof Error ? err.message : String(err) }
+      }
     },
     gitLsRemote: async (url) => {
       try {

@@ -19,6 +19,7 @@ function joinIO(over: Partial<JoinIO> = {}): JoinIO {
     readPublicKey: () => 'ssh-ed25519 KEY joy',
     sshConfigHas: () => true,
     appendSshConfig: () => {},
+    ensureKnownHost: async () => ({ ok: true }),
     gitLsRemote: async () => true,
     gitClone: async () => ({ ok: true, out: '' }),
     gitConfig: async () => {},
@@ -70,6 +71,15 @@ describe('workspaceCommand', () => {
     const reg = loadRegistry(store)
     expect(reg).toHaveLength(1)
     expect(reg[0].manifest?.sharedWith).toBe('partner')
+  })
+
+  it('reports an unverified host key without registering the workspace', async () => {
+    const io = joinIO({ ensureKnownHost: async () => ({ ok: false, message: 'ssh-keyscan timed out' }) })
+    const out = await workspaceCommand(['join', 'havn', 'git@github.com:o/r.git'], {
+      joinIO: io, storeDir: store, identity: id, syncOne: okSync,
+    })
+    expect(out).toBe('Could not verify the SSH host key for github.com: ssh-keyscan timed out. Nothing was cloned.')
+    expect(loadRegistry(store)).toHaveLength(0)
   })
 
   it('status lists workspaces with last sync', async () => {

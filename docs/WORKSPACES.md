@@ -21,6 +21,10 @@ The URL must be an SSH one: `git@github.com:org/repo.git` or
 `ssh://git@github.com/org/repo.git`. An https URL is refused, because the
 per-workspace deploy key can only be used over SSH.
 
+Before the first clone, the assistant verifies the git host's SSH key: for
+`github.com` it pins GitHub's own published host keys, and for any other host
+it accepts whatever key that host offers on first use.
+
 The key is pinned in `~/.ssh/havn-workspaces.conf`, which the assistant adds to
 the top of your `~/.ssh/config` with a single `Include` line. It is pinned
 there rather than appended to `~/.ssh/config` so that an existing `Host *`

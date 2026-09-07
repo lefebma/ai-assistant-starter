@@ -7,6 +7,7 @@ export interface JoinIO {
   readPublicKey(keyPath: string): string
   sshConfigHas(alias: string): boolean
   appendSshConfig(block: string): void
+  ensureKnownHost(host: string): Promise<{ ok: boolean; message?: string }>
   gitLsRemote(url: string): Promise<boolean>
   gitClone(url: string, dir: string): Promise<{ ok: boolean; out: string }>
   gitConfig(dir: string, key: string, value: string): Promise<void>
@@ -28,6 +29,7 @@ export interface JoinOptions {
 export type JoinOutcome =
   | { stage: 'key-ready'; publicKey: string; created: boolean }
   | { stage: 'access-denied'; publicKey: string }
+  | { stage: 'host-unverified'; message: string }
   | { stage: 'clone-failed'; message: string }
   | { stage: 'joined'; manifest: WorkspaceManifest; warning?: string }
 
@@ -95,6 +97,7 @@ export function sshConfigBlock(alias: string, keyPath: string, host = 'github.co
     `  IdentityFile ${keyPath}`,
     '  IdentitiesOnly yes',
     '  IdentityAgent none',
+    '  UserKnownHostsFile ~/.ssh/known_hosts',
     '',
   ].join('\n')
 }
@@ -108,6 +111,24 @@ export function ensureIncludeLine(existing: string, includeLine: string): string
   if (existing.split('\n').some((l) => l.trim() === wanted)) return existing
   if (existing.trim() === '') return `${wanted}\n`
   return `${wanted}\n\n${existing}`
+}
+
+/**
+ * Pure: does a known_hosts file (as text) already carry a line for `host`?
+ * Matches a plain first field equal to `host`, or a `[host]:port` form. A
+ * hashed entry (`|1|...`) can't be matched against a plain hostname, so it is
+ * never treated as a hit, meaning the caller proceeds to append a fresh line.
+ */
+export function knownHostsHas(fileText: string, host: string): boolean {
+  return fileText.split('\n').some((line) => {
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) return false
+    const first = trimmed.split(/\s+/)[0]
+    if (first.startsWith('|')) return false
+    return first
+      .split(',')
+      .some((entry) => entry === host || entry === `[${host}]:22` || entry.startsWith(`[${host}]:`))
+  })
 }
 
 /**
@@ -131,6 +152,11 @@ export async function runJoin(io: JoinIO, opts: JoinOptions): Promise<JoinOutcom
 
   const url = rewriteRepoUrl(opts.repo, alias)
   if (created) return { stage: 'key-ready', publicKey, created }
+
+  const host = hostOf(opts.repo)
+  const known = await io.ensureKnownHost(host)
+  if (!known.ok) return { stage: 'host-unverified', message: known.message ?? 'unknown error' }
+
   if (!(await io.gitLsRemote(url))) return { stage: 'access-denied', publicKey }
 
   if (!io.dirExists(opts.dir)) {

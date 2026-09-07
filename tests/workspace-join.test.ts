@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ensureIncludeLine, runJoin, rewriteRepoUrl, sshConfigBlock, validateRepoUrl } from '../src/workspace/join.js'
+import { ensureIncludeLine, knownHostsHas, runJoin, rewriteRepoUrl, sshConfigBlock, validateRepoUrl } from '../src/workspace/join.js'
 import type { JoinIO } from '../src/workspace/join.js'
 
 function fakeIO(over: Partial<JoinIO> = {}): JoinIO & { config: string[] } {
@@ -11,6 +11,7 @@ function fakeIO(over: Partial<JoinIO> = {}): JoinIO & { config: string[] } {
     readPublicKey: () => 'ssh-ed25519 AAAA joy@havn',
     sshConfigHas: () => false,
     appendSshConfig: (b) => { config.push(b) },
+    ensureKnownHost: vi.fn(async () => ({ ok: true })),
     gitLsRemote: async () => true,
     gitClone: async () => ({ ok: true, out: '' }),
     gitConfig: vi.fn(async () => {}),
@@ -37,6 +38,21 @@ describe('rewriteRepoUrl / sshConfigBlock', () => {
     expect(b).toContain('IdentityFile /k')
     expect(b).toContain('IdentitiesOnly yes')
     expect(b).toContain('IdentityAgent none')
+  })
+})
+
+describe('knownHostsHas', () => {
+  it('matches a plain host line', () => {
+    expect(knownHostsHas('github.com ssh-ed25519 AAAA\n', 'github.com')).toBe(true)
+  })
+  it('matches a [host]:port line', () => {
+    expect(knownHostsHas('[git.example.com]:22 ssh-ed25519 AAAA\n', 'git.example.com')).toBe(true)
+  })
+  it('cannot match a hashed line, so it proceeds to append', () => {
+    expect(knownHostsHas('|1|abcd1234=|efgh5678= ssh-ed25519 AAAA\n', 'github.com')).toBe(false)
+  })
+  it('returns false for a non-matching file', () => {
+    expect(knownHostsHas('gitlab.com ssh-ed25519 AAAA\n', 'github.com')).toBe(false)
   })
 })
 
@@ -145,5 +161,26 @@ describe('runJoin', () => {
     const io = fakeIO({ keyExists: () => true, sshConfigHas: () => true, gitClone: async () => ({ ok: false, out: 'boom' }) })
     const r = await runJoin(io, opts)
     expect(r).toEqual({ stage: 'clone-failed', message: 'boom' })
+  })
+
+  it('returns host-unverified and never calls gitLsRemote or gitClone when the host key cannot be verified', async () => {
+    const lsRemote = vi.fn(async () => true)
+    const clone = vi.fn(async () => ({ ok: true, out: '' }))
+    const io = fakeIO({
+      keyExists: () => true, sshConfigHas: () => true,
+      ensureKnownHost: vi.fn(async () => ({ ok: false, message: 'ssh-keyscan timed out' })),
+      gitLsRemote: lsRemote, gitClone: clone,
+    })
+    const r = await runJoin(io, opts)
+    expect(r).toEqual({ stage: 'host-unverified', message: 'ssh-keyscan timed out' })
+    expect(lsRemote).not.toHaveBeenCalled()
+    expect(clone).not.toHaveBeenCalled()
+  })
+
+  it('calls ensureKnownHost with the host parsed from the repo url', async () => {
+    const ensureKnownHost = vi.fn(async () => ({ ok: true }))
+    const io = fakeIO({ keyExists: () => true, sshConfigHas: () => true, ensureKnownHost })
+    await runJoin(io, { ...opts, repo: 'git@github.com:o/r.git' })
+    expect(ensureKnownHost).toHaveBeenCalledWith('github.com')
   })
 })
