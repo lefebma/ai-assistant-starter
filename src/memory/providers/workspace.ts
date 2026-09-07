@@ -93,7 +93,7 @@ export class WorkspaceProvider implements ContextProvider {
       if (chosen.length === 0 && (chatHint || nameHit)) chosen = states.slice(0, MAX_STATES_ON_HINT)
       if (chosen.length === 0 && !chatHint && !nameHit) continue
 
-      frags.push({ source: this.name, content: bannerFor(entry), relevance: 0.9 })
+      frags.push({ source: this.name, content: bannerFor(entry), relevance: 0.9, standing: true })
       for (const s of chosen) {
         try {
           const raw = readFileSync(s, 'utf-8').slice(0, SUMMARY_CHARS)
@@ -104,7 +104,7 @@ export class WorkspaceProvider implements ContextProvider {
       }
     }
 
-    if (frags.length > 0) frags.push({ source: this.name, content: RULES, relevance: 0.9 })
+    if (frags.length > 0) frags.push({ source: this.name, content: RULES, relevance: 0.9, standing: true })
     return frags
   }
 }
