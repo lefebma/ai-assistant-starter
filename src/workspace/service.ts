@@ -99,7 +99,10 @@ export function initWorkspaceService(deps: ServiceDeps): void {
   entries.forEach((entry, i) => {
     const every = Math.max(1, entry.syncMinutes || 30) * 60_000
     const first = setTimeout(() => {
-      runOne(entry, deps).catch((err) => logger.error({ err }, 'workspace sync failed'))
+      const fresh = getWorkspace(entry.name, deps.storeDir)
+      if (fresh && fresh.enabled) {
+        runOne(fresh, deps).catch((err) => logger.error({ err }, 'workspace sync failed'))
+      }
       timers.push(setInterval(() => {
         const fresh = getWorkspace(entry.name, deps.storeDir)
         if (!fresh || !fresh.enabled) return

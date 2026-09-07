@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { applySyncOutcome } from '../src/workspace/service.js'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { mkdtempSync } from 'node:fs'
+import { applySyncOutcome, initWorkspaceService, stopWorkspaceService } from '../src/workspace/service.js'
+import { saveRegistry } from '../src/workspace/registry.js'
 import type { WorkspaceEntry } from '../src/workspace/types.js'
 
 const base: WorkspaceEntry = {
@@ -43,5 +45,38 @@ describe('applySyncOutcome', () => {
     const { notice } = applySyncOutcome(base, r, 1)
     expect(notice).toContain('a.md')
     expect(notice).toContain('private pattern')
+  })
+})
+
+describe('initWorkspaceService', () => {
+  afterEach(() => {
+    stopWorkspaceService()
+    vi.useRealTimers()
+  })
+
+  it('first timer run re-reads enabled state and skips if disabled', async () => {
+    vi.useFakeTimers()
+    const storeDir = mkdtempSync('/tmp/test-workspace-')
+    const syncOne = vi.fn()
+
+    const entry: WorkspaceEntry = {
+      name: 'test-workspace',
+      repo: 'git@github.com:test/repo.git',
+      path: '',
+      syncMinutes: 30,
+      enabled: true,
+      chatIds: [],
+      failures: 0,
+    }
+    saveRegistry([entry], storeDir)
+
+    initWorkspaceService({ syncOne, notify: async () => {}, storeDir })
+
+    const disabledEntry = { ...entry, enabled: false }
+    saveRegistry([disabledEntry], storeDir)
+
+    vi.advanceTimersByTime(20_000)
+
+    expect(syncOne).not.toHaveBeenCalled()
   })
 })
