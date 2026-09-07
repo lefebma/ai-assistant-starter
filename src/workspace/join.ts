@@ -21,6 +21,8 @@ export interface JoinOptions {
   keyPath: string
   owner: string
   assistant: string
+  /** Commit email. Defaults to the first token of the assistant name. */
+  email?: string
 }
 
 export type JoinOutcome =
@@ -136,7 +138,8 @@ export async function runJoin(io: JoinIO, opts: JoinOptions): Promise<JoinOutcom
     if (!clone.ok) return { stage: 'clone-failed', message: clone.out.trim() }
   }
   await io.gitConfig(opts.dir, 'user.name', `${opts.assistant} (${opts.owner})`)
-  await io.gitConfig(opts.dir, 'user.email', `${opts.assistant.toLowerCase()}@havn.noreply`)
+  const email = opts.email ?? `${opts.assistant.trim().split(/\s+/)[0].toLowerCase()}@havn.noreply`
+  await io.gitConfig(opts.dir, 'user.email', email)
 
   const raw = io.readManifest(opts.dir)
   const manifest = parseWorkspaceManifest(raw ?? '', opts.name)

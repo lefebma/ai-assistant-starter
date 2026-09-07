@@ -99,5 +99,8 @@ describe('WorkspaceProvider', () => {
     const text = result2.map((f) => f.content).join('\n')
     expect(text).toContain('SHARED WORKSPACE "a-b" (partner)')
     expect(text).toContain('Sample state content')
+    // Positive match on the escaped name itself, not just the chat hint.
+    const result3 = await p.retrieve('1', 'did John[Dev] look at the plan')
+    expect(result3.map((f) => f.content).join('\n')).toContain('SHARED WORKSPACE "a-b" (partner)')
   })
 })

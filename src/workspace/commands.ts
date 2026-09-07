@@ -13,7 +13,7 @@ export interface CommandDeps {
   joinIO: JoinIO
   storeDir?: string
   root?: string
-  identity?: { owner: string; assistant: string }
+  identity?: { owner: string; assistant: string; email?: string }
   syncOne?: (e: WorkspaceEntry) => Promise<WorkspaceSyncResult>
   notify?: Notify
   removeDir?: (dir: string) => void
@@ -60,7 +60,7 @@ export async function workspaceCommand(args: string[], deps: CommandDeps): Promi
       name: a1, repo: a2, path: '', syncMinutes: 30, enabled: true, chatIds: [], failures: 0,
     }
     const dir = workspaceDir(entry, root)
-    const outcome = await runJoin(deps.joinIO, { name: a1, repo: a2, dir, keyPath: keyPathFor(a1), owner: id.owner, assistant: id.assistant })
+    const outcome = await runJoin(deps.joinIO, { name: a1, repo: a2, dir, keyPath: keyPathFor(a1), owner: id.owner, assistant: id.assistant, email: id.email })
 
     switch (outcome.stage) {
       case 'key-ready':

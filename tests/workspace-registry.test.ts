@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  loadRegistry, saveRegistry, upsertWorkspace, removeWorkspace, getWorkspace, workspaceDir,
+  loadRegistry, saveRegistry, upsertWorkspace, removeWorkspace, getWorkspace, workspaceDir, identity,
 } from '../src/workspace/registry.js'
 import type { WorkspaceEntry } from '../src/workspace/types.js'
 
@@ -53,5 +53,25 @@ describe('workspace registry', () => {
   it('writes pretty JSON so a human can read the store file', () => {
     saveRegistry([havn], dir)
     expect(readFileSync(join(dir, 'workspaces.json'), 'utf-8')).toContain('\n  ')
+  })
+
+  it('writes through a temp file and leaves none behind', () => {
+    saveRegistry([havn], dir)
+    expect(readdirSync(dir)).toEqual(['workspaces.json'])
+  })
+})
+
+describe('identity', () => {
+  it('uses only the first token of the assistant name for the commit email', () => {
+    const prev = process.env.ASSISTANT_NAME
+    process.env.ASSISTANT_NAME = 'Joy Assistant'
+    try {
+      const id = identity(dir)
+      expect(id.assistant).toBe('Joy Assistant')
+      expect(id.email).toBe('joy@havn.noreply')
+    } finally {
+      if (prev === undefined) delete process.env.ASSISTANT_NAME
+      else process.env.ASSISTANT_NAME = prev
+    }
   })
 })

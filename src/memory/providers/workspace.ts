@@ -80,7 +80,11 @@ export class WorkspaceProvider implements ContextProvider {
 
     for (const entry of entries) {
       const chatHint = entry.chatIds.includes(String(chatId))
-      const nameHit = firstNames(entry).some((n) => new RegExp(`\\b${escapeRegExp(n)}\\b`).test(lower))
+      // Lookarounds rather than \b: a name ending in a non-word character
+      // ("john[dev]") has no word boundary after it, so \b would never match.
+      const nameHit = firstNames(entry).some((n) =>
+        new RegExp(`(?<![a-z0-9])${escapeRegExp(n)}(?![a-z0-9])`).test(lower)
+      )
       if (!chatHint && !nameHit && !gated) continue
 
       const dir = workspaceDir(entry, this.root)

@@ -3,10 +3,13 @@ import type { SharedWith, WorkspaceManifest, WorkspaceMember } from './types.js'
 const SHARED: SharedWith[] = ['partner', 'internal', 'client', 'unknown']
 
 function frontmatter(raw: string): Record<string, string> {
-  const m = raw.match(/^---\n([\s\S]+?)\n---/)
+  // CRLF: Marina's access is the GitHub web view, which saves with \r\n, and
+  // a manifest that fails to parse reads as shared-with: unknown, which stops
+  // the assistant writing to the workspace at all.
+  const m = raw.match(/^---\r?\n([\s\S]+?)\r?\n---/)
   const out: Record<string, string> = {}
   if (!m) return out
-  for (const line of m[1].split('\n')) {
+  for (const line of m[1].split(/\r?\n/)) {
     const t = line.trim()
     if (!t || t.startsWith('#')) continue
     const i = t.indexOf(':')

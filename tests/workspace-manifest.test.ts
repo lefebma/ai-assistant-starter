@@ -36,4 +36,12 @@ describe('parseWorkspaceManifest', () => {
     const m = parseWorkspaceManifest('---\nname: a\nshared-with: internal\nmembers: [Walid Esefan]\n---', 'a')
     expect(m.members).toEqual([{ human: 'Walid Esefan', assistant: '', role: 'member' }])
   })
+
+  it('parses frontmatter saved with CRLF line endings', () => {
+    const raw = '---\r\nname: havn\r\nshared-with: partner\r\nmembers: [Marc + Umi (owner)]\r\n---\r\nbody'
+    const m = parseWorkspaceManifest(raw, 'fallback')
+    expect(m.sharedWith).toBe('partner')
+    expect(m.name).toBe('havn')
+    expect(m.members[0]).toMatchObject({ human: 'Marc', assistant: 'Umi', role: 'owner' })
+  })
 })
