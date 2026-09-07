@@ -35,7 +35,7 @@ export interface SyncResult {
  *   "You are <NAME>'s personal AI assistant"
  * Falls back to "User" if CLAUDE.md is missing or doesn't match.
  */
-function extractOwnerName(): string {
+export function extractOwnerName(): string {
   try {
     const claude = readFileSync(resolve(PROJECT_ROOT, 'CLAUDE.md'), 'utf-8')
     const m = claude.match(/^You are (.+?)'s personal AI assistant/m)
