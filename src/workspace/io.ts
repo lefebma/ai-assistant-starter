@@ -42,6 +42,8 @@ export function makeSyncIO(dir: string, log: (line: string) => void): SyncIO {
         return null
       }
     },
+    rebaseInProgress: () =>
+      existsSync(resolve(dir, '.git', 'rebase-merge')) || existsSync(resolve(dir, '.git', 'rebase-apply')),
     fileSize: (path) => {
       try {
         return statSync(resolve(dir, path)).size
