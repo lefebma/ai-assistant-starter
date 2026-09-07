@@ -109,7 +109,7 @@ export function makeJoinIO(): JoinIO {
         if (host === 'github.com') {
           // GitHub publishes its host keys, so this pins them instead of
           // trusting whatever the first SSH connection happens to offer.
-          const res = await fetch('https://api.github.com/meta')
+          const res = await fetch('https://api.github.com/meta', { signal: AbortSignal.timeout(10_000) })
           if (!res.ok) return { ok: false, message: `GitHub meta API returned ${res.status}` }
           const meta = (await res.json()) as { ssh_keys?: string[] }
           const keys = meta.ssh_keys ?? []
@@ -125,7 +125,10 @@ export function makeJoinIO(): JoinIO {
         await appendLines(lines)
         return { ok: true, message: 'host key accepted on first use; verify it if the host is not yours' }
       } catch (err) {
-        return { ok: false, message: err instanceof Error ? err.message : String(err) }
+        const message = err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
+          ? 'timed out fetching GitHub host keys'
+          : (err instanceof Error ? err.message : String(err))
+        return { ok: false, message }
       }
     },
     gitLsRemote: async (url) => {
