@@ -176,16 +176,25 @@
     async function signIn() {
       const params = new URLSearchParams(window.location.search)
       const token = params.get('token') || ''
+      let failed = ''
       if (token) {
         try {
-          await fetch('/api/voice-session', {
+          const resp = await fetch('/api/voice-session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
             body: JSON.stringify({ token }),
           })
+          // A 404 is not this user's problem: the route exists in the app, so
+          // reaching Caddy's catch-all instead means the edge config predates
+          // it and the operator has to re-run the edge script. Reporting that
+          // as an expired link sends the wrong person hunting, which is
+          // exactly what happened on havn-test.
+          if (resp.status === 404) failed = 'edge'
+          else if (!resp.ok) failed = 'spent'
         } catch (e) {
           console.warn('Could not exchange the link for a session:', e)
+          failed = 'offline'
         }
         // Strip it either way. A spent token in the bar is noise; a live one
         // is a password on a screen someone may be sharing.
@@ -193,21 +202,34 @@
         const rest = params.toString()
         window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : ''))
       }
-      // The cookie decides, not the URL. Someone reopening an already-spent
-      // link is still signed in; someone arriving with neither is not. This
-      // doubles as the voice list the picker needs, so it is one round trip.
+      // The cookie decides, not the URL. Someone reopening a link inside its
+      // grace window, or after it, is still signed in if this browser already
+      // exchanged one. This doubles as the voice list the picker needs, so it
+      // is one round trip rather than two.
       try {
         const probe = await fetch('/api/voices', { credentials: 'same-origin' })
-        if (probe.ok) return await probe.json()
+        if (probe.ok) return { ok: true, voices: await probe.json() }
       } catch (e) {
         console.warn('Could not reach the assistant:', e)
+        return { ok: false, reason: 'offline' }
       }
-      return null
+      return { ok: false, reason: failed || (token ? 'spent' : 'none') }
     }
 
-    function lockOut() {
+    // Four different situations used to render as "this link has expired", and
+    // only one of them was expiry. Each of these sends a different person to do
+    // a different thing.
+    const SIGN_IN_TROUBLE = {
+      edge: 'This box is missing its sign-in route, so the page cannot let you in. The operator needs to re-run the edge script with --voice.',
+      spent: 'This link has already been used to sign in, or it has expired. Send /voice ui in your chat for a new one.',
+      none: 'Send /voice ui in your chat to get a link to this page.',
+      offline: 'Could not reach the assistant. Check your connection and reload.',
+    }
+
+    function lockOut(reason) {
       document.getElementById('status').textContent =
-        'This voice link has expired. Send /voice ui in your chat for a new one.'
+        SIGN_IN_TROUBLE[reason] || SIGN_IN_TROUBLE.spent
+      document.getElementById('hint').textContent = ''
       document.getElementById('orb-wrap').style.pointerEvents = 'none'
       document.getElementById('send-btn').disabled = true
       voiceSelect.innerHTML = '<option value="">Unavailable</option>'
@@ -633,12 +655,12 @@
       speak('This is how I sound now.')
     })
 
-    signedIn.then((info) => {
-      if (!info) {
-        lockOut()
+    signedIn.then((result) => {
+      if (!result.ok) {
+        lockOut(result.reason)
         return
       }
-      applyVoices(info)
+      applyVoices(result.voices)
     })
 
     // --- MediaRecorder: records from selected mic, sends to Whisper ---

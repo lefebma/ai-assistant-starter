@@ -41,6 +41,27 @@ export const PUBLIC_HOSTNAME = env['PUBLIC_HOSTNAME']?.trim() ?? ''
 // Voice UI links double as the API credential, so the TTL is a session length,
 // not a click window.
 export const VOICE_LINK_TTL_HOURS = parseInt(env['VOICE_LINK_TTL_HOURS'] ?? '12', 10) || 12
+/**
+ * How long a link stays usable after the first browser opens it.
+ *
+ * Not zero, which is what 1.23.0 shipped. The natural way to use the page is
+ * to open the link on whatever machine you read the message on and then reach
+ * for your phone, which is the device voice is for; strict single use made the
+ * second one fail. A leaked URL is still worthless within minutes rather than
+ * for the link's full life, which is the exposure that mattered.
+ */
+export const VOICE_LINK_GRACE_MINUTES = parseGraceMinutes(env['VOICE_LINK_GRACE_MINUTES'])
+
+/**
+ * Exported for tests. Written out longhand because `parseInt(...) || 10` gets
+ * this wrong: 0 is a meaningful setting here (strict single use) and is also
+ * falsy, so the shorthand would silently hand back 10 to anyone who asked for
+ * none.
+ */
+export function parseGraceMinutes(raw: string | undefined, fallback = 10): number {
+  const parsed = parseInt(raw ?? '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
 // Which OpenAI TTS voice speaks replies. Hardcoded until 2026-08-29, which
 // meant an install that wanted a different one had to patch engine code, and
 // the next update silently reverted it.

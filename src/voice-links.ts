@@ -20,7 +20,7 @@
 import { randomBytes } from 'node:crypto'
 import { getDb } from './db.js'
 import { logger } from './logger.js'
-import { VOICE_LINK_TTL_HOURS } from './config.js'
+import { VOICE_LINK_TTL_HOURS, VOICE_LINK_GRACE_MINUTES } from './config.js'
 import { createVoiceSession, revokeVoiceSessions, type VoiceSession } from './voice-sessions.js'
 
 export interface VoiceLink {
@@ -38,9 +38,18 @@ function ttlMs(): number {
   return Math.max(1, VOICE_LINK_TTL_HOURS) * 60 * 60 * 1000
 }
 
-/** Drop expired rows so a long-lived box doesn't accumulate dead tokens. */
+function graceMs(): number {
+  return Math.max(0, VOICE_LINK_GRACE_MINUTES) * 60 * 1000
+}
+
+/**
+ * Drop rows that can no longer be used: past their expiry, or past the grace
+ * window that started when the first browser opened them.
+ */
 function prune(now: number): void {
-  getDb().prepare('DELETE FROM voice_links WHERE expires_at <= ?').run(now)
+  const d = getDb()
+  d.prepare('DELETE FROM voice_links WHERE expires_at <= ?').run(now)
+  d.prepare('DELETE FROM voice_links WHERE used_at IS NOT NULL AND used_at + ? <= ?').run(graceMs(), now)
 }
 
 /**
@@ -75,10 +84,13 @@ export function resolveVoiceToken(token: string, now: number = Date.now()): stri
   if (!token) return null
   try {
     const row = getDb()
-      .prepare('SELECT chat_id, expires_at FROM voice_links WHERE token = ?')
-      .get(token) as { chat_id: string; expires_at: number } | undefined
+      .prepare('SELECT chat_id, expires_at, used_at FROM voice_links WHERE token = ?')
+      .get(token) as { chat_id: string; expires_at: number; used_at: number | null } | undefined
     if (!row) return null
-    if (row.expires_at <= now) {
+    // The grace window is the shorter leash, but it never outlives the link:
+    // one opened a minute before expiry does not get ten more.
+    const deadAt = row.used_at === null ? row.expires_at : Math.min(row.expires_at, row.used_at + graceMs())
+    if (deadAt <= now) {
       getDb().prepare('DELETE FROM voice_links WHERE token = ?').run(token)
       return null
     }
@@ -92,10 +104,15 @@ export function resolveVoiceToken(token: string, now: number = Date.now()): stri
 /**
  * Spend a link and open a browser session with it.
  *
- * One-way and one-shot: the link row is deleted in the same transaction that
- * writes the session, so the token in the URL bar is dead the moment the page
- * has a cookie. That is the whole point. A copy of the link left in browser
- * history, in a referrer, or in a log someone forgot to redact buys nothing.
+ * First use starts a short clock (VOICE_LINK_GRACE_MINUTES, default 10)
+ * rather than killing the link outright. Long enough to open the page on the
+ * machine you read the message on and then on your phone, which is the way
+ * people actually use it; short enough that the copy left behind in browser
+ * history, in a referrer, or in a log someone forgot to redact is worthless
+ * by the time anyone finds it.
+ *
+ * 1.23.0 made this strictly single use and that was wrong: the second device
+ * is not an edge case, it is the point of the feature.
  *
  * Deliberately not reached by a GET. A link preview fetcher (Telegram makes
  * one for every URL posted in a chat) would otherwise burn the link before the
@@ -111,7 +128,9 @@ export function exchangeVoiceToken(token: string, now: number = Date.now()): Voi
     | undefined
   if (!row) return null
   const spend = d.transaction((): VoiceSession => {
-    d.prepare('DELETE FROM voice_links WHERE token = ?').run(token)
+    // Stamped once, on first use. Later exchanges inside the window ride the
+    // original stamp, so a second device cannot extend the leash by arriving.
+    d.prepare('UPDATE voice_links SET used_at = ? WHERE token = ? AND used_at IS NULL').run(now, token)
     return createVoiceSession(chatId, row.expires_at, now)
   })
   try {
@@ -143,10 +162,11 @@ export function voiceLinkUrl(hostname: string, token: string): string {
  */
 export function voiceLinkMessage(url: string, expiresAt: number, now: number = Date.now()): string {
   const hours = Math.max(1, Math.round((expiresAt - now) / (60 * 60 * 1000)))
+  const GRACE = Math.max(1, VOICE_LINK_GRACE_MINUTES)
   return [
     url,
     '',
-    `Expires in ${hours}h. Opening it signs that browser in and the link itself stops working, so treat it like a password until you have used it and don't forward it.`,
-    'Send /voice ui again for a fresh link (which signs the old browser out), or /voice ui revoke to sign out now.',
+    `Expires in ${hours}h. Opening it signs that browser in; it keeps working for ${GRACE} more minutes so you can open it on a second device, then stops. Treat it like a password and don't forward it.`,
+    'Send /voice ui again for a fresh link (which signs the old browsers out), or /voice ui revoke to sign out now.',
   ].join('\n')
 }
