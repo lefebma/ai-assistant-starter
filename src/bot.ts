@@ -457,7 +457,9 @@ async function handleVoiceUiCommand(
     const n = revokeVoiceLinks(chatId)
     await adapter.sendMessage(
       chatId,
-      n > 0 ? 'Voice link revoked. It will not open again.' : 'No active voice link to revoke.'
+      n > 0
+        ? 'Voice link revoked, and any browser signed in with it is signed out.'
+        : 'No active voice link to revoke.'
     )
     return
   }

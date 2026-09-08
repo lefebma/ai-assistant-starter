@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Changed: the voice link signs you in and then stops working.** Opening it trades its token for a session cookie the page cannot read, and drops the token out of the address bar. The token was the API credential for the whole box, and it was sitting in a URL: URLs land in browser history, in the `Referer` header of any outbound link, and in anything that logs them. The hosted access log redacts `?token=` for exactly that reason, which was a mitigation and not a fix. The link is still the way in, once. The copy left behind afterwards opens nothing. Nothing changes in how you use it: send `/voice ui`, tap the link. The session inherits the link's expiry rather than restarting the clock, so "expires in 12h" still means what it said, and `/voice ui revoke` now signs out live browsers instead of only cancelling an unused link. **Hosted boxes must re-run `enable-teams` with `--voice` after updating**, because the sign-in route is new and a Caddyfile that predates it will 404 it.
+
 ## 1.22.1 - 2026-09-05
 
 One fix, found by asking a box what was in 1.22.0 and getting an answer about 1.19.

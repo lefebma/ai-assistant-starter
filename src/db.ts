@@ -139,6 +139,22 @@ export function initDatabase(): void {
     ON voice_links(chat_id)
   `)
 
+  // Browser sessions the voice page trades its link token for (see
+  // src/voice-sessions.ts). Separate from voice_links because the link is spent
+  // on first load and the session outlives it.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS voice_sessions (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    )
+  `)
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_voice_sessions_chat
+    ON voice_sessions(chat_id)
+  `)
+
   // Small key/value store for one-shot install state that must outlive a
   // restart (see src/onboarding/interview-offer.ts). A table rather than a
   // marker file so it travels with store/, which updates already preserve.

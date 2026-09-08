@@ -191,7 +191,7 @@ describe('the hosted edge proxies the route', () => {
     const caddy = buildCaddyfile('havn.example.com', { voice: true })
     // Both, and as separate paths: /api/voices alone would leave the picker
     // able to list voices and unable to change one.
-    expect(caddy).toMatch(/\/api\/voices \/api\/voice$/m)
+    expect(caddy).toMatch(/\/api\/voices \/api\/voice \/api\/voice-session$/m)
   })
 
   it('does not expose it when the voice UI is off', () => {
@@ -218,9 +218,12 @@ describe('truncateForSpeech', () => {
 })
 
 describe('the voice page', () => {
-  it('asks the server to speak, with its credential', () => {
+  it('asks the server to speak, and lets the browser carry the credential', () => {
     expect(PAGE_CODE).toContain("fetch('/api/speak'")
-    expect(PAGE_CODE).toContain('...authHeaders()')
+    // The page used to attach the credential itself, read out of its own URL.
+    // It is a cookie now, so the browser attaches it and the page never holds
+    // it. See tests/voice-session-auth.test.ts.
+    expect(PAGE_CODE).toContain("credentials: 'same-origin'")
   })
 
   it('no longer calls speechSynthesis', () => {

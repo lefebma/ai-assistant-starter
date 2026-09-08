@@ -422,12 +422,24 @@ The edge proxies an explicit list of paths, so a box whose Caddyfile predates a
 route gets a 404 from Caddy for something that works perfectly in local
 development. 1.20.0 added `/api/speak`, so every box updating into it needs this
 once; the page answers in text and says it could not speak until you do.
+1.22.0 added `/api/voice-session`, which is how the page signs in: a box that
+404s it shows the voice page and then tells every user their link has expired.
 
 **Nothing in the edge config is a credential.** Each user mints their own
 link by sending `/voice ui` in their chat; the app validates it. Links
 expire (`VOICE_LINK_TTL_HOURS`, default 12), minting a new one cancels the
 previous, and `/voice ui revoke` kills it immediately. The link is scoped to
 the chat that minted it, so it opens that assistant and no other.
+
+**The link works once.** Opening it trades the token for a session cookie
+(`HttpOnly`, `SameSite=Lax`, `Secure` behind the edge) and the token is spent
+in the same breath, so the copy left in browser history, in a `Referer`, or in
+an access log nobody redacted is worth nothing a second later. The session
+inherits the link's expiry rather than restarting the clock, so "expires in
+12h" stays true. Revoking or re-minting kills live sessions too, which is what
+makes `/voice ui revoke` the right answer to a lost phone. Reopening a spent
+link still works on the browser that used it, because the cookie is what
+answers, not the URL.
 
 This exists because the earlier design put `HTTP_BEARER_TOKEN` in the URL
 and in `/etc/caddy/Caddyfile`, which made whoever provisioned the box a
@@ -437,8 +449,10 @@ the SQLite database either way. What it removes is the standing key that sat
 in a file the operator already had open, so reaching a user's assistant now
 takes a deliberate act.
 
-Tell users plainly that the link is a password. Anyone holding it can talk to
-their assistant, so it should not be forwarded or pasted into a chat.
+Tell users plainly that the link is a password until they open it. Anyone who
+uses it first gets the session, so it should not be forwarded or pasted into a
+chat. After it has been opened, the thing worth protecting is the browser it
+was opened in.
 
 ## Edge access log
 

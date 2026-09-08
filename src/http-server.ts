@@ -6,7 +6,8 @@ import {
   transcribeAudio, synthesizeSpeechAudio, voiceCapabilities,
   ttsEngine, effectiveVoice, setEffectiveVoice, isOpenAIVoice, OPENAI_VOICES,
 } from './voice.js'
-import { resolveVoiceToken } from './voice-links.js'
+import { resolveVoiceToken, exchangeVoiceToken } from './voice-links.js'
+import { resolveVoiceSession, sessionIdFromCookies, voiceSessionCookie } from './voice-sessions.js'
 import { runAgent } from './agent.js'
 import { sendPlatformMessage } from './bot.js'
 import { logger } from './logger.js'
@@ -87,8 +88,51 @@ function authContext(req: IncomingMessage): { ok: boolean; chatId: string | null
   if (HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN) return { ok: true, chatId: null }
   const chatId = resolveVoiceToken(token)
   if (chatId) return { ok: true, chatId }
+  const sessionChat = resolveVoiceSession(sessionIdFromCookies(req.headers.cookie))
+  if (sessionChat) return { ok: true, chatId: sessionChat }
   if (!HTTP_BEARER_TOKEN) return { ok: true, chatId: null }
   return { ok: false, chatId: null }
+}
+
+/**
+ * Whether the browser reached us over TLS, which decides the cookie's Secure
+ * flag. The edge terminates TLS and rewrites X-Forwarded-Proto, so a client
+ * cannot forge it on a hosted box. Reached directly it can, and the only thing
+ * a forged value buys is a *more* restrictive cookie or one a plain-http page
+ * will not send back, so there is nothing here to steal.
+ */
+function overTls(req: IncomingMessage): boolean {
+  const forwarded = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim().toLowerCase()
+  if (forwarded) return forwarded === 'https'
+  return Boolean((req.socket as { encrypted?: boolean }).encrypted)
+}
+
+/**
+ * Trade a `/voice ui` link token for a session cookie. Unauthenticated by
+ * design: this route IS the authentication. It reads the token from the body
+ * rather than the query string, so the one credential the user was handed does
+ * not get copied into another log on its way out of circulation.
+ */
+async function handleVoiceSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let token = ''
+  try {
+    const parsed = JSON.parse((await readBody(req)) || '{}') as { token?: unknown }
+    token = typeof parsed.token === 'string' ? parsed.token : ''
+  } catch {
+    token = ''
+  }
+  const session = exchangeVoiceToken(token)
+  if (!session) {
+    res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify({ error: 'invalid or expired link' }))
+    return
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    'Set-Cookie': voiceSessionCookie(session, overTls(req)),
+  })
+  res.end(JSON.stringify({ ok: true, expiresAt: session.expiresAt }))
 }
 
 function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
@@ -557,6 +601,10 @@ export function startHttpServer(port: number = HTTP_PORT): void {
       handleVoices(req, res)
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/voice-session') {
+      void handleVoiceSession(req, res)
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/voice') {
       void handleSetVoice(req, res)
       return
@@ -569,8 +617,14 @@ export function startHttpServer(port: number = HTTP_PORT): void {
       // The edge proxies this path without inspecting the token, so the check
       // lives here. Serving the shell to an unauthenticated caller would leak
       // nothing (it is inert without a token), but a 403 keeps the box quiet.
+      // A session counts as well as a link. The link is spent on first load,
+      // so without this a returning visitor (reopening the link from their
+      // chat, or a bookmark) would be turned away while still signed in.
       const token = url.searchParams.get('token') ?? ''
-      const ok = resolveVoiceToken(token) !== null || (!!HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN)
+      const ok =
+        resolveVoiceToken(token) !== null ||
+        (!!HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN) ||
+        resolveVoiceSession(sessionIdFromCookies(req.headers.cookie)) !== null
       if (!ok) {
         res.writeHead(403, { 'Content-Type': 'text/plain' })
         res.end('This voice link is not valid or has expired. Send /voice ui in your chat for a new one.')
