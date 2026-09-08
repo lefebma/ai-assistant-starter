@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Removed: the `/r1` route.** It came across when this product was split out of the assistant it was built from, where it serves a tiny page sized for a Rabbit R1 handheld. The page itself never came with it, so the route answered 404 on every install that has ever existed, and it built that response by injecting `HTTP_BEARER_TOKEN` into HTML served with no auth check. Nothing here used it. The original assistant keeps its own copy, unaffected.
+
 ## 1.24.0 - 2026-09-08
 
 Housekeeping. Updates stop leaving every old copy of the app on the disk, which on a box installed from a release bundle was about 400MB a time and never came back.
