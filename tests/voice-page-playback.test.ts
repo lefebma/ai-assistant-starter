@@ -77,7 +77,7 @@ interface Page {
   unlockAudio: () => void
   startRecording: () => Promise<void>
   stopSpeaking: () => void
-  loadVoices: () => Promise<void>
+  signedIn: Promise<any>
   player: FakeAudio
   transcript: any
   voiceSelect: any
@@ -122,6 +122,10 @@ function loadPage(opts: { sinkSupported?: boolean; voices?: unknown } = {}): Pag
       speakCalls.push(JSON.parse(init.body).text)
       return { ok: true, status: 200, blob: async () => ({ size: 64, type: 'audio/mpeg' }) }
     }
+    if (path.includes('/api/voice-session')) {
+      // Checked before /api/voice, which is a prefix of it.
+      return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    }
     if (path.includes('/api/voices')) {
       return { ok: true, status: 200, json: async () => opts.voices ?? {
         engine: 'openai',
@@ -161,10 +165,10 @@ function loadPage(opts: { sinkSupported?: boolean; voices?: unknown } = {}): Pag
   const run = new Function(
     'window', 'document', 'navigator', 'localStorage', 'fetch', 'Audio', 'URL',
     'HTMLMediaElement', 'MediaRecorder', '__expose',
-    `${SCRIPT}\n__expose({ speak, unlockAudio, startRecording, stopSpeaking, loadVoices, player, transcript, voiceSelect })`,
+    `${SCRIPT}\n__expose({ speak, unlockAudio, startRecording, stopSpeaking, signedIn, player, transcript, voiceSelect })`,
   )
   run(
-    { location: { search: '?token=test-token' } },
+    { location: { search: '?token=test-token', pathname: '/voice' }, history: { replaceState() {} } },
     document, navigator, localStorage, fetchStub, FakeAudio, url,
     HTMLMediaElement, MediaRecorder,
     (internals: any) => { captured = { ...internals, session, speakCalls, voiceSets } },
@@ -260,7 +264,8 @@ describe('the voice page, played the way an iPhone plays it', () => {
 describe('the voice picker', () => {
   it('offers the box\'s voices and shows the one in use', async () => {
     const page = loadPage()
-    await page.loadVoices()
+    await page.signedIn
+    await new Promise((r) => setTimeout(r, 0))
 
     expect(page.voiceSelect.disabled).toBe(false)
     expect(page.voiceSelect.children.map((o: any) => o.value)).toEqual(
@@ -271,7 +276,8 @@ describe('the voice picker', () => {
 
   it('changes the assistant\'s voice and answers in it, so the name means something', async () => {
     const page = loadPage()
-    await page.loadVoices()
+    await page.signedIn
+    await new Promise((r) => setTimeout(r, 0))
 
     page.voiceSelect.value = 'nova'
     gesture(() => page.voiceSelect.listeners['change'][0]({}))
@@ -287,7 +293,8 @@ describe('the voice picker', () => {
   it('says so rather than listing voices a box cannot use', async () => {
     // macOS `say` has its own unrelated names, and a box with no TTS has none.
     const page = loadPage({ voices: { engine: 'macos', voices: [], current: null } })
-    await page.loadVoices()
+    await page.signedIn
+    await new Promise((r) => setTimeout(r, 0))
 
     expect(page.voiceSelect.disabled).toBe(true)
     expect(page.voiceSelect.innerHTML).toContain('Set by this assistant')

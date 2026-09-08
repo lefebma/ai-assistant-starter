@@ -117,7 +117,11 @@ describe('the /voice page gate, end to end', () => {
   // so they run here where AGENT_STORE_DIR points at a temp database.
   // Fresh port per start, and wait until it answers: see the note in
   // http-routes.test.ts about rebinding a just-closed port on Windows.
-  let nextPort = 3800 + Math.floor(Math.random() * 100) * 10
+  // 3800-3990. The old draw was 100 slots wide and reached 4790, which
+  // contains 4045 and 4190: both are on fetch's blocked-port list, so a draw
+  // that landed on either hung the readiness loop for five seconds and then
+  // threw "fetch failed", which reads exactly like a hung server and is not one.
+  let nextPort = 3800 + Math.floor(Math.random() * 20) * 10
   async function startServer(): Promise<number> {
     const { startHttpServer } = await import('../src/http-server.js')
     const port = nextPort++

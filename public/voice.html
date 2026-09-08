@@ -161,15 +161,57 @@
 
   <script>
     // --- Auth ---
-    const params = new URLSearchParams(window.location.search)
-    const TOKEN = params.get('token') || ''
-    if (!TOKEN) {
-      document.getElementById('status').textContent = 'Missing ?token= parameter'
+    // The link carries a credential in its query string, once. Trade it for an
+    // HttpOnly cookie and get it out of the address bar: a URL leaks into
+    // browser history, into the Referer of any outbound link, and into
+    // anything that logs URLs, and this one opens the whole box. The exchange
+    // spends the token, so every copy left behind in those places is worthless
+    // a second later.
+    //
+    // Nothing else in this page handles the credential. The browser attaches
+    // the cookie on its own, and being HttpOnly the page could not read it if
+    // it tried, which is the improvement over holding it in a variable here.
+    const signedIn = signIn()
+
+    async function signIn() {
+      const params = new URLSearchParams(window.location.search)
+      const token = params.get('token') || ''
+      if (token) {
+        try {
+          await fetch('/api/voice-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ token }),
+          })
+        } catch (e) {
+          console.warn('Could not exchange the link for a session:', e)
+        }
+        // Strip it either way. A spent token in the bar is noise; a live one
+        // is a password on a screen someone may be sharing.
+        params.delete('token')
+        const rest = params.toString()
+        window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : ''))
+      }
+      // The cookie decides, not the URL. Someone reopening an already-spent
+      // link is still signed in; someone arriving with neither is not. This
+      // doubles as the voice list the picker needs, so it is one round trip.
+      try {
+        const probe = await fetch('/api/voices', { credentials: 'same-origin' })
+        if (probe.ok) return await probe.json()
+      } catch (e) {
+        console.warn('Could not reach the assistant:', e)
+      }
+      return null
+    }
+
+    function lockOut() {
+      document.getElementById('status').textContent =
+        'This voice link has expired. Send /voice ui in your chat for a new one.'
       document.getElementById('orb-wrap').style.pointerEvents = 'none'
       document.getElementById('send-btn').disabled = true
-    }
-    function authHeaders() {
-      return TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}
+      voiceSelect.innerHTML = '<option value="">Unavailable</option>'
+      voiceSelect.disabled = true
     }
 
     // --- State ---
@@ -294,7 +336,8 @@
     async function transcribeAudio(blob) {
       const resp = await fetch('/api/transcribe', {
         method: 'POST',
-        headers: { 'Content-Type': blob.type || 'audio/webm', ...authHeaders() },
+        headers: { 'Content-Type': blob.type || 'audio/webm' },
+        credentials: 'same-origin',
         body: blob,
       })
       if (!resp.ok) throw new Error('Transcribe failed: ' + resp.status)
@@ -312,7 +355,8 @@
       try {
         const resp = await fetch('/v1/chat/completions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
           body: JSON.stringify({
             messages: conversationHistory.slice(-10),
             stream: true,
@@ -441,7 +485,8 @@
     async function fetchSpeech(text) {
       const resp = await fetch('/api/speak', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ text }),
       })
       if (resp.status === 503) {
@@ -536,19 +581,7 @@
     // changes what Telegram sounds like too. A per-browser setting was the
     // alternative and would rebuild the exact problem this page was changed to
     // fix: one assistant with a different voice on every screen it reaches.
-    async function loadVoices() {
-      let info
-      try {
-        const resp = await fetch('/api/voices', { headers: authHeaders() })
-        if (!resp.ok) throw new Error('voices failed: ' + resp.status)
-        info = await resp.json()
-      } catch (e) {
-        console.warn('Could not load voices:', e)
-        voiceSelect.innerHTML = '<option value="">Unavailable</option>'
-        voiceSelect.disabled = true
-        return
-      }
-
+    function applyVoices(info) {
       const voices = (info && info.voices) || []
       if (voices.length === 0) {
         // A box on macOS `say`, or one with no TTS at all. Offering names that
@@ -584,7 +617,8 @@
       try {
         const resp = await fetch('/api/voice', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
           body: JSON.stringify({ voice: chosen }),
         })
         if (!resp.ok) throw new Error('set voice failed: ' + resp.status)
@@ -599,7 +633,13 @@
       speak('This is how I sound now.')
     })
 
-    loadVoices()
+    signedIn.then((info) => {
+      if (!info) {
+        lockOut()
+        return
+      }
+      applyVoices(info)
+    })
 
     // --- MediaRecorder: records from selected mic, sends to Whisper ---
     let mediaRecorder = null

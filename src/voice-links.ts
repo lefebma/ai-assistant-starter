@@ -21,6 +21,7 @@ import { randomBytes } from 'node:crypto'
 import { getDb } from './db.js'
 import { logger } from './logger.js'
 import { VOICE_LINK_TTL_HOURS } from './config.js'
+import { createVoiceSession, revokeVoiceSessions, type VoiceSession } from './voice-sessions.js'
 
 export interface VoiceLink {
   token: string
@@ -51,6 +52,10 @@ export function mintVoiceLink(chatId: string, now: number = Date.now()): VoiceLi
   const d = getDb()
   prune(now)
   d.prepare('DELETE FROM voice_links WHERE chat_id = ?').run(chatId)
+  // A new link supersedes the old one, and a session opened from the old link
+  // is the same grant by another name. Leaving it alive would mean the phone
+  // you minted a replacement to lock out kept talking.
+  revokeVoiceSessions(chatId)
   const token = newToken()
   const expiresAt = now + ttlMs()
   d.prepare(
@@ -84,10 +89,46 @@ export function resolveVoiceToken(token: string, now: number = Date.now()): stri
   }
 }
 
+/**
+ * Spend a link and open a browser session with it.
+ *
+ * One-way and one-shot: the link row is deleted in the same transaction that
+ * writes the session, so the token in the URL bar is dead the moment the page
+ * has a cookie. That is the whole point. A copy of the link left in browser
+ * history, in a referrer, or in a log someone forgot to redact buys nothing.
+ *
+ * Deliberately not reached by a GET. A link preview fetcher (Telegram makes
+ * one for every URL posted in a chat) would otherwise burn the link before the
+ * human tapped it, and the feature would appear broken to everyone. Only the
+ * page's own POST, which needs JavaScript, gets here.
+ */
+export function exchangeVoiceToken(token: string, now: number = Date.now()): VoiceSession | null {
+  const chatId = resolveVoiceToken(token, now)
+  if (!chatId) return null
+  const d = getDb()
+  const row = d.prepare('SELECT expires_at FROM voice_links WHERE token = ?').get(token) as
+    | { expires_at: number }
+    | undefined
+  if (!row) return null
+  const spend = d.transaction((): VoiceSession => {
+    d.prepare('DELETE FROM voice_links WHERE token = ?').run(token)
+    return createVoiceSession(chatId, row.expires_at, now)
+  })
+  try {
+    return spend()
+  } catch (err) {
+    logger.error({ err }, 'voice session exchange failed; denying')
+    return null
+  }
+}
+
 /** Returns how many links were dropped, so the caller can say "nothing to revoke". */
 export function revokeVoiceLinks(chatId: string): number {
   const info = getDb().prepare('DELETE FROM voice_links WHERE chat_id = ?').run(chatId)
-  return info.changes
+  // Counted together: to the user this is one thing ("kill my voice access"),
+  // and reporting "nothing to revoke" while a live browser session carries on
+  // would be worse than wrong.
+  return info.changes + revokeVoiceSessions(chatId)
 }
 
 /** The URL a user opens. https only: the edge terminates TLS and the mic needs a secure context. */
@@ -105,7 +146,7 @@ export function voiceLinkMessage(url: string, expiresAt: number, now: number = D
   return [
     url,
     '',
-    `Expires in ${hours}h. Anyone with this link can talk to your assistant, so treat it like a password and don't forward it.`,
-    'Send /voice ui again for a fresh link (which cancels this one), or /voice ui revoke to kill it now.',
+    `Expires in ${hours}h. Opening it signs that browser in and the link itself stops working, so treat it like a password until you have used it and don't forward it.`,
+    'Send /voice ui again for a fresh link (which signs the old browser out), or /voice ui revoke to sign out now.',
   ].join('\n')
 }
