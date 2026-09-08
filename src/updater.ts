@@ -31,6 +31,7 @@ import {
   type InstallEnvironment,
 } from './update/plan.js'
 import { moveAside, moveInto, restoreBackup } from './update/swap.js'
+import { pruneBackups } from './update/backups.js'
 
 
 /**
@@ -340,6 +341,10 @@ async function applyBundleUpdate(
       checkedAt: Date.now(),
     })
 
+    // Only now, with the swap done and the new version recorded. Pruning any
+    // earlier could delete the directory a rollback is about to read from.
+    pruneBackups(resolve(PROJECT_ROOT, 'store'))
+
     logger.info({ from: currentVersion, to: targetVersion }, 'Bundle update applied')
     return {
       success: true,
@@ -456,6 +461,10 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
       checkedAt: Date.now(),
     }
     saveCachedStatus(newStatus)
+
+    // Same rule as the bundle path: after the swap succeeded, never in the
+    // rollback, and never before the backup has stopped being needed.
+    pruneBackups(resolve(PROJECT_ROOT, 'store'))
 
     logger.info({ from: currentVersion, to: targetVersion }, 'Update applied successfully')
 
