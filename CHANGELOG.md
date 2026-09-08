@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Fixed: a voice link opens on more than one device again.** 1.23.0 spent the link on first use, which sounds right and is wrong: the natural way to use the page is to open the link on whatever machine you read the message on and then reach for your phone, which is the device voice is for. The second device got told the link had expired. First use now starts a short clock instead (`VOICE_LINK_GRACE_MINUTES`, default 10) and the link keeps working until it runs out. A copy left in browser history, in a referrer, or in a log is still worthless by the time anyone finds it, which was the point of the change. Set the grace to 0 if you want the strict single-use behaviour back.
+- **Fixed: the voice page said "expired" for four different problems.** A box whose edge was never updated, a link that had genuinely run out, a revoked session, and arriving with no link at all all rendered the same sentence, which sent the wrong person looking for the wrong thing. Each now says what actually happened, and the one that is the operator's problem says so.
+
 ## 1.23.0 - 2026-09-08
 
 One change, and it is the one the voice page has needed since it shipped: the link that opens it stops being a credential you have to carry around and be careful with.

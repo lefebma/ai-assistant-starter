@@ -17,6 +17,7 @@ let resolveVoiceToken: typeof import('../src/voice-links.js').resolveVoiceToken
 let resolveVoiceSession: typeof import('../src/voice-sessions.js').resolveVoiceSession
 let revokeVoiceSessions: typeof import('../src/voice-sessions.js').revokeVoiceSessions
 let VOICE_COOKIE: typeof import('../src/voice-sessions.js').VOICE_COOKIE
+let VOICE_LINK_GRACE_MINUTES: number
 
 beforeAll(async () => {
   const db = await import('../src/db.js')
@@ -30,6 +31,7 @@ beforeAll(async () => {
   resolveVoiceSession = sessions.resolveVoiceSession
   revokeVoiceSessions = sessions.revokeVoiceSessions
   VOICE_COOKIE = sessions.VOICE_COOKIE
+  VOICE_LINK_GRACE_MINUTES = (await import('../src/config.js')).VOICE_LINK_GRACE_MINUTES
 })
 
 afterAll(async () => {
@@ -55,17 +57,21 @@ describe('exchanging a link for a session', () => {
     expect(resolveVoiceSession(session!.id)).toBe('chat-exchange')
   })
 
-  it('spends the link, so the URL that opened the page is dead afterwards', () => {
-    const link = mintVoiceLink('chat-single-use')
-    expect(resolveVoiceToken(link.token)).toBe('chat-single-use')
+  it('spends the link once its grace window closes', () => {
+    // 1.23.0 killed the link on first use, which broke opening it on a laptop
+    // and then a phone. First use now starts a short clock instead; the
+    // window itself is covered in tests/voice-link-grace.test.ts. What this
+    // test holds onto is the end state: the credential sitting in browser
+    // history, in a referrer, or in someone's access log is worth nothing.
+    const now = Date.now()
+    const link = mintVoiceLink('chat-single-use', now)
+    expect(resolveVoiceToken(link.token, now)).toBe('chat-single-use')
 
-    expect(exchangeVoiceToken(link.token)).not.toBeNull()
+    expect(exchangeVoiceToken(link.token, now)).not.toBeNull()
 
-    // This is the whole point of the card: after the exchange the credential
-    // sitting in browser history, in a referrer, or in someone's access log is
-    // worth nothing.
-    expect(resolveVoiceToken(link.token)).toBeNull()
-    expect(exchangeVoiceToken(link.token)).toBeNull()
+    const afterWindow = now + (VOICE_LINK_GRACE_MINUTES + 1) * 60 * 1000
+    expect(resolveVoiceToken(link.token, afterWindow)).toBeNull()
+    expect(exchangeVoiceToken(link.token, afterWindow)).toBeNull()
   })
 
   it('refuses an unknown token', () => {
@@ -216,7 +222,10 @@ describe('the session cookie, over HTTP', () => {
     })
   })
 
-  it('stops accepting the spent link token as a bearer credential', async () => {
+  it('stops accepting the link token as a bearer credential once it is done', async () => {
+    // Time cannot be advanced through an HTTP request, so this drives the
+    // link to the same terminal state by revoking it. The clock-based path is
+    // in tests/voice-link-grace.test.ts.
     await withServer(async (port) => {
       const link = mintVoiceLink('chat-bearer-dies')
 
@@ -226,6 +235,7 @@ describe('the session cookie, over HTTP', () => {
       expect(before.status).toBe(200)
 
       await exchange(port, link.token)
+      revokeVoiceLinks('chat-bearer-dies')
 
       const after = await fetch(`http://127.0.0.1:${port}/api/voices`, {
         headers: { Authorization: `Bearer ${link.token}` },

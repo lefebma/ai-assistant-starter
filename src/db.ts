@@ -139,6 +139,13 @@ export function initDatabase(): void {
     ON voice_links(chat_id)
   `)
 
+  // Migration: when the link was first exchanged for a session. Null means
+  // never used. Additive; boxes updating from 1.23.0 and earlier lack it.
+  const voiceLinkCols = d.pragma('table_info(voice_links)') as { name: string }[]
+  if (!voiceLinkCols.some((c) => c.name === 'used_at')) {
+    d.exec('ALTER TABLE voice_links ADD COLUMN used_at INTEGER')
+  }
+
   // Browser sessions the voice page trades its link token for (see
   // src/voice-sessions.ts). Separate from voice_links because the link is spent
   // on first load and the session outlives it.

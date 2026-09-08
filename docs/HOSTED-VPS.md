@@ -431,15 +431,19 @@ expire (`VOICE_LINK_TTL_HOURS`, default 12), minting a new one cancels the
 previous, and `/voice ui revoke` kills it immediately. The link is scoped to
 the chat that minted it, so it opens that assistant and no other.
 
-**The link works once.** Opening it trades the token for a session cookie
-(`HttpOnly`, `SameSite=Lax`, `Secure` behind the edge) and the token is spent
-in the same breath, so the copy left in browser history, in a `Referer`, or in
-an access log nobody redacted is worth nothing a second later. The session
-inherits the link's expiry rather than restarting the clock, so "expires in
-12h" stays true. Revoking or re-minting kills live sessions too, which is what
-makes `/voice ui revoke` the right answer to a lost phone. Reopening a spent
-link still works on the browser that used it, because the cookie is what
-answers, not the URL.
+**The link signs a browser in and then closes behind you.** Opening it trades
+the token for a session cookie (`HttpOnly`, `SameSite=Lax`, `Secure` behind the
+edge). The token keeps working for `VOICE_LINK_GRACE_MINUTES` after that first
+use, default 10, so opening it on the machine you read the message on and then
+on your phone both work. After the window it is dead, and so is the copy left
+in browser history, in a `Referer`, or in an access log nobody redacted. Set
+the grace to 0 for strict single use.
+
+Sessions inherit the link's expiry rather than restarting the clock, so
+"expires in 12h" stays true. Revoking or re-minting kills every session the
+link opened, which is what makes `/voice ui revoke` the right answer to a lost
+phone. Reopening the link on a browser that already used it works regardless
+of the window, because the cookie is what answers, not the URL.
 
 This exists because the earlier design put `HTTP_BEARER_TOKEN` in the URL
 and in `/etc/caddy/Caddyfile`, which made whoever provisioned the box a
@@ -449,10 +453,10 @@ the SQLite database either way. What it removes is the standing key that sat
 in a file the operator already had open, so reaching a user's assistant now
 takes a deliberate act.
 
-Tell users plainly that the link is a password until they open it. Anyone who
-uses it first gets the session, so it should not be forwarded or pasted into a
-chat. After it has been opened, the thing worth protecting is the browser it
-was opened in.
+Tell users plainly that the link is a password. Anyone holding it during its
+grace window can sign a browser in, so it should not be forwarded or pasted
+into a chat. Once the window closes, the thing worth protecting is the browser
+it was opened in.
 
 ## Edge access log
 
