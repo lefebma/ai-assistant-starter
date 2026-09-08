@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.24.0 - 2026-09-08
+
+Housekeeping. Updates stop leaving every old copy of the app on the disk, which on a box installed from a release bundle was about 400MB a time and never came back.
+
 - **Fixed: update backups no longer pile up forever.** Every update renames the old payload into `store/backup-vVERSION-STAMP` rather than deleting it, because this process has native addons mapped out of `node_modules` and Windows will not unlink those. Nothing ever removed them. On a bundle install that payload includes `node_modules`, about 400MB, so ten updates left 4GB of dead weight on a box with a 40GB disk. A successful update now keeps the two newest backups and removes the rest. It prunes only after the swap has succeeded, never while rolling back, and never touches anything in `store/` that is not a backup directory. A box updating into this reclaims everything it has accumulated on its first update.
 
 ## 1.23.1 - 2026-09-08
