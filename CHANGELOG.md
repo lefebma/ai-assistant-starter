@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.25.0 - 2026-09-09
+
+Shared workspaces, plus the voice and route cleanups that landed since 1.24.0.
+
 - **New: shared workspaces.** Join a private git repo of plain markdown with `/workspace join <name> <ssh-url>` (or `npm run workspace -- join`) and your assistant clones it, syncs it every 30 minutes from the moment you join, and surfaces its `STATE.md` files under a banner naming everyone who can see them, with standing rules about what may never be copied in, delivered as live instructions rather than as conversation history. One SSH deploy key per workspace, generated on the box and pinned in its own ssh config file so an existing `Host *` block cannot lend the clone your personal key. SSH URLs only. Each sync stages, runs the guards, commits, rebases on what the others pushed, then pushes: files that look like secrets, contain key material, are binaries outside `inbox/`, or match a line in `workspaces/.private-patterns` are held back and named rather than pushed, and if one of them cannot actually be held back the sync is abandoned instead. Conflicts, held-back files and failures are each reported once, not on every tick. Built so two partners and their two assistants can plan together without either assistant confusing shared files with private ones. See `docs/WORKSPACES.md`.
 
 - **Fixed: voice answers your question instead of pushing it to chat.** A voice turn that produced no word within 12 seconds was acknowledged out loud and the real answer sent to Telegram instead. That budget existed to work around "ElevenLabs' 15s hard cutoff on tool-use turns", which is not a thing: there is no such cutoff, and no ElevenLabs code path in the product to be constrained by one. Measured against real turns, 12 seconds was handing roughly half of all spoken questions to chat rather than answering them. The budget is now 30 seconds and configurable (`VOICE_HANDOFF_SECONDS`; set 0 to never hand off and wait however long it takes).
