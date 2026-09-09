@@ -239,7 +239,8 @@ describe('runWizard', () => {
       'Skip for now', // email
       'Sam', '', '', '', // signature parts
       '43.65', '-79.38', 'celsius', // weather
-      false, false, false, false, false, false, false, // seven skill opt-ins
+      false, false, false, false, false, false, // six skill opt-ins
+      false, // monthly audit
     ])
     const a = await runWizard(p, '/repo')
     expect(a.ownerName).toBe('Sam')
@@ -318,6 +319,7 @@ describe('runWizard', () => {
           false, // apollo
           // no wordsmith question
           false, false, false, false,
+          false, // monthly audit
         ]),
       ]),
       '/repo'

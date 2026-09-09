@@ -38,6 +38,16 @@ import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT } from './env.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import {
+  collectAudit,
+  defaultAuditIO,
+  buildAuditPrompt,
+  renderDigest,
+  setAuditSchedule,
+  findAuditTask,
+  AUDIT_SCHEDULE,
+} from './audit/index.js'
+import { auditScheduleDeps } from './audit/wiring.js'
+import {
   collectDiagnostics,
   buildSupportDraft,
   formatDraftPreview,
@@ -140,7 +150,11 @@ async function handleMessage(
   adapter: PlatformAdapter,
   chatId: string,
   rawText: string,
-  forceVoiceReply = false
+  forceVoiceReply = false,
+  // skipMemory: the audit feeds the assistant a report about the memory record.
+  // Saving that prompt back into the record would put last month's audit into
+  // next month's sample, and the month after that would audit the audit.
+  opts: { skipMemory?: boolean } = {}
 ): Promise<void> {
   // Always-on skill catalog so the assistant knows its full toolbox and can route
   // to a skill even when the message lacks a literal trigger word. Kept as its
@@ -266,7 +280,7 @@ async function handleMessage(
     }
 
     // Save to memory
-    await saveConversationTurn(chatId, rawText, response)
+    if (!opts.skipMemory) await saveConversationTurn(chatId, rawText, response)
 
     // Voice reply?
     if (willVoice) {
@@ -440,6 +454,69 @@ async function handleBrowserCommand(adapter: PlatformAdapter, chatId: string, te
   }
 
   await adapter.sendMessage(chatId, 'Usage: /browser [start|stop|status]\n  --default: use your real Chrome profile')
+}
+
+/**
+ * `/audit` reviews how this chat has actually been using its assistant.
+ *
+ * The numbers come from the box's own records (src/audit/digest.ts) and the
+ * reading of them comes from the assistant. Feeding it through handleMessage
+ * rather than runAgent buys streaming, formatting and message splitting for
+ * free; skipMemory keeps the audit out of the record it audits.
+ *
+ * `/audit digest` prints the raw facts with no model in the loop, which is the
+ * only way for an owner to check that the report was not embroidered.
+ */
+async function handleAuditCommand(
+  adapter: PlatformAdapter,
+  chatId: string,
+  text: string
+): Promise<void> {
+  const args = text.split(/\s+/).slice(1).map((w) => w.toLowerCase())
+
+  if (args[0] === 'monthly') {
+    const deps = auditScheduleDeps()
+    if (args[1] === 'on' || args[1] === 'off') {
+      const result = setAuditSchedule(chatId, args[1] === 'on', deps)
+      const replies: Record<string, string> = {
+        created: `Monthly audit scheduled: ${AUDIT_SCHEDULE} (9am on the 1st). Send /audit any time for one now.`,
+        exists: 'The monthly audit is already scheduled.',
+        removed: 'Monthly audit turned off. /audit still works on demand.',
+        absent: 'The monthly audit was not scheduled.',
+      }
+      await adapter.sendMessage(chatId, replies[result] ?? result)
+      return
+    }
+    const existing = findAuditTask(chatId, deps)
+    await adapter.sendMessage(
+      chatId,
+      existing
+        ? `Monthly audit is on (${existing.schedule}). Send /audit monthly off to stop it.`
+        : 'Monthly audit is off. Send /audit monthly on to schedule it for the 1st of each month.'
+    )
+    return
+  }
+
+  if (args.length > 0 && args[0] !== 'digest') {
+    await adapter.sendMessage(chatId, 'Usage: /audit, /audit digest (raw numbers), /audit monthly on|off')
+    return
+  }
+
+  let digest
+  try {
+    digest = collectAudit(chatId, defaultAuditIO())
+  } catch (err) {
+    logger.error({ err, chatId }, 'Audit digest failed')
+    await adapter.sendMessage(chatId, 'Could not read the usage records for this chat.')
+    return
+  }
+
+  if (args[0] === 'digest') {
+    await adapter.sendMessage(chatId, renderDigest(digest))
+    return
+  }
+
+  await handleMessage(adapter, chatId, buildAuditPrompt(digest), false, { skipMemory: true })
 }
 
 /**
@@ -1067,6 +1144,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await handleUpdateCommand(adapter, chatId, trimmed)
       return
     }
+    if (cmd === '/audit') {
+      await handleAuditCommand(adapter, chatId, trimmed)
+      return
+    }
     if (cmd === '/help') {
       await adapter.sendMessage(chatId, [
         'Commands:',
@@ -1081,6 +1162,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/skill - Manage skills (list/enable/disable/reload)',
         '/secret - Manage API keys in the encrypted vault (set/list/rm)',
         '/authorize - Manage multi-chat access (add/remove/list)',
+        '/audit - Review how you have been using the assistant (monthly on/off)',
         '/support - Draft and send a support request (confirms before sending)',
         '/update - Check for and apply updates (check/apply)',
         '/version - Show current version',
@@ -1109,6 +1191,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
           { command: 'secret', description: 'Manage API keys in the encrypted vault' },
           { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
+          { command: 'audit', description: 'Review how you have been using the assistant' },
           { command: 'support', description: 'Draft and send a support request' },
           { command: 'update', description: 'Check for and apply updates' },
           { command: 'version', description: 'Show current version' },

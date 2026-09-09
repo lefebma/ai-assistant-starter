@@ -13,6 +13,9 @@ import { createAdapter, detectPlatform } from './platform/index.js'
 import { syncAlwaysOnSkills } from './skills/sync.js'
 import { reloadSkills } from './skills/index.js'
 import { interviewGreeting, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
+import { auditWanted, ensureAuditTask } from './audit/index.js'
+import { auditScheduleDeps } from './audit/wiring.js'
+import { readEnvFile } from './env.js'
 import { PROJECT_ROOT } from './env.js'
 import { clearRestartNotice, pendingRestartNotice, restartNoticeMessage, shutdownExitCode } from './infra/restart.js'
 import { RESTART_EXIT_CODE } from './service/supervisor.js'
@@ -147,6 +150,20 @@ async function main(): Promise<void> {
       logger.info('Offered the discovery interview on startup')
     } catch (err) {
       logger.info({ err }, 'Could not greet on startup; the offer rides the first inbound message')
+    }
+  }
+
+  // The setup wizard records the monthly-audit preference in .env, because it
+  // runs before the owner has messaged their bot and there is no chat to
+  // schedule against yet. Seed it here, once ever: an owner who later deletes
+  // the task has said something, and a box that recreates it on every boot is
+  // not listening.
+  if (PRIMARY_CHAT_ID) {
+    try {
+      const result = ensureAuditTask(PRIMARY_CHAT_ID, auditWanted(readEnvFile(['MONTHLY_AUDIT'])), auditScheduleDeps())
+      if (result === 'created') logger.info('Scheduled the monthly assistant audit')
+    } catch (err) {
+      logger.warn({ err }, 'Could not seed the monthly audit task')
     }
   }
 

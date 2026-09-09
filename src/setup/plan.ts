@@ -44,6 +44,8 @@ export interface Answers {
   latitude: string
   longitude: string
   tempUnit: 'celsius' | 'fahrenheit'
+  /** Schedule the monthly usage audit (card #123). */
+  monthlyAudit: boolean
   skills: {
     webResearch: boolean
     apollo: boolean
@@ -113,6 +115,11 @@ export function buildEnvContent(a: Answers): string {
     '# Platform credentials (fill in after creating your bot)',
     ...PLATFORM_ENV[a.platform],
     `TIMEZONE=${a.timezone}`,
+    '',
+    '# Monthly usage audit: on the 1st of each month, review how the assistant',
+    '# has been used and suggest what to do differently. /audit runs one on demand',
+    '# whatever this says; this only controls the scheduled one.',
+    `MONTHLY_AUDIT=${a.monthlyAudit ? 'on' : 'off'}`,
   ]
 
   // Every key name already written, so an answer reused across two questions
