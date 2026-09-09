@@ -2,6 +2,9 @@ import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
 import { getDueTasks, getAllTasks, updateTaskAfterRun, deleteTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
+import { expandTaskPrompt } from './audit/schedule.js'
+import { collectAudit, defaultAuditIO } from './audit/index.js'
+import { buildAuditPrompt } from './audit/report.js'
 import { logger } from './logger.js'
 import { dashboardDataFile } from './cockpit/paths.js'
 
@@ -104,7 +107,14 @@ export async function runDueTasks(): Promise<void> {
         await sender(task.chat_id, `Running: ${label}...`)
       }
 
-      const { text } = await runAgent(task.prompt, undefined, undefined, undefined, undefined, 'cron')
+      // Task prompts are frozen in SQLite at creation, so a job that needs
+      // current data carries a token instead of the data. Today that is only
+      // the monthly audit; expandTaskPrompt is a no-op for every other job.
+      const prompt = expandTaskPrompt(task.prompt, () =>
+        buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
+      )
+
+      const { text } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron')
       const result = text ?? '(no response)'
 
       // Check if the API was overloaded and defer a retry
@@ -114,7 +124,7 @@ export async function runDueTasks(): Promise<void> {
           deferredRetries.delete(task.id)
           try {
             logger.info({ taskId: task.id }, 'Running deferred retry')
-            const { text: retryText } = await runAgent(task.prompt, undefined, undefined, undefined, undefined, 'cron')
+            const { text: retryText } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron')
             const retryResult = retryText ?? '(no response)'
             updateTaskAfterRun(task.id, retryResult, nextRun)
 
