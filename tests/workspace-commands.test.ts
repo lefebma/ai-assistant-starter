@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { workspaceCommand, workspaceCommandArgs } from '../src/workspace/commands.js'
 import { loadRegistry } from '../src/workspace/registry.js'
 import type { JoinIO } from '../src/workspace/join.js'
@@ -117,7 +117,7 @@ describe('workspaceCommand', () => {
     await workspaceCommand(['join', 'havn', 'git@github.com:o/r.git'], { joinIO: joinIO(), storeDir: store, identity: id, syncOne: okSync, root: '/r' })
     const removeDir = vi.fn()
     const out = await workspaceCommand(['leave', 'havn'], { joinIO: joinIO(), storeDir: store, removeDir, root: '/r' })
-    expect(removeDir).toHaveBeenCalledWith('/r/workspaces/havn')
+    expect(removeDir).toHaveBeenCalledWith(resolve('/r', 'workspaces', 'havn'))
     expect(out).toMatch(/key .* left in place/i)
     expect(loadRegistry(store)).toHaveLength(0)
   })

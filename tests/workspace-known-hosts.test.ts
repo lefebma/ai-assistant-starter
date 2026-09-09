@@ -50,8 +50,10 @@ describe('workspace ensureKnownHost', () => {
     expect(content).toContain('github.com ssh-ed25519 AAAAtest')
     expect(content).toContain('github.com ssh-rsa AAAAtest2')
 
-    const stat = statSync(knownHostsPath)
-    expect((stat.mode & 0o777).toString(8)).toBe('600')
+    if (process.platform !== 'win32') {
+      const stat = statSync(knownHostsPath)
+      expect((stat.mode & 0o777).toString(8)).toBe('600')
+    }
   })
 
   it('returns timeout error when GitHub fetch times out', async () => {

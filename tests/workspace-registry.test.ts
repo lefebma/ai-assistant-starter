@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   loadRegistry, saveRegistry, upsertWorkspace, removeWorkspace, getWorkspace, workspaceDir, identity,
 } from '../src/workspace/registry.js'
@@ -33,7 +33,7 @@ describe('workspace registry', () => {
     const back = loadRegistry(dir)
     expect(back).toHaveLength(1)
     expect(back[0].name).toBe('havn')
-    expect(workspaceDir(back[0], '/root')).toBe('/root/workspaces/havn')
+    expect(workspaceDir(back[0], '/root')).toBe(resolve('/root', 'workspaces', 'havn'))
   })
 
   it('upsert replaces by name and remove reports whether it existed', () => {

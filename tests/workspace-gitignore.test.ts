@@ -5,7 +5,7 @@ import { PROJECT_ROOT } from '../src/env.js'
 
 describe('workspace plumbing', () => {
   it('gitignores workspace clones but backs up the private-pattern list', () => {
-    const ignore = readFileSync(resolve(PROJECT_ROOT, '.gitignore'), 'utf-8').split('\n')
+    const ignore = readFileSync(resolve(PROJECT_ROOT, '.gitignore'), 'utf-8').split(/\r?\n/)
     expect(ignore).toContain('workspaces/*')
     expect(ignore).toContain('!workspaces/.private-patterns')
     // The negation only bites if the directory itself is not excluded.
