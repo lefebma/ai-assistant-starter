@@ -469,6 +469,34 @@ The most valuable scheduled task. Create it with a prompt like:
 
 > **Why the lookup table?** LLMs reliably get day-of-week wrong for dates more than 2-3 days out. The `date` command generates the correct mapping and the LLM just reads it.
 
+## The monthly audit
+
+Setup asks whether to schedule it, and `/audit monthly on` turns it on later.
+On the 1st of each month the assistant reads its own records for the past 30
+days and writes you a short report: when and how often you actually used it,
+what kinds of things you brought it, what is enabled and never gets touched,
+and at most three specific things to change.
+
+The unused half is usually the useful half. A skill you set up in week one and
+never triggered again, a scheduled task that has been paused since May, an
+integration you have credentials for and never ask about: none of that is
+visible from inside the conversation, and all of it is in the report.
+
+`/audit` runs one on demand. `/audit digest` prints the raw numbers with no
+model involved, which is how you check the report against its source.
+
+**What the numbers can and cannot see.** The assistant keeps no message log.
+The audit counts the conversation turns saved to memory, which skips anything
+20 characters or shorter, skips slash commands, and records a repeated question
+once. So the turn count is a floor, not a total, and the report says so rather
+than presenting it as a tally. Token counts appear only if you run on an API
+key (`AGENT_RUNTIME=ai-sdk`); on a Claude subscription nothing is metered, and
+the report says that too instead of showing you a zero.
+
+Nothing leaves the machine. The report is generated on the box and delivered to
+your chat, and secrets and file paths are stripped out of the quoted examples
+before the assistant ever sees them.
+
 ## Browser automation
 
 For anything with no API behind it: webmail, a supplier portal, a booking form, a site you have to be logged in to.

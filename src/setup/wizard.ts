@@ -221,6 +221,13 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
     keys.wpAppPassword = await p.ask('Application Password (leave blank to fill in later)', '')
   }
 
+  // Card #123. Asked here rather than left to a docs page nobody reads: the
+  // owners who most need this report are the ones least likely to go looking
+  // for it. The task itself is created on first startup, once ALLOWED_CHAT_ID
+  // exists (see src/audit/schedule.ts).
+  p.say('Monthly audit: on the 1st of each month, your assistant reviews how you have been using it and suggests what to do differently. You can turn it on or off later with /audit monthly on|off.')
+  const monthlyAudit = await p.yesNo('Schedule the monthly audit?')
+
   return {
     ownerName,
     assistantName,
@@ -242,6 +249,7 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
     latitude,
     longitude,
     tempUnit,
+    monthlyAudit,
     skills,
     keys,
     projectPath,
