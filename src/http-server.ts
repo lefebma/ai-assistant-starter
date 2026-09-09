@@ -1,7 +1,8 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http'
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
-import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, PRIMARY_CHAT_ID } from './config.js'
+import { readEnvFile } from './env.js'
+import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, PRIMARY_CHAT_ID } from './config.js'
 import {
   transcribeAudio, synthesizeSpeechAudio, voiceCapabilities,
   ttsEngine, effectiveVoice, setEffectiveVoice, isOpenAIVoice, OPENAI_VOICES,
@@ -11,7 +12,7 @@ import { resolveVoiceSession, sessionIdFromCookies, voiceSessionCookie } from '.
 import { runAgent } from './agent.js'
 import { sendPlatformMessage } from './bot.js'
 import { logger } from './logger.js'
-import https from 'node:https'
+import { detectPlatform, type PlatformName } from './platform/index.js'
 import { getUsageSnapshot, getActivitySeries } from './cockpit/usage.js'
 import { readRecentActivity } from './cockpit/activity.js'
 import { getDeclaredMcpServers } from './cockpit/mcp.js'
@@ -38,8 +39,50 @@ export function registerHttpRoute(method: string, pathname: string, handler: Rou
   }
 }
 
-// If a voice turn takes longer than this without streaming content, hand off to Telegram instead.
-const VOICE_TIMEOUT_MS = 12_000
+/**
+ * How long a voice turn may go without producing a word before the answer is
+ * handed to the chat surface instead of spoken.
+ *
+ * This is not a vendor constraint. The comment here used to say it was working
+ * around "ElevenLabs' 15s hard cutoff on tool-use turns" and there is no such
+ * cutoff: ElevenLabs has a soft timeout (0.5-8s) that plays one filler phrase,
+ * a backup-LLM cascade timeout (2-15s, which is almost certainly where the 15
+ * came from), and a max conversation duration defaulting to 600s. Nothing ends
+ * a turn at 15 seconds. Card #118 has the research.
+ *
+ * The number that does matter is ours. Measured over 49 real agent turns, time
+ * to first word had a median of 12.1s and a p90 of 22.3s, so the old 12s
+ * budget was handing roughly half of all voice questions to the chat surface
+ * rather than answering them, which is the opposite of what a voice interface
+ * is for. 30s clears p90 with room. Nothing upstream is counting: the response
+ * is an SSE stream with a keep-alive heartbeat and the browser waits.
+ *
+ * Set VOICE_HANDOFF_SECONDS=0 to never hand off and wait however long it takes.
+ */
+const VOICE_HANDOFF_MS = parseHandoffSeconds(readEnvFile()['VOICE_HANDOFF_SECONDS']) * 1000
+
+/**
+ * Exported for tests. Longhand because `parseInt(raw) || 30` reads a
+ * configured 0 as unset: 0 is meaningful here (never hand off) and is also
+ * falsy, so the shorthand would quietly give 30 seconds to an operator who
+ * asked for no limit at all.
+ */
+export function parseHandoffSeconds(raw: string | undefined, fallback = 30): number {
+  const parsed = parseInt(raw ?? '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+/**
+ * What voice says when it gives up and sends the answer to chat instead.
+ *
+ * Named per surface because this shipped saying "I'll send the details to
+ * Telegram" on every box, including the Teams boxes the voice page was
+ * validated on, where there is no Telegram to send anything to.
+ */
+export function handoffAck(platform: PlatformName): string {
+  const surface = platform === 'teams' ? 'Teams' : platform === 'slack' ? 'Slack' : 'Telegram'
+  return `On it. I'll send the details to ${surface}.`
+}
 
 type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
@@ -234,23 +277,22 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   }, 2000)
 
   let lastSent = ''
-  let handedOffToTelegram = false
+  let handedOffToChat = false
 
-  // Timer: if no content token arrives within VOICE_TIMEOUT_MS, fast-ack in voice and route
-  // the full answer to Telegram to avoid ElevenLabs' 15s hard cutoff on tool-use turns.
-  const timeoutHandle = setTimeout(() => {
-    if (lastSent.length > 0 || handedOffToTelegram) return
-    handedOffToTelegram = true
-    const ack = "On it. I'll send the details to Telegram."
-    res.write(sseFrame(openaiChunk(completionId, model, { content: ack })))
+  // If no word has been produced inside the budget, acknowledge in voice and
+  // let the real answer land in chat. Zero disables the handoff entirely.
+  const timeoutHandle = VOICE_HANDOFF_MS === 0 ? undefined : setTimeout(() => {
+    if (lastSent.length > 0 || handedOffToChat) return
+    handedOffToChat = true
+    res.write(sseFrame(openaiChunk(completionId, model, { content: handoffAck(detectPlatform()) })))
     res.write(sseFrame(openaiChunk(completionId, model, {}, 'stop')))
     res.write('data: [DONE]\n\n')
     clearInterval(heartbeat)
     res.end()
-  }, VOICE_TIMEOUT_MS)
+  }, VOICE_HANDOFF_MS)
 
   const onPartial = (accumulated: string): void => {
-    if (handedOffToTelegram) return
+    if (handedOffToChat) return
     const delta = accumulated.slice(lastSent.length)
     if (!delta) return
     lastSent = accumulated
@@ -261,8 +303,8 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
     const { text, newSessionId } = await runAgent(lastUser.content, existingSession, undefined, onPartial)
     if (newSessionId) conversationSessions.set(convoKey, newSessionId)
 
-    if (handedOffToTelegram) {
-      // Voice already closed — push the real answer to Telegram.
+    if (handedOffToChat) {
+      // Voice already closed, so the real answer goes to the chat surface.
       if (PRIMARY_CHAT_ID && text) {
         await sendPlatformMessage(PRIMARY_CHAT_ID, text).catch((e: unknown) =>
           logger.warn({ err: e }, 'voice fallback failed'),
@@ -271,7 +313,7 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
       return
     }
 
-    clearTimeout(timeoutHandle)
+    if (timeoutHandle) clearTimeout(timeoutHandle)
     // Flush any tail that wasn't streamed via partials
     if (text && text.length > lastSent.length) {
       res.write(sseFrame(openaiChunk(completionId, model, { content: text.slice(lastSent.length) })))
@@ -280,14 +322,14 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
     res.write('data: [DONE]\n\n')
   } catch (err) {
     logger.error({ err }, 'voice agent failed')
-    if (!handedOffToTelegram) {
+    if (!handedOffToChat) {
       res.write(sseFrame(openaiChunk(completionId, model, { content: '\n\n(error)' }, 'stop')))
       res.write('data: [DONE]\n\n')
     }
   } finally {
-    clearTimeout(timeoutHandle)
+    if (timeoutHandle) clearTimeout(timeoutHandle)
     clearInterval(heartbeat)
-    if (!handedOffToTelegram) res.end()
+    if (!handedOffToChat) res.end()
   }
 }
 
@@ -470,40 +512,6 @@ async function handleSetVoice(req: IncomingMessage, res: ServerResponse): Promis
   res.end(JSON.stringify({ current: voice }))
 }
 
-async function handleSignedUrl(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!requireAuth(req, res)) return
-  if (!ELEVENLABS_API_KEY || !ELEVENLABS_AGENT_ID) {
-    res.writeHead(500, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'elevenlabs_not_configured' }))
-    return
-  }
-
-  const opts = {
-    hostname: 'api.elevenlabs.io',
-    path: `/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(ELEVENLABS_AGENT_ID)}`,
-    method: 'GET',
-    headers: { 'xi-api-key': ELEVENLABS_API_KEY },
-  }
-
-  await new Promise<void>((resolvePromise) => {
-    const r = https.request(opts, (upstream) => {
-      let data = ''
-      upstream.on('data', (c) => (data += c))
-      upstream.on('end', () => {
-        res.writeHead(upstream.statusCode ?? 500, { 'Content-Type': 'application/json' })
-        res.end(data)
-        resolvePromise()
-      })
-    })
-    r.on('error', (err) => {
-      logger.error({ err }, 'signed-url fetch failed')
-      res.writeHead(502, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'upstream_failed' }))
-      resolvePromise()
-    })
-    r.end()
-  })
-}
 
 function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: string): void {
   const rel = urlPath === '/' ? '/voice.html' : urlPath
@@ -609,10 +617,6 @@ export function startHttpServer(port: number = HTTP_PORT): void {
       void handleSetVoice(req, res)
       return
     }
-    if (req.method === 'GET' && url.pathname === '/api/signed-url') {
-      void handleSignedUrl(req, res)
-      return
-    }
     if (req.method === 'GET' && (url.pathname === '/voice' || url.pathname === '/voice/')) {
       // The edge proxies this path without inspecting the token, so the check
       // lives here. Serving the shell to an unauthenticated caller would leak
@@ -631,12 +635,6 @@ export function startHttpServer(port: number = HTTP_PORT): void {
         return
       }
       serveStatic(req, res, '/voice.html')
-      return
-    }
-    if (req.method === 'GET' && url.pathname === '/api/config') {
-      if (!requireAuth(req, res)) return
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ agentId: ELEVENLABS_AGENT_ID }))
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/cockpit/usage') {

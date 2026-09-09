@@ -72,11 +72,13 @@ function main(): void {
       warn('ALLOWED_CHAT_ID not set (accepting all messages)')
     }
 
-    // TTS
-    if (envContent.includes('ELEVENLABS_API_KEY="') && !envContent.includes('ELEVENLABS_API_KEY=""')) {
-      ok('ElevenLabs TTS configured')
+    // Voice. TTS is OpenAI (or macOS `say`), never ElevenLabs: the product has
+    // no ElevenLabs code path, so reporting on that key told every install it
+    // was missing a feature that does not exist. See src/voice.ts.
+    if (envContent.includes('OPENAI_API_KEY="') && !envContent.includes('OPENAI_API_KEY=""')) {
+      ok('Voice configured (transcription and speech)')
     } else {
-      warn('ElevenLabs TTS not configured')
+      warn('Voice not configured (needs OPENAI_API_KEY)')
     }
 
     // Video
