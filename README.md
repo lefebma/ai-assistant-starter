@@ -13,6 +13,7 @@ Built and maintained by [ELS Partners](https://www.els-partners.com).
 - Voice: send voice notes, get spoken replies, or have a live back-and-forth conversation on the voice page (needs an OpenAI API key, see [Voice](docs/SETUP-GUIDE.md#voice))
 - Memory that persists across conversations
 - Browser automation for web tasks
+- A monthly audit of how you actually use it, and what you set up and never touched
 
 ### Skill matrix
 
@@ -134,6 +135,7 @@ in the encrypted vault: [docs/VAULT.md](docs/VAULT.md).
    ```
    /schedule create "Morning briefing: weather, calendar, urgent emails" "0 7 * * *" --name "Morning Briefing"
    ```
+5. **`/audit`** - after a few weeks, see how you have actually been using it
 
 ## Project Structure
 
