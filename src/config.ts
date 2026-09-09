@@ -31,8 +31,11 @@ export const SCHEDULER_ENABLED = (env['SCHEDULER_ENABLED'] ?? 'true') === 'true'
 // HTTP server (for ElevenLabs Conversational AI custom LLM + voice UI)
 export const HTTP_PORT = parseInt(env['HTTP_PORT'] ?? '3030', 10)
 export const HTTP_BEARER_TOKEN = getSecret('HTTP_BEARER_TOKEN') ?? ''
+// No code path reads this today; the voice page speaks through OpenAI or
+// macOS `say`. Kept in the vault inventory rather than removed, because a
+// box may already hold a stored value and dropping the key from the
+// inventory would orphan it. See archived Kanban card #118.
 export const ELEVENLABS_API_KEY = getSecret('ELEVENLABS_API_KEY') ?? ''
-export const ELEVENLABS_AGENT_ID = env['ELEVENLABS_AGENT_ID'] ?? ''
 
 // Public hostname of the edge (Caddy), written by scripts/hosted/enable-teams.ts.
 // Empty on a box with no public edge: /voice ui then explains how to enable one

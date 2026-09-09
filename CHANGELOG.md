@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed: voice answers your question instead of pushing it to chat.** A voice turn that produced no word within 12 seconds was acknowledged out loud and the real answer sent to Telegram instead. That budget existed to work around "ElevenLabs' 15s hard cutoff on tool-use turns", which is not a thing: there is no such cutoff, and no ElevenLabs code path in the product to be constrained by one. Measured against real turns, 12 seconds was handing roughly half of all spoken questions to chat rather than answering them. The budget is now 30 seconds and configurable (`VOICE_HANDOFF_SECONDS`; set 0 to never hand off and wait however long it takes).
+- **Fixed: the handoff named the wrong app.** When voice did give up, it said "I'll send the details to Telegram" on every install, including Teams and Slack boxes with no Telegram to send anything to. It now names the surface the answer is actually going to.
+- **Removed: the `/api/signed-url` and `/api/config` routes.** Both were left over from an ElevenLabs experiment, were proxied by the hosted edge, and were called by nothing: `/api/signed-url` minted an ElevenLabs signed URL for any caller holding the box credential. Re-run `enable-teams` with `--voice` to drop them from a hosted box's edge config, or leave it, since the routes now 404 either way.
+- **Fixed: `status` reported on a feature that does not exist.** It checked `ELEVENLABS_API_KEY` and told every install "ElevenLabs TTS not configured". The product speaks through OpenAI, or macOS `say` when there is no key. It now reports on that instead.
+
 - **Removed: the `/r1` route.** It came across when this product was split out of the assistant it was built from, where it serves a tiny page sized for a Rabbit R1 handheld. The page itself never came with it, so the route answered 404 on every install that has ever existed, and it built that response by injecting `HTTP_BEARER_TOKEN` into HTML served with no auth check. Nothing here used it. The original assistant keeps its own copy, unaffected.
 
 ## 1.24.0 - 2026-09-08
