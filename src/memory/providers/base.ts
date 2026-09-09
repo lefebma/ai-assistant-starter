@@ -13,6 +13,14 @@ export interface ContextFragment {
   relevance: number
   /** Optional TTL in seconds (for caching) */
   maxAge?: number
+  /**
+   * Standing rules and shared context that are live instructions, not history.
+   * These are rendered in their own block after the memory block, in provider
+   * order, and are exempt from the token budget. Use sparingly: a workspace
+   * banner naming who can read a shared file is standing, the file's contents
+   * are not.
+   */
+  standing?: true
 }
 
 export interface ContextProvider {

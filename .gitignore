@@ -5,7 +5,12 @@ store/
 # BYOK vault: never commit the encrypted secrets blob or its key, anywhere
 **/vault.key
 **/secrets.json
-workspace/
+/workspace/
+workspaces/*
+# ... but the private-pattern list is config, not workspace content: it is a
+# plain list of strings the guard refuses to push, and losing it on a reinstall
+# silently disables that guard.
+!workspaces/.private-patterns
 docs/.obsidian/
 *.log
 *.pid

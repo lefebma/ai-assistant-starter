@@ -35,6 +35,9 @@ export interface SyncIO {
   readFile(path: string): string | null
   fileSize(path: string): number
   log(line: string): void
+  /** True when the repo is sitting in a half-finished rebase. Optional: callers
+   * that cannot tell (test fakes) simply do not implement it. */
+  rebaseInProgress?(): boolean
 }
 
 export interface SyncOptions {

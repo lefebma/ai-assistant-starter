@@ -1,6 +1,7 @@
 import type { ContextProvider, ContextFragment } from './providers/base.js'
 import { EpisodicProvider } from './providers/episodic.js'
 import { SemanticProvider } from './providers/semantic.js'
+import { WorkspaceProvider } from './providers/workspace.js'
 import { ProjectProvider } from './providers/project.js'
 import { CalendarProvider } from './providers/calendar.js'
 import { skillsProvider } from './providers/skills.js'
@@ -84,13 +85,20 @@ export class ContextEngine {
       })
     )
 
-    // Collect and score all fragments
+    // Collect and score all fragments. Standing fragments are pulled aside:
+    // they are current instructions, not prior history, so they keep provider
+    // order, skip the budget, and land outside the memory block.
     const scored: Array<ContextFragment & { score: number }> = []
+    const standing: ContextFragment[] = []
 
     for (const result of results) {
       if (result.status === 'rejected') continue
       const { priority, fragments } = result.value
       for (const fragment of fragments) {
+        if (fragment.standing) {
+          standing.push(fragment)
+          continue
+        }
         scored.push({
           ...fragment,
           score: (priority / 100) * fragment.relevance,
@@ -98,7 +106,7 @@ export class ContextEngine {
       }
     }
 
-    if (scored.length === 0) return ''
+    if (scored.length === 0 && standing.length === 0) return ''
 
     // Stale-cache detection: if fragment count shrank significantly
     // (e.g., after /newchat or memory pruning), invalidate caches.
@@ -151,7 +159,19 @@ export class ContextEngine {
       'Context built'
     )
 
-    return `<memory-context hidden="true">\nPRIOR CONVERSATION HISTORY (already handled in past sessions). These are NOT new requests. DO NOT re-action items listed here, DO NOT repeat answers you already gave, and DO NOT surface unresolved items unless the user explicitly asks about them now. Use this only as background to understand continuity.\n${lines.join('\n')}\n</memory-context>`
+    const blocks: string[] = []
+    if (deduped.length > 0) {
+      blocks.push(
+        `<memory-context hidden="true">\nPRIOR CONVERSATION HISTORY (already handled in past sessions). These are NOT new requests. DO NOT re-action items listed here, DO NOT repeat answers you already gave, and DO NOT surface unresolved items unless the user explicitly asks about them now. Use this only as background to understand continuity.\n${lines.join('\n')}\n</memory-context>`
+      )
+    }
+    if (standing.length > 0) {
+      const standingLines = deduplicateFragments(standing).map((f) => `- ${f.content} (${f.source})`)
+      blocks.push(
+        `<workspace-context>\nSTANDING RULES AND SHARED CONTEXT (active now, not history):\n${standingLines.join('\n')}\n</workspace-context>`
+      )
+    }
+    return blocks.join('\n')
   }
 }
 
@@ -183,6 +203,7 @@ export function createDefaultEngine(): ContextEngine {
   engine.register(new CalendarProvider())    // priority 70
   engine.register(new SemanticProvider())    // priority 60
   engine.register(new EpisodicProvider())    // priority 50
+  engine.register(new WorkspaceProvider())   // priority 45
   engine.register(new ProjectProvider())     // priority 40
   engine.register(new UpdateProvider())      // priority 30
 

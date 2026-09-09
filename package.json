@@ -13,6 +13,7 @@
     "teams-manifest": "tsx scripts/teams-manifest.ts",
     "teams-register": "tsx scripts/teams-register.ts",
     "status": "tsx scripts/status.ts",
+    "workspace": "tsx scripts/workspace.ts",
     "schedule": "node dist/src/schedule-cli.js",
     "seed-jobs": "tsx src/seed-jobs.ts",
     "dream": "node dist/src/dreaming/index.js",
