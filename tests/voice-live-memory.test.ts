@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, utimesSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 
 const { mockRunAgent, mockBuildContext } = vi.hoisted(() => ({
   mockRunAgent: vi.fn(),
@@ -132,7 +132,7 @@ describe('where voice memory is filed', () => {
   it('never resolves outside the transcript root, whatever the chat id', () => {
     for (const hostile of ['..', '.', '../..', '/etc', '..\\..', '%2e%2e', '']) {
       const out = transcriptDirFor(hostile, dir)
-      expect(out.startsWith(dir + '/')).toBe(true)
+      expect(out.startsWith(dir + sep)).toBe(true)
       expect(out).not.toBe(dir)
     }
   })
