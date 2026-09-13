@@ -10,7 +10,7 @@ Built and maintained by [ELS Partners](https://www.els-partners.com).
 - Email and calendar awareness (Gmail, Outlook, or both — up to 2 of each)
 - Scheduled tasks (morning briefing, reminders, monitoring)
 - Drop-in skills system — see the matrix below
-- Voice message support (send voice notes, get voice replies)
+- Voice: send voice notes, get spoken replies, or have a live back-and-forth conversation on the voice page (needs an OpenAI API key, see [Voice](docs/SETUP-GUIDE.md#voice))
 - Memory that persists across conversations
 - Browser automation for web tasks
 
@@ -109,6 +109,13 @@ Message your bot on Telegram. If it replies, you're live.
 ### Optional: Connect email
 
 See [docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md) for Gmail and Outlook setup.
+
+### Optional: Voice
+
+Voice notes, spoken replies, and live conversation run on an OpenAI API key,
+even when Claude does the thinking. Setup asks for it. Live conversation costs
+about $0.05 per minute and needs Node 22. See
+[docs/SETUP-GUIDE.md](docs/SETUP-GUIDE.md#voice).
 
 ### Optional: Run it on OpenAI, Gemini, or your own models
 

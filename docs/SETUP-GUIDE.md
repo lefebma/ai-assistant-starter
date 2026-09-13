@@ -11,6 +11,9 @@ This guide walks you through setting up your personal AI assistant powered by Cl
   that you sign in with, or an API key from Anthropic, OpenAI, or Google that
   bills per use. Setup asks which you have. See [Signing in](#signing-in) below.
 - A messaging platform account (Telegram, Slack, Discord, or Teams)
+- **Optional, for voice:** an OpenAI API key. Voice notes, spoken replies, and
+  live conversation all run on OpenAI, even when Claude does the thinking. See
+  [Voice](#voice).
 
 You do **not** need to install Claude Code separately. The Claude engine ships
 inside this app, and a globally installed `claude` command is a different copy
@@ -468,6 +471,34 @@ The most valuable scheduled task. Create it with a prompt like:
 ```
 
 > **Why the lookup table?** LLMs reliably get day-of-week wrong for dates more than 2-3 days out. The `date` command generates the correct mapping and the LLM just reads it.
+
+## Voice
+
+Everything voice runs on an OpenAI API key (`OPENAI_API_KEY`), whichever AI
+company does the thinking. Setup asks for it ("Enable voice?"); to add it later,
+put it in `.env` and restart the assistant. Get a key at
+https://platform.openai.com/api-keys.
+
+| Feature | What it does | Without the key |
+|---|---|---|
+| Voice notes | Send a voice message in chat; it is transcribed (Whisper) and answered | Not transcribed |
+| Spoken replies | `/voice` turns on replies read aloud (OpenAI text-to-speech, `TTS_VOICE`) | macOS `say` where available |
+| Voice page | `/voice ui` gets you a link to a browser page: tap to speak, hear the answer | Transcription and speech unavailable |
+| Live conversation | `/voice/live`, linked from the voice page: a real back-and-forth where you can interrupt, and it keeps talking while it looks things up (GPT-Live-1, `LIVE_VOICE`) | Off |
+
+**Cost.** Billed per use to your OpenAI account. Voice notes and spoken replies
+cost cents. Live conversation is about $0.05 per minute of talking, billed per
+second, plus whatever the thinking costs on your normal setup. At most two live
+calls run at once, each capped at 45 minutes.
+
+**Requirements for live conversation.**
+- **Node 22.** Installs that run on your own Node need 22 or later. The
+  installer bundles currently include Node 20, so live conversation is not
+  available on a bundle install yet; hosted servers run Node 22 and have it.
+- **HTTPS.** Browsers only allow the microphone on HTTPS or on `localhost`.
+  On the computer the assistant runs on, `http://localhost:3030/voice` works.
+  From a phone you need an HTTPS address: see
+  [Voice UI in HOSTED-VPS.md](HOSTED-VPS.md#voice-ui) for hosted servers.
 
 ## Browser automation
 
