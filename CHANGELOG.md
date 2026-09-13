@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.26.2 - 2026-09-13
+
+Live calls are remembered: the next call can pick up where the last one left off, and your chat remembers what was said by voice.
+
 - **Fixed: live calls are remembered.** 1.26.0 forgot every live call the moment it ended, and the assistant behind it never saw your memory, so "do you remember what we talked about?" had nothing to go on. Each call is now saved when it ends: the transcript under `store/voice-transcripts/`, each exchange as a regular memory, and a one-line summary, all filed under the chat that owns the voice link, so your Telegram or Teams chat remembers the call too. The next call starts with the tail of your last couple of calls from the past week, so it can pick up where you left off without a lookup, and the work it hands off gets the same memory context and skill list as a chat message. A call where you never spoke saves nothing.
 
 ## 1.26.1 - 2026-09-13
