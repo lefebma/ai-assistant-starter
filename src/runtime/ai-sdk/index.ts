@@ -43,8 +43,18 @@ function isRetryableError(err: unknown): boolean {
     || /\b(503|service.?unavailable)\b/i.test(msg)
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+/** Resolves after `ms`, or as soon as `signal` aborts (a cancel shouldn't sit out a retry backoff). */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve()
+    const timer = setTimeout(done, ms)
+    function done() {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    signal?.addEventListener('abort', done, { once: true })
+  })
 }
 
 export class AiSdkAgentRuntime implements AgentRuntime {
@@ -202,7 +212,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
         if (attempt > 0) {
           const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1)
           logger.info({ attempt, delay }, 'Retrying after transient error')
-          await sleep(delay)
+          await sleep(delay, options.signal)
         }
 
         const typingInterval = options.onTyping ? setInterval(options.onTyping, 4000) : null
@@ -211,7 +221,14 @@ export class AiSdkAgentRuntime implements AgentRuntime {
         let loopCount = 0
         let loopDetected = false
         let streamError: unknown
+        if (options.signal?.aborted) {
+          logger.info({ attempt, sessionId }, 'AI SDK turn cancelled before starting')
+          return { text: null, newSessionId: sessionId }
+        }
         const abort = new AbortController()
+        // Caller cancellation shares the controller the loop guard already uses.
+        const onAbort = () => abort.abort()
+        options.signal?.addEventListener('abort', onAbort, { once: true })
 
         try {
           logger.info({ attempt, sessionId, historyLength: history.length }, 'Starting AI SDK agent turn')
@@ -244,6 +261,11 @@ export class AiSdkAgentRuntime implements AgentRuntime {
               // overload contract never fired).
               streamError = part.error
             }
+          }
+
+          if (options.signal?.aborted) {
+            logger.info({ sessionId }, 'AI SDK turn cancelled')
+            return { text: null, newSessionId: sessionId }
           }
 
           if (loopDetected) {
@@ -303,6 +325,10 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           return { text, newSessionId: sessionId }
         } catch (err) {
           lastError = err
+          if (options.signal?.aborted) {
+            logger.info({ attempt, sessionId }, 'AI SDK turn cancelled')
+            return { text: null, newSessionId: sessionId }
+          }
           logger.error({ err, attempt }, 'AI SDK agent turn failed')
 
           // A truncated real answer beats a fabricated one (claude runtime contract).
@@ -324,6 +350,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           const detail = String((err as Error)?.message ?? err).replace(/\s+/g, ' ').trim().slice(0, 300)
           return { text: `Ran into an error and couldn't finish that: ${detail}`, newSessionId: sessionId }
         } finally {
+          options.signal?.removeEventListener('abort', onAbort)
           if (typingInterval) clearInterval(typingInterval)
         }
       }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **New: live conversation on the voice page.** `/voice/live` is a phone-friendly page for a real back-and-forth: the assistant listens while it talks, you can interrupt it mid-sentence, and it says "checking" and keeps chatting while a slow lookup runs instead of going quiet. OpenAI's GPT-Live-1 handles the conversation and hands anything that needs real work (your calendar, email, files, the web) to your assistant, with its skills, then speaks the answer. Correct yourself mid-request ("Toronto... actually Montreal") and the first lookup is cancelled rather than answered. It signs in exactly like the voice page (a `/voice ui` link, then a cookie), and the voice page links to it. It talks as your assistant, taking its name and tone from `PERSONALITY.md`. Needs `OPENAI_API_KEY`; costs about $0.05 per minute of conversation, billed per second to that key, and `LIVE_VOICE` picks the default voice. At most two calls at once, each capped at 45 minutes. **Hosted boxes need `enable-teams --voice` re-run** so the edge proxies `/voice/live` and `/api/live/*`, and the microphone only works over HTTPS.
+- **New: agent turns can be cancelled.** A turn given an `AbortSignal` stops the Claude process (or the model stream), skips retries and the `ANTHROPIC_API_KEY` overflow lane, and returns nothing. Live voice uses it for superseded requests.
+- **Fixed: a cancelled turn can no longer crash the service.** The Claude SDK writes to its CLI without an error listener, so a cancel could raise an unhandled `EPIPE` that took the whole process down. That one error is now logged and ignored; every other uncaught error still exits so the service manager restarts it.
+
 ## 1.25.0 - 2026-09-09
 
 Shared workspaces, plus the voice and route cleanups that landed since 1.24.0.

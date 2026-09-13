@@ -25,6 +25,12 @@ export type AgentRunOptions = {
   onToolProgress?: (toolName: string, status: string) => void
   /** Fired once if the runtime escalates to a paid/fallback billing lane. */
   onLaneSwitch?: (info: LaneSwitchInfo) => void
+  /**
+   * Cancels the turn. On abort the runtime stops the underlying model/CLI
+   * work, skips retries and fallback lanes, and resolves with `text: null`
+   * (never throws). Callers treat a null text after abort as "cancelled".
+   */
+  signal?: AbortSignal
 }
 
 export type AgentRunResult = {

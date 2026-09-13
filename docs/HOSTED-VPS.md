@@ -407,7 +407,11 @@ chats and channels.
 ## Voice UI
 
 The voice page is a browser UI for talking to the assistant: hold to speak,
-it transcribes, answers, and reads the answer back. Enable it on the edge:
+it transcribes, answers, and reads the answer back. `/voice/live` (linked from
+the voice page) is a live conversation instead: the assistant listens while it
+talks, can be interrupted, and hands real work to the assistant in the
+background. It needs `OPENAI_API_KEY` on the box (billed per second of
+conversation to that key) and HTTPS for the microphone. Enable both on the edge:
 
 ```
 sudo node dist/scripts/hosted/enable-teams.js <hostname> --voice

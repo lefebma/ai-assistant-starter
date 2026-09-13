@@ -60,8 +60,18 @@ function isUsageLimitError(err: unknown): boolean {
   return /usage limit/i.test(String(err))
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+/** Resolves after `ms`, or as soon as `signal` aborts (a cancel shouldn't sit out a retry backoff). */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal?.aborted) return resolve()
+    const timer = setTimeout(done, ms)
+    function done() {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    signal?.addEventListener('abort', done, { once: true })
+  })
 }
 
 /**
@@ -177,7 +187,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
 
     const primary = await this.runOnLane(options, options.sessionId, cwd, undefined)
 
-    if (!primary.usageLimitHit) {
+    // Cancelled: never escalate a turn nobody wants any more to paid billing.
+    if (!primary.usageLimitHit || options.signal?.aborted) {
       return { text: primary.text, newSessionId: primary.newSessionId }
     }
 
@@ -228,7 +239,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       if (attempt > 0) {
         const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1)
         logger.info({ attempt, delay }, 'Retrying after transient error')
-        await sleep(delay)
+        await sleep(delay, options.signal)
       }
 
       let responseText: string | null = null
@@ -237,6 +248,16 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       let usageLimitHit = false
       let rateLimitType: string | undefined
       let resetsAt: number | undefined
+
+      if (options.signal?.aborted) {
+        logger.info({ attempt }, 'Agent turn cancelled before starting')
+        return { text: null, newSessionId: sessionId }
+      }
+      // The SDK kills the CLI subprocess when this controller aborts. Link it
+      // to the caller's signal per attempt so a retry gets a fresh controller.
+      const abortController = new AbortController()
+      const onAbort = () => abortController.abort()
+      options.signal?.addEventListener('abort', onAbort, { once: true })
 
       const typingInterval = onTyping ? setInterval(onTyping, 4000) : null
 
@@ -251,6 +272,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             permissionMode: 'bypassPermissions',
             settingSources: ['project', 'user'],
             includePartialMessages: Boolean(onPartial),
+            abortController,
             ...(sessionId ? { resume: sessionId } : {}),
             // Overflow lane: scope the API key to THIS subprocess only. Spread
             // process.env so HOME/PATH/etc still reach the CLI; the explicit key
@@ -316,8 +338,16 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           } else if (event.type === 'result') {
             logger.warn({ subtype: event.subtype }, 'Agent returned non-success result')
           }
+          if (options.signal?.aborted) break
         }
         logger.info('Event loop ended')
+
+        if (options.signal?.aborted) {
+          logger.info({ sessionId: newSessionId }, 'Agent turn cancelled')
+          if (newSessionId) this.activeWorkspaces.delete(newSessionId)
+          this.pendingSteer = null
+          return { text: null, newSessionId }
+        }
 
         // Subscription window rejected with no usable turn: bubble up so the caller
         // can escalate to the API lane. Skip the steer/partial paths — there's no
@@ -340,6 +370,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             onTyping,
             onPartial,
             onToolProgress,
+            // A cancel must reach the steered follow-up too, not just the original run.
+            signal: options.signal,
           })
           return { text: steered.text, newSessionId: steered.newSessionId ?? newSessionId }
         }
@@ -368,6 +400,13 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         return { text: responseText, newSessionId }
       } catch (err) {
         lastError = err
+        // Cancellation surfaces as a thrown AbortError from the killed
+        // subprocess. It is not a failure: no retry, no partial, no error text.
+        if (options.signal?.aborted) {
+          logger.info({ attempt, sessionId: newSessionId }, 'Agent turn cancelled')
+          if (newSessionId) this.activeWorkspaces.delete(newSessionId)
+          return { text: null, newSessionId }
+        }
         logger.error({ err, attempt }, 'Agent query failed')
 
         // The turn's real answer arrived before the subprocess died: the CLI emitted a
@@ -406,6 +445,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         const detail = String((err as any)?.message ?? err).replace(/\s+/g, ' ').trim().slice(0, 300)
         return { text: `Ran into an error and couldn't finish that: ${detail}` }
       } finally {
+        options.signal?.removeEventListener('abort', onAbort)
         if (typingInterval) clearInterval(typingInterval)
       }
     }
