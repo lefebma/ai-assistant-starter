@@ -125,8 +125,16 @@ describe('saveVoiceCall', () => {
 
 describe('where voice memory is filed', () => {
   it('keeps chat ids path-safe', () => {
-    expect(transcriptDirFor('19:abc/../x@thread.v2', dir)).toBe(join(dir, '19_abc_.._x_thread.v2'))
+    expect(transcriptDirFor('19:abc/../x@thread.v2', dir)).toBe(join(dir, '19_abc____x_thread_v2'))
     expect(transcriptDirFor('229610809', dir)).toBe(join(dir, '229610809'))
+  })
+
+  it('never resolves outside the transcript root, whatever the chat id', () => {
+    for (const hostile of ['..', '.', '../..', '/etc', '..\\..', '%2e%2e', '']) {
+      const out = transcriptDirFor(hostile, dir)
+      expect(out.startsWith(dir + '/')).toBe(true)
+      expect(out).not.toBe(dir)
+    }
   })
 
   it('uses the link chat, falling back when the operator bearer has none', () => {

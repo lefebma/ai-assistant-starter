@@ -21,7 +21,7 @@
  * against real calendar, board, and web lookups of 19 to 34 seconds.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
-import { resolve, relative } from 'node:path'
+import { resolve, relative, sep } from 'node:path'
 import { OPENAI_API_KEY, LIVE_VOICE, PROJECT_ROOT, STORE_DIR, PRIMARY_CHAT_ID } from './config.js'
 import { installTimezone } from './env.js'
 import { runAgent } from './agent.js'
@@ -285,9 +285,18 @@ export function memoryChatId(chatId: string | null | undefined): string {
   return chatId || PRIMARY_CHAT_ID || 'voice'
 }
 
-/** One directory per chat. Chat ids come from platforms, so keep them path-safe. */
+/**
+ * One directory per chat. Chat ids come from platforms (Teams ids carry ':',
+ * '@' and '.'), so map everything but letters, digits, '_' and '-' to '_'.
+ * Dots go too: a chat id of '..' must never resolve outside the transcript
+ * root. The containment check is the backstop if the mapping ever changes.
+ */
 export function transcriptDirFor(chatId: string, root: string = TRANSCRIPT_ROOT()): string {
-  return resolve(root, chatId.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120) || 'voice')
+  const safe = chatId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'voice'
+  const base = resolve(root)
+  const dir = resolve(base, safe)
+  if (!dir.startsWith(base + sep)) throw new Error('voice transcript path escaped its root')
+  return dir
 }
 
 export interface VoiceCallRecord {
