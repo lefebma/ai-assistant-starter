@@ -70,6 +70,11 @@ export function parseGraceMinutes(raw: string | undefined, fallback = 10): numbe
 // the next update silently reverted it.
 export const TTS_VOICE = env['TTS_VOICE']?.trim() || 'fable'
 
+// Live voice (/voice/live): OpenAI GPT-Live-1 holds the conversation and hands
+// real work to the assistant. Its voices are a separate set from TTS_VOICE's.
+// The page can override per browser. Uses OPENAI_API_KEY; billed per second.
+export const LIVE_VOICE = env['LIVE_VOICE']?.trim() || 'gleam'
+
 // Support requests (/support). Destination inbox for drafted support emails.
 // Non-secret, so plain .env like other addresses.
 export const SUPPORT_EMAIL = env['SUPPORT_EMAIL']?.trim() || 'support@els-partners.com'

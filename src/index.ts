@@ -18,6 +18,7 @@ import { PROJECT_ROOT } from './env.js'
 import { clearRestartNotice, pendingRestartNotice, restartNoticeMessage, shutdownExitCode } from './infra/restart.js'
 import { RESTART_EXIT_CODE } from './service/supervisor.js'
 import { logger } from './logger.js'
+import { installEpipeGuard } from './infra/epipe-guard.js'
 
 const PID_FILE = resolve(STORE_DIR, 'assistant.pid')
 
@@ -220,6 +221,7 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', () => void shutdown())
   process.on('SIGTERM', () => void shutdown())
+  installEpipeGuard()
 
   // Start HTTP server (voice / custom-LLM endpoint)
   startHttpServer()

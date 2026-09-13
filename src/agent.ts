@@ -52,7 +52,8 @@ export async function runAgent(
   onTyping?: () => void,
   onPartial?: (accumulated: string) => void,
   onToolProgress?: (toolName: string, status: string) => void,
-  lane: RuntimeLane = 'chat'
+  lane: RuntimeLane = 'chat',
+  signal?: AbortSignal
 ): Promise<{ text: string | null; newSessionId?: string }> {
   return getAgentRuntime(lane).run({
     message,
@@ -60,5 +61,6 @@ export async function runAgent(
     onTyping,
     onPartial,
     onToolProgress,
+    signal,
   })
 }

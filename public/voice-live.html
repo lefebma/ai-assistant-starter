@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0a0a0b" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<title>Havn · Live</title>
+<style>
+  :root { color-scheme: dark; --bg:#0a0a0b; --panel:#111118; --line:#2a2a30; --fg:#e8e8ea; --dim:#8a8a92; --accent:#4ae0a0; --user:#b0cfff; --danger:#e04a4a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; margin:0; overflow-x:hidden; -webkit-text-size-adjust:100%; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.5 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+  main { max-width:620px; margin:0 auto; height:100%; min-width:0; display:flex; flex-direction:column; padding:16px 18px 20px; }
+  header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  h1 { font-weight:500; font-size:1.4rem; margin:0; letter-spacing:.02em; }
+  .sub { color:var(--dim); font-size:13px; }
+  .sub a { color:var(--dim); }
+  /* 16px minimum: iOS Safari zooms into any focused field under 16px and stays zoomed. */
+  select { font:inherit; font-size:16px; background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+  #log { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column-reverse; gap:10px; padding:12px 2px; margin:12px 0; border-top:1px solid #1a1a20; border-bottom:1px solid #1a1a20; }
+  .msg { padding:.55rem .8rem; border-radius:10px; max-width:88%; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.45; }
+  .msg.user { align-self:flex-end; background:#1a2a4a; color:var(--user); border-bottom-right-radius:3px; }
+  .msg.assistant { align-self:flex-start; background:#1a2a1a; color:#a8dca0; border-bottom-left-radius:3px; }
+  .msg.system { align-self:center; color:#666; font-size:.8rem; font-style:italic; }
+  .empty { margin:auto; color:var(--dim); text-align:center; font-size:14px; padding:0 1rem; }
+  #status { color:var(--dim); text-align:center; min-height:1.5em; font-size:14px; margin-bottom:12px; }
+  #status.working::after { content:''; display:inline-block; width:.9em; height:.9em; margin-left:8px; vertical-align:-2px; border:2px solid var(--accent); border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg) } }
+  .controls { display:flex; align-items:center; justify-content:center; gap:22px; }
+  button { font:inherit; color:var(--fg); cursor:pointer; border:none; background:none; }
+  #talk { width:88px; height:88px; border-radius:50%; background:radial-gradient(circle at 40% 35%, #2a3a34, #111118); border:2px solid var(--accent); color:var(--accent); font-weight:600; font-size:15px; transition:transform .15s; }
+  #talk:active { transform:scale(.96); }
+  #talk:disabled { opacity:.4; cursor:default; }
+  #talk.live { border-color:var(--danger); color:#fff; background:radial-gradient(circle at 40% 35%, #4a2a2a, #1a1111); animation:pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(224,74,74,.45) } 70% { box-shadow:0 0 0 18px rgba(224,74,74,0) } 100% { box-shadow:0 0 0 0 rgba(224,74,74,0) } }
+  .round { width:56px; height:56px; border-radius:50%; border:1px solid var(--line); background:var(--panel); font-size:13px; }
+  .round:disabled { opacity:.35; cursor:default; }
+  .round.on { border-color:#e0c04a; color:#e0c04a; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 id="title">Havn</h1>
+      <div class="sub">Live conversation. Talk naturally, interrupt any time. <a href="/voice">Classic voice</a></div>
+    </div>
+    <select id="voice" aria-label="Voice"></select>
+  </header>
+  <div id="log"><div class="empty" id="empty">Tap Talk to start. On a laptop, headphones stop the assistant hearing itself.</div></div>
+  <div id="status"></div>
+  <div class="controls">
+    <button id="mute" class="round" disabled>Mute</button>
+    <button id="talk" disabled>Talk</button>
+    <span class="round" style="visibility:hidden"></span>
+  </div>
+  <audio id="audio" autoplay playsinline></audio>
+</main>
+<script>
+// Sign-in works exactly like /voice: a /voice ui link token is traded once for
+// an HttpOnly session cookie and stripped from the address bar. Nothing on this
+// page ever holds the credential.
+const $ = (id) => document.getElementById(id)
+const audio = $('audio')
+const LS_VOICE = 'havn_live_voice'
+let peer, events, mic, wakeLock, closeTimer
+let ready = false, finalized = false, muted = false, connecting = false, pending = 0
+let current = { who: null, el: null, lastEnd: 0 }
+
+const SIGN_IN_TROUBLE = {
+  edge: 'This box is missing its live voice routes. The operator needs to re-run the edge script with --voice.',
+  spent: 'This link has already been used to sign in, or it has expired. Send /voice ui in your chat for a new one.',
+  none: 'Send /voice ui in your chat to get a link, then open Live from the voice page.',
+  offline: 'Could not reach the assistant. Check your connection and reload.',
+  disabled: 'Live voice needs an OpenAI API key on this assistant (OPENAI_API_KEY).',
+  node: 'Live voice needs Node.js 22 or newer on the machine running the assistant.',
+}
+
+function status(t, working = false) { $('status').textContent = t; $('status').classList.toggle('working', working) }
+function addMessage(role, text) { $('empty')?.remove(); const d = document.createElement('div'); d.className = 'msg ' + role; d.textContent = text; $('log').prepend(d); return d }
+function caption(who, delta, startMs = 0, endMs = startMs) {
+  if (current.who !== who || startMs - current.lastEnd > 1500) current = { who, el: addMessage(who, ''), lastEnd: endMs }
+  current.el.textContent += delta
+  current.lastEnd = endMs
+}
+function setWorking() { status(pending > 0 ? 'Working on it…' : (ready ? 'Live' : ''), pending > 0) }
+
+async function signIn() {
+  const params = new URLSearchParams(location.search)
+  const token = params.get('token') || ''
+  let failed = ''
+  if (token) {
+    try {
+      const resp = await fetch('/api/voice-session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ token }) })
+      if (resp.status === 404) failed = 'edge'
+      else if (!resp.ok) failed = 'spent'
+    } catch { failed = 'offline' }
+    params.delete('token')
+    const rest = params.toString()
+    history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''))
+  }
+  try {
+    const probe = await fetch('/api/live/status', { credentials: 'same-origin' })
+    if (probe.ok) return { ok: true, info: await probe.json() }
+    if (probe.status === 404) return { ok: false, reason: 'edge' }
+  } catch { return { ok: false, reason: 'offline' } }
+  return { ok: false, reason: failed || (token ? 'spent' : 'none') }
+}
+
+async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request('screen') } catch {} }
+document.addEventListener('visibilitychange', () => { if (ready && document.visibilityState === 'visible') keepAwake() })
+
+function cleanup() {
+  clearTimeout(closeTimer)
+  // Detach handlers first: closing the channel fires onclose, which would
+  // replace the real error on screen with "Disconnected."
+  if (events) { events.onclose = null; events.onmessage = null }
+  if (peer) peer.onconnectionstatechange = null
+  mic?.getTracks().forEach((t) => t.stop()); events?.close(); peer?.close()
+  audio.srcObject = null; wakeLock?.release?.().catch(() => {})
+  ready = false; connecting = false; pending = 0; muted = false
+  $('talk').classList.remove('live'); $('talk').textContent = 'Talk'; $('talk').disabled = false
+  $('mute').disabled = true; $('mute').classList.remove('on'); $('mute').textContent = 'Mute'; $('voice').disabled = false
+}
+
+async function start() {
+  connecting = true; finalized = false; pending = 0
+  current = { who: null, el: null, lastEnd: 0 }
+  $('talk').disabled = true; $('voice').disabled = true; status('Connecting…', true)
+  audio.play().catch(() => {}) // iOS only allows playback started from the tap itself
+  try {
+    mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+    peer = new RTCPeerConnection()
+    peer.ontrack = (e) => { audio.srcObject = new MediaStream([e.track]); audio.play().catch(() => status('Tap anywhere to hear the assistant.')) }
+    mic.getAudioTracks().forEach((t) => peer.addTrack(t, mic))
+    events = peer.createDataChannel('oai-events')
+    events.onmessage = ({ data }) => {
+      const ev = JSON.parse(data)
+      switch (ev.type) {
+        case 'session.started':
+          ready = true; connecting = false; keepAwake()
+          $('talk').disabled = false; $('talk').classList.add('live'); $('talk').textContent = 'End'; $('mute').disabled = false
+          setWorking(); break
+        case 'session.input_transcript.delta': caption('user', ev.delta, ev.start_ms, ev.end_ms); break
+        case 'session.output_transcript.delta': caption('assistant', ev.delta, ev.start_ms, ev.end_ms); break
+        case 'session.delegation.created': pending++; setWorking(); break
+        case 'session.commentary.appended': pending = Math.max(0, pending - 1); setWorking(); break
+        case 'error': addMessage('system', 'Error: ' + (ev.error?.message || JSON.stringify(ev.error))); break
+        case 'session.closed': finalized = true; addMessage('system', `Call ended, ${ev.usage?.seconds ?? '?'}s`); status(''); cleanup(); break
+      }
+    }
+    events.onclose = () => { if (!finalized) { status('Disconnected.'); cleanup() } }
+    peer.onconnectionstatechange = () => { if (['failed', 'disconnected'].includes(peer.connectionState) && !finalized) { status('Connection lost.'); cleanup() } }
+
+    await peer.setLocalDescription(await peer.createOffer())
+    if (peer.iceGatheringState !== 'complete') {
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, 4000)
+        peer.onicegatheringstatechange = () => { if (peer.iceGatheringState === 'complete') { clearTimeout(t); resolve() } }
+      })
+    }
+    const r = await fetch('/api/live/session', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sdp: peer.localDescription.sdp, voice: $('voice').value }),
+    })
+    if (r.status === 401) throw new Error(SIGN_IN_TROUBLE.spent)
+    if (r.status === 404) throw new Error(SIGN_IN_TROUBLE.edge)
+    if (r.status === 429) throw new Error('Too many live calls open on this assistant. End one first.')
+    if (r.status === 503) {
+      const code = (await r.json().catch(() => ({}))).error
+      throw new Error(code === 'node_22_required' ? SIGN_IN_TROUBLE.node : SIGN_IN_TROUBLE.disabled)
+    }
+    if (!r.ok) throw new Error('Could not start the call (' + ((await r.json().catch(() => ({}))).error || r.status) + ').')
+    const result = await r.json()
+    await peer.setRemoteDescription({ type: 'answer', sdp: result.transport.sdp })
+  } catch (err) {
+    status(err?.name === 'NotAllowedError' ? 'Microphone permission denied.' : String(err?.message ?? err))
+    cleanup()
+  }
+}
+
+function stop() {
+  if (!ready || events?.readyState !== 'open') { cleanup(); return }
+  $('talk').disabled = true; status('Finishing…', true)
+  events.send(JSON.stringify({ type: 'session.close' }))
+  closeTimer = setTimeout(() => { status(''); cleanup() }, 15000)
+}
+
+$('talk').onclick = () => (ready ? stop() : connecting ? null : start())
+$('mute').onclick = () => {
+  if (!ready) return
+  muted = !muted
+  events.send(JSON.stringify({ type: muted ? 'session.input_audio.mute' : 'session.input_audio.unmute' }))
+  $('mute').classList.toggle('on', muted); $('mute').textContent = muted ? 'Muted' : 'Mute'
+}
+
+signIn().then((res) => {
+  if (!res.ok) { status(SIGN_IN_TROUBLE[res.reason] || SIGN_IN_TROUBLE.spent); $('voice').disabled = true; return }
+  const info = res.info
+  if (info.assistant) { $('title').textContent = info.assistant; document.title = info.assistant + ' · Live' }
+  const saved = localStorage.getItem(LS_VOICE)
+  for (const v of info.voices || []) {
+    const o = document.createElement('option'); o.value = v; o.textContent = v[0].toUpperCase() + v.slice(1); $('voice').appendChild(o)
+  }
+  $('voice').value = (info.voices || []).includes(saved) ? saved : info.defaultVoice
+  $('voice').onchange = () => localStorage.setItem(LS_VOICE, $('voice').value)
+  if (info.nodeSupported === false) { status(SIGN_IN_TROUBLE.node); return }
+  if (!info.enabled) { status(SIGN_IN_TROUBLE.disabled); return }
+  if (!window.isSecureContext) { status('The microphone needs HTTPS. Open this page through the assistant\'s https address.'); return }
+  $('talk').disabled = false
+})
+</script>
+</body>
+</html>

@@ -138,9 +138,9 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
   if (voice) {
     lines.push(
       '',
-      '\t# Voice UI page. The app validates ?token= and 403s a bad or expired link.',
+      '\t# Voice UI pages (classic and live). The app validates ?token= or the session cookie and 403s otherwise.',
       '\t@voice_page {',
-      '\t\tpath /voice /voice/',
+      '\t\tpath /voice /voice/ /voice/live /voice/live/',
       '\t}',
       '\thandle @voice_page {',
       `\t\treverse_proxy ${APP_UPSTREAM}`,
@@ -154,12 +154,12 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       `\t\treverse_proxy ${APP_UPSTREAM}`,
       '\t}',
       '',
-      '\t# API endpoints (chat completions, transcribe, speak, voice picker, sign-in)',
+      '\t# API endpoints (chat completions, transcribe, speak, voice picker, sign-in, live voice)',
       '\t@api {',
       // Exact-match paths, so /api/voice-session has to be listed even though
       // /api/voice is here: a box that 404s the exchange serves a voice page
       // that can never sign in, and it works perfectly on localhost.
-      '\t\tpath /v1/* /chat/* /api/transcribe /api/speak /api/voices /api/voice /api/voice-session',
+      '\t\tpath /v1/* /chat/* /api/transcribe /api/speak /api/voices /api/voice /api/voice-session /api/live/session /api/live/status',
       '\t}',
       '\thandle @api {',
       `\t\treverse_proxy ${APP_UPSTREAM}`,

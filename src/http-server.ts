@@ -10,6 +10,7 @@ import {
 import { resolveVoiceToken, exchangeVoiceToken } from './voice-links.js'
 import { resolveVoiceSession, sessionIdFromCookies, voiceSessionCookie } from './voice-sessions.js'
 import { runAgent } from './agent.js'
+import { createLiveSession, liveStatus, LiveSessionError } from './voice-live.js'
 import { sendPlatformMessage } from './bot.js'
 import { logger } from './logger.js'
 import { detectPlatform, type PlatformName } from './platform/index.js'
@@ -176,6 +177,56 @@ async function handleVoiceSession(req: IncomingMessage, res: ServerResponse): Pr
     'Set-Cookie': voiceSessionCookie(session, overTls(req)),
   })
   res.end(JSON.stringify({ ok: true, expiresAt: session.expiresAt }))
+}
+
+/**
+ * Live voice: the browser posts its WebRTC SDP offer, and this creates the
+ * GPT-Live session with the box's OPENAI_API_KEY and returns the SDP answer.
+ * Same credentials as the rest of the voice API (a /voice ui session, or the
+ * operator bearer), because every session bills per second and runs agent turns.
+ */
+async function handleLiveSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireAuth(req, res)) return
+  const auth = authContext(req)
+  let payload: { sdp?: unknown; voice?: unknown }
+  try {
+    const raw = await readBody(req)
+    if (raw.length > 64_000) throw new Error('too large')
+    payload = JSON.parse(raw)
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'invalid_json' }))
+    return
+  }
+  if (typeof payload.sdp !== 'string' || !payload.sdp.trim()) {
+    res.writeHead(400, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'sdp_required' }))
+    return
+  }
+  try {
+    const result = await createLiveSession(payload.sdp, typeof payload.voice === 'string' ? payload.voice : undefined, auth.chatId)
+    res.writeHead(201, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify(result))
+  } catch (err) {
+    const status = err instanceof LiveSessionError ? err.status : 500
+    const code = err instanceof LiveSessionError ? err.code : 'internal_error'
+    if (!(err instanceof LiveSessionError)) logger.error({ err }, 'live session failed')
+    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: code }))
+  }
+}
+
+/**
+ * Whether a request for a voice page may be served: a live link token, the
+ * operator bearer in the query, or a signed-in voice session cookie.
+ */
+function voicePageAllowed(req: IncomingMessage, url: URL): boolean {
+  const token = url.searchParams.get('token') ?? ''
+  return (
+    resolveVoiceToken(token) !== null ||
+    (!!HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN) ||
+    resolveVoiceSession(sessionIdFromCookies(req.headers.cookie)) !== null
+  )
 }
 
 function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
@@ -617,6 +668,27 @@ export function startHttpServer(port: number = HTTP_PORT): void {
       void handleSetVoice(req, res)
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/live/session') {
+      void handleLiveSession(req, res)
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/live/status') {
+      if (!requireAuth(req, res)) return
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify(liveStatus()))
+      return
+    }
+    if (req.method === 'GET' && (url.pathname === '/voice/live' || url.pathname === '/voice/live/')) {
+      // Same gate as /voice. The live page signs in the same way, so a /voice ui
+      // link works here too, and a browser already signed in on /voice walks in.
+      if (!voicePageAllowed(req, url)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' })
+        res.end('This voice link is not valid or has expired. Send /voice ui in your chat for a new one.')
+        return
+      }
+      serveStatic(req, res, '/voice-live.html')
+      return
+    }
     if (req.method === 'GET' && (url.pathname === '/voice' || url.pathname === '/voice/')) {
       // The edge proxies this path without inspecting the token, so the check
       // lives here. Serving the shell to an unauthenticated caller would leak
@@ -624,12 +696,7 @@ export function startHttpServer(port: number = HTTP_PORT): void {
       // A session counts as well as a link. The link is spent on first load,
       // so without this a returning visitor (reopening the link from their
       // chat, or a bookmark) would be turned away while still signed in.
-      const token = url.searchParams.get('token') ?? ''
-      const ok =
-        resolveVoiceToken(token) !== null ||
-        (!!HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN) ||
-        resolveVoiceSession(sessionIdFromCookies(req.headers.cookie)) !== null
-      if (!ok) {
+      if (!voicePageAllowed(req, url)) {
         res.writeHead(403, { 'Content-Type': 'text/plain' })
         res.end('This voice link is not valid or has expired. Send /voice ui in your chat for a new one.')
         return

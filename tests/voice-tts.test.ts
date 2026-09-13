@@ -191,7 +191,7 @@ describe('the hosted edge proxies the route', () => {
     const caddy = buildCaddyfile('havn.example.com', { voice: true })
     // Both, and as separate paths: /api/voices alone would leave the picker
     // able to list voices and unable to change one.
-    expect(caddy).toMatch(/\/api\/voices \/api\/voice \/api\/voice-session$/m)
+    expect(caddy).toMatch(/\/api\/voices \/api\/voice \/api\/voice-session( |$)/m)
   })
 
   it('does not expose it when the voice UI is off', () => {
