@@ -12,6 +12,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // createAssistantBackend needs runAgent mocked so it never spawns Claude.
 const { mockRunAgent } = vi.hoisted(() => ({ mockRunAgent: vi.fn() }))
 vi.mock('../src/agent.js', () => ({ runAgent: mockRunAgent }))
+vi.mock('../src/skills/index.js', () => ({ buildSkillIndex: () => '' }))
+vi.mock('../src/memory/engine.js', () => ({ createDefaultEngine: () => ({ buildContext: async () => '' }) }))
 
 import { createLiveBridge, createAssistantBackend, buildLiveInstructions } from '../src/voice-live.js'
 

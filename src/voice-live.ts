@@ -20,11 +20,16 @@
  * Ported from the assistant this product came from, where it was proven
  * against real calendar, board, and web lookups of 19 to 34 seconds.
  */
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { OPENAI_API_KEY, LIVE_VOICE, PROJECT_ROOT } from './config.js'
+import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
+import { resolve, relative, sep } from 'node:path'
+import { OPENAI_API_KEY, LIVE_VOICE, PROJECT_ROOT, STORE_DIR, PRIMARY_CHAT_ID } from './config.js'
+import { installTimezone } from './env.js'
 import { runAgent } from './agent.js'
 import { identity } from './workspace/registry.js'
+import { saveConversationTurn } from './memory.js'
+import { insertMemory } from './db.js'
+import { createDefaultEngine, type ContextEngine } from './memory/engine.js'
+import { buildSkillIndex } from './skills/index.js'
 import { logger } from './logger.js'
 
 const LIVE_MODEL = 'gpt-live-1'
@@ -33,6 +38,10 @@ const RESULT_CHUNK_CHARS = 1500 // appends cap at 500 tokens each
 const MAX_CONCURRENT_SESSIONS = 2
 const MAX_SESSION_MS = 45 * 60_000 // billed per second; don't let a forgotten tab run all day
 const PERSONALITY_EXCERPT_CHARS = 2500
+const TRANSCRIPT_ROOT = () => resolve(STORE_DIR, 'voice-transcripts') // store/ is preserved by updates
+const RECENT_CALLS = 2
+const RECENT_CALL_CHARS = 1200
+const RECENT_CALL_MAX_AGE_DAYS = 7
 
 export const LIVE_VOICES = ['gleam', 'meridian', 'vesper', 'willow', 'stone', 'ripple', 'quartz', 'beacon', 'delta', 'cinder'] as const
 
@@ -46,7 +55,11 @@ function personalityExcerpt(root: string = PROJECT_ROOT): string {
 }
 
 /** Instructions for the live voice model: who it is, how it sounds, when to hand off. */
-export function buildLiveInstructions(who: { assistant: string; owner: string } = identity(), personality: string = personalityExcerpt()): string {
+export function buildLiveInstructions(
+  who: { assistant: string; owner: string } = identity(),
+  personality: string = personalityExcerpt(),
+  recentCalls: string = '',
+): string {
   const owner = who.owner || 'the user'
   return [
     `You are ${who.assistant}, ${owner}'s personal AI assistant, talking with ${owner} by voice.`,
@@ -72,6 +85,9 @@ Do not delegate to the backend when:
 Delegate before giving an answer that depends on backend work. Do not guess results while waiting.
 While the backend works, keep the conversation natural: a brief "checking" is fine, then chat or wait.
 Never claim something was sent, booked, or changed unless the backend confirmed it.`,
+    recentCalls
+      ? `Recent voice calls with ${owner} (most recent first). Use them when ${owner} refers back to an earlier call ("remember when we talked about...", "like I said last time"). Don't bring them up unprompted, and delegate if they need more detail than this:\n${recentCalls}`
+      : '',
   ].filter(Boolean).join('\n\n')
 }
 
@@ -259,11 +275,158 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
   }
 }
 
-/** The assistant as the delegation backend: one Claude session per live call. */
-export function createAssistantBackend(): RunBackend {
+/**
+ * Voice memory is filed under the chat that owns the voice link, so the chat
+ * surface (Telegram, Teams) remembers what was said on a call and the call
+ * sees recent chat. The operator bearer carries no chat; that falls back to
+ * the primary chat.
+ */
+export function memoryChatId(chatId: string | null | undefined): string {
+  return chatId || PRIMARY_CHAT_ID || 'voice'
+}
+
+/**
+ * One directory per chat. Chat ids come from platforms (Teams ids carry ':',
+ * '@' and '.'), so map everything but letters, digits, '_' and '-' to '_'.
+ * Dots go too: a chat id of '..' must never resolve outside the transcript
+ * root. The containment check is the backstop if the mapping ever changes.
+ */
+export function transcriptDirFor(chatId: string, root: string = TRANSCRIPT_ROOT()): string {
+  const safe = chatId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'voice'
+  const base = resolve(root)
+  const dir = resolve(base, safe)
+  if (!dir.startsWith(base + sep)) throw new Error('voice transcript path escaped its root')
+  return dir
+}
+
+export interface VoiceCallRecord {
+  sessionId: string
+  chatId: string
+  startedAt: Date
+  endedAt: Date
+  turns: Turn[]
+  delegations: number
+  billedSeconds?: number
+}
+
+export interface VoiceCallDeps {
+  dir?: string
+  timezone?: string
+  writeFile?: (path: string, content: string) => void
+  saveTurn?: (chatId: string, user: string, assistant: string) => Promise<void>
+  insert?: (chatId: string, content: string, sector: 'semantic' | 'episodic') => void
+}
+
+const zonedTime = (d: Date, timeZone: string, opts: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone, ...opts }).format(d)
+
+/**
+ * Persist a finished call: the full transcript as markdown under
+ * store/voice-transcripts/<chat>/, each exchange as a regular conversation-turn
+ * memory (same filters as chat: short turns are skipped), and one episodic
+ * memory summarizing the call with a pointer to the transcript. A call where
+ * the user never spoke saves nothing. Returns the transcript path or null.
+ */
+export async function saveVoiceCall(call: VoiceCallRecord, deps: VoiceCallDeps = {}): Promise<string | null> {
+  const dir = deps.dir ?? transcriptDirFor(call.chatId)
+  const timeZone = deps.timezone ?? installTimezone()
+  const writeFile = deps.writeFile ?? ((path: string, content: string) => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(path, content, { mode: 0o600 })
+  })
+  const saveTurn = deps.saveTurn ?? saveConversationTurn
+  const insert = deps.insert ?? insertMemory
+
+  const turns = call.turns.filter((t) => t.text.trim())
+  const userSaid = turns.filter((t) => t.who === 'user').map((t) => t.text.trim())
+  if (userSaid.length === 0) return null
+
+  const minutes = Math.max(1, Math.round((call.endedAt.getTime() - call.startedAt.getTime()) / 60_000))
+  const stamp = zonedTime(call.startedAt, timeZone, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .replace(/[^\d]+/g, '-').replace(/-$/, '')
+  const when = zonedTime(call.startedAt, timeZone, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const path = resolve(dir, `${stamp}-${call.sessionId.slice(-6)}.md`)
+  const lookups = `${call.delegations} backend lookup${call.delegations === 1 ? '' : 's'}`
+
+  writeFile(path, [
+    `# Voice call, ${when}`,
+    '',
+    `- Duration: ~${minutes} min${call.billedSeconds ? ` (${call.billedSeconds}s billed)` : ''}`,
+    `- ${lookups[0].toUpperCase()}${lookups.slice(1)}`,
+    `- Session: ${call.sessionId}`,
+    '',
+    ...turns.map((t) => `**${t.who === 'user' ? 'User' : 'Assistant'}:** ${t.text.trim()}\n`),
+  ].join('\n'))
+
+  // Pair each run of user turns with the assistant turns that follow it.
+  for (let i = 0; i < turns.length; ) {
+    if (turns[i].who !== 'user') { i++; continue }
+    const user: string[] = []
+    const reply: string[] = []
+    while (i < turns.length && turns[i].who === 'user') user.push(turns[i++].text.trim())
+    while (i < turns.length && turns[i].who === 'assistant') reply.push(turns[i++].text.trim())
+    const userText = user.join(' ')
+    if (userText.length <= 20) continue // the same threshold chat uses, measured before the prefix
+    await saveTurn(call.chatId, `(by voice) ${userText}`, reply.join(' '))
+  }
+
+  const said = userSaid.join(' / ')
+  insert(
+    call.chatId,
+    `Voice call on ${when} (~${minutes} min, ${lookups}). The user said: ${said.length > 240 ? said.slice(0, 240) + '...' : said} [transcript: ${relative(PROJECT_ROOT, path)}]`,
+    'episodic',
+  )
+  return path
+}
+
+/**
+ * The tail of the last couple of calls, for the voice model's instructions, so
+ * "do you remember what we talked about?" gets an answer without a lookup.
+ * Reads the transcripts saveVoiceCall wrote; skips anything older than a week.
+ */
+export function recentCallsNote(
+  chatId: string,
+  opts: { dir?: string; now?: number; maxCalls?: number; perCallChars?: number; maxAgeDays?: number } = {},
+): string {
+  const dir = opts.dir ?? transcriptDirFor(chatId)
+  const now = opts.now ?? Date.now()
+  const maxAgeMs = (opts.maxAgeDays ?? RECENT_CALL_MAX_AGE_DAYS) * 86_400_000
+  let files: { path: string; mtime: number }[]
+  try {
+    files = readdirSync(dir)
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => ({ path: resolve(dir, f), mtime: statSync(resolve(dir, f)).mtimeMs }))
+      .filter((f) => now - f.mtime <= maxAgeMs)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, opts.maxCalls ?? RECENT_CALLS)
+  } catch {
+    return ''
+  }
+  const perCall = opts.perCallChars ?? RECENT_CALL_CHARS
+  return files
+    .map((f) => {
+      const raw = readFileSync(f.path, 'utf-8')
+      const heading = raw.match(/^# (.+)$/m)?.[1] ?? 'Voice call'
+      const body = raw.split('\n').filter((l) => l.startsWith('**')).join('\n').replace(/\*\*/g, '')
+      const tail = body.length > perCall ? '...' + body.slice(body.length - perCall) : body
+      return `${heading}:\n${tail}`
+    })
+    .join('\n\n')
+}
+
+let engine: ContextEngine | undefined
+
+/**
+ * The assistant as the delegation backend: one Claude session per live call,
+ * with the same skill index and memory context a chat message gets.
+ */
+export function createAssistantBackend(chatId: string = memoryChatId(null)): RunBackend {
   let sessionId: string | undefined
   return async (prompt, signal) => {
-    const { text, newSessionId } = await runAgent(prompt, sessionId, undefined, undefined, undefined, 'chat', signal)
+    engine ??= createDefaultEngine()
+    const memoryContext = await engine.buildContext(chatId, prompt).catch(() => '')
+    const full = [buildSkillIndex(), memoryContext, prompt].filter(Boolean).join('\n\n')
+    const { text, newSessionId } = await runAgent(full, sessionId, undefined, undefined, undefined, 'chat', signal)
     if (signal.aborted) {
       // Never resume a session a cancelled run touched: resuming it right after
       // the abort failed with error_during_execution and then an unhandled
@@ -309,6 +472,13 @@ export async function createLiveSession(sdp: string, voice?: string, chatId?: st
   if (activeSessions.size >= MAX_CONCURRENT_SESSIONS) throw new LiveSessionError(429, 'too_many_sessions')
   const chosenVoice = (LIVE_VOICES as readonly string[]).includes(voice ?? '') ? voice : LIVE_VOICE
   const who = identity()
+  const chat = memoryChatId(chatId)
+  let recent = ''
+  try {
+    recent = recentCallsNote(chat)
+  } catch (err) {
+    logger.warn({ err }, 'could not read recent voice calls')
+  }
 
   const upstream = await fetch(LIVE_API, {
     method: 'POST',
@@ -316,7 +486,7 @@ export async function createLiveSession(sdp: string, voice?: string, chatId?: st
     body: JSON.stringify({
       session: {
         model: LIVE_MODEL,
-        instructions: buildLiveInstructions(who),
+        instructions: buildLiveInstructions(who, personalityExcerpt(), recent),
         audio: { output: { voice: chosenVoice } },
         delegation: { type: 'client' },
       },
@@ -331,12 +501,12 @@ export async function createLiveSession(sdp: string, voice?: string, chatId?: st
   const result = JSON.parse(body) as { session?: { id?: string } }
   const sessionId = result.session?.id
   if (!sessionId) throw new LiveSessionError(502, 'no_session_id')
-  logger.info({ sessionId, voice: chosenVoice, chatId }, 'live session created')
-  attachSideband(sessionId, backendPreamble(who.owner))
+  logger.info({ sessionId, voice: chosenVoice, chatId, recentCalls: !!recent }, 'live session created')
+  attachSideband(sessionId, backendPreamble(who.owner), chat)
   return result
 }
 
-function attachSideband(sessionId: string, preamble: string): void {
+function attachSideband(sessionId: string, preamble: string, chatId: string): void {
   const ws = new WebSocket(`${LIVE_API.replace('https://', 'wss://')}/${encodeURIComponent(sessionId)}/attach`, {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
   } as any)
@@ -345,13 +515,23 @@ function attachSideband(sessionId: string, preamble: string): void {
   }
   const bridge = createLiveBridge({
     send,
-    runBackend: createAssistantBackend(),
+    runBackend: createAssistantBackend(chatId),
     preamble,
     log: (msg, extra) => logger.info({ sessionId, ...extra }, `live: ${msg}`),
   })
 
   const close = () => send({ type: 'session.close' })
   activeSessions.set(sessionId, { close })
+  const startedAt = new Date()
+  let persisted = false
+  // Once, on session.closed or on a sideband that dropped before getting there.
+  const persist = (billedSeconds?: number) => {
+    if (persisted) return
+    persisted = true
+    saveVoiceCall({ sessionId, chatId, startedAt, endedAt: new Date(), turns: bridge.turns(), delegations: bridge.metrics().length, billedSeconds })
+      .then((path) => path && logger.info({ sessionId, path }, 'live call saved to memory'))
+      .catch((err) => logger.error({ err, sessionId }, 'live call save failed'))
+  }
   const maxTimer = setTimeout(() => {
     logger.warn({ sessionId }, 'live session hit max duration, closing')
     close()
@@ -372,10 +552,12 @@ function attachSideband(sessionId: string, preamble: string): void {
     void bridge.onEvent(event)
     if (event.type === 'session.closed') {
       logger.info({ sessionId, usage: event.usage, delegations: bridge.metrics() }, 'live session closed')
+      persist(typeof event.usage?.seconds === 'number' ? event.usage.seconds : undefined)
       ws.close()
     }
   })
   ws.addEventListener('close', () => {
+    persist()
     clearTimeout(maxTimer)
     activeSessions.delete(sessionId)
     logger.info({ sessionId }, 'live sideband closed')
