@@ -64,6 +64,11 @@ arm64 builds; the provisioner picks the right gog asset from `dpkg
 3. **Optional: a Tailscale auth key** (admin console → Settings → Keys).
    Pre-authorized, not ephemeral (the server should survive key GC), ideally
    tagged (e.g. `tag:havn`) so ACLs can scope it.
+4. **Optional, for voice: the client's OpenAI API key.** Voice notes, spoken
+   replies, and live conversation on the voice page all bill to it (live is
+   about $0.05 per minute), whichever AI does the thinking. It goes in `.env`
+   as `OPENAI_API_KEY` during the finishing steps. Without it the assistant
+   works but voice does not. See "Voice UI" below for the edge it also needs.
 
 ## Generate the user-data
 

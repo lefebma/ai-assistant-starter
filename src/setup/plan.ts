@@ -151,6 +151,19 @@ export function buildEnvContent(a: Answers): string {
     )
   }
 
+  // Voice (Whisper voice notes, spoken replies, live conversation) runs on
+  // OpenAI whatever the model provider. Written once: an OpenAI model install
+  // already emitted the same key above.
+  if (a.keys.openai !== undefined && !emitted.has('OPENAI_API_KEY')) {
+    lines.push(
+      '',
+      '# Voice: voice notes, spoken replies, and live conversation (/voice/live).',
+      '# Billed per use to this key; live conversation is about $0.05 per minute.',
+      `OPENAI_API_KEY=${a.keys.openai}`
+    )
+    emitted.add('OPENAI_API_KEY')
+  }
+
   // Wordsmith no longer needs a separate API key — it writes directly
   // using the configured LLM provider.
   return lines.join('\n') + '\n'

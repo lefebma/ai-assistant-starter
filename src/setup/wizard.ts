@@ -117,6 +117,44 @@ async function askEngine(p: Prompter, hooks?: WizardHooks): Promise<EngineAnswer
   }
 }
 
+/**
+ * Voice runs on OpenAI no matter which company does the thinking: voice notes
+ * are transcribed by Whisper, spoken replies come from OpenAI text-to-speech,
+ * and live conversation on the voice page is GPT-Live-1. A Claude install was
+ * never asked for that key, so voice quietly did nothing (or fell back to macOS
+ * `say`) and nobody was told why. Ask once, in terms of what it turns on and
+ * what it costs. An OpenAI key already given for the model is reused.
+ */
+async function askVoice(p: Prompter, keys: Answers['keys']): Promise<void> {
+  if (keys.openai !== undefined) {
+    p.say('Voice (voice notes, spoken replies, live conversation) will use the OpenAI key you already entered.')
+    return
+  }
+  p.say(
+    'Voice: send voice notes, hear replies spoken, and talk live on the voice page.\n' +
+      '  Voice uses an OpenAI API key, whichever AI does the thinking. It bills per use:\n' +
+      '  live conversation is about $0.05 per minute of talking; notes and spoken replies cost cents.\n' +
+      '  Key: https://platform.openai.com/api-keys'
+  )
+  if (!(await p.yesNo('Enable voice?'))) return
+  keys.openai = await p.ask('OpenAI API key (leave blank to fill in later)', '')
+  p.say(liveNodeNote(process.versions.node))
+}
+
+/**
+ * Live conversation needs Node 22 (a built-in WebSocket client); voice notes
+ * and spoken replies do not. Say which applies on this machine rather than
+ * letting the owner find out from an error on the voice page.
+ */
+export function liveNodeNote(nodeVersion: string): string {
+  const major = parseInt(nodeVersion.split('.')[0] ?? '0', 10)
+  if (major >= 22) return 'Voice notes, spoken replies, and live conversation will all work on this computer.'
+  return (
+    `Voice notes and spoken replies will work. Live conversation on the voice page needs Node 22,\n` +
+    `  and this computer is running Node ${nodeVersion}, so that part stays off until Node is upgraded.`
+  )
+}
+
 export async function runWizard(p: Prompter, projectPath: string, hooks?: WizardHooks): Promise<Answers> {
   const ownerName = await p.ask('Your name')
   const assistantName = await p.ask('Name for your assistant', 'Atlas')
@@ -212,6 +250,8 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
     keys.kanbanzone = await p.ask('Kanban Zone API key (leave blank to fill in later)', '')
     keys.kzBoardId = await p.ask('Default board ID (optional)', '')
   }
+
+  await askVoice(p, keys)
 
   p.say('WordPress (drafts-only): reads content, drafts posts, never publishes.')
   skills.wordpress = await p.yesNo('Enable WordPress skill?')

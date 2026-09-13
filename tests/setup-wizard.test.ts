@@ -93,6 +93,26 @@ describe('buildEnvContent', () => {
     expect(env).toMatch(/AI_MODEL is REQUIRED/)
   })
 
+  it('writes a voice OpenAI key on a Claude install, labelled for voice', () => {
+    const env = buildEnvContent({ ...BASE, keys: { openai: 'sk-voice' } })
+    expect(env).toMatch(/^OPENAI_API_KEY=sk-voice$/m)
+    expect(env).toMatch(/# Voice: voice notes, spoken replies, and live conversation/)
+  })
+
+  it('writes an empty voice key line to fill in later when voice was enabled without one', () => {
+    const env = buildEnvContent({ ...BASE, keys: { openai: '' } })
+    expect(env).toMatch(/^OPENAI_API_KEY=$/m)
+  })
+
+  it('writes no OpenAI key when voice was declined', () => {
+    expect(buildEnvContent({ ...BASE, keys: {} })).not.toMatch(/OPENAI_API_KEY/)
+  })
+
+  it('writes OPENAI_API_KEY once when OpenAI is also the model provider', () => {
+    const env = buildEnvContent({ ...BASE, engine: 'api-key', aiProvider: 'openai', aiModel: 'gpt-5', keys: { openai: 'sk-o' } })
+    expect(env.match(/^OPENAI_API_KEY=/gm)?.length).toBe(1)
+  })
+
   it('writes GOOGLE_API_KEY once when Gemini is the model provider', () => {
     const env = buildEnvContent({
       ...BASE,
@@ -317,12 +337,61 @@ describe('runWizard', () => {
           false, // web research
           false, // apollo
           // no wordsmith question
-          false, false, false, false,
+          false, false, false, // antilibrary, notion, kanban zone
+          false, // voice
+          false, // wordpress
         ]),
       ]),
       '/repo'
     )
     expect(a.keys.google).toBe('g-1')
+  })
+
+  it('offers voice on a Claude install and stores the OpenAI key', async () => {
+    const a = await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        0, // engine: Claude subscription
+        ...tail([
+          false, false, false, false, false, // web research, apollo, antilibrary, notion, kanban zone
+          true, 'sk-voice', // voice -> key
+          false, // wordpress
+        ]),
+      ]),
+      '/repo'
+    )
+    expect(a.keys.openai).toBe('sk-voice')
+  })
+
+  it('leaves the OpenAI key unset when voice is declined', async () => {
+    const a = await runWizard(
+      scripted([
+        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+        0,
+        ...tail([false, false, false, false, false, false, false]),
+      ]),
+      '/repo'
+    )
+    expect(a.keys.openai).toBeUndefined()
+  })
+
+  it('does not ask for voice again when OpenAI is already the model provider', async () => {
+    const asked: string[] = []
+    const inner = scripted([
+      'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
+      1, 1, 'sk-o', 'gpt-5', // engine -> OpenAI -> key -> model
+      ...tail([false, false, false, false, false, false]), // six skill questions, no voice
+    ])
+    const a = await runWizard({ ...inner, yesNo: async (q) => (asked.push(q), inner.yesNo(q)) }, '/repo')
+    expect(asked).not.toContain('Enable voice?')
+    expect(a.keys.openai).toBe('sk-o')
+  })
+
+  it('tells the owner whether live conversation will work on this Node version', async () => {
+    const { liveNodeNote } = await import('../src/setup/wizard.js')
+    expect(liveNodeNote('22.23.2')).toMatch(/live conversation will all work/)
+    expect(liveNodeNote('20.20.2')).toMatch(/needs Node 22/)
+    expect(liveNodeNote('20.20.2')).toMatch(/Node 20\.20\.2/)
   })
 
   /** Wraps a scripted prompter to record the order questions were asked in. */
