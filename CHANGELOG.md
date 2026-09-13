@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.26.1 - 2026-09-13
+
+Voice setup: the setup wizard now asks for the OpenAI key that voice runs on, and the docs say what voice needs and costs.
+
 - **Fixed: setup never asked for the key voice runs on.** Voice notes, spoken replies, and live conversation all run on an OpenAI API key, whichever AI does the thinking, but setup only asked for one when you chose OpenAI to run the assistant. On the default Claude setup voice quietly did nothing and nobody was told why. Setup now asks "Enable voice?", says what it turns on and what it costs, stores the key in `.env`, and reuses the key if OpenAI already runs the assistant. It also says whether live conversation will work on the computer's Node version.
 - **Docs: voice requirements are written down.** The setup guide has a new Voice section (what each feature does, what it costs, what happens without the key, and live conversation's Node 22 and HTTPS requirements), the README mentions the key, the hosted runbook lists it in "Before you start, collect", and `.env.example` no longer describes `OPENAI_API_KEY` as Whisper-only or the voice settings as ElevenLabs.
 - **Known limitation: live conversation is not available on installer-bundle installs yet.** The bundles include Node 20 and live conversation needs Node 22. Hosted servers run Node 22 and are unaffected.
