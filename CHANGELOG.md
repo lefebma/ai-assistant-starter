@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Security: a box with a public edge no longer serves its API without a credential.** With no `HTTP_BEARER_TOKEN` in `.env`, the app treated every caller as authorized, on the theory that such a box is only reachable locally. A hosted box whose edge was opened without a token therefore answered chat completions, live voice sessions, transcription, speech and voice changes from anyone on the internet, spending its owner's OpenAI key and running the assistant with the owner's connected accounts. Now a missing token only admits a caller that is plainly local: once `PUBLIC_HOSTNAME` is set, or a request arrives through the edge proxy, the box token or a voice link is required. Voice links and sessions keep working either way. `enable-teams` also generates `HTTP_BEARER_TOKEN` before it opens the edge if the box has none, and never replaces one that exists, and the app logs a warning at startup when a public box has no token. **Hosted boxes: check `grep -c '^HTTP_BEARER_TOKEN=.' ~/havn/.env` prints 1; if not, re-run `enable-teams` with the same flags and restart.**
+
 ## 1.26.2 - 2026-09-13
 
 Live calls are remembered: the next call can pick up where the last one left off, and your chat remembers what was said by voice.

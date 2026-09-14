@@ -4,6 +4,24 @@
  * scripts/hosted/enable-teams.ts does the apt/ufw/systemctl work.
  */
 export const TEAMS_WEBHOOK_PREFIX = '/api/teams/*'
+
+/**
+ * Make sure a .env has a non-empty HTTP_BEARER_TOKEN before its box gets a
+ * public edge. Returns the content unchanged when one is already set (a token
+ * is never rotated behind the operator's back), otherwise appends a fresh one.
+ * Pure: the caller supplies the generator and writes the file, and the value is
+ * never meant to be printed.
+ */
+export function ensureBearerToken(envContent: string, generate: () => string): { content: string; generated: boolean } {
+  const existing = envContent.match(/^HTTP_BEARER_TOKEN=(.*)$/m)
+  const value = existing?.[1]?.trim().replace(/^["']|["']$/g, '') ?? ''
+  if (value) return { content: envContent, generated: false }
+  const line = `HTTP_BEARER_TOKEN=${generate()}`
+  const content = existing
+    ? envContent.replace(/^HTTP_BEARER_TOKEN=.*$/m, line)
+    : envContent.replace(/\n*$/, `\n# Box credential for the HTTP API. Required once the edge is public.\n${line}\n`)
+  return { content, generated: true }
+}
 export const APP_UPSTREAM = '127.0.0.1:3030'
 export const ACCESS_LOG_PATH = '/var/log/caddy/access.log'
 
