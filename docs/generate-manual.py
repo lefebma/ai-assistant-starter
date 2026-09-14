@@ -122,7 +122,7 @@ def cover_page_template(canvas, doc):
     # Footer
     canvas.setFillColor(ELS_GRAY)
     canvas.setFont("Helvetica", 9)
-    canvas.drawCentredString(WIDTH / 2, 0.5 * inch, "els-partners.com  |  marc.l@els-partners.com  |  (647) 407-9473")
+    canvas.drawCentredString(WIDTH / 2, 0.5 * inch, "els-partners.com  |  marc.l@els-partners.com  |  (437) 224-2640")
     canvas.restoreState()
 
 
@@ -646,7 +646,7 @@ def build_section_10(story, S):
         ["Marc Lefebvre", ""],
         ["Principal Consultant", ""],
         ["", ""],
-        ["Phone", "(647) 407-9473"],
+        ["Phone", "(437) 224-2640"],
         ["Email", "marc.l@els-partners.com"],
         ["Web", "www.els-partners.com"],
         ["", ""],
