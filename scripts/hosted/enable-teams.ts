@@ -22,9 +22,10 @@
  * execFileSync with an argument array: no shell, nothing interpolated.
  */
 import { execFileSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
-import { ACCESS_LOG_PATH, buildCaddyfile, isValidHostname } from '../../src/deploy/teams-edge.js'
+import { ACCESS_LOG_PATH, buildCaddyfile, ensureBearerToken, isValidHostname } from '../../src/deploy/teams-edge.js'
 
 const USAGE = 'Usage: sudo node dist/scripts/hosted/enable-teams.js <hostname> [--voice]   (e.g. 5-161-197-79.sslip.io)'
 const ENV = { ...process.env, DEBIAN_FRONTEND: 'noninteractive', NEEDRESTART_MODE: 'a' }
@@ -64,6 +65,27 @@ function writePublicHostname(hostname: string): void {
     : content.replace(/\n*$/, `\n${line}\n`)
   // Truncating an existing file keeps its owner and mode; .env stays havn-owned.
   writeFileSync(envPath, updated)
+}
+
+/**
+ * Give the box an HTTP API credential before anything is exposed. Without one
+ * the app would have refused operator calls from the edge anyway (1.26.3), but
+ * an edge should never go up on a box whose API has no key at all. Never
+ * printed: the operator reads it from .env if they need it.
+ */
+function ensureBoxToken(): void {
+  const envPath = resolve(ENV_PATH)
+  let content = ''
+  try {
+    content = readFileSync(envPath, 'utf-8')
+  } catch {
+    console.error(`Cannot read ${ENV_PATH}; is the app installed?`)
+    process.exit(1)
+  }
+  const { content: updated, generated } = ensureBearerToken(content, () => randomBytes(32).toString('hex'))
+  if (!generated) return
+  writeFileSync(envPath, updated)
+  console.log('  Generated the box API token in .env (it had none). Restart the service to apply it.')
 }
 
 /**
@@ -135,6 +157,9 @@ function main(): void {
     run('apt-get', ['install', '-y', 'caddy'])
   }
 
+  // Before the edge exists, not after: there must be no window where the API is
+  // reachable without a credential.
+  ensureBoxToken()
   if (enableVoice) writePublicHostname(hostname)
 
   // The apt package creates this, but a box where Caddy was installed another
@@ -164,7 +189,7 @@ function main(): void {
 
   writeRestartOverride()
 
-  console.log('Edge configured.')
+  console.log('Edge configured. Restart the service so it picks up any .env changes: sudo systemctl restart havn')
   console.log(`  Teams endpoint: https://${hostname}/api/teams/messages`)
   if (enableVoice) {
     console.log(`  Voice UI:       https://${hostname}/voice`)

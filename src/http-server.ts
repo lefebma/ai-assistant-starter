@@ -2,7 +2,7 @@ import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
 import { readEnvFile } from './env.js'
-import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, PRIMARY_CHAT_ID } from './config.js'
+import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, PRIMARY_CHAT_ID, PUBLIC_HOSTNAME } from './config.js'
 import {
   transcribeAudio, synthesizeSpeechAudio, voiceCapabilities,
   ttsEngine, effectiveVoice, setEffectiveVoice, isOpenAIVoice, OPENAI_VOICES,
@@ -124,17 +124,56 @@ function bearerFrom(req: IncomingMessage): string {
  * Who is calling. Two credentials are accepted:
  *   - HTTP_BEARER_TOKEN, the box-wide operator credential (no chat identity)
  *   - a per-chat voice link minted by `/voice ui` (carries the chat id)
- * With no HTTP_BEARER_TOKEN configured the server is unauthenticated, which is
- * the loopback-only default; the hosted edge always sets one.
+ * With no HTTP_BEARER_TOKEN configured, only a plainly local caller gets in
+ * without a credential (see decideAuth); a box with a public edge never does.
  */
 function authContext(req: IncomingMessage): { ok: boolean; chatId: string | null } {
   const token = bearerFrom(req)
-  if (HTTP_BEARER_TOKEN && token === HTTP_BEARER_TOKEN) return { ok: true, chatId: null }
-  const chatId = resolveVoiceToken(token)
-  if (chatId) return { ok: true, chatId }
-  const sessionChat = resolveVoiceSession(sessionIdFromCookies(req.headers.cookie))
-  if (sessionChat) return { ok: true, chatId: sessionChat }
-  if (!HTTP_BEARER_TOKEN) return { ok: true, chatId: null }
+  return decideAuth({
+    boxToken: HTTP_BEARER_TOKEN,
+    presented: token,
+    linkChat: token ? resolveVoiceToken(token) : null,
+    sessionChat: resolveVoiceSession(sessionIdFromCookies(req.headers.cookie)),
+    publicHostname: PUBLIC_HOSTNAME,
+    proxied: cameThroughProxy(req),
+  })
+}
+
+/**
+ * A request relayed by the edge carries X-Forwarded-* headers. Caddy sets them
+ * on every proxied request, so their presence means the caller is on the
+ * internet side of the box even if PUBLIC_HOSTNAME was never recorded (an edge
+ * set up without --voice, or by hand).
+ */
+function cameThroughProxy(req: IncomingMessage): boolean {
+  return Boolean(req.headers['x-forwarded-for'] || req.headers['x-forwarded-proto'] || req.headers['x-forwarded-host'])
+}
+
+/**
+ * The auth decision, kept pure so it can be tested without a server.
+ *
+ * With no HTTP_BEARER_TOKEN the API used to be open to every caller, on the
+ * theory that such a box is loopback-only. That theory broke on a hosted box
+ * (2026-09-13): its edge was opened with no token in .env, and chat
+ * completions, live sessions, transcription and speech were reachable from the
+ * internet without a credential. An unconfigured token is now only "open" for
+ * a caller that is plainly local: no public hostname and not relayed by a
+ * proxy. Everyone else needs the box token or a voice link/session, and a box
+ * with a public edge and no token simply refuses the operator path.
+ */
+export function decideAuth(input: {
+  boxToken: string
+  presented: string
+  linkChat: string | null
+  sessionChat: string | null
+  publicHostname: string
+  proxied: boolean
+}): { ok: boolean; chatId: string | null } {
+  if (input.boxToken && input.presented === input.boxToken) return { ok: true, chatId: null }
+  if (input.linkChat) return { ok: true, chatId: input.linkChat }
+  if (input.sessionChat) return { ok: true, chatId: input.sessionChat }
+  const localOnly = !input.publicHostname && !input.proxied
+  if (!input.boxToken && localOnly) return { ok: true, chatId: null }
   return { ok: false, chatId: null }
 }
 
@@ -749,6 +788,12 @@ export function startHttpServer(port: number = HTTP_PORT): void {
   // on the LAN. Bearer-token auth (HTTP_BEARER_TOKEN) is the security boundary.
   server.listen(port, '0.0.0.0', () => {
     logger.info({ port }, 'HTTP server listening (voice/custom-LLM/cockpit)')
+    if (PUBLIC_HOSTNAME && !HTTP_BEARER_TOKEN) {
+      logger.warn(
+        { publicHostname: PUBLIC_HOSTNAME },
+        'PUBLIC_HOSTNAME is set but HTTP_BEARER_TOKEN is not: operator API calls are refused. Voice links still work. Re-run enable-teams to generate a token.',
+      )
+    }
   })
   httpServer = server
 }
