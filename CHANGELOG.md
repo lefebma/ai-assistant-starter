@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.27.0 - 2026-09-14
+
+One new thing: your assistant can now tell you how you have actually been using it, and what you set up and never touched.
+
 - **New: `/audit`, a monthly review of how you actually use your assistant.** It reads the box's own records for the last 30 days and reports back: when and how often you used it, what kinds of things you brought it, and, more usefully, what you set up and never touched. A skill enabled in week one and never triggered since, a scheduled task paused since May, an integration you hold credentials for and never ask about. None of that is visible from inside the conversation. It closes with at most three specific things to change, aimed at the priorities in `PROFILE.md`, or by asking for those priorities when the file does not have any. Setup now asks whether to schedule it for the 1st of each month; `/audit monthly on|off` changes your mind later, and `/audit` runs one on demand regardless.
 - **The audit does not guess.** The counts, the skill breakdown and the schedule state are computed in code and handed to the assistant as fixed facts it is told not to embroider; `/audit digest` prints those facts with no model involved so you can check the report against its source. It is honest about its own blind spots rather than papering over them: there is no message log on a Havn box, so the audit counts saved conversation turns, which skip anything 20 characters or shorter, skip slash commands, and record a repeated question once. The report presents that number as a floor and says why. Token counts appear only on API-key installs, and a subscription install is told the figure is unknown rather than shown a zero. Secrets and file paths are stripped from the quoted examples before the assistant sees them, and nothing leaves the machine.
 
