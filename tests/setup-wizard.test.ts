@@ -259,7 +259,9 @@ describe('runWizard', () => {
       'Skip for now', // email
       'Sam', '', '', '', // signature parts
       '43.65', '-79.38', 'celsius', // weather
-      false, false, false, false, false, false, false, // seven skill opt-ins
+      false, false, false, false, false, false, // six skill opt-ins
+      false, // voice
+      false, // monthly audit
     ])
     const a = await runWizard(p, '/repo')
     expect(a.ownerName).toBe('Sam')
@@ -282,7 +284,8 @@ describe('runWizard', () => {
       '1', '2', 'celsius',
       false, // web research
       true, 'ap-1', // apollo + key
-      false, false, false, false, false,
+      false, false, false, false, false, // antilibrary, notion, kanban zone, voice, wordpress
+      false, // monthly audit
     ])
     const a = await runWizard(p, '/repo')
     expect(a.gmailAddress2).toBe('b@g.com')
@@ -297,6 +300,7 @@ describe('runWizard', () => {
     'Sam', '', '', '',
     '1', '2', 'celsius',
     ...extra,
+    false, // monthly audit — the wizard's last question
   ]
 
   it('asks for a model id when the provider has no default, and not when it does', async () => {
@@ -459,6 +463,7 @@ describe('runWizard', () => {
         'Sam', '', '', 'a@g.com',
         '1', '2', 'celsius',
         false, false, false, false, false, false, false,
+        false, // monthly audit
       ]),
       order
     )
@@ -493,6 +498,7 @@ describe('runWizard', () => {
         'Sam', '', '', 'a@o.com',
         '1', '2', 'celsius',
         false, false, false, false, false, false, false,
+        false, // monthly audit
       ]),
       '/repo',
       { ensureGog }
