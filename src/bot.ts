@@ -460,6 +460,46 @@ async function handleBrowserCommand(adapter: PlatformAdapter, chatId: string, te
 }
 
 /**
+ * Send a body of text that may be longer than the platform allows.
+ *
+ * handleMessage does this inline for an agent reply. Anything else that can
+ * produce a long body needs it too: a platform does not truncate an oversized
+ * message, it rejects the send, so the user gets nothing at all. /audit digest
+ * quotes up to 60 turns and lands near 11,000 characters on a busy box,
+ * against Telegram's 4096 and Teams' 8000.
+ */
+export async function deliverText(
+  adapter: PlatformAdapter,
+  chatId: string,
+  body: string
+): Promise<void> {
+  for (const chunk of adapter.splitMessage(adapter.formatText(body))) {
+    await adapter.sendMessage(chatId, chunk)
+  }
+}
+
+/**
+ * Send a fixed-width block as code, in pieces that each stand on their own.
+ *
+ * Fencing first and splitting afterwards is the obvious order and the wrong
+ * one: the opening fence lands in the first chunk and the closing fence in the
+ * last, so every chunk in between renders as prose or as literal backticks.
+ * So the body is split first, on a budget that leaves room for the fence, and
+ * each piece is wrapped on its own.
+ */
+export async function deliverFenced(
+  adapter: PlatformAdapter,
+  chatId: string,
+  body: string
+): Promise<void> {
+  const FENCE_OVERHEAD = 8 // ```\n ... \n```
+  const budget = Math.max(1, adapter.maxMessageLength - FENCE_OVERHEAD)
+  for (let i = 0; i < body.length; i += budget) {
+    await adapter.sendMessage(chatId, `\`\`\`\n${body.slice(i, i + budget)}\n\`\`\``)
+  }
+}
+
+/**
  * `/audit` reviews how this chat has actually been using its assistant.
  *
  * The numbers come from the box's own records (src/audit/digest.ts) and the
@@ -515,7 +555,11 @@ async function handleAuditCommand(
   }
 
   if (args[0] === 'digest') {
-    await adapter.sendMessage(chatId, renderDigest(digest))
+    // Fenced: the digest is a fixed-width block whose columns and indentation
+    // are the point. Every adapter turns a fence into its own monospace form
+    // (Teams leaves it alone, Telegram makes it a pre block), and without one
+    // Teams collapses the single newlines into a paragraph.
+    await deliverFenced(adapter, chatId, renderDigest(digest))
     return
   }
 

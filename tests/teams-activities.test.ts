@@ -302,3 +302,25 @@ describe('isMicrosoftAttachmentHost', () => {
     expect(isMicrosoftAttachmentHost('https://attacker-tenant.sharepoint.com/x')).toBe(false)
   })
 })
+
+describe('formatForTeams line breaks', () => {
+  it('leaves a blank line after a heading so the title does not run into its text', () => {
+    // Teams renders markdown: a single newline is a soft break and collapses,
+    // so "**Section**\nBody" arrives as one run-on line.
+    const out = formatForTeams('## Section\nBody text')
+    expect(out).toBe('**Section**\n\nBody text')
+  })
+
+  it('does not add a second blank line when one is already there', () => {
+    expect(formatForTeams('## Section\n\nBody text')).toBe('**Section**\n\nBody text')
+  })
+
+  it('still ends cleanly when the heading is the last line', () => {
+    expect(formatForTeams('Intro\n\n## Section')).toBe('Intro\n\n**Section**')
+  })
+
+  it('leaves a heading inside a code fence alone', () => {
+    const out = formatForTeams('```\n## not a heading\nnext\n```')
+    expect(out).toBe('```\n## not a heading\nnext\n```')
+  })
+})

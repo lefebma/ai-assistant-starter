@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: `/audit digest` could not be sent at all on a busy box.** It skipped the chunking every other long reply goes through, and the digest runs to about 11,000 characters once it has a month of conversation to quote, against Telegram's 4,096 limit and Teams' 8,000. An oversized message is rejected rather than truncated, so the reply simply never arrived. It is now split, and sent as a code block so its columns line up.
+- **Fixed: on Teams, a heading ran into the line underneath it.** Teams renders bot messages as Markdown, where a single newline collapses, and the app turned every heading into a bold line with nothing after it. Any reply with sections arrived as a slab. This affected every structured message on a Teams box, not just the audit.
+- **Improved: the audit report is written for a chat window.** It was told what to cover and nothing about shape, so it came back with headings and nested bullets that the chat surfaces render worst. It now writes short paragraphs separated by blank lines, which is the one separator that survives everywhere.
+
 ## 1.27.0 - 2026-09-14
 
 One new thing: your assistant can now tell you how you have actually been using it, and what you set up and never touched.

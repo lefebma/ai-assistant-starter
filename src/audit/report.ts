@@ -178,6 +178,37 @@ export function renderDigest(d: AuditDigest): string {
     .join('\n\n')
 }
 
+/**
+ * How the report should be shaped.
+ *
+ * This reply is delivered to whichever chat surface the owner uses, and Teams
+ * is the weakest renderer of the three: it renders markdown, so a single
+ * newline is a soft break that collapses, headings come through as a plain
+ * bold line, and tables have to be rewritten as code blocks to survive at all.
+ * A report written with headings, nested bullets and single-newline lines
+ * arrives there as a slab. So the rule is written to the weakest surface
+ * rather than made conditional on which one is in use.
+ *
+ * The "do not number the sections" line is here because the instructions
+ * below are numbered, and a model handed a numbered brief will happily mirror
+ * that numbering into the output, which turns a report into a form.
+ */
+function shapeInstruction(): string {
+  return [
+    'Shape it for a chat window, not a document:',
+    '',
+    '- Short paragraphs, two or three sentences each, with a blank line between',
+    '  every one. A blank line is the only separator that survives on every',
+    '  surface, so it is the only one to rely on.',
+    '- No headings, and do not number the sections or echo the numbering of this',
+    '  brief. It is a report, not a form.',
+    '- No tables and no nested bullets. A short flat list with "- " is fine where',
+    '  you are genuinely listing things, with a blank line before and after it.',
+    '- Bold sparingly, for a name or a number worth catching the eye, never for a',
+    '  whole line standing in for a heading.',
+  ].join('\n')
+}
+
 /** The goal branch, which is the whole of acceptance criterion 4. */
 function goalInstruction(d: AuditDigest): string {
   if (!d.goals.profileWritten) {
@@ -234,6 +265,8 @@ export function buildAuditPrompt(d: AuditDigest): string {
       '',
       goalInstruction(d),
       '',
+      shapeInstruction(),
+      '',
       'Keep it under 200 words.]'
     )
     return parts.join('\n')
@@ -258,6 +291,8 @@ export function buildAuditPrompt(d: AuditDigest): string {
     '   more is the worst kind, and is worse than saying nothing.',
     '',
     goalInstruction(d),
+    '',
+    shapeInstruction(),
     '',
     'Under 400 words. No preamble about running an audit. Open with the single thing',
     'that matters most, and if that thing is that they barely used you this month,',
