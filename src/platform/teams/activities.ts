@@ -193,8 +193,15 @@ export function formatForTeams(markdown: string): string {
   // Markdown tables → fenced block (Teams renders pipes literally otherwise)
   out = out.replace(/((?:^\|.*\|\s*$\n?){2,})/gm, (table) => '```\n' + table.trimEnd() + '\n```\n')
 
-  // Headings → bold line
-  out = out.replace(/^#{1,6}\s+(.+)$/gm, '**$1**')
+  // Headings → bold line, with a blank line under it.
+  //
+  // Teams renders these as markdown, where a single newline is a soft break
+  // that collapses. Without the blank line a section title and its first
+  // sentence arrive as one run-on line, which is what a structured reply
+  // looks like when it lands badly there.
+  out = out.replace(/^#{1,6}\s+(.+)$/gm, '**$1**\n')
+  // ...but never three newlines where the source already had a blank line.
+  out = out.replace(/\n{3,}/g, '\n\n')
 
   // __bold__ → **bold**
   out = out.replace(/__(.+?)__/g, '**$1**')

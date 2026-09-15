@@ -185,3 +185,21 @@ describe('profileHasPriorities', () => {
     expect(profileHasPriorities('# About\n\n## People\n\nAlice.\n')).toBe(false)
   })
 })
+
+describe('the prompt tells the model what shape to write in', () => {
+  it('rules out the markup that the weakest renderer mangles', () => {
+    const prompt = buildAuditPrompt(digest())
+    expect(prompt).toMatch(/heading/i)
+    expect(prompt).toMatch(/table/i)
+    expect(prompt).toMatch(/blank line/i)
+  })
+
+  it('says it plainly enough to survive a thin month too', () => {
+    const prompt = buildAuditPrompt(digest({ recordedTurns: 0, activeDays: 0, samples: [] }))
+    expect(prompt).toMatch(/blank line/i)
+  })
+
+  it('does not invite the model to mirror the instruction numbering', () => {
+    expect(buildAuditPrompt(digest())).toMatch(/do not number|not a form|without numbering/i)
+  })
+})
