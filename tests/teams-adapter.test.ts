@@ -415,12 +415,13 @@ describe('TeamsAdapter outbound', () => {
     expect(await adapter.deleteMessage('a:out', 'm1')).toBe(false)
   })
 
-  it('formats text, leaving a blank line under a heading', () => {
-    // This used to expect '**T**\n**x**'. Teams renders markdown, where a
-    // single newline is a soft break, so that arrived as one run-on line with
-    // the heading glued to the sentence under it. The blank line is the fix.
+  it('formats text, putting a real gap under a heading', () => {
+    // Twice revised. It first expected '**T**\n**x**', which arrived on one
+    // run-on line, then '**T**\n\n**x**', which arrived on two lines with no
+    // space between them. A probe against a live Teams client showed a blank
+    // line gets no vertical space there and an &nbsp; line does.
     const { adapter } = makeAdapter(sent)
-    expect(adapter.formatText('# T\n<b>x</b>')).toBe('**T**\n\n**x**')
+    expect(adapter.formatText('# T\n<b>x</b>')).toBe('**T**\n\n&nbsp;\n\n**x**')
   })
 
   it('splits long text at newline, then space, then hard boundaries, never over the limit, losing nothing but the separator', () => {
