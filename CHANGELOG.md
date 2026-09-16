@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the gap around a list on Teams is no longer double the gap between paragraphs.** 1.27.2 gave every paragraph break a spacer Teams would render, but Teams already spaces a list block itself, so the two stacked. Prose spacing is unchanged.
+
 ## 1.27.2 - 2026-09-15
 
 Teams replies get their spacing back.
