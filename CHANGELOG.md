@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.27.2 - 2026-09-15
+
+Teams replies get their spacing back.
+
 - **Fixed: replies on Teams now have space between their paragraphs.** Teams renders bot messages as Markdown but gives a blank line no vertical space at all, so anything with more than one paragraph arrived as a slab with every paragraph butted against the next. Paragraph breaks now carry a separator Teams actually renders. This applies to every message on a Teams box, not just the audit. Telegram and Slack are untouched, since neither has the problem.
 
 ## 1.27.1 - 2026-09-15
