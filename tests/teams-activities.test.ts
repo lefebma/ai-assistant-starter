@@ -304,23 +304,63 @@ describe('isMicrosoftAttachmentHost', () => {
 })
 
 describe('formatForTeams line breaks', () => {
-  it('leaves a blank line after a heading so the title does not run into its text', () => {
-    // Teams renders markdown: a single newline is a soft break and collapses,
-    // so "**Section**\nBody" arrives as one run-on line.
-    const out = formatForTeams('## Section\nBody text')
-    expect(out).toBe('**Section**\n\nBody text')
+  // These three were written believing a blank line was enough to separate a
+  // heading from its text. A probe against a live Teams client disproved that:
+  // Teams gives a blank line no vertical space, so the gap needs the &nbsp;
+  // spacer below. Updated to what was measured rather than deleted, because
+  // the cases themselves are still the ones worth pinning.
+  it('separates a heading from the text under it', () => {
+    expect(formatForTeams('## Section\nBody text')).toBe('**Section**\n\n&nbsp;\n\nBody text')
   })
 
-  it('does not add a second blank line when one is already there', () => {
-    expect(formatForTeams('## Section\n\nBody text')).toBe('**Section**\n\nBody text')
+  it('does not double the separator when the source already had a blank line', () => {
+    expect(formatForTeams('## Section\n\nBody text')).toBe('**Section**\n\n&nbsp;\n\nBody text')
   })
 
   it('still ends cleanly when the heading is the last line', () => {
-    expect(formatForTeams('Intro\n\n## Section')).toBe('Intro\n\n**Section**')
+    expect(formatForTeams('Intro\n\n## Section')).toBe('Intro\n\n&nbsp;\n\n**Section**')
   })
 
   it('leaves a heading inside a code fence alone', () => {
     const out = formatForTeams('```\n## not a heading\nnext\n```')
     expect(out).toBe('```\n## not a heading\nnext\n```')
+  })
+})
+
+describe('formatForTeams paragraph gaps', () => {
+  // Measured against a live Teams client on 2026-09-15, not assumed. A plain
+  // blank line and a trailing-double-space hard break both render with no gap
+  // at all; an &nbsp; line and <br><br> both render a real one. &nbsp; wins
+  // because it keeps every line start intact: <br><br> would splice the next
+  // block onto the end of a line, so "para<br><br>- item" stops being a list.
+  it('puts a visible spacer between paragraphs, because Teams eats a blank line', () => {
+    expect(formatForTeams('para one\n\npara two')).toBe('para one\n\n&nbsp;\n\npara two')
+  })
+
+  it('gives a heading a real gap under it, not just a newline', () => {
+    expect(formatForTeams('## S\nBody')).toBe('**S**\n\n&nbsp;\n\nBody')
+  })
+
+  it('leaves single newlines alone, so lists keep working', () => {
+    expect(formatForTeams('- a\n- b')).toBe('- a\n- b')
+  })
+
+  it('emits one spacer for a run of blank lines, not several', () => {
+    expect(formatForTeams('a\n\n\n\nb')).toBe('a\n\n&nbsp;\n\nb')
+  })
+
+  it('never touches a blank line inside a code fence', () => {
+    const src = '```\nfirst\n\nsecond\n```'
+    expect(formatForTeams(src)).toBe(src)
+  })
+
+  it('keeps a fence and its surrounding prose separated', () => {
+    const out = formatForTeams('intro\n\n```\ncode\n```\n\noutro')
+    expect(out).toContain('```\ncode\n```')
+    expect(out).toContain('&nbsp;')
+  })
+
+  it('adds no spacer to a single paragraph', () => {
+    expect(formatForTeams('just one line')).toBe('just one line')
   })
 })

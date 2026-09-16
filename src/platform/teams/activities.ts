@@ -200,11 +200,24 @@ export function formatForTeams(markdown: string): string {
   // sentence arrive as one run-on line, which is what a structured reply
   // looks like when it lands badly there.
   out = out.replace(/^#{1,6}\s+(.+)$/gm, '**$1**\n')
-  // ...but never three newlines where the source already had a blank line.
-  out = out.replace(/\n{3,}/g, '\n\n')
 
   // __bold__ → **bold**
   out = out.replace(/__(.+?)__/g, '**$1**')
+
+  // Paragraph gaps. Teams renders these as Markdown but gives a blank line no
+  // vertical space at all, so a multi-paragraph reply arrives as a slab with
+  // every paragraph butted against the next.
+  //
+  // Measured against a live Teams client on 2026-09-15 rather than guessed at,
+  // after guessing wrong once: a plain blank line and a trailing-double-space
+  // hard break both render with no gap; a line holding &nbsp; and a <br><br>
+  // both render a real one.
+  //
+  // &nbsp; over <br><br> because it keeps line starts intact. <br><br> splices
+  // the following block onto the end of a line, so "para<br><br>- item" stops
+  // being a list and "para<br><br># Head" stops being a heading. Code fences
+  // and inline spans are already stashed above, so nothing here reaches them.
+  out = out.replace(/\n{2,}/g, '\n\n&nbsp;\n\n')
 
   out = out.replace(/\0STASH_(\d+)\0/g, (_, i: string) => stash[Number(i)])
   return out.trim()
