@@ -171,6 +171,11 @@ const ADAPTIVE_CARD = 'application/vnd.microsoft.card.adaptive'
  * The bot core produces Markdown, and a few HTML tags left over from the
  * Telegram path; both are normalised here.
  */
+/** A bulleted or numbered list item, which Teams spaces on its own. */
+function isListLine(line: string): boolean {
+  return /^[ \t]*(?:[-*+]|\d+[.)])\s+/.test(line)
+}
+
 export function formatForTeams(markdown: string): string {
   // Code must pass through untouched: stash fences and inline spans behind
   // placeholders, transform the prose, then put them back.
@@ -217,7 +222,14 @@ export function formatForTeams(markdown: string): string {
   // the following block onto the end of a line, so "para<br><br>- item" stops
   // being a list and "para<br><br># Head" stops being a heading. Code fences
   // and inline spans are already stashed above, so nothing here reaches them.
-  out = out.replace(/\n{2,}/g, '\n\n&nbsp;\n\n')
+  // ...except at a list boundary. Teams already puts its own margin above and
+  // below a list block, so a spacer there lands on top of it and the gap around
+  // a list comes out about double the gap between paragraphs.
+  out = out.replace(/\n{2,}/g, (run, offset: number, whole: string) => {
+    const before = whole.slice(0, offset).split('\n').pop() ?? ''
+    const after = whole.slice(offset + run.length).split('\n')[0] ?? ''
+    return isListLine(before) || isListLine(after) ? '\n\n' : '\n\n&nbsp;\n\n'
+  })
 
   out = out.replace(/\0STASH_(\d+)\0/g, (_, i: string) => stash[Number(i)])
   return out.trim()

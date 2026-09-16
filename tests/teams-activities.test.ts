@@ -364,3 +364,39 @@ describe('formatForTeams paragraph gaps', () => {
     expect(formatForTeams('just one line')).toBe('just one line')
   })
 })
+
+describe('formatForTeams spacing around lists', () => {
+  // Teams already puts its own margin above and below a list block, so the
+  // spacer lands on top of it and the gap around a list comes out roughly
+  // double the gap between paragraphs. Observed in a live client on
+  // 2026-09-16. Paragraph breaks still need the spacer; list boundaries do not.
+  it('adds no spacer where a list begins', () => {
+    expect(formatForTeams('intro\n\n- one\n- two')).toBe('intro\n\n- one\n- two')
+  })
+
+  it('adds no spacer where a list ends', () => {
+    expect(formatForTeams('- one\n- two\n\noutro')).toBe('- one\n- two\n\noutro')
+  })
+
+  it('treats a numbered list the same way', () => {
+    expect(formatForTeams('intro\n\n1. one\n2. two\n\noutro')).toBe('intro\n\n1. one\n2. two\n\noutro')
+  })
+
+  it('still spaces plain paragraphs', () => {
+    expect(formatForTeams('one\n\ntwo')).toBe('one\n\n&nbsp;\n\ntwo')
+  })
+
+  it('does not space a loose list apart item by item', () => {
+    expect(formatForTeams('- one\n\n- two')).toBe('- one\n\n- two')
+  })
+
+  it('handles a list between two paragraphs', () => {
+    expect(formatForTeams('a\n\n- x\n- y\n\nb')).toBe('a\n\n- x\n- y\n\nb')
+  })
+
+  it('still spaces the paragraphs either side of a fenced block', () => {
+    const out = formatForTeams('a\n\n```\ncode\n```\n\nb')
+    expect(out).toContain('&nbsp;')
+    expect(out).toContain('```\ncode\n```')
+  })
+})
