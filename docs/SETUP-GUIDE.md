@@ -620,6 +620,5 @@ you can send it manually.
 
 - Add more skills as your workflow evolves
 - Set up project tracking with `projects/` folders and `STATE.md` files
-- Create custom agents for specialized work (`.claude/agents/`)
 - Connect additional tools via MCP servers
 - Set up a dashboard for monitoring (optional)
