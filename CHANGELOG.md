@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the setup guide no longer tells you to create agents in a folder that does not exist.** It suggested `.claude/agents/` for custom agents, but that directory has never been part of an install and nothing ever created it, so the instruction pointed nowhere. Custom agents are not a Havn feature; skills are, and `skill-builder` is the way in.
+
 - **Fixed: the gap around a list on Teams is no longer double the gap between paragraphs.** 1.27.2 gave every paragraph break a spacer Teams would render, but Teams already spaces a list block itself, so the two stacked. Prose spacing is unchanged.
 
 ## 1.27.2 - 2026-09-15
