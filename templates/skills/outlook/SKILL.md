@@ -35,9 +35,9 @@ moment they run, and neither can be taken back.
 
 ### If Outlook is not connected
 
-When a command says Outlook is not connected, or that `MS_CLIENT_ID` is not
-set, tell the owner plainly. Never describe a mailbox or calendar you could not
-read.
+When a command says Outlook is not connected, or reports an error from
+Microsoft, tell the owner plainly and pass the message on. Never describe a
+mailbox or calendar you could not read.
 
 To connect this mailbox:
 1. `node {{PROJECT_PATH}}/dist/scripts/ms-auth.js start --account {{EMAIL_ADDRESS}}`
@@ -48,6 +48,7 @@ To connect this mailbox:
    it again. A code lasts fifteen minutes; after that, start over.
 
 `node {{PROJECT_PATH}}/dist/scripts/ms-auth.js status` lists the connected
-mailboxes. `MS_CLIENT_ID` not set means this install has no Microsoft app
-registration yet: that is a setup step for whoever installed it, not something
-to work around.
+mailboxes. The consent screen Microsoft shows names the app and marks the
+publisher unverified; that is expected, and the owner can go ahead. If their
+organization blocks it ("needs admin approval"), their Microsoft 365 admin has
+to approve the app once; say so rather than retrying.

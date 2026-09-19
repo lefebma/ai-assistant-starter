@@ -329,8 +329,9 @@ export async function runCalendar(argv: string[], deps: CliDeps): Promise<string
     case 'range': {
       const first = args[0]
       if (!first) throw new Error(`range needs at least one date.\n${CALENDAR_USAGE}`)
-      const events = await eventsInRange(clientFor(account, deps), first, args[1] ?? first, deps.timeZone)
-      return renderEvents(events)
+      const last = args[1] ?? first
+      const events = await eventsInRange(clientFor(account, deps), first, last, deps.timeZone)
+      return renderEvents(events, last !== first)
     }
     case 'create': {
       const subject = str(flags, 'subject')

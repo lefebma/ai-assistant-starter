@@ -84,6 +84,24 @@ export async function listInbox(client: GraphLike, count = 10): Promise<MailSumm
 }
 
 /**
+ * Marketing mail pads its preview line with invisible characters (combining
+ * grapheme joiners, zero-width spaces, byte-order marks) so the inbox shows
+ * only the teaser. Read as plain text, that is several lines of nothing that
+ * a reader has to scroll past and a model has to pay for.
+ */
+const INVISIBLE = /[\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\u3164\uFEFF\uFFA0]/g
+
+export function cleanBody(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(INVISIBLE, '')
+    .replace(/[ \t\u00A0]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
  * Bodies come back as HTML unless asked otherwise, and a marketing email's
  * HTML is mostly table markup. Plain text is what a reader, human or model,
  * can use.
@@ -92,7 +110,7 @@ export async function readMail(client: GraphLike, id: string): Promise<MailBody>
   const m = (await client.get(`/me/messages/${encodeURIComponent(id)}`, {
     Prefer: 'outlook.body-content-type="text"',
   })) as RawMessage
-  return { ...toSummary(m), body: m.body?.content ?? '' }
+  return { ...toSummary(m), body: cleanBody(m.body?.content ?? '') }
 }
 
 function recipients(addresses: string[]): { emailAddress: { address: string } }[] {

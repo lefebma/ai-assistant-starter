@@ -26,7 +26,7 @@ Ships with these skills. The always-on ones need no key and no decision at setup
 | **daily-briefing** | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
 | **exec-interview** | Discovery interview that teaches the assistant your business, role, priorities and preferences | Nothing (always on) |
 | **gmail** | Read inbox, search, calendar via `gog` CLI | Gmail address (up to 2 accounts) |
-| **outlook** | Microsoft 365 / Outlook.com mail and calendar via Microsoft Graph: inbox, search, read, drafts and reply drafts, today and date ranges, create events. Sends only an existing draft, only with the owner's approval | A Microsoft app registration id (`MS_CLIENT_ID`, no secret) and a one-time sign-in per mailbox (up to 2 accounts) |
+| **outlook** | Microsoft 365 / Outlook.com mail and calendar via Microsoft Graph: inbox, search, read, drafts and reply drafts, today and date ranges, create events. Sends only an existing draft, only with the owner's approval | A one-time Microsoft sign-in per mailbox (up to 2 accounts); setup prints the command |
 | **web-research** | Three-tier Perplexity research with citations | Perplexity API key |
 | **apollo** | Apollo.io lookups + sequence reports | Apollo API key |
 | **wordsmith** | Drafts prose in a focused writing call on your configured provider | Nothing (always on) |

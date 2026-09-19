@@ -69,9 +69,13 @@ describe('ms-auth start', () => {
     expect(w.data.has('MS_TOKENS_WORK')).toBe(false)
   })
 
-  it('says what is missing when no app registration is configured', async () => {
+  it('falls back to the built-in app registration when none is configured', async () => {
     const w = world({ env: {} })
-    await expect(runAuth(['start'], w.deps)).rejects.toThrow(/MS_CLIENT_ID/)
+    let sent = ''
+    const inner = w.deps.fetchImpl
+    w.deps.fetchImpl = async (url, init) => ((sent = init?.body ?? ''), inner(url, init))
+    await runAuth(['start'], w.deps)
+    expect(sent).toContain('client_id=a67bec40-964d-4ea9-99bb-6a1301f217db')
   })
 })
 
@@ -274,6 +278,11 @@ describe('ms-calendar', () => {
   it("shows today's events in local time", async () => {
     const out = await runCalendar(['today', '--account', 'work'], calWorld().deps)
     expect(out).toBe('09:00-09:15  Standup')
+  })
+
+  it('dates the events when range covers more than one day, even if only one day has any', async () => {
+    const out = await runCalendar(['range', '2026-09-14', '2026-09-20', '--account', 'work'], calWorld().deps)
+    expect(out).toBe('Wed 2026-09-16\n  09:00-09:15  Standup')
   })
 
   it('reads a single day when range gets one date', async () => {

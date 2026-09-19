@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   resolveMsConfig,
+  DEFAULT_MS_CLIENT_ID,
   stampExpiry,
   needsRefresh,
   startDeviceCode,
@@ -22,8 +23,17 @@ function jsonFetch(status: number, body: unknown) {
 }
 
 describe('resolveMsConfig', () => {
-  it('needs a client id', () => {
-    expect(() => resolveMsConfig({})).toThrow(/MS_CLIENT_ID/)
+  it('uses the built-in registration when none is configured, so Outlook works out of the box', () => {
+    expect(resolveMsConfig({}).clientId).toBe(DEFAULT_MS_CLIENT_ID)
+    expect(resolveMsConfig({ MS_CLIENT_ID: '   ' }).clientId).toBe(DEFAULT_MS_CLIENT_ID)
+  })
+
+  it('lets MS_CLIENT_ID replace it, for anyone shipping under their own name', () => {
+    expect(resolveMsConfig({ MS_CLIENT_ID: 'mine' }).clientId).toBe('mine')
+  })
+
+  it('never ships a blank or malformed default', () => {
+    expect(DEFAULT_MS_CLIENT_ID).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   })
 
   it('defaults the tenant to common, which is what makes it work for any org', () => {

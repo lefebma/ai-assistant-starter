@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { searchMail, listInbox, readMail, draftMail, replyDraft, sendDraft, summarise } from '../src/ms/mail.js'
+import { searchMail, listInbox, readMail, draftMail, replyDraft, sendDraft, summarise, cleanBody } from '../src/ms/mail.js'
 
 function fake(responses: unknown[] = []) {
   const calls: { method: string; path: string; body?: unknown; headers?: Record<string, string> }[] = []
@@ -169,5 +169,21 @@ describe('summarise', () => {
     )
     expect(out).toContain('2026-09-15 09:00')
     expect(out).not.toContain('13:00')
+  })
+})
+
+describe('cleanBody', () => {
+  it('drops the invisible padding marketing mail puts after its preview line', () => {
+    // Shape taken from a real Wise Business email read through Graph.
+    const padded = 'Take a tour of the account\n' + '\u034F \u200C \u00A0 \u00A0 \uFEFF '.repeat(40) + '\nHi Marc,'
+    expect(cleanBody(padded)).toBe('Take a tour of the account\n\nHi Marc,')
+  })
+
+  it('keeps paragraphs but not runs of blank lines or stray carriage returns', () => {
+    expect(cleanBody('One.\r\n\r\n\r\n\r\nTwo.  \r\n  Three.')).toBe('One.\n\nTwo.\nThree.')
+  })
+
+  it('leaves ordinary text alone', () => {
+    expect(cleanBody('Invoice #42 is due Friday.')).toBe('Invoice #42 is due Friday.')
   })
 })

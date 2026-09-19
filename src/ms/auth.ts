@@ -31,6 +31,16 @@ const LOGIN_HOST = 'https://login.microsoftonline.com'
 /** Refresh this far ahead of expiry, so a slow call cannot land on a dead token. */
 export const REFRESH_MARGIN_SECS = 300
 
+/**
+ * The product's own app registration, "Havn": open to any organization and to
+ * personal Microsoft accounts, public client flows on, no secret. A client id
+ * is not a credential; it names the app on the consent screen and nothing
+ * more, which is why it can sit in source. Anyone shipping this under their
+ * own name sets MS_CLIENT_ID to their own registration, so their clients see
+ * their name on that screen rather than Havn's.
+ */
+export const DEFAULT_MS_CLIENT_ID = 'a67bec40-964d-4ea9-99bb-6a1301f217db'
+
 export interface MsConfig {
   clientId: string
   /** 'common' lets any Microsoft organization sign in; pin it for one tenant. */
@@ -59,10 +69,7 @@ export type FetchLike = (
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> }>
 
 export function resolveMsConfig(env: Record<string, string | undefined>): MsConfig {
-  const clientId = (env['MS_CLIENT_ID'] ?? '').trim()
-  if (!clientId) {
-    throw new Error('MS_CLIENT_ID is not set. Outlook needs a Microsoft app registration id.')
-  }
+  const clientId = (env['MS_CLIENT_ID'] ?? '').trim() || DEFAULT_MS_CLIENT_ID
   const tenantId = (env['MS_TENANT_ID'] ?? '').trim() || 'common'
   return { clientId, tenantId }
 }

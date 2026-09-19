@@ -153,7 +153,17 @@ describe('renderEvents', () => {
       { id: 'E1', subject: 'Standup', start: '2026-09-16T09:00:00', end: '2026-09-16T09:15:00', location: '', allDay: false },
       { id: 'E2', subject: 'Review', start: '2026-09-17T14:00:00', end: '2026-09-17T15:00:00', location: '', allDay: false },
     ])
-    expect(out.split('\n')).toEqual(['2026-09-16', '  09:00-09:15  Standup', '2026-09-17', '  14:00-15:00  Review'])
+    expect(out.split('\n')).toEqual(['Wed 2026-09-16', '  09:00-09:15  Standup', 'Thu 2026-09-17', '  14:00-15:00  Review'])
+  })
+
+  it('dates a lone event when asked, so a week with one appointment says which day', () => {
+    // Found live: a week-long range with a single event printed its time and
+    // no date at all.
+    const out = renderEvents(
+      [{ id: 'E1', subject: 'Chiro', start: '2026-09-15T16:45:00', end: '2026-09-15T17:15:00', location: '', allDay: false }],
+      true
+    )
+    expect(out.split('\n')).toEqual(['Tue 2026-09-15', '  16:45-17:15  Chiro'])
   })
 
   it('marks an all-day event as such instead of showing 00:00', () => {

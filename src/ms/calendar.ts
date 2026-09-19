@@ -136,12 +136,25 @@ function line(e: CalEvent): string {
   return `${when}  ${e.subject}${where}`
 }
 
-/** One day prints as a plain list; a range gets a heading per day. */
-export function renderEvents(events: CalEvent[]): string {
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function dayHeading(day: string): string {
+  const [y, m, d] = day.split('-').map(Number)
+  return `${WEEKDAYS[new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay()]} ${day}`
+}
+
+/**
+ * A heading per day whenever the question covered more than one day. Keyed
+ * on the question, not the answer: a week with a single appointment in it
+ * still has to say which day that appointment is on.
+ */
+export function renderEvents(events: CalEvent[], dated = false): string {
   if (events.length === 0) return 'Nothing on the calendar.'
   const days = [...new Set(events.map((e) => e.start.slice(0, 10)))]
-  if (days.length === 1) return events.map(line).join('\n')
+  if (!dated && days.length === 1) return events.map(line).join('\n')
   return days
-    .map((d) => [d, ...events.filter((e) => e.start.slice(0, 10) === d).map((e) => `  ${line(e)}`)].join('\n'))
+    .map((d) =>
+      [dayHeading(d), ...events.filter((e) => e.start.slice(0, 10) === d).map((e) => `  ${line(e)}`)].join('\n')
+    )
     .join('\n')
 }
