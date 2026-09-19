@@ -2,7 +2,7 @@
   "id": "outlook",
   "name": "Outlook Email & Calendar",
   "description": "Microsoft 365 email and calendar via Microsoft Graph API",
-  "enabled": false,
+  "enabled": true,
   "triggers": ["outlook", "email", "inbox", "calendar", "meeting"],
   "priority": 60
 }
