@@ -112,9 +112,9 @@ describe('pollDeviceCode', () => {
     expect(await pollDeviceCode(CFG, 'dev', fn, 0)).toEqual({ status: 'pending' })
   })
 
-  it('reports slow_down as pending too, so the caller just waits longer', async () => {
+  it('reports slow_down as pending, flagged so the caller widens its interval', async () => {
     const { fn } = jsonFetch(400, { error: 'slow_down' })
-    expect(await pollDeviceCode(CFG, 'dev', fn, 0)).toEqual({ status: 'pending' })
+    expect(await pollDeviceCode(CFG, 'dev', fn, 0)).toEqual({ status: 'pending', slowDown: true })
   })
 
   it('returns stamped tokens on success', async () => {

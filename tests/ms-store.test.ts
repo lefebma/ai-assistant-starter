@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { tokenSecretName, saveTokens, loadTokens, clearTokens, listAuthedAccounts } from '../src/ms/store.js'
+import {
+  tokenSecretName,
+  saveTokens,
+  loadTokens,
+  clearTokens,
+  listAuthedAccounts,
+  pendingSecretName,
+  savePending,
+  loadPending,
+  clearPending,
+} from '../src/ms/store.js'
 import type { MsTokens } from '../src/ms/auth.js'
 
 function fakeVault(seed: Record<string, string> = {}) {
@@ -84,5 +94,36 @@ describe('listAuthedAccounts', () => {
 
   it('is empty on a fresh install', () => {
     expect(listAuthedAccounts(fakeVault() as never)).toEqual([])
+  })
+})
+
+describe('pending sign-ins', () => {
+  const P = { deviceCode: 'dc', userCode: 'ABCD', verificationUri: 'https://microsoft.com/devicelogin', intervalSecs: 5, expiresAt: 900 }
+
+  it('round-trips through the vault', () => {
+    const v = fakeVault()
+    savePending('work', P, v)
+    expect(loadPending('work', v)).toEqual(P)
+  })
+
+  it('keeps a pending sign-in apart from the tokens, so starting over cannot clobber a live one', () => {
+    expect(pendingSecretName('work')).not.toBe(tokenSecretName('work'))
+    const v = fakeVault()
+    saveTokens('work', TOK, v)
+    savePending('work', P, v)
+    expect(loadTokens('work', v)).toEqual(TOK)
+    expect(listAuthedAccounts(v)).toEqual(['WORK'])
+  })
+
+  it('reads a corrupt entry as nothing pending', () => {
+    expect(loadPending('work', fakeVault({ MS_PENDING_WORK: 'not json' }))).toBeNull()
+    expect(loadPending('work', fakeVault({ MS_PENDING_WORK: '{"userCode":"x"}' }))).toBeNull()
+  })
+
+  it('clears', () => {
+    const v = fakeVault()
+    savePending('work', P, v)
+    expect(clearPending('work', v)).toBe(true)
+    expect(loadPending('work', v)).toBeNull()
   })
 })

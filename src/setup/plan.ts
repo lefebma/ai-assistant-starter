@@ -260,9 +260,11 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
   // literally for every owner who arrived by update rather than fresh install.
   p.push({ type: 'edit', file: 'skills/daily-briefing/SKILL.md', vars: { OWNER_NAME: a.ownerName } })
 
+  // PROJECT_PATH because the outlook skill runs this install's own
+  // dist/scripts/ms-*.js, and a relative path depends on the agent's cwd.
   const emailSkill = (kind: 'gmail' | 'outlook', address: string, secondary?: string) => {
     p.push({ type: 'copy', from: `templates/skills/${kind}`, to: `skills/${kind}` })
-    p.push({ type: 'edit', file: `skills/${kind}/SKILL.md`, vars: { EMAIL_ADDRESS: address } })
+    p.push({ type: 'edit', file: `skills/${kind}/SKILL.md`, vars: { EMAIL_ADDRESS: address, PROJECT_PATH: a.projectPath } })
     p.push({ type: 'edit', file: `skills/${kind}/manifest.json`, vars: { EMAIL_ADDRESS: address } })
     if (secondary) {
       const names: Record<string, { id: string; name: string }> = {
@@ -270,7 +272,11 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
         outlook: { id: 'outlook', name: 'Outlook Email & Calendar' },
       }
       p.push({ type: 'copy', from: `templates/skills/${kind}`, to: `skills/${kind}-secondary` })
-      p.push({ type: 'edit', file: `skills/${kind}-secondary/SKILL.md`, vars: { EMAIL_ADDRESS: secondary } })
+      p.push({
+        type: 'edit',
+        file: `skills/${kind}-secondary/SKILL.md`,
+        vars: { EMAIL_ADDRESS: secondary, PROJECT_PATH: a.projectPath },
+      })
       p.push({
         type: 'edit',
         file: `skills/${kind}-secondary/manifest.json`,

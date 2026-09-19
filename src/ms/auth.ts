@@ -135,7 +135,7 @@ export async function startDeviceCode(
 }
 
 export type PollResult =
-  | { status: 'pending' }
+  | { status: 'pending'; slowDown?: true }
   | { status: 'ok'; tokens: MsTokens }
   | { status: 'failed'; reason: string }
 
@@ -160,7 +160,9 @@ export async function pollDeviceCode(
     fetchImpl
   )
   if (raw.access_token) return { status: 'ok', tokens: stampExpiry(raw, nowSecs) }
-  if (raw.error === 'authorization_pending' || raw.error === 'slow_down') return { status: 'pending' }
+  if (raw.error === 'authorization_pending') return { status: 'pending' }
+  // RFC 8628: slow_down means add five seconds to the interval, for good.
+  if (raw.error === 'slow_down') return { status: 'pending', slowDown: true }
   return { status: 'failed', reason: raw.error_description || raw.error || 'device code failed' }
 }
 

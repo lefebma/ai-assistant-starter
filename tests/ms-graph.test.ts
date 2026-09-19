@@ -7,7 +7,7 @@ const FRESH: MsTokens = { accessToken: 'fresh', refreshToken: 'r', expiresAt: 10
 const STALE: MsTokens = { accessToken: 'stale', refreshToken: 'r', expiresAt: 100 }
 
 function harness(opts: { tokens: MsTokens | null; responses: { status: number; body: unknown }[] }) {
-  const calls: { url: string; auth?: string; method: string }[] = []
+  const calls: { url: string; auth?: string; method: string; headers?: Record<string, string> }[] = []
   const saved: MsTokens[] = []
   let queue = [...opts.responses]
   const fetchImpl = (async (url: string, init?: { headers?: Record<string, string>; method?: string; body?: string }) => {
@@ -15,7 +15,7 @@ function harness(opts: { tokens: MsTokens | null; responses: { status: number; b
       calls.push({ url, method: 'POST' })
       return { ok: true, status: 200, json: async () => ({ access_token: 'renewed', refresh_token: 'r2', expires_in: 3600 }), text: async () => '' }
     }
-    calls.push({ url, auth: init?.headers?.['Authorization'], method: init?.method ?? 'GET' })
+    calls.push({ url, auth: init?.headers?.['Authorization'], method: init?.method ?? 'GET', headers: init?.headers })
     const next = queue.shift() ?? { status: 200, body: {} }
     return { ok: next.status < 400, status: next.status, json: async () => next.body, text: async () => JSON.stringify(next.body) }
   }) as never
@@ -89,5 +89,21 @@ describe('GraphClient', () => {
     const out = await h.client.post('/me/messages', { subject: 'hi' })
     expect(h.calls[0]!.method).toBe('POST')
     expect(out).toEqual({ id: 'x' })
+  })
+
+  it('passes extra headers through, but never lets one replace the token', async () => {
+    const h = harness({ tokens: FRESH, responses: [{ status: 200, body: {} }] })
+    await h.client.get('/me/messages/1', { Prefer: 'outlook.body-content-type="text"', Authorization: 'Bearer forged' })
+    expect(h.calls[0]!.headers?.['Prefer']).toBe('outlook.body-content-type="text"')
+    expect(h.calls[0]!.auth).toBe('Bearer fresh')
+  })
+
+  it('keeps the extra headers on the retry after a 401', async () => {
+    const h = harness({ tokens: FRESH, responses: [{ status: 401, body: {} }, { status: 200, body: {} }] })
+    await h.client.get('/me/messages/1', { Prefer: 'x' })
+    const graphCalls = h.calls.filter((c) => c.url.includes('graph.microsoft.com'))
+    expect(graphCalls).toHaveLength(2)
+    expect(graphCalls[1]!.headers?.['Prefer']).toBe('x')
+    expect(graphCalls[1]!.auth).toBe('Bearer renewed')
   })
 })

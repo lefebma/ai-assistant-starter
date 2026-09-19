@@ -21,12 +21,18 @@ export interface TokenVault {
 }
 
 const PREFIX = 'MS_TOKENS_'
+const PENDING_PREFIX = 'MS_PENDING_'
 
-/** Vault key for an account label. Folds anything a secret name cannot carry. */
+/** Folds anything a secret name cannot carry. */
+function slug(account: string): string {
+  const s = account.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  if (!s) throw new Error('Microsoft account label cannot be empty')
+  return s
+}
+
+/** Vault key for an account label. */
 export function tokenSecretName(account: string): string {
-  const slug = account.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-  if (!slug) throw new Error('Microsoft account label cannot be empty')
-  return `${PREFIX}${slug}`
+  return `${PREFIX}${slug(account)}`
 }
 
 export function saveTokens(account: string, tokens: MsTokens, vault: TokenVault = defaultVault()): void {
@@ -58,4 +64,50 @@ export function clearTokens(account: string, vault: TokenVault = defaultVault())
 /** Account labels that have completed sign-in. */
 export function listAuthedAccounts(vault: TokenVault = defaultVault()): string[] {
   return vault.list().filter((n) => n.startsWith(PREFIX)).map((n) => n.slice(PREFIX.length))
+}
+
+/**
+ * A sign-in that has been started and not finished. It sits in the vault, not
+ * in memory, because in chat the two halves are separate processes: the code
+ * is shown, the owner goes off to a browser, and a later turn collects the
+ * result. The device code is redeemable by whoever holds it for those fifteen
+ * minutes, so it is a secret for exactly as long as it matters.
+ */
+export interface PendingSignIn {
+  deviceCode: string
+  userCode: string
+  verificationUri: string
+  intervalSecs: number
+  /** Epoch seconds. */
+  expiresAt: number
+}
+
+export function pendingSecretName(account: string): string {
+  return `${PENDING_PREFIX}${slug(account)}`
+}
+
+export function savePending(account: string, pending: PendingSignIn, vault: TokenVault = defaultVault()): void {
+  vault.set(pendingSecretName(account), JSON.stringify(pending))
+}
+
+export function loadPending(account: string, vault: TokenVault = defaultVault()): PendingSignIn | null {
+  const raw = vault.get(pendingSecretName(account))
+  if (!raw) return null
+  try {
+    const p = JSON.parse(raw) as Partial<PendingSignIn>
+    if (typeof p.deviceCode !== 'string' || typeof p.expiresAt !== 'number') return null
+    return {
+      deviceCode: p.deviceCode,
+      userCode: p.userCode ?? '',
+      verificationUri: p.verificationUri ?? 'https://microsoft.com/devicelogin',
+      intervalSecs: typeof p.intervalSecs === 'number' ? p.intervalSecs : 5,
+      expiresAt: p.expiresAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function clearPending(account: string, vault: TokenVault = defaultVault()): boolean {
+  return vault.delete(pendingSecretName(account))
 }
