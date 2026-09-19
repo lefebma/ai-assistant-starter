@@ -194,6 +194,17 @@ describe('buildSkillPlan', () => {
     expect(edit.vars?.EMAIL_ADDRESS).toBe('b@g.com')
   })
 
+  it('gives each outlook SKILL.md its own address and the install path its commands live under', () => {
+    const plan = buildSkillPlan(
+      { ...BASE, emailProvider: 'Outlook/Microsoft 365', outlookAddress: 'a@co.com', outlookAddress2: 'b@co.com', emailAddress: 'a@co.com' },
+      '/home/sam'
+    )
+    const primary = plan.find((a) => a.type === 'edit' && a.file === 'skills/outlook/SKILL.md')!
+    const secondary = plan.find((a) => a.type === 'edit' && a.file === 'skills/outlook-secondary/SKILL.md')!
+    expect(primary.vars).toEqual({ EMAIL_ADDRESS: 'a@co.com', PROJECT_PATH: BASE.projectPath })
+    expect(secondary.vars).toEqual({ EMAIL_ADDRESS: 'b@co.com', PROJECT_PATH: BASE.projectPath })
+  })
+
   it('plans the apollo secret at the path the skill reads', () => {
     const plan = buildSkillPlan(
       { ...BASE, skills: { ...BASE.skills, apollo: true }, keys: { apollo: 'ap-1' } },

@@ -161,7 +161,7 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
   const timezone = await p.ask('Your timezone', 'America/New_York')
   const city = await p.ask('Your city (for weather)', 'New York')
 
-  const platform = (await p.choice('Which messaging platform?', ['Telegram', 'Slack', 'Discord', 'Teams'])) as Platform
+  const platform = (await p.choice('Which messaging platform?', ['Telegram', 'Slack', 'Teams'])) as Platform
 
   const engineAnswers = await askEngine(p, hooks)
 

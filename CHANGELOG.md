@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **New: the Outlook skill has commands behind it.** It has shipped since the first release naming three scripts, `ms-auth`, `ms-mail` and `ms-calendar`, that never existed, so an Outlook install could read no mail at all. They exist now: inbox, search, read, drafts and reply drafts; today's calendar, any date range, and new events. One sign-in per mailbox covers both mail and calendar, the tokens are kept encrypted in the vault, and times are shown in your timezone. Sending works only on a draft that already exists, and only once you have approved it, so what goes out is exactly what you looked at; creating an event with guests needs the same approval, since Outlook emails the invitations the moment it exists. Nothing to register in Azure first: the app registration ships with the product, and setup ends with the one command that connects each mailbox. The skill also installs switched on now: it used to arrive disabled, so choosing Outlook at setup gave you a skill that never loaded until you found `/skill enable outlook`. Microsoft's consent screen shows the publisher as unverified for now; some organizations only let an admin approve an app like that, and the assistant says so rather than retrying.
+
+- **Fixed: setup no longer offers Discord.** There has never been a Discord adapter, so choosing it produced an assistant that stopped at startup with "not yet implemented". It is gone from setup and from the README until one exists.
+
 - **Fixed: the setup guide no longer tells you to create agents in a folder that does not exist.** It suggested `.claude/agents/` for custom agents, but that directory has never been part of an install and nothing ever created it, so the instruction pointed nowhere. Custom agents are not a Havn feature; skills are, and `skill-builder` is the way in.
 
 - **Fixed: the gap around a list on Teams is no longer double the gap between paragraphs.** 1.27.2 gave every paragraph break a spacer Teams would render, but Teams already spaces a list block itself, so the two stacked. Prose spacing is unchanged.

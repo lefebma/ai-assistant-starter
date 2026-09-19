@@ -31,6 +31,7 @@ export interface NextStepsInput {
   /** gog is not installed and setup could not install it. */
   gogMissing: boolean
   outlookAddress: string
+  outlookAddress2: string
   /** The background service was installed and is running now. */
   serviceInstalled: boolean
   /** Quoted absolute path to the interpreter to use. */
@@ -39,6 +40,8 @@ export interface NextStepsInput {
   appEntry: string
   /** Quoted absolute path to dist/scripts/service.js. */
   serviceEntry: string
+  /** Quoted absolute path to dist/scripts/ms-auth.js. */
+  msAuthEntry: string
 }
 
 export function buildNextSteps(i: NextStepsInput): NextStep[] {
@@ -67,8 +70,16 @@ export function buildNextSteps(i: NextStepsInput): NextStep[] {
     })
   }
 
+  // Nothing to register: the app registration ships with the product, so
+  // each mailbox only has to sign in once. login shows a Microsoft code and
+  // waits while the owner enters it in a browser.
   if (i.outlookAddress) {
-    steps.push({ text: 'Set up Microsoft 365 credentials (docs/SETUP-GUIDE.md > Outlook)' })
+    steps.push({
+      text: 'Connect Outlook. Each command shows a Microsoft sign-in code and waits while you enter it in a browser. You can also ask your bot to connect your Outlook once it is running.',
+      commands: [i.outlookAddress, i.outlookAddress2]
+        .filter(Boolean)
+        .map((address) => `${i.nodeBin} ${i.msAuthEntry} login --account ${address}`),
+    })
   }
   // Wordsmith voice samples are always a good idea — mention unconditionally.
   steps.push({ text: 'Optional: drop writing samples into skills/wordsmith/voice-samples/' })

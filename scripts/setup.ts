@@ -287,10 +287,12 @@ async function main(): Promise<void> {
       gmailAddress2: answers.gmailAddress2,
       gogMissing,
       outlookAddress: answers.outlookAddress,
+      outlookAddress2: answers.outlookAddress2,
       serviceInstalled,
       nodeBin: `"${process.execPath}"`,
       appEntry: `"${resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')}"`,
       serviceEntry: `"${serviceEntry}"`,
+      msAuthEntry: `"${resolve(PROJECT_ROOT, 'dist', 'scripts', 'ms-auth.js')}"`,
     })
   )) {
     console.log(line)

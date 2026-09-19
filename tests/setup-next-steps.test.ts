@@ -7,11 +7,12 @@ const BASE: NextStepsInput = {
   gmailAddress2: '',
   gogMissing: false,
   outlookAddress: '',
- 
+  outlookAddress2: '',
   serviceInstalled: false,
   nodeBin: '"/app/runtime/bin/node"',
   appEntry: '"/app/dist/src/index.js"',
   serviceEntry: '"/app/dist/scripts/service.js"',
+  msAuthEntry: '"/app/dist/scripts/ms-auth.js"',
 }
 
 const flatten = (i: NextStepsInput) => renderNextSteps(buildNextSteps(i)).join('\n')
@@ -69,11 +70,23 @@ describe('buildNextSteps', () => {
       gmailAddress2: 'b@g.com',
       gogMissing: true,
       outlookAddress: 'a@o.com',
-     
+      outlookAddress2: 'b@o.com',
       serviceInstalled: true,
     })
     expect(everything).toEqual(Array.from({ length: everything.length }, (_, n) => n + 1))
     expect(everything.length).toBeGreaterThan(minimal.length)
+  })
+
+  it('signs each Outlook mailbox in with an absolute path, and asks for no credentials', () => {
+    const out = flatten({ ...BASE, outlookAddress: 'a@o.com', outlookAddress2: 'b@o.com' })
+    expect(out).toContain('"/app/runtime/bin/node" "/app/dist/scripts/ms-auth.js" login --account a@o.com')
+    expect(out).toContain('"/app/runtime/bin/node" "/app/dist/scripts/ms-auth.js" login --account b@o.com')
+    // An app registration ships with the product now; nothing to create.
+    expect(out).not.toMatch(/credentials \(docs\/SETUP-GUIDE\.md > Outlook\)/)
+  })
+
+  it('offers no Outlook step without an Outlook address', () => {
+    expect(flatten(BASE)).not.toMatch(/ms-auth/)
   })
 
   it('mentions installing gog only when it is actually missing', () => {
