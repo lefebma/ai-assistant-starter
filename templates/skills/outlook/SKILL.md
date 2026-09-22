@@ -3,7 +3,9 @@
 Account: {{EMAIL_ADDRESS}}
 
 Run the commands exactly as written, with `--account {{EMAIL_ADDRESS}}` on every
-one. Their output is plain text, meant to be relayed, and every time in it is
+one. That address is the one setup expected. If a command answers that a
+different mailbox is connected, the owner signed in with that one instead:
+use it from then on, and say so rather than starting another sign-in. Their output is plain text, meant to be relayed, and every time in it is
 already in the owner's timezone.
 
 ### Mail

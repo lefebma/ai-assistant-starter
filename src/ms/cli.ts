@@ -84,9 +84,39 @@ function positiveInt(flags: Flags, name: string, fallback: number): number {
   return n
 }
 
-/** --account, then MS_ACCOUNT, then one unnamed mailbox. */
-function accountOf(flags: Flags, env: CliDeps['env']): string {
-  return str(flags, 'account')?.trim() || env['MS_ACCOUNT']?.trim() || 'default'
+/**
+ * --account, then MS_ACCOUNT, then the one connected mailbox if there is
+ * exactly one, and only then a nameless default.
+ *
+ * The connected-mailbox step is there because the address in a skill file is
+ * a guess made at setup, and the mailbox someone actually signs in with is
+ * the fact. On havn-test the skill said one address and the owner connected
+ * another, which worked until a fresh session followed the file.
+ */
+function accountOf(flags: Flags, deps: CliDeps): string {
+  const asked = str(flags, 'account')?.trim() || deps.env['MS_ACCOUNT']?.trim()
+  if (asked) return asked
+  const connected = listAuthedAccounts(deps.vault)
+  return connected.length === 1 ? connected[0]! : 'default'
+}
+
+/**
+ * Fail before the network when the named mailbox was never connected, and
+ * name the ones that were. Otherwise an assistant reads "not connected",
+ * starts a fresh sign-in for an address nobody uses, and asks the owner to
+ * approve it again.
+ */
+function requireConnected(account: string, deps: CliDeps): void {
+  if (loadTokens(account, deps.vault)) return
+  const others = listAuthedAccounts(deps.vault)
+  if (others.length === 0) {
+    throw new Error(`Outlook is not connected. Run: ms-auth start --account ${account}`)
+  }
+  throw new Error(
+    `Outlook is not connected for "${account}", but ${others.join(', ')} ${others.length === 1 ? 'is' : 'are'}. ` +
+      `Run the command again with --account ${others[0]}, or ms-auth start --account ${account} to add that mailbox too. ` +
+      `ms-auth status lists them.`
+  )
 }
 
 function secs(deps: CliDeps): number {
@@ -193,7 +223,7 @@ async function authStatus(accounts: string[], deps: CliDeps): Promise<string> {
 
 export async function runAuth(argv: string[], deps: CliDeps): Promise<string> {
   const { cmd, flags } = parse(argv, { wait: 'string' })
-  const account = accountOf(flags, deps.env)
+  const account = accountOf(flags, deps)
   switch (cmd) {
     case 'start': {
       const p = await startSignIn(account, deps)
@@ -238,6 +268,8 @@ export const MAIL_USAGE = `usage: ms-mail <command> [--account LABEL]
   reply ID --body B [--all]                  saved as a draft in the thread
   send DRAFT_ID --approved                   only once the owner has said yes`
 
+const MAIL_COMMANDS = new Set(['inbox', 'search', 'read', 'draft', 'reply', 'send'])
+
 export async function runMail(argv: string[], deps: CliDeps): Promise<string> {
   const { cmd, args, flags } = parse(argv, {
     count: 'string',
@@ -248,7 +280,8 @@ export async function runMail(argv: string[], deps: CliDeps): Promise<string> {
     all: 'boolean',
     approved: 'boolean',
   })
-  const account = accountOf(flags, deps.env)
+  const account = accountOf(flags, deps)
+  if (MAIL_COMMANDS.has(cmd)) requireConnected(account, deps)
   const need = (value: string | undefined, what: string): string => {
     if (!value) throw new Error(`${cmd} needs ${what}.\n${MAIL_USAGE}`)
     return value
@@ -312,6 +345,8 @@ export const CALENDAR_USAGE = `usage: ms-calendar <command> [--account LABEL]
   create --subject S --start 2026-09-20T10:00 --end 2026-09-20T11:00
          [--location L] [--body B] [--attendees A,B --approved]`
 
+const CALENDAR_COMMANDS = new Set(['today', 'range', 'create'])
+
 export async function runCalendar(argv: string[], deps: CliDeps): Promise<string> {
   const { cmd, args, flags } = parse(argv, {
     subject: 'string',
@@ -322,7 +357,8 @@ export async function runCalendar(argv: string[], deps: CliDeps): Promise<string
     attendees: 'string',
     approved: 'boolean',
   })
-  const account = accountOf(flags, deps.env)
+  const account = accountOf(flags, deps)
+  if (CALENDAR_COMMANDS.has(cmd)) requireConnected(account, deps)
   switch (cmd) {
     case 'today':
       return renderEvents(await eventsToday(clientFor(account, deps), deps.timeZone, new Date(deps.now())))

@@ -176,11 +176,34 @@ describe('command parsing', () => {
     await expect(runMail(['send', 'D1', '--aproved'], world().deps)).rejects.toThrow(/aproved/)
   })
 
-  it('falls back to MS_ACCOUNT, then to one unnamed mailbox', async () => {
+  it('falls back to MS_ACCOUNT before anything else', async () => {
     const w = world({ vault: { MS_TOKENS_SHARED: LIVE }, env: { MS_CLIENT_ID: 'cid', MS_ACCOUNT: 'shared' }, graph: () => ({ status: 200, body: { value: [] } }) })
     await runMail(['inbox'], w.deps)
     expect(w.graphCalls[0]!.auth).toBe('Bearer tok')
-    await expect(runMail(['inbox'], world().deps)).rejects.toThrow(/"default"/)
+  })
+
+  it('uses the one connected mailbox when no account was named', async () => {
+    // The address in a skill file is a setup-time guess; what the owner
+    // actually signed in with is the fact. havn-test had them differ.
+    const w = world({ vault: { MS_TOKENS_MARC_SITEWIDETECH_COM: LIVE }, graph: () => ({ status: 200, body: { value: [] } }) })
+    await runMail(['inbox'], w.deps)
+    expect(w.graphCalls[0]!.auth).toBe('Bearer tok')
+  })
+
+  it('names the mailbox that is connected when asked for one that is not', async () => {
+    const w = world({ vault: { MS_TOKENS_MARC_SITEWIDETECH_COM: LIVE } })
+    await expect(runMail(['inbox', '--account', 'marc@pmtec.com'], w.deps)).rejects.toThrow(
+      /not connected for "marc@pmtec.com", but MARC_SITEWIDETECH_COM is.*--account MARC_SITEWIDETECH_COM/s
+    )
+    expect(w.graphCalls).toHaveLength(0)
+  })
+
+  it('says how to connect when nothing is connected at all', async () => {
+    await expect(runCalendar(['today'], world().deps)).rejects.toThrow(/ms-auth start --account default/)
+  })
+
+  it('still reports an unknown command as unknown, not as a connection problem', async () => {
+    await expect(runMail(['frobnicate'], world().deps)).rejects.toThrow(/unknown command/i)
   })
 })
 
