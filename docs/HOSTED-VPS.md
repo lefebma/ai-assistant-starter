@@ -409,6 +409,29 @@ also disables streaming. What does not, yet: the assistant replying with voice (
 bot voice bubble), sending files back (it says where it saved them), group
 chats and channels.
 
+## Browser automation
+
+The assistant's browser tools work on the box, in their sandboxed form: a
+clean headless Chromium with no logins, fine for public pages. There is no
+Google Chrome and no screen, so the tools drive Playwright's bundled Chromium
+instead, and `/browser start` (your own Chrome with your sessions) does not
+apply here.
+
+Boxes provisioned from this release on get the browser and its system
+libraries at first boot. A box provisioned earlier needs them once, as `havn`:
+
+```bash
+cd ~/havn
+sudo node node_modules/playwright-core/cli.js install-deps chromium
+node node_modules/playwright-core/cli.js install chromium
+```
+
+No restart needed: the browser launches on demand. Symptoms of a box that is
+missing them: every browser action fails with "Target page, context or
+browser has been closed" (libraries missing). "Chromium distribution 'chrome'
+is not found" means the install predates this fix and still asks for Google
+Chrome; `/update` brings the fix.
+
 ## Voice UI
 
 The voice page is a browser UI for talking to the assistant: hold to speak,

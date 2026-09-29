@@ -191,6 +191,20 @@ describe('renderCloudInit', () => {
     expect(rendered).toContain("runuser -u havn -- bash -lc 'cd /home/havn/havn && npm ci --no-audit --no-fund && npm run build'")
   })
 
+  it('installs the browser the Playwright tools drive, after the build, without making it fatal', () => {
+    // Without the system libraries every launch died with "Target page,
+    // context or browser has been closed" (havn-test, 2026-09-28).
+    const deps = 'node /home/havn/havn/node_modules/playwright-core/cli.js install-deps chromium'
+    const browser = "runuser -u havn -- bash -lc 'cd /home/havn/havn && node node_modules/playwright-core/cli.js install chromium'"
+    expect(rendered).toContain(deps)
+    expect(rendered).toContain(browser)
+    expect(rendered.indexOf(deps)).toBeGreaterThan(rendered.indexOf('npm run build'))
+    // Browser automation is optional; a failed download must not stop the box
+    // from reaching the ready marker.
+    expect(rendered).toMatch(/install-deps chromium \|\| echo "WARNING/)
+    expect(rendered).toMatch(/install chromium' \|\| echo "WARNING/)
+  })
+
   it('keeps unattended-upgrades on', () => {
     expect(rendered).toContain('unattended-upgrades')
     expect(rendered).toContain('APT::Periodic::Unattended-Upgrade "1";')
