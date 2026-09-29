@@ -140,6 +140,16 @@ write_files:
       runuser -u havn -- mkdir -p {{INSTALL_DIR}}/logs
       runuser -u havn -- bash -lc 'cd {{INSTALL_DIR}} && npm ci --no-audit --no-fund && npm run build'
 
+      # --- Browser for the Playwright tools -------------------------------
+      # There is no Google Chrome here, so the tools drive Playwright's bundled
+      # Chromium (scripts/playwright-mcp.ts picks it). Its system libraries go
+      # in as root; without them every launch dies with "Target page, context
+      # or browser has been closed" (havn-test, 2026-09-28). The browser itself
+      # downloads as havn, into ~havn/.cache/ms-playwright. Optional capability,
+      # so a failure warns instead of stopping provisioning.
+      node {{INSTALL_DIR}}/node_modules/playwright-core/cli.js install-deps chromium || echo "WARNING: browser libraries failed to install; see docs/HOSTED-VPS.md > Browser automation"
+      runuser -u havn -- bash -lc 'cd {{INSTALL_DIR}} && node node_modules/playwright-core/cli.js install chromium' || echo "WARNING: browser download failed; see docs/HOSTED-VPS.md > Browser automation"
+
       # --- Service: registered but NOT started ----------------------------
       systemctl daemon-reload
       # Deliberately no enable/start: .env and credentials do not exist yet.
