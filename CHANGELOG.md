@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.28.1 - 2026-09-28
+
+The browser works on a hosted box.
+
 - **Fixed: browser automation works on a hosted box.** Every browser action failed there, twice over. The tools asked for Google Chrome, which a server does not have, and the bundled browser that could stand in for it was missing the system libraries it needs to start. The tools now use Google Chrome when it is installed and Playwright's own Chromium when it is not, which also fixes a desktop install without Chrome. New boxes get the browser and its libraries when they are provisioned; for an existing box, see docs/HOSTED-VPS.md > Browser automation.
 
 ## 1.28.0 - 2026-09-24
