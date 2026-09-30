@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.29.0 - 2026-09-30
+
+Your assistant stops waiting to be asked whether it is out of date.
+
 - **New: your assistant tells you when a new version is out.** Until now it only mentioned one if you happened to ask, or used a word like "version" or "briefing", so a box could sit on an old build for weeks and you would find out by hitting a bug that was already fixed. It now says so once per release, in chat, with a one-line summary of what changed and the command to install it. Once, not repeatedly: ignoring a release is a decision. Nothing arrives in the middle of the night, nothing arrives while an update you already applied is waiting for a restart, and `UPDATE_NOTICE=off` stops it entirely on a box somebody else updates for you.
 
 ## 1.28.2 - 2026-09-30
