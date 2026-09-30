@@ -177,7 +177,7 @@ export function buildEnvContent(a: Answers): string {
 }
 
 export function installedSkillsList(a: Answers): string {
-  const list = ['weather', 'decision-log', 'daily-briefing', 'exec-interview', 'skill-builder']
+  const list = ['weather', 'decision-log', 'daily-briefing', 'exec-interview', 'skill-builder', 'browse']
   if (a.gmailAddress) list.push('gmail')
   if (a.gmailAddress2) list.push('gmail-secondary')
   if (a.outlookAddress) list.push('outlook')
@@ -253,6 +253,11 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
   p.push({ type: 'edit', file: 'skills/exec-interview/SKILL.md', vars: identity })
   p.push({ type: 'edit', file: 'skills/exec-interview/manifest.json', vars: identity })
   p.push({ type: 'copy', from: 'templates/skills/skill-builder', to: 'skills/skill-builder' })
+  // Browse needs no key and no opt-in: the browser tools are registered in
+  // .mcp.json for every install, so the only thing missing was the guidance
+  // on when to reach for them and when curl is the better answer.
+  p.push({ type: 'copy', from: 'templates/skills/browse', to: 'skills/browse' })
+  p.push({ type: 'edit', file: 'skills/browse/SKILL.md', vars: identity })
   p.push({ type: 'copy', from: 'templates/skills/daily-briefing', to: 'skills/daily-briefing' })
   // OWNER_NAME only: the same file is installed on existing machines by
   // syncAlwaysOnSkills(), which can substitute OWNER_NAME and PROJECT_PATH and

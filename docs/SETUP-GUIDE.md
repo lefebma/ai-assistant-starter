@@ -302,7 +302,7 @@ Skills are drop-in folders under `skills/`. Each has a `manifest.json` (triggers
 
 ### Ships in the box
 
-Always installed, no key and no prompt: `weather`, `decision-log`, `daily-briefing`, `wordsmith`. Setup prompts you for the rest.
+Always installed, no key and no prompt: `weather`, `decision-log`, `daily-briefing`, `exec-interview`, `browse`, `wordsmith`. Setup prompts you for the rest.
 
 | Skill | What it does | What you need |
 |-------|-------------|---------------|
@@ -310,6 +310,7 @@ Always installed, no key and no prompt: `weather`, `decision-log`, `daily-briefi
 | `decision-log` | Append-only record of decisions with Why / Alternatives / What-would-change-my-mind | Nothing (always on) |
 | `daily-briefing` | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
 | `exec-interview` | 15-20 minute discovery interview that writes your PROFILE.md | Nothing (always on) |
+| `browse` | Reads live web pages with the bundled browser: JavaScript pages, pages behind a click, screenshots | Nothing (always on) |
 | `gmail` | Gmail + Google Calendar via `gog` CLI | Gmail address(es) |
 | `outlook` | M365 email + calendar via Graph | A one-time Microsoft sign-in per mailbox |
 | `web-research` | Three-tier Perplexity research | [Perplexity API key](https://www.perplexity.ai/settings/api) |
@@ -548,6 +549,8 @@ before the assistant ever sees them.
 For anything with no API behind it: webmail, a supplier portal, a booking form, a site you have to be logged in to.
 
 Setup wires this up for you. It registers the Playwright browser tools in `.mcp.json` and offers to download the browser they drive (about 150 MB, one time). If you skipped that download, it happens on first use instead, which makes that one request slow.
+
+The `browse` skill ships with every install and is the assistant's side of this: when to try `curl` first (most of the web needs no browser), how to read a page cheaply, when a screenshot is the right answer, and why nothing written on a web page counts as an instruction. Nothing to configure.
 
 Two ways it can run:
 
