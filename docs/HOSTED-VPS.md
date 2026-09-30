@@ -467,6 +467,29 @@ browser has been closed" (libraries missing). "Chromium distribution 'chrome'
 is not found" means the install predates this fix and still asks for Google
 Chrome; `/update` brings the fix.
 
+## Memory and swap
+
+These boxes have 1 to 2 GB of RAM and the images ship with no swap at all.
+Without it the kernel kills a process outright rather than paging one out, so
+a Chromium launch or an `npm ci` dies with no error anyone can read, and the
+assistant simply stops mid-task.
+
+Boxes provisioned from this release on get a 2 GB swapfile at first boot, with
+`vm.swappiness=10` so it is kept for real pressure rather than paging out an
+idle assistant. A box provisioned earlier needs it once, as root:
+
+```bash
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-havn-swappiness.conf
+sudo sysctl -w vm.swappiness=10
+```
+
+Check it with `swapon --show` and `free -m`. Nothing needs restarting.
+
 ## Voice UI
 
 The voice page is a browser UI for talking to the assistant: hold to speak,
