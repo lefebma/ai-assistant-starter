@@ -205,6 +205,33 @@ describe('renderCloudInit', () => {
     expect(rendered).toMatch(/install chromium' \|\| echo "WARNING/)
   })
 
+  it('gives the box swap before the build, since the image ships with none', () => {
+    // 1 to 2 GB of RAM and no swap: the kernel kills a process outright
+    // instead of paging. Both pilot boxes were found this way, 2026-09-30.
+    expect(rendered).toContain('mkswap /swapfile')
+    expect(rendered).toContain('swapon /swapfile')
+    // Before the build, because the build is itself a memory spike. Match the
+    // command, not the string 'npm ci', which also appears in a comment above.
+    expect(rendered.indexOf('mkswap /swapfile')).toBeLessThan(
+      rendered.indexOf('npm ci --no-audit --no-fund && npm run build')
+    )
+  })
+
+  it('survives a reboot and leaves an existing swap setup alone', () => {
+    expect(rendered).toContain('/swapfile none swap sw 0 0')
+    expect(rendered).toContain('vm.swappiness=10')
+    // An image that already has swap, or a re-run, must not build a second one.
+    expect(rendered).toMatch(/swapon --show=NAME --noheadings \| wc -l\)" -eq 0 \] && \[ ! -e \/swapfile \]/)
+    expect(rendered).toMatch(/grep -q '\^\/swapfile ' \/etc\/fstab \|\| echo/)
+  })
+
+  it('does not let a swap failure stop provisioning', () => {
+    // Same rule as the browser: a box without swap still has to finish and
+    // reach the ready marker.
+    expect(rendered).toMatch(/\) \|\| echo "WARNING: swap setup failed/)
+    expect(rendered).toContain('fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile')
+  })
+
   it('keeps unattended-upgrades on', () => {
     expect(rendered).toContain('unattended-upgrades')
     expect(rendered).toContain('APT::Periodic::Unattended-Upgrade "1";')

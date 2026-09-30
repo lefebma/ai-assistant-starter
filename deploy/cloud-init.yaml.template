@@ -124,6 +124,29 @@ write_files:
       # --- Tailscale (optional) -------------------------------------------
       {{TAILSCALE_CMD}}
 
+      # --- Swap: these images ship with none -------------------------------
+      # 1 to 2 GB of RAM and no swap means the kernel kills a process outright
+      # rather than paging one out: npm ci, tsc, or a Chromium launch dies with
+      # no error the assistant or its owner can read. Both pilot boxes were
+      # found this way on 2026-09-30. Before the build on purpose, since the
+      # build is itself a memory spike. Skipped when the image already provides
+      # swap, and never allowed to stop provisioning.
+      if [ "$(swapon --show=NAME --noheadings | wc -l)" -eq 0 ] && [ ! -e /swapfile ]; then
+        (
+          set -e
+          fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+          # The default swappiness of 60 pages out an idle assistant and makes
+          # it slow to answer. 10 keeps swap for the pressure it is here for.
+          echo 'vm.swappiness=10' > /etc/sysctl.d/99-havn-swappiness.conf
+          sysctl -q -w vm.swappiness=10
+        ) || echo "WARNING: swap setup failed; the box runs without it (docs/HOSTED-VPS.md > Memory and swap)"
+      fi
+      swapon --show || true
+
       # --- Clone and build as the havn user -------------------------------
       # Switch users with runuser, not sudo. Hetzner's vendor-data sets a root
       # password and expires it (chpasswd: expire: true); sudo runs PAM's
