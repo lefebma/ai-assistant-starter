@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.28.2 - 2026-09-30
+
+A hosted box stops running out of memory with nothing to show for it.
+
 - **Fixed: a hosted box gets swap, so it stops dying instead of slowing down.** These boxes have 1 to 2 GB of memory and the images ship with no swap, which means the kernel kills a process outright rather than paging one out. A browser launch or a rebuild would vanish with no error the assistant could report and nothing in the logs to explain it. New boxes now get a 2 GB swapfile at first boot, kept for real pressure rather than paging out an idle assistant. An existing box needs it added once: docs/HOSTED-VPS.md > Memory and swap.
 
 ## 1.28.1 - 2026-09-28
