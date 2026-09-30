@@ -467,6 +467,31 @@ browser has been closed" (libraries missing). "Chromium distribution 'chrome'
 is not found" means the install predates this fix and still asks for Google
 Chrome; `/update` brings the fix.
 
+### How many tabs
+
+Measured on havn-test (1.9 GB, 2 GB swap) with the service running, loading a
+real article in each tab:
+
+| State | Memory still free |
+|---|---|
+| No browser | 1459 MB |
+| Browser up, no page | 1439 MB |
+| 1 tab | 1384 MB |
+| 2 tabs | 1330 MB |
+| 3 tabs | 1280 MB |
+| 4 tabs | 1218 MB |
+
+The first tab costs about 75 MB and each one after it about 55 MB, and closing
+the browser returns all of it. So the tab count is not the limit anyone hits:
+the assistant's own peak is around 900 MB on a busy turn, so what actually
+squeezes a 2 GB box is a browser left open across a long answer, not a fourth
+tab. Three concurrent tabs is comfortable; leaving the browser up all day is
+not. The `browse` skill tells the assistant to close it when the task ends.
+
+Heavier pages cost more than the article measured here, an app-like page with
+a video or a large table more again, so treat the table as a floor rather than
+a budget.
+
 ## Memory and swap
 
 These boxes have 1 to 2 GB of RAM and the images ship with no swap at all.

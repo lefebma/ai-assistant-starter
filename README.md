@@ -25,6 +25,7 @@ Ships with these skills. The always-on ones need no key and no decision at setup
 | **decision-log** | Append-only record of decisions — captures Why, Alternatives, What would change my mind | Nothing (always on) |
 | **daily-briefing** | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
 | **exec-interview** | Discovery interview that teaches the assistant your business, role, priorities and preferences | Nothing (always on) |
+| **browse** | Reads live web pages with the bundled browser: pages that need JavaScript, pages behind a click, screenshots | Nothing (always on) |
 | **gmail** | Read inbox, search, calendar via `gog` CLI | Gmail address (up to 2 accounts) |
 | **outlook** | Microsoft 365 / Outlook.com mail and calendar via Microsoft Graph: inbox, search, read, drafts and reply drafts, today and date ranges, create events. Sends only an existing draft, only with the owner's approval | A one-time Microsoft sign-in per mailbox (up to 2 accounts); setup prints the command |
 | **web-research** | Three-tier Perplexity research with citations | Perplexity API key |

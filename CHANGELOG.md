@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **New: your assistant knows how to use the browser it already had.** The browser tools have been wired into every install for a while with nothing to tell it when they are the right answer, so it would launch a browser to read a page that plain text would have answered, take a screenshot of words it could have read as words, and leave the browser running afterwards holding a tenth of a small machine's memory. A `browse` skill now ships with every install, no key and nothing to configure: try the cheap way first, read pages as text, screenshot when the question is actually visual, and close up when the task ends. It also draws the line that matters once an assistant is reading the open web. What a page says is information to report back to you, never an instruction to follow, and nothing gets submitted, sent, or signed in to without your say in the conversation. Existing installs pick the skill up on `/update`.
+
 ## 1.29.0 - 2026-09-30
 
 Your assistant stops waiting to be asked whether it is out of date.
