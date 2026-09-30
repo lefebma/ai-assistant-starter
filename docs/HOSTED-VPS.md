@@ -313,7 +313,42 @@ The Google OAuth client setup itself (Cloud Console, consent screen,
 publish-to-production) is unchanged from `docs/SETUP-GUIDE.md > Gmail` and
 happens in your browser, not on the box.
 
-### 4. Verify, then start the service
+### 4. Connect Outlook, if the client is on Microsoft 365
+
+Much shorter than the Gmail section above, because none of what makes that one
+long applies: no keyring, no OAuth client to create, no URL to paste back.
+
+The app registration ships with the product, and the sign-in uses Microsoft's
+device code flow, which was picked precisely because a headless box has no
+browser and no redirect URL to listen on.
+
+```bash
+node dist/scripts/ms-auth.js start --account them@theircompany.com
+```
+
+That prints a Microsoft URL and a short code and returns immediately, so it is
+safe over SSH. Send both to the client. Once they say they have signed in:
+
+```bash
+node dist/scripts/ms-auth.js finish --account them@theircompany.com
+node dist/scripts/ms-auth.js status
+```
+
+The code expires after fifteen minutes; rerun `start` for a fresh one. Tokens
+go into the encrypted vault, one entry per mailbox, so `.env` needs nothing
+added and a second mailbox cannot overwrite the first.
+
+Two stalls worth knowing before you are on a call with someone:
+
+- The consent screen marks the publisher unverified. Expected, they can
+  continue.
+- "Needs admin approval" means the tenant blocks third-party apps. Their M365
+  admin has to approve it once. Retrying will not help.
+
+Full walk-through, including what to tell the client at each step:
+`docs/CLIENT-EMAIL-ONBOARDING.md > Part 2`.
+
+### 5. Verify, then start the service
 
 ```bash
 node dist/src/index.js --selftest --live   # one real model call; proves credentials

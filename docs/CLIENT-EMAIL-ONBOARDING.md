@@ -154,27 +154,80 @@ the service if it was already running: `sudo systemctl restart havn`.
 
 ## Part 2: Outlook / Microsoft 365
 
-**Not ready to promise to a client yet.** The Outlook skill's own
-instructions reference `node scripts/ms-auth.js`, `ms-mail.js`, and
-`ms-calendar.js` — none of those scripts exist in this codebase. The skill
-ships `"enabled": false` by default for exactly this reason. Setting
-`MS_CLIENT_ID`/`MS_CLIENT_SECRET`/`MS_TENANT_ID` and running the documented
-auth flow will not work today.
+**Available since v1.28.0.** Mail (inbox, search, read, drafts, reply drafts,
+send an approved draft) and calendar (today, a date range, create an event).
 
-Options if a client needs this now:
+Easier to onboard than Gmail: there is no Azure app registration, no client
+secret, and no Cloud project. The app registration ships with the product, so
+the client signs in once and you are done. No step here needs anything
+downloaded onto the box.
 
-1. **Be upfront**: M365 mail/calendar is on the roadmap, not available on
-   this install yet. Fine at small scale; don't sell it as done.
-2. **Stopgap**: the assistant's Playwright browser automation (already built
-   for arbitrary webmail — see `SETUP-GUIDE.md § Apple Mail / Other`) could
-   reach Outlook webmail the same way, slower and not purpose-built or
-   tested against it. The client would still need to complete their own
-   sign-in in a browser session the assistant controls (`/browser start`),
-   same "never type their password" rule applies.
-3. **Real fix**: build the three `ms-*.js` scripts against Microsoft Graph
-   properly (Azure App Registration, delegated auth flow analogous to the
-   `gog --remote` two-step above). This is a real, scoped dev task — flag it
-   if an M365 client is imminent rather than promising it ad hoc.
+### Step A — 🧑‍💻 YOU: start the sign-in on the box
+
+```bash
+node dist/scripts/ms-auth.js start --account client@theircompany.com
+```
+
+It prints a Microsoft URL and a short code, then returns straight away. It
+does not sit and wait, so this is safe to run over SSH.
+
+### Step B — 👤 CLIENT: sign in
+
+Send them the URL and the code exactly as printed. They open it in any
+browser, including on a phone, enter the code, sign in with their own
+Microsoft account, and approve.
+
+Two things to warn them about in advance:
+
+- The consent screen names the app and marks the **publisher as unverified**.
+  That is expected for an app that is not in Microsoft's commercial
+  marketplace. They can go ahead.
+- If their organization blocks third-party apps, they will see **"needs admin
+  approval"** instead. Their Microsoft 365 administrator has to approve the
+  app once for the tenant. Retrying does not get past it, and neither does
+  starting over. Stop and get the admin.
+
+The code is good for **fifteen minutes**. After that, rerun Step A for a fresh
+one.
+
+### Step C — 🧑‍💻 YOU: collect it
+
+```bash
+node dist/scripts/ms-auth.js finish --account client@theircompany.com
+```
+
+If it reports it is still waiting, they have not finished in the browser yet.
+Ask, then run it again. There is nothing to paste back from the client at any
+point, which is the part that goes wrong most often on the Gmail side.
+
+### Step D — 🧑‍💻 YOU: verify
+
+```bash
+node dist/scripts/ms-auth.js status
+node dist/scripts/ms-mail.js inbox --count 3 --account client@theircompany.com
+node dist/scripts/ms-calendar.js today --account client@theircompany.com
+```
+
+`status` also prints who Microsoft says each mailbox signed in as. If that is
+a different address than the one you expected, the client signed in with
+another account: use that address from then on rather than starting over.
+
+### Step E — done
+
+Message the bot: "check my email," "what's on my calendar today." Restart the
+service if it was already running: `sudo systemctl restart havn`.
+
+For a second mailbox, run the same three steps with the other address. Each is
+stored separately. To disconnect one:
+`node dist/scripts/ms-auth.js logout --account <address>`.
+
+### Shipping under your own name
+
+Optional, and not needed for a normal client onboarding. The consent screen
+shows the app registration's publisher. To make it show yours instead, create
+your own Azure app registration (public client, device code flow enabled, no
+secret) and set `MS_CLIENT_ID` in `.env`. `MS_TENANT_ID` stays unset for
+ordinary work accounts. See the notes in `.env.example`.
 
 ---
 
@@ -182,9 +235,13 @@ Options if a client needs this now:
 
 - You never type, see, or store the client's account password. Every login
   screen is theirs to click through.
-- The only secret you handle is the OAuth *client* (your own app
+- The only secret you handle is the Google OAuth *client* (your own app
   registration) — delete the downloaded JSON off the VPS once imported
-  (`rm ~/client_secret_*.json`).
+  (`rm ~/client_secret_*.json`). Outlook has no equivalent: nothing is
+  downloaded and there is no secret to clean up.
+- Outlook sign-ins are stored in the encrypted vault, one entry per mailbox,
+  not in `.env`. To revoke one, `ms-auth logout --account <address>` on the
+  box; the client can also revoke it from their own Microsoft account.
 - The auth code exchanged in Step C.6 is single-use and short-lived — treat
   it like a one-time password, not something to save or reuse.
 - `GOG_KEYRING_PASSWORD` in `.env` is what encrypts the token store at rest
