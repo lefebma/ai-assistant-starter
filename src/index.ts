@@ -1,12 +1,14 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID } from './config.js'
+import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED } from './config.js'
 import { initDatabase } from './db.js'
 import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
 import { createBot } from './bot.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
 import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './workspace/service.js'
+import { initUpdateNotice, stopUpdateNotice } from './update/notice-service.js'
+import { checkForUpdate, getChangelog, restartPending } from './updater.js'
 import { startHttpServer, stopHttpServer } from './http-server.js'
 import { stopChrome, isCdpAvailable } from './browser.js'
 import { runBestEffortCleanup, withTimeout } from './infra/cleanup.js'
@@ -192,6 +194,19 @@ async function main(): Promise<void> {
     },
   })
 
+  // Tell the owner once when a release lands. Without a chat to speak into
+  // there is nobody to tell, so it does not start at all.
+  if (PRIMARY_CHAT_ID && UPDATE_NOTICE_ENABLED) {
+    initUpdateNotice({
+      check: () => checkForUpdate(false),
+      changelog: getChangelog,
+      restartPending: () => restartPending(),
+      notify: async (text) => {
+        await adapter.sendMessage(PRIMARY_CHAT_ID, adapter.formatText(text))
+      },
+    })
+  }
+
   // Graceful shutdown
   let shuttingDown = false
   const shutdown = async (): Promise<void> => {
@@ -226,6 +241,7 @@ async function main(): Promise<void> {
     })
     await runBestEffortCleanup({ name: 'scheduler.stop', cleanup: () => stopScheduler() })
     await runBestEffortCleanup({ name: 'workspace.stop', cleanup: () => stopWorkspaceService() })
+    await runBestEffortCleanup({ name: 'updateNotice.stop', cleanup: () => stopUpdateNotice() })
     if (await isCdpAvailable()) {
       await runBestEffortCleanup({ name: 'chrome.stop', cleanup: async () => stopChrome() })
     }
