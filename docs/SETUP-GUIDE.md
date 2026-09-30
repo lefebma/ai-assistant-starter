@@ -10,7 +10,7 @@ This guide walks you through setting up your personal AI assistant powered by Cl
 - **An account with an AI company.** Either a Claude subscription (Pro or Max)
   that you sign in with, or an API key from Anthropic, OpenAI, or Google that
   bills per use. Setup asks which you have. See [Signing in](#signing-in) below.
-- A messaging platform account (Telegram, Slack, Discord, or Teams)
+- A messaging platform account (Telegram, Slack, or Teams)
 - **Optional, for voice:** an OpenAI API key. Voice notes, spoken replies, and
   live conversation all run on OpenAI, even when Claude does the thinking. See
   [Voice](#voice).
@@ -25,7 +25,6 @@ that the assistant never calls.
 |----------|-----------------|----------|
 | **Telegram** | Easiest | Solo users, mobile-first, free, no org restrictions |
 | **Slack** | Moderate | Teams already on Slack, threaded conversations, enterprise |
-| **Discord** | Moderate | Communities, voice channels, casual/creative teams |
 | **Teams** | Hardest | Microsoft-centric orgs, Outlook/SharePoint integration |
 
 ### Telegram Setup
@@ -50,17 +49,6 @@ that the assistant never calls.
    SLACK_BOT_TOKEN=xoxb-your-token
    SLACK_APP_TOKEN=xapp-your-token
    SLACK_ALLOWED_USERS=U01234ABCDE
-   ```
-
-### Discord Setup
-1. Create an application at [discord.com/developers](https://discord.com/developers/applications)
-2. Bot tab > Add Bot, copy the token
-3. Enable Message Content Intent (Bot tab > Privileged Gateway Intents)
-4. Generate invite URL: OAuth2 > URL Generator > scopes: `bot`, permissions: `Send Messages`, `Read Message History`
-5. Add to `.env`:
-   ```
-   DISCORD_BOT_TOKEN=your_token_here
-   DISCORD_ALLOWED_USERS=your_user_id
    ```
 
 ### Teams Setup
@@ -251,18 +239,46 @@ gog auth add secondary@gmail.com --services gmail,calendar
 
 **6.** The skill at `skills/gmail/` is pre-configured for the primary address. If you opted into a second account, `skills/gmail-secondary/` is wired to it independently.
 
-### Outlook / Microsoft 365 (via CLI or MCP)
-1. Register an app in [Azure AD App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps)
-2. Add permissions: `Mail.Read`, `Mail.Send`, `Calendars.Read`, `Calendars.ReadWrite`
-3. Generate a client secret
-4. Add to `.env`:
-   ```
-   MS_CLIENT_ID=your_client_id
-   MS_CLIENT_SECRET=your_secret
-   MS_TENANT_ID=your_tenant_id
-   ```
-5. Run the auth flow: `node scripts/ms-auth.js`
-6. If you opted into a second Outlook account, `skills/outlook-secondary/` is wired to it. Same Azure app + tenant; the auth flow handles both addresses.
+### Outlook / Microsoft 365
+
+There is no app to register and no client secret to create. The Microsoft app
+registration ships with the product, so a mailbox only has to sign in once.
+
+**1. Sign in.** Setup prints this command with your address already filled in:
+
+```
+node dist/scripts/ms-auth.js login --account you@yourcompany.com
+```
+
+It prints a short code and a Microsoft URL, then waits. Open the URL in any
+browser, including the one on your phone, enter the code, and approve.
+
+**2. Check it took:** `node dist/scripts/ms-auth.js status` lists the connected
+mailboxes and who each one signed in as.
+
+**3. Second mailbox.** If you opted into one, `skills/outlook-secondary/` is
+already wired to it. Run `login` again with that address.
+
+To disconnect a mailbox: `node dist/scripts/ms-auth.js logout --account <address>`.
+
+**Where the sign-in is kept.** In the encrypted vault (see
+[docs/VAULT.md](VAULT.md)), one entry per mailbox, never in `.env`. The
+permissions requested are mail read/write, mail send, and calendar read/write,
+delegated to the person who signs in, so the assistant can only do what that
+person could do themselves.
+
+**Two things that surprise people.**
+
+- Microsoft's consent screen names the app and marks the publisher as
+  unverified. That is expected for an app that is not listed in Microsoft's
+  commercial marketplace, and you can go ahead.
+- Some organizations block third-party apps by default. The sign-in then says
+  it needs admin approval, and your Microsoft 365 administrator has to approve
+  the app once for the whole tenant. Retrying will not get past it.
+
+**On a headless box** (a hosted VPS with no desktop), the same command works
+unchanged. The sign-in uses Microsoft's device code flow, which needs no
+browser and no redirect URL on the machine itself.
 
 ### Apple Mail / Other
 For non-API email providers, the assistant can use browser automation (Playwright) to read and draft emails through webmail. Slower but works with anything. See [Browser automation](#browser-automation) below.
@@ -275,7 +291,7 @@ Already included with Gmail setup above (gog CLI handles both).
 - View range: `gog calendar events --from "2026-01-01T00:00:00" --to "2026-01-01T23:59:59" --account your.email@gmail.com`
 
 ### Outlook Calendar
-Already included with Microsoft 365 setup above. The Outlook skill handles both email and calendar via the same credentials.
+Already included with the Microsoft 365 sign-in above. The `outlook` skill handles mail and calendar through the same connection: today's events, a date range, and creating an event (sending invites needs your approval).
 
 ### MCP Calendar Servers
 Claude Code also supports Google Calendar and Outlook Calendar via MCP servers. These give richer read/write access (create events, respond to invites). See `claude_desktop_config.json` for MCP server configuration.
@@ -295,7 +311,7 @@ Always installed, no key and no prompt: `weather`, `decision-log`, `daily-briefi
 | `daily-briefing` | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
 | `exec-interview` | 15-20 minute discovery interview that writes your PROFILE.md | Nothing (always on) |
 | `gmail` | Gmail + Google Calendar via `gog` CLI | Gmail address(es) |
-| `outlook` | M365 email + calendar via Graph | Azure app registration |
+| `outlook` | M365 email + calendar via Graph | A one-time Microsoft sign-in per mailbox |
 | `web-research` | Three-tier Perplexity research | [Perplexity API key](https://www.perplexity.ai/settings/api) |
 | `apollo` | Apollo.io company/person/sequence intel | [Apollo API key](https://app.apollo.io/#/settings/integrations/api) |
 | `wordsmith` | Drafts prose in a focused writing call on your configured provider | Nothing (always on) |
@@ -352,7 +368,7 @@ Example `manifest.json`:
 2. Fill in the CLAUDE.md placeholders:
    - `{{ASSISTANT_NAME}}` - Give your assistant a name
    - `{{OWNER_NAME}}` - Your name
-   - `{{PLATFORM}}` - Telegram / Slack / Discord / Teams
+   - `{{PLATFORM}}` - Telegram / Slack / Teams
    - `{{HOST_OS}}` - Mac / Linux / Windows (WSL)
    - `{{TIMEZONE}}` - Your timezone (e.g., America/New_York)
    - `{{OWNER_BIO}}` - A short paragraph about you, your work, your preferences
@@ -557,7 +573,7 @@ Chrome has to be installed for `/browser start` to do anything. `/browser status
 |---------|-----|
 | Installed fine, but never replies | Run `node dist/src/index.js --selftest --live`. If `credentials` fails, see [Signing in](#signing-in) |
 | Bot not responding | Check `launchctl list \| grep ai-assistant`, look at `/tmp/ai-assistant.log` |
-| Email auth expired | Re-run `gog auth add` (Gmail) or `node scripts/ms-auth.js` (Outlook) |
+| Email auth expired | Re-run `gog auth add` (Gmail) or `node dist/scripts/ms-auth.js login --account <address>` (Outlook) |
 | Gmail works, Calendar 403s with `accessNotConfigured` | The OAuth client's GCP project has the Gmail API enabled but not the Calendar API. Cloud Console → APIs & Services → Library → Google Calendar API → Enable, wait ~1-2 min. No re-auth needed. |
 | Scheduled task not firing | Check `sqlite3 store/assistant.db "SELECT * FROM scheduled_tasks"` |
 | Bot token conflict | Only one process can poll a Telegram bot token. Kill duplicates. |
