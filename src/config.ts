@@ -28,6 +28,10 @@ export const GOOGLE_API_KEY = getSecret('GOOGLE_API_KEY') ?? ''
 // Scheduler
 export const SCHEDULER_ENABLED = (env['SCHEDULER_ENABLED'] ?? 'true') === 'true'
 
+// One unprompted message per release, so an owner who never asks still hears
+// about a fix. Set UPDATE_NOTICE=off for a box whose updates someone else runs.
+export const UPDATE_NOTICE_ENABLED = (env['UPDATE_NOTICE'] ?? 'on').toLowerCase() !== 'off'
+
 // HTTP server (for ElevenLabs Conversational AI custom LLM + voice UI)
 export const HTTP_PORT = parseInt(env['HTTP_PORT'] ?? '3030', 10)
 export const HTTP_BEARER_TOKEN = getSecret('HTTP_BEARER_TOKEN') ?? ''
