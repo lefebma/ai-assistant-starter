@@ -211,12 +211,16 @@ export class SlackAdapter implements PlatformAdapter {
     void chatId
   }
 
-  async sendFile(chatId: string, filePath: string, type: 'voice' | 'document'): Promise<void> {
+  async sendFile(chatId: string, filePath: string, type: 'voice' | 'document' | 'photo'): Promise<void> {
     const { createReadStream } = await import('node:fs')
+    const { basename } = await import('node:path')
     await this.app.client.files.uploadV2({
       channel_id: chatId,
       file: createReadStream(filePath),
-      filename: type === 'voice' ? 'voice-reply.mp3' : 'file',
+      // Slack renders an image inline when the name carries its extension,
+      // and the literal 'file' this used to send carried none, so every
+      // document arrived extensionless and every image arrived as a download.
+      filename: type === 'voice' ? 'voice-reply.mp3' : basename(filePath),
     })
   }
 

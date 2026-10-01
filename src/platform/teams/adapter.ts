@@ -16,6 +16,8 @@ import { logger } from '../../logger.js'
 import { downloadToUploads } from '../../media.js'
 import type { PlatformAdapter, IncomingMessage, SendOptions } from '../types.js'
 import { basename } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import {
   buildCardActivity,
   buildClearedCardActivity,
@@ -27,6 +29,14 @@ import {
 } from './activities.js'
 import { InboundTokenValidator, OutboundTokenProvider } from './auth.js'
 import { BotConnector } from './connector.js'
+import {
+  contentTypeFor,
+  decideDelivery,
+  fileConsentActivity,
+  fileInfoActivity,
+  inlineImageActivity,
+} from './files.js'
+import { UploadError, putFileBytes } from './upload.js'
 import {
   getConversation,
   hasProcessedActivity,
@@ -45,12 +55,21 @@ const EDIT_INTERVAL_MS = 1000
 // removed one at a time on a button click or a coalesced edit landing.
 export const MAX_CARD_TEXTS = 500
 export const MAX_EDIT_STATES = 500
+/**
+ * A consent card the owner never answers leaves its file waiting. Bound both
+ * dimensions: how many can wait, and how long. The TTL is generous because
+ * clicking Allow tomorrow morning on a card sent last night is reasonable
+ * behaviour, not a mistake.
+ */
+export const MAX_PENDING_UPLOADS = 50
+export const PENDING_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000
 
 export interface TeamsAdapterOptions extends TeamsCredentials {
   validator?: Pick<InboundTokenValidator, 'validate'>
   connector?: Pick<BotConnector, 'sendActivity' | 'updateActivity' | 'deleteActivity' | 'sendTyping'>
   tokens?: OutboundTokenProvider
   download?: typeof downloadToUploads
+  upload?: typeof putFileBytes
   registerRoute?: typeof registerHttpRoute
   now?: () => number
   /**
@@ -86,6 +105,7 @@ export class TeamsAdapter implements PlatformAdapter {
   private readonly connector: Pick<BotConnector, 'sendActivity' | 'updateActivity' | 'deleteActivity' | 'sendTyping'>
   private readonly tokens: OutboundTokenProvider
   private readonly download: typeof downloadToUploads
+  private readonly upload: typeof putFileBytes
   private readonly registerRoute: typeof registerHttpRoute
   private readonly isAuthorizedChat: (chatId: string) => boolean
   private readonly now: () => number
@@ -94,6 +114,7 @@ export class TeamsAdapter implements PlatformAdapter {
   private activityHandler: (() => void) | null = null
   private authFailures = { lastLoggedAt: 0, suppressed: 0 }
   private cardTexts = new Map<string, string>()
+  private pendingUploads = new Map<string, { filePath: string; name: string; sizeInBytes: number; at: number }>()
   private edits = new Map<string, { lastSentAt: number; pending?: { activityId: string; activity: OutboundActivity }; timer?: NodeJS.Timeout }>()
 
   constructor(opts: TeamsAdapterOptions) {
@@ -103,6 +124,7 @@ export class TeamsAdapter implements PlatformAdapter {
     this.validator = opts.validator ?? new InboundTokenValidator({ appId: opts.appId })
     this.connector = opts.connector ?? new BotConnector({ tokens: this.tokens })
     this.download = opts.download ?? downloadToUploads
+    this.upload = opts.upload ?? putFileBytes
     this.registerRoute = opts.registerRoute ?? registerHttpRoute
     this.isAuthorizedChat = opts.isAuthorizedChat
     // Tables exist from construction so processActivity works in tests that
@@ -170,8 +192,17 @@ export class TeamsAdapter implements PlatformAdapter {
       res.end()
       return
     }
-    res.writeHead(200)
-    res.end()
+    // An invoke expects an InvokeResponse body, not a bare 200. We still
+    // answer before doing the work (an upload is far slower than Teams is
+    // willing to wait), so the status reports that we accepted the invoke,
+    // not that the upload succeeded; the outcome arrives as a message.
+    if (activity.type === 'invoke') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ status: 200 }))
+    } else {
+      res.writeHead(200)
+      res.end()
+    }
     void this.processActivity(activity).catch((err) => {
       logger.error({ err, activityId: activity.id, type: activity.type }, 'Teams: failed to process activity')
     })
@@ -215,6 +246,9 @@ export class TeamsAdapter implements PlatformAdapter {
         await this.messageHandler?.({ ...mapped.base, filePath })
         return
       }
+      case 'file-consent':
+        await this.handleFileConsent(mapped)
+        return
       case 'bot-added':
         if (ref) await this.messageHandler?.({ chatId: ref.conversationId, userId: ref.userId, text: '/chatid', type: 'text' })
         return
@@ -294,11 +328,119 @@ export class TeamsAdapter implements PlatformAdapter {
     await this.connector.sendTyping(this.reference(chatId))
   }
 
-  async sendFile(chatId: string, filePath: string, _type: 'voice' | 'document'): Promise<void> {
-    await this.sendMessage(
-      chatId,
-      `Saved on the assistant's machine as ${basename(filePath)}. Sending files into Teams is not supported yet.`
+  /**
+   * Images go into the message; everything else asks first.
+   *
+   * The asking is not politeness we chose: a consent upload writes into the
+   * owner's own OneDrive, so Teams requires the click. The cost is that this
+   * method returns having sent a question, not a file, and the file leaves
+   * later, from handleFileConsent.
+   */
+  async sendFile(chatId: string, filePath: string, type: 'voice' | 'document' | 'photo'): Promise<void> {
+    const name = basename(filePath)
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(filePath)
+    } catch (err) {
+      logger.warn({ err, filePath }, 'Teams: cannot read the file to send')
+      await this.sendMessage(chatId, `I could not read ${name} to send it.`)
+      return
+    }
+
+    const contentType = contentTypeFor(filePath)
+    const delivery = decideDelivery(bytes.length, contentType)
+    if (delivery.kind === 'refuse') {
+      await this.sendMessage(chatId, `I did not send ${name}: ${delivery.reason}. It is on the assistant's machine at ${filePath}`)
+      return
+    }
+    if (delivery.kind === 'inline') {
+      await this.connector.sendActivity(this.reference(chatId), inlineImageActivity(filePath, delivery.contentType, bytes))
+      return
+    }
+
+    const pendingId = randomUUID()
+    this.rememberPendingUpload(pendingId, { filePath, name, sizeInBytes: bytes.length, at: this.now() })
+    await this.connector.sendActivity(
+      this.reference(chatId),
+      fileConsentActivity(name, bytes.length, pendingId, describeFile(type, name))
     )
+  }
+
+  /**
+   * The owner answered a consent card.
+   *
+   * The pending entry is dropped before the upload starts, not after. Teams
+   * leaves the card in the chat and happily sends a second invoke if it is
+   * clicked again, and an upload URL is single-use, so the second attempt
+   * would fail confusingly. One card, one upload.
+   */
+  private async handleFileConsent(mapped: {
+    chatId: string
+    decision: 'accept' | 'decline'
+    pendingId: string | null
+    uploadInfo: { name: string; uploadUrl: string; contentUrl?: string; uniqueId?: string; fileType?: string } | null
+  }): Promise<void> {
+    // The same reasoning as the attachment download: an upload on behalf of a
+    // chat we would not act for is not something to do quietly.
+    if (!this.isAuthorizedChat(mapped.chatId)) {
+      logger.warn({ chatId: mapped.chatId }, 'Teams: ignoring file consent from an unauthorized chat')
+      return
+    }
+
+    const pending = mapped.pendingId ? this.pendingUploads.get(mapped.pendingId) : undefined
+    if (mapped.pendingId) this.pendingUploads.delete(mapped.pendingId)
+
+    if (mapped.decision === 'decline') {
+      const name = pending?.name ?? mapped.uploadInfo?.name ?? 'the file'
+      await this.sendMessage(mapped.chatId, `Not sent. ${name} is still on the assistant's machine if you change your mind.`)
+      return
+    }
+
+    if (!pending) {
+      await this.sendMessage(mapped.chatId, 'That file is no longer waiting to be sent. Ask me for it again and I will offer it.')
+      return
+    }
+    if (!mapped.uploadInfo) {
+      logger.warn({ chatId: mapped.chatId }, 'Teams: consent accepted without an upload URL')
+      await this.sendMessage(mapped.chatId, `Teams accepted ${pending.name} but did not say where to put it, so it did not send.`)
+      return
+    }
+
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(pending.filePath)
+    } catch (err) {
+      logger.warn({ err, filePath: pending.filePath }, 'Teams: pending file disappeared before upload')
+      await this.sendMessage(mapped.chatId, `${pending.name} is no longer on the assistant's machine, so it did not send.`)
+      return
+    }
+
+    try {
+      await this.upload(mapped.uploadInfo.uploadUrl, bytes)
+    } catch (err) {
+      const why = err instanceof UploadError ? err.message : 'the upload failed'
+      logger.warn({ err, chatId: mapped.chatId }, 'Teams: file upload failed')
+      await this.sendMessage(mapped.chatId, `${pending.name} did not send: ${why}.`)
+      return
+    }
+
+    await this.connector.sendActivity(
+      this.reference(mapped.chatId),
+      fileInfoActivity({ ...mapped.uploadInfo, name: pending.name }, `${pending.name} is in your OneDrive.`)
+    )
+  }
+
+  private rememberPendingUpload(id: string, entry: { filePath: string; name: string; sizeInBytes: number; at: number }): void {
+    const cutoff = this.now() - PENDING_UPLOAD_TTL_MS
+    for (const [key, value] of this.pendingUploads) {
+      if (value.at <= cutoff) this.pendingUploads.delete(key)
+    }
+    this.pendingUploads.set(id, entry)
+    while (this.pendingUploads.size > MAX_PENDING_UPLOADS) {
+      const oldest = this.pendingUploads.keys().next().value
+      if (oldest === undefined) break
+      this.pendingUploads.delete(oldest)
+    }
   }
 
   async answerCallback(_callbackId: string, _text?: string): Promise<void> {
@@ -409,4 +551,15 @@ function safeHostname(url: string): string {
   } catch {
     return '(unparseable url)'
   }
+}
+
+/**
+ * What the consent card says the file is. The owner sees this line next to
+ * Allow and Decline, so it should answer "what am I agreeing to", not restate
+ * the filename Teams is already showing.
+ */
+function describeFile(type: 'voice' | 'document' | 'photo', name: string): string {
+  if (type === 'voice') return 'Spoken reply from your assistant.'
+  if (type === 'photo') return `Image from your assistant, too large to show in the chat (${name}).`
+  return 'File from your assistant.'
 }

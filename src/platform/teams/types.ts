@@ -21,6 +21,8 @@ export interface Activity {
   id?: string
   replyToId?: string
   text?: string
+  /** Invoke activities are identified by name, e.g. 'fileConsent/invoke'. */
+  name?: string
   value?: unknown
   serviceUrl?: string
   channelId?: string
