@@ -320,6 +320,7 @@ Always installed, no key and no prompt: `weather`, `decision-log`, `daily-briefi
 | `notion` | Pages, databases, search via Notion API | [Notion integration token](https://www.notion.so/profile/integrations) |
 | `kanbanzone` | Generic Kanban Zone board CLI | Kanban Zone API key (Settings → API) |
 | `wordpress` | Drafts-only REST helper (no publish) | Site URL + WP Application Password |
+| `slack` | Posts and reads in Slack as the assistant's own bot, not as you. Optional, not in the setup wizard: install from `templates/skills/slack/` (steps in its SKILL.md) | A Slack app and its bot token (`xoxb-`) |
 
 ### Per-skill setup notes
 

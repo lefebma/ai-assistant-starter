@@ -1,0 +1,17 @@
+{
+  "id": "slack",
+  "name": "Slack (as your assistant)",
+  "description": "Post and read in your Slack workspace as your assistant's own bot, so messages show the assistant as the sender instead of you.",
+  "enabled": true,
+  "triggers": [
+    "slack",
+    "post in slack",
+    "message in slack",
+    "slack channel",
+    "slack dm",
+    "tell them on slack",
+    "ping them on slack"
+  ],
+  "priority": 50,
+  "context": "Slack CLI: python3 {{PROJECT_PATH}}/skills/slack/scripts/slack.py <verb>. Verbs: whoami, channels [--all], users [--query], post --channel ID|#name --text TEXT [--thread TS], dm --user U123 --text TEXT, read --channel ID [--limit N]. Token: SLACK_BOT_TOKEN (xoxb-) in {{PROJECT_PATH}}/.env. If it is not set, the skill is not configured: tell {{OWNER_NAME}} to follow skills/slack/SKILL.md (create a Slack app from the manifest, install it, put the bot token in .env) and do nothing else. Messages show as the assistant's own app, not as {{OWNER_NAME}}. Slack is outward-facing: show {{OWNER_NAME}} the exact draft and wait for approval before post or dm, unless they told you to send it. Use plain mrkdwn (*bold*, _italic_, `code`). The bot can only read and post in channels it was invited to. Never put secrets, client names or pricing in Slack."
+}

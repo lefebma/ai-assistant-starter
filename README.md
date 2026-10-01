@@ -35,6 +35,7 @@ Ships with these skills. The always-on ones need no key and no decision at setup
 | **notion** | Read/search/create pages and databases | Notion integration token |
 | **kanbanzone** | Generic Kanban Zone board CLI | Kanban Zone API key |
 | **wordpress** | Drafts-only WP REST helper (no publish) | Site URL + Application Password |
+| **slack** | Posts and reads in your Slack workspace as the assistant's own bot (its own name, not yours). Optional, installed by hand | A Slack app and its bot token, see `templates/skills/slack/SKILL.md` |
 
 Adding more is one folder away — see [Adding Skills](#adding-skills).
 

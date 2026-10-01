@@ -1,0 +1,30 @@
+{
+  "display_information": {
+    "name": "My Assistant",
+    "description": "{{OWNER_NAME}}'s AI assistant",
+    "background_color": "#0b1620"
+  },
+  "features": {
+    "bot_user": { "display_name": "My Assistant", "always_online": true }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "channels:read",
+        "channels:history",
+        "groups:read",
+        "groups:history",
+        "im:write",
+        "im:history",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
