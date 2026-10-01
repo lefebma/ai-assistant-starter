@@ -6,6 +6,7 @@ import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
 import { createBot } from './bot.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
+import { sendTextWithFiles } from './outbound-delivery.js'
 import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './workspace/service.js'
 import { initUpdateNotice, stopUpdateNotice } from './update/notice-service.js'
 import { checkForUpdate, getChangelog, restartPending } from './updater.js'
@@ -173,17 +174,9 @@ async function main(): Promise<void> {
 
   // Initialize scheduler
   if (SCHEDULER_ENABLED) {
-    initScheduler(async (chatId, text) => {
-      const formatted = adapter.formatText(text)
-      const chunks = adapter.splitMessage(formatted)
-      for (const chunk of chunks) {
-        try {
-          await adapter.sendMessage(chatId, chunk, { parseMode: 'html' })
-        } catch {
-          await adapter.sendMessage(chatId, chunk)
-        }
-      }
-    })
+    // Same [[file:]] handling as an interactive reply, so a scheduled job can
+    // attach the chart or the PDF it just produced.
+    initScheduler((chatId, text) => sendTextWithFiles(adapter, chatId, text))
     logger.info('Scheduler enabled')
   }
 

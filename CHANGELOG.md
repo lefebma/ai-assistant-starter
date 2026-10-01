@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: a scheduled job can attach a file too.** Sending a file worked on a reply to something you said and not on anything your assistant did on its own, so a briefing that built a chart or an audit that produced a PDF put the delivery marker in the chat as literal text instead of sending the file. Scheduled output now takes the same path as a live reply.
+
 ## 1.30.0 - 2026-09-30
 
 Your assistant knows how to use the browser it has, and can speak in Slack under its own name.
