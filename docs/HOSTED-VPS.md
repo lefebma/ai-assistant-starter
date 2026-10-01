@@ -422,8 +422,8 @@ the credentials blank).
 
 What works: text with Markdown, typing indicator, approval buttons (a card
 takes one answer; a second click is refused, which matters on desktop where
-the buttons stay on screen after a click), and files and images sent to the
-assistant. Replies arrive as one message rather
+the buttons stay on screen after a click), and files and images in both
+directions (see "Files into Teams" below). Replies arrive as one message rather
 than streaming in: Teams desktop renders an activity as first sent and only
 picks up later edits when the client resyncs, so a streamed reply stayed
 invisible there (mobile and web were fine) until the user quit and reopened
@@ -438,11 +438,27 @@ the edge enabled for it (`--voice`), the user sends `/voice ui` in the chat
 and gets their own expiring link. See "Voice UI" below.
 
 Note that `/voice` on its own is a different feature (spoken replies) and is
-not worth enabling on Teams: there is no bot voice bubble, so the audio comes
-back as a line of text saying where the file was saved, and turning it on
-also disables streaming. What does not, yet: the assistant replying with voice (Teams has no
-bot voice bubble), sending files back (it says where it saved them), group
-chats and channels.
+still not worth enabling on Teams: there is no bot voice bubble, so each
+spoken reply arrives as a file to accept rather than something you can just
+listen to, and turning it on also disables streaming. What does not work,
+yet: group chats and channels. The consent flow below is personal-chat only,
+which is Microsoft's limit, not ours.
+
+### Files into Teams
+
+An image under 1 MB arrives in the message, like any picture. Anything else
+(a PDF, a CSV, a screenshot too big to inline) asks first: the assistant
+sends a card with Allow and Decline, and on Allow the file goes into the
+user's own OneDrive and appears as a file card in the chat. That ask is
+Microsoft's flow for a bot writing a file, not a confirmation we added, and
+it only exists in personal chats.
+
+Clicking Allow the next morning on a card sent last night works. A card
+nobody answers expires after a day, and the assistant says so if it is
+clicked later.
+
+The app manifest carries `"supportsFiles": true`, which is what makes any of
+it available. A package built before 2026-09 already has it.
 
 ## Browser automation
 

@@ -377,9 +377,14 @@ export class TelegramAdapter implements PlatformAdapter {
     await this.bot.api.sendChatAction(Number(chatId), 'typing').catch(() => {})
   }
 
-  async sendFile(chatId: string, filePath: string, type: 'voice' | 'document'): Promise<void> {
+  async sendFile(chatId: string, filePath: string, type: 'voice' | 'document' | 'photo'): Promise<void> {
     if (type === 'voice') {
       await this.bot.api.sendVoice(Number(chatId), new InputFile(filePath))
+    } else if (type === 'photo') {
+      // sendPhoto re-encodes and caps the long edge around 1280px, which is
+      // right for a screenshot someone is going to glance at on a phone. A
+      // caller that needs the original pixels should send it as a document.
+      await this.bot.api.sendPhoto(Number(chatId), new InputFile(filePath))
     } else {
       await this.bot.api.sendDocument(Number(chatId), new InputFile(filePath))
     }

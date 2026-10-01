@@ -4,6 +4,7 @@
  * downloading and sending.
  */
 import type { IncomingMessage } from '../types.js'
+import { FILE_CONSENT_INVOKE, type FileUploadInfo } from './files.js'
 import type { Activity, ConversationReference, OutboundActivity } from './types.js'
 
 export type AttachmentDownload = { url: string; name: string; needsAuth: boolean; kind: 'photo' | 'document' | 'voice' }
@@ -12,6 +13,7 @@ export type InboundMapping =
   | { kind: 'message'; message: IncomingMessage }
   | { kind: 'attachment'; download: AttachmentDownload; base: IncomingMessage }
   | { kind: 'bot-added' }
+  | { kind: 'file-consent'; chatId: string; decision: 'accept' | 'decline'; pendingId: string | null; uploadInfo: FileUploadInfo | null }
   | { kind: 'ignore'; reason: string }
 
 const TEAMS_FILE_INFO = 'application/vnd.microsoft.teams.file.download.info'
@@ -97,11 +99,48 @@ function extensionFor(contentType: string): string {
   return sub === 'jpeg' ? 'jpg' : sub.replace(/[^a-z0-9]/gi, '')
 }
 
+/**
+ * The answer to a file consent card, as Teams sends it back.
+ *
+ * Everything here is read defensively rather than cast: this is the one
+ * inbound shape whose contents decide where a local file gets uploaded, so a
+ * missing field has to mean "do nothing", never "upload somewhere else".
+ * `uploadUrl` is the only field the upload cannot proceed without; the rest
+ * only decorate the card that follows.
+ */
+function parseFileConsent(activity: Activity): InboundMapping {
+  const ref = referenceFrom(activity)
+  if (!ref) return { kind: 'ignore', reason: 'fileConsent invoke without conversation/serviceUrl' }
+  const value = (activity.value ?? {}) as {
+    action?: unknown
+    context?: { pendingId?: unknown }
+    uploadInfo?: { name?: unknown; uploadUrl?: unknown; contentUrl?: unknown; uniqueId?: unknown; fileType?: unknown }
+  }
+  const decision = value.action === 'accept' ? 'accept' : 'decline'
+  const pendingId = typeof value.context?.pendingId === 'string' ? value.context.pendingId : null
+
+  const raw = value.uploadInfo
+  const uploadUrl = typeof raw?.uploadUrl === 'string' ? raw.uploadUrl : null
+  const uploadInfo: FileUploadInfo | null =
+    decision === 'accept' && uploadUrl
+      ? {
+          uploadUrl,
+          name: typeof raw?.name === 'string' ? raw.name : 'file',
+          contentUrl: typeof raw?.contentUrl === 'string' ? raw.contentUrl : undefined,
+          uniqueId: typeof raw?.uniqueId === 'string' ? raw.uniqueId : undefined,
+          fileType: typeof raw?.fileType === 'string' ? raw.fileType : undefined,
+        }
+      : null
+
+  return { kind: 'file-consent', chatId: ref.conversationId, decision, pendingId, uploadInfo }
+}
+
 export function mapInbound(activity: Activity, botId: string): InboundMapping {
   if (activity.type === 'conversationUpdate') {
     const added = activity.membersAdded?.some((m) => m.id === botId) ?? false
     return added ? { kind: 'bot-added' } : { kind: 'ignore', reason: 'conversationUpdate without the bot' }
   }
+  if (activity.type === 'invoke' && activity.name === FILE_CONSENT_INVOKE) return parseFileConsent(activity)
   if (activity.type !== 'message') return { kind: 'ignore', reason: `activity type ${activity.type}` }
 
   const ref = referenceFrom(activity)

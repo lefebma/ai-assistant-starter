@@ -74,8 +74,16 @@ export interface PlatformAdapter {
   /** Send typing / processing indicator */
   sendTyping(chatId: string): Promise<void>
 
-  /** Send a file (voice reply, document, etc.) */
-  sendFile(chatId: string, filePath: string, type: 'voice' | 'document'): Promise<void>
+  /**
+   * Send a file: a voice reply, a document, or an image.
+   *
+   * 'photo' is a hint, not a promise of how it arrives. Telegram puts it in a
+   * picture bubble, Teams inlines it when it is small enough and otherwise
+   * asks permission to drop it in the owner's OneDrive, and Slack uploads it
+   * either way. Callers say what the file *is* and let the adapter decide how
+   * the platform shows it.
+   */
+  sendFile(chatId: string, filePath: string, type: 'voice' | 'document' | 'photo'): Promise<void>
 
   /** Acknowledge a callback/button click */
   answerCallback(callbackId: string, text?: string): Promise<void>
