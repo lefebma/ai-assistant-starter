@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.30.0 - 2026-09-30
+
+Your assistant knows how to use the browser it has, and can speak in Slack under its own name.
 
 - **New: your assistant can post in Slack as itself.** A Slack connector that is signed in as you sends everything under your name, which is wrong when the message is the assistant's. An optional `slack` skill now ships in the templates: you create a Slack app for the assistant from a ready-made manifest, put its bot token in `.env`, and invite it to the channels it should use. Messages then show the assistant's own name and Slack's APP tag. It posts, replies in a thread, sends a DM, reads the channels it has been invited to, and looks people up. It shows you the draft and waits for a yes before anything goes out, and the script refuses any token that is not a bot token, so it can never post as a person. It is outbound only: reacting to @mentions needs a listener this skill does not have. It is not in the setup wizard yet; the steps to install it on an existing box are in `templates/skills/slack/SKILL.md`.
 
