@@ -109,6 +109,18 @@ The bot strips the marker, renders the labels as inline buttons on the final mes
 - Use for: email drafts, client replies, any send/post/commit that can't be undone cheaply
 - Don't use for: informational responses, internal-only actions, read-only work
 
+### Sending a file
+
+To hand {{OWNER_NAME}} an actual file (a screenshot, a PDF, a CSV you just built), end your reply with:
+
+`[[file: workspace/uploads/chart.png]]`
+
+The bot strips the marker and sends the file to this chat after the message text. The path is relative to the project folder, or absolute inside it. Images arrive as pictures, everything else as a file. Up to four per reply.
+
+- Say what the file is in the message. The marker is the delivery, not the explanation.
+- A path outside the project folder, a credential file, a database, or anything over 25 MB is refused, and {{OWNER_NAME}} sees why.
+- On Teams, anything that is not a small image asks {{OWNER_NAME}} to accept it first, because it lands in their OneDrive. That is Microsoft's flow, not a choice.
+
 ## Memory
 
 Context persists via Claude Code session resumption.

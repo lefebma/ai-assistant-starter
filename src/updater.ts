@@ -31,6 +31,7 @@ import {
   type InstallEnvironment,
 } from './update/plan.js'
 import { moveAside, moveInto, restoreBackup } from './update/swap.js'
+import { ensureFileMarkerSection } from './update/conventions.js'
 import { pruneBackups } from './update/backups.js'
 
 
@@ -54,6 +55,26 @@ function syncPlaywrightMcp(): void {
     }
   } catch (err) {
     logger.warn({ err }, 'Could not register browser tools; continuing update')
+  }
+}
+
+/**
+ * Teach an existing install the [[file:]] convention.
+ *
+ * CLAUDE.md is in PRESERVED_PATHS, so the template's copy of this section
+ * only ever reaches a fresh install. Without this, sending a file works on
+ * every box and the assistant on an older one has no idea it can.
+ */
+function syncReplyConventions(): void {
+  try {
+    const path = resolve(PROJECT_ROOT, 'CLAUDE.md')
+    if (!existsSync(path)) return
+    const updated = ensureFileMarkerSection(readFileSync(path, 'utf-8'))
+    if (!updated) return
+    writeFileSync(path, updated)
+    logger.info('Documented the [[file:]] marker in CLAUDE.md')
+  } catch (err) {
+    logger.warn({ err }, 'Could not document the file marker; continuing update')
   }
 }
 
@@ -332,6 +353,7 @@ async function applyBundleUpdate(
     }
 
     syncPlaywrightMcp()
+    syncReplyConventions()
 
     rmSync(tempDir, { recursive: true, force: true })
     saveCachedStatus({
@@ -432,6 +454,7 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
 
     // 6c. Register the browser tools for installs that predate them.
     syncPlaywrightMcp()
+    syncReplyConventions()
 
     // 7. Reinstall against the lockfile that came with the update. Dev
     //    dependencies included: the build step needs tsc.

@@ -23,6 +23,7 @@ import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
 import { applyReplyContext } from './prompt-safety.js'
+import { extractFileMarkers, resolveOutboundFile } from './outbound-files.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
 import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
@@ -298,8 +299,9 @@ async function handleMessage(
       }
     }
 
-    // Extract inline buttons
-    const { cleanText, labels } = extractButtons(response)
+    // Extract inline buttons and any [[file:]] the reply asked to send
+    const { cleanText: withoutButtons, labels } = extractButtons(response)
+    const { cleanText, requests: fileRequests } = extractFileMarkers(withoutButtons)
     const buttonOpts = labels.length > 0 && adapter.supportsButtons ? { buttons: labels } : {}
 
     // Format and deliver
@@ -329,6 +331,11 @@ async function handleMessage(
       }
     }
 
+    // Files after the text: the message says what the thing is, then the
+    // thing arrives. A file that cannot be sent says so on its own line
+    // rather than silently not turning up.
+    if (fileRequests.length > 0) await deliverFiles(adapter, chatId, fileRequests)
+
     // The reply carrying the offer reached the client, so it is spent. Marked
     // here rather than at the top: a turn that throws before delivery would
     // otherwise burn the one offer this install gets.
@@ -337,6 +344,36 @@ async function handleMessage(
     if (pendingEditTimer) clearTimeout(pendingEditTimer)
     clearInterval(typingInterval)
     clearLane(chatId)
+  }
+}
+
+/**
+ * Hand over the files a reply asked for.
+ *
+ * Each one is resolved independently and a refusal is reported rather than
+ * swallowed: "here is the report" with no report attached is worse than a
+ * line saying why it did not come. A send that throws (platform rejected it,
+ * network gone) gets the same treatment, because the owner is looking at the
+ * message that promised the file.
+ */
+async function deliverFiles(
+  adapter: PlatformAdapter,
+  chatId: string,
+  requests: Array<{ requested: string }>
+): Promise<void> {
+  for (const { requested } of requests) {
+    const resolved = resolveOutboundFile(requested, { projectRoot: PROJECT_ROOT, uploadsDir: UPLOADS_DIR })
+    if (!resolved.ok) {
+      logger.warn({ requested, reason: resolved.reason }, 'refused to send a file')
+      await adapter.sendMessage(chatId, `I could not send ${requested}: ${resolved.reason}.`)
+      continue
+    }
+    try {
+      await adapter.sendFile(chatId, resolved.path, resolved.kind)
+    } catch (err) {
+      logger.error({ err, path: resolved.path }, 'sending a file failed')
+      await adapter.sendMessage(chatId, `${resolved.name} did not send. It is on my machine at ${resolved.path}`)
+    }
   }
 }
 
