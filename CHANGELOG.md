@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.30.1 - 2026-10-01
+
+A file your assistant offered you is still there after it restarts.
+
 - **Fixed: a file you were offered survives a restart.** On Teams, anything larger than a small image arrives as a card asking you to accept it, and the offer only lived in memory. If the assistant updated or the machine rebooted before you clicked, the card stayed on screen but the file behind it was gone, and Allow answered "that file is no longer waiting to be sent". Offers are now kept on disk, so clicking Allow in the morning on a card from last night works.
 
 ## 1.30.0 - 2026-10-01
