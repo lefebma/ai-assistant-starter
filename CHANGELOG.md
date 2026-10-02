@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: a reply that was only a file arrived as nothing at all.** If your assistant sent a file without saying anything alongside it, the empty message was rejected by the chat platform and the error took the file down with it, so nothing turned up. The file now goes out on its own, and a message the platform refuses no longer cancels the attachment.
+- **Fixed: a scheduled job can attach a file too.** Sending a file worked on a reply to something you said and not on anything your assistant did on its own, so a briefing that built a chart or an audit that produced a PDF put the delivery marker in the chat as literal text instead of sending the file. Scheduled output now takes the same path as a live reply.
+
 ## 1.30.0 - 2026-09-30
 
 Your assistant knows how to use the browser it has, and can speak in Slack under its own name.
