@@ -42,6 +42,9 @@ import {
   hasProcessedActivity,
   initTeamsTables,
   markActivityProcessed,
+  prunePendingUploads,
+  savePendingUpload,
+  takePendingUpload,
   upsertConversation,
 } from './conversations.js'
 import type { Activity, ConversationReference, OutboundActivity, TeamsCredentials } from './types.js'
@@ -59,7 +62,8 @@ export const MAX_EDIT_STATES = 500
  * A consent card the owner never answers leaves its file waiting. Bound both
  * dimensions: how many can wait, and how long. The TTL is generous because
  * clicking Allow tomorrow morning on a card sent last night is reasonable
- * behaviour, not a mistake.
+ * behaviour, not a mistake, and the offers now survive the restart in
+ * between.
  */
 export const MAX_PENDING_UPLOADS = 50
 export const PENDING_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000
@@ -114,7 +118,6 @@ export class TeamsAdapter implements PlatformAdapter {
   private activityHandler: (() => void) | null = null
   private authFailures = { lastLoggedAt: 0, suppressed: 0 }
   private cardTexts = new Map<string, string>()
-  private pendingUploads = new Map<string, { filePath: string; name: string; sizeInBytes: number; at: number }>()
   private edits = new Map<string, { lastSentAt: number; pending?: { activityId: string; activity: OutboundActivity }; timer?: NodeJS.Timeout }>()
 
   constructor(opts: TeamsAdapterOptions) {
@@ -130,6 +133,9 @@ export class TeamsAdapter implements PlatformAdapter {
     // Tables exist from construction so processActivity works in tests that
     // never call start(); CREATE IF NOT EXISTS makes this idempotent.
     initTeamsTables()
+    // Offers outlive the process now, so a restart is the moment to drop the
+    // ones that went stale while it was down.
+    prunePendingUploads(this.pendingCutoff(), MAX_PENDING_UPLOADS)
   }
 
   // --- Lifecycle ---
@@ -359,7 +365,15 @@ export class TeamsAdapter implements PlatformAdapter {
     }
 
     const pendingId = randomUUID()
-    this.rememberPendingUpload(pendingId, { filePath, name, sizeInBytes: bytes.length, at: this.now() })
+    savePendingUpload({
+      id: pendingId,
+      chatId,
+      filePath,
+      name,
+      sizeInBytes: bytes.length,
+      createdAt: Math.floor(this.now() / 1000),
+    })
+    prunePendingUploads(this.pendingCutoff(), MAX_PENDING_UPLOADS)
     await this.connector.sendActivity(
       this.reference(chatId),
       fileConsentActivity(name, bytes.length, pendingId, describeFile(type, name))
@@ -387,8 +401,9 @@ export class TeamsAdapter implements PlatformAdapter {
       return
     }
 
-    const pending = mapped.pendingId ? this.pendingUploads.get(mapped.pendingId) : undefined
-    if (mapped.pendingId) this.pendingUploads.delete(mapped.pendingId)
+    // One statement reads and removes it, so a card clicked twice cannot
+    // produce two uploads to a single-use URL.
+    const pending = mapped.pendingId ? takePendingUpload(mapped.pendingId, mapped.chatId, this.pendingCutoff()) : null
 
     if (mapped.decision === 'decline') {
       const name = pending?.name ?? mapped.uploadInfo?.name ?? 'the file'
@@ -430,17 +445,9 @@ export class TeamsAdapter implements PlatformAdapter {
     )
   }
 
-  private rememberPendingUpload(id: string, entry: { filePath: string; name: string; sizeInBytes: number; at: number }): void {
-    const cutoff = this.now() - PENDING_UPLOAD_TTL_MS
-    for (const [key, value] of this.pendingUploads) {
-      if (value.at <= cutoff) this.pendingUploads.delete(key)
-    }
-    this.pendingUploads.set(id, entry)
-    while (this.pendingUploads.size > MAX_PENDING_UPLOADS) {
-      const oldest = this.pendingUploads.keys().next().value
-      if (oldest === undefined) break
-      this.pendingUploads.delete(oldest)
-    }
+  /** The oldest an offer may be, in unix seconds, to still be honoured. */
+  private pendingCutoff(): number {
+    return Math.floor((this.now() - PENDING_UPLOAD_TTL_MS) / 1000)
   }
 
   async answerCallback(_callbackId: string, _text?: string): Promise<void> {

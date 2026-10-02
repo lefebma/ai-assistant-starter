@@ -42,8 +42,13 @@ afterAll(async () => {
   }
 })
 
-// 5900-6090 minus fetch's blocked 6000: clear of the other HTTP suites' bands.
-let nextPort = 5900 + Math.floor(Math.random() * 9) * 10
+// 6100-6290. Not 5900: voice-link-grace.test.ts draws from that band and said
+// the same thing this comment used to, so the two collided roughly one run in
+// ten and whichever lost the race timed out waiting for a server that never
+// bound. Vitest runs these files in parallel workers, so a band is only yours
+// if no other file claims it. 6100 up is clear of fetch's blocked 6000 and of
+// the 6665-6669 IRC block.
+let nextPort = 6100 + Math.floor(Math.random() * 10) * 10
 
 async function withServer(fn: (port: number) => Promise<void>): Promise<void> {
   const { startHttpServer, stopHttpServer } = await import('../src/http-server.js')

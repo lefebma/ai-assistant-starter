@@ -29,6 +29,7 @@ const STORE = vi.hoisted(() => {
 rmSync(STORE, { recursive: true, force: true })
 
 import { TeamsAdapter, MAX_PENDING_UPLOADS, PENDING_UPLOAD_TTL_MS } from '../src/platform/teams/adapter.js'
+import { countPendingUploads } from '../src/platform/teams/conversations.js'
 import {
   FILE_CONSENT_CARD,
   FILE_INFO_CARD,
@@ -435,5 +436,100 @@ describe('files waiting on an answer', () => {
     )
     expect(uploads).toEqual([])
     expect(String(sent.at(-1)!.activity.text)).toContain('no longer waiting')
+  })
+})
+
+describe('an offer outlives the process', () => {
+  const consentAccept = (pendingId: string, chatId = CHAT): Activity =>
+    activity({
+      type: 'invoke',
+      name: 'fileConsent/invoke',
+      conversation: { id: chatId, tenantId: 't1' },
+      value: {
+        type: 'fileUpload',
+        action: 'accept',
+        context: { pendingId },
+        uploadInfo: { name: 'report.pdf', uploadUrl: UPLOAD_URL, contentUrl: 'https://contoso.sharepoint.com/x', uniqueId: 'u-1', fileType: 'pdf' },
+      },
+    })
+
+  async function offerThenRestart(): Promise<{ pendingId: string; after: ReturnType<typeof harness> }> {
+    const first = harness()
+    await connect(first.adapter)
+    const file = join(dir, 'overnight.pdf')
+    writeFileSync(file, Buffer.from('%PDF overnight'))
+    await first.adapter.sendFile(CHAT, file, 'document')
+    const att = (first.sent.at(-1)!.activity.attachments as Array<Record<string, unknown>>)[0]
+    const pendingId = (att.content as { acceptContext: { pendingId: string } }).acceptContext.pendingId
+    // A new adapter over the same store is what a restart looks like from
+    // here: the process is gone, the database is not.
+    return { pendingId, after: harness() }
+  }
+
+  it('is still there after a restart, and uploads when the owner finally clicks', async () => {
+    // The whole point: a box restarts for every update, and a consent card is
+    // exactly the kind of thing that sits unanswered overnight.
+    const { pendingId, after } = await offerThenRestart()
+
+    await after.adapter.processActivity(consentAccept(pendingId))
+
+    expect(after.uploads).toHaveLength(1)
+    expect(after.uploads[0].bytes.toString()).toBe('%PDF overnight')
+    expect(String(after.sent.at(-1)!.activity.text)).toContain('in your OneDrive')
+  })
+
+  it('still uploads only once across a restart', async () => {
+    const { pendingId, after } = await offerThenRestart()
+    await after.adapter.processActivity(consentAccept(pendingId))
+    await after.adapter.processActivity(consentAccept(pendingId))
+    expect(after.uploads).toHaveLength(1)
+  })
+
+  it('will not redeem an offer from a different conversation', async () => {
+    // The invoke is Bot Framework signed, so this is not the likeliest
+    // attack, but an offer made in one chat has no business being claimed
+    // from another, and a refused claim must not consume the offer either.
+    const { pendingId, after } = await offerThenRestart()
+    const other = 'a:2someoneelse'
+    await after.adapter.processActivity(activity({ text: 'hello', conversation: { id: other, tenantId: 't1' } }))
+
+    await after.adapter.processActivity(consentAccept(pendingId, other))
+    expect(after.uploads).toEqual([])
+
+    // The offer survived the refused claim, which is the half that is easy to
+    // get wrong: a mismatch must not consume it either.
+    await after.adapter.processActivity(consentAccept(pendingId))
+    expect(after.uploads).toHaveLength(1)
+    expect(after.uploads[0].bytes.toString()).toBe('%PDF overnight')
+  })
+
+  it('sweeps offers that went stale while the process was down', async () => {
+    let clock = 2_000_000_000_000
+    const first = harness({ now: () => clock })
+    await connect(first.adapter)
+    const file = join(dir, 'forgotten.pdf')
+    writeFileSync(file, Buffer.from('old'))
+    await first.adapter.sendFile(CHAT, file, 'document')
+    expect(countPendingUploads()).toBeGreaterThan(0)
+
+    clock += PENDING_UPLOAD_TTL_MS + 1000
+    harness({ now: () => clock }) // construction sweeps
+    expect(countPendingUploads()).toBe(0)
+  })
+
+  it('keeps the newest when more offers pile up than the cap allows', async () => {
+    const { adapter, sent } = harness()
+    await connect(adapter)
+    for (let i = 0; i < MAX_PENDING_UPLOADS + 5; i++) {
+      const file = join(dir, `bulk${i}.pdf`)
+      writeFileSync(file, Buffer.from(`file ${i}`))
+      await adapter.sendFile(CHAT, file, 'document')
+    }
+    expect(countPendingUploads()).toBe(MAX_PENDING_UPLOADS)
+    // The newest offer is the one a person is most likely to still be looking at.
+    const att = (sent.at(-1)!.activity.attachments as Array<Record<string, unknown>>)[0]
+    const newest = (att.content as { acceptContext: { pendingId: string } }).acceptContext.pendingId
+    await adapter.processActivity(consentAccept(newest))
+    expect(String(sent.at(-1)!.activity.text)).toContain('in your OneDrive')
   })
 })
