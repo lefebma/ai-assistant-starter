@@ -162,6 +162,19 @@ export function initDatabase(): void {
     ON voice_sessions(chat_id)
   `)
 
+  // Apple Shortcuts credentials (see src/shortcut-tokens.ts). One row per chat,
+  // keyed by chat so minting a new one replaces the old. Only the hash is kept:
+  // unlike a voice link this lives for months on a phone, so the database
+  // must not be a list of working keys.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS shortcut_tokens (
+      chat_id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER
+    )
+  `)
+
   // Small key/value store for one-shot install state that must outlive a
   // restart (see src/onboarding/interview-offer.ts). A table rather than a
   // marker file so it travels with store/, which updates already preserve.

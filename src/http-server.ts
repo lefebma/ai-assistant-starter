@@ -2,7 +2,7 @@ import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
 import { readEnvFile } from './env.js'
-import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, PRIMARY_CHAT_ID, PUBLIC_HOSTNAME } from './config.js'
+import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, PRIMARY_CHAT_ID, PUBLIC_HOSTNAME, SHORTCUT_WAIT_SECONDS } from './config.js'
 import {
   transcribeAudio, synthesizeSpeechAudio, voiceCapabilities,
   ttsEngine, effectiveVoice, setEffectiveVoice, isOpenAIVoice, OPENAI_VOICES,
@@ -11,7 +11,10 @@ import { resolveVoiceToken, exchangeVoiceToken } from './voice-links.js'
 import { resolveVoiceSession, sessionIdFromCookies, voiceSessionCookie } from './voice-sessions.js'
 import { runAgent } from './agent.js'
 import { createLiveSession, liveStatus, LiveSessionError } from './voice-live.js'
-import { sendPlatformMessage } from './bot.js'
+import { sendPlatformMessage, runShortcutTurn, deliverToChat, isChatAllowed } from './bot.js'
+import { isChatBusy } from './agent.js'
+import { resolveShortcutToken } from './shortcut-tokens.js'
+import { handleShortcut } from './shortcut-route.js'
 import { logger } from './logger.js'
 import { detectPlatform, type PlatformName } from './platform/index.js'
 import { getUsageSnapshot, getActivitySeries } from './cockpit/usage.js'
@@ -395,8 +398,11 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
 
     if (handedOffToChat) {
       // Voice already closed, so the real answer goes to the chat surface.
-      if (PRIMARY_CHAT_ID && text) {
-        await sendPlatformMessage(PRIMARY_CHAT_ID, text).catch((e: unknown) =>
+      // To the chat that asked. A voice link carries its chat; only the
+      // operator bearer has none, and that falls back to the primary chat.
+      const target = auth.chatId ?? PRIMARY_CHAT_ID
+      if (target && text) {
+        await sendPlatformMessage(target, text).catch((e: unknown) =>
           logger.warn({ err: e }, 'voice fallback failed'),
         )
       }
@@ -685,6 +691,26 @@ export function startHttpServer(port: number = HTTP_PORT): void {
 
     if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
       void handleChatCompletions(req, res)
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/shortcut') {
+      // Its own credential (a per-chat Shortcut key), not requireAuth: the box
+      // token and voice links are not accepted here, and this key is accepted
+      // nowhere else.
+      void handleShortcut(req, res, {
+        resolveToken: resolveShortcutToken,
+        isChatAllowed,
+        isChatBusy,
+        runTurn: runShortcutTurn,
+        deliverToChat,
+        waitMs: SHORTCUT_WAIT_SECONDS * 1000,
+      }).catch((err) => {
+        logger.error({ err }, 'shortcut request failed')
+        if (!res.headersSent) {
+          res.writeHead(500)
+          res.end()
+        }
+      })
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/transcribe') {
