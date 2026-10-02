@@ -5,12 +5,12 @@
  */
 
 import { resolve } from 'node:path'
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS } from './config.js'
 import { getSession, setSession, clearSession, getMemoriesForChat, getSessionMeta, bumpSessionMessageCount } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
@@ -24,7 +24,9 @@ import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from 
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
 import { applyReplyContext } from './prompt-safety.js'
 import { extractFileMarkers } from './outbound-files.js'
-import { deliverFiles } from './outbound-delivery.js'
+import { deliverFiles, sendTextWithFiles } from './outbound-delivery.js'
+import { mintShortcutToken, revokeShortcutToken, shortcutTokenInfo } from './shortcut-tokens.js'
+import { SHORTCUT_TEMPLATE, shortcutSetupMessage, shortcutUrl } from './shortcut-setup.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
 import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
@@ -370,6 +372,68 @@ async function handleMessage(
   }
 }
 
+// --- Apple Shortcuts ---
+
+/**
+ * Framing for a turn that arrived from a Shortcut. The answer lands in a small
+ * panel on a phone or watch, or is read aloud by Siri, so formatting that
+ * renders nicely in a chat is noise there, and a button cannot be pressed.
+ */
+export const SHORTCUT_FRAMING =
+  '[Sent from an Apple Shortcut on the owner\'s device. The reply is shown in a small panel or read aloud by Siri: ' +
+  'answer in short plain text, no Markdown, no tables, no [[buttons:]]. If something needs their approval, say so ' +
+  'and they will confirm in the chat.]'
+
+/** Whether this chat may still use the assistant. A revoked chat's Shortcut dies with it. */
+export function isChatAllowed(chatId: string): boolean {
+  return accessFor(chatId, '').allow
+}
+
+/**
+ * One turn on behalf of a Shortcut, in the chat's own session.
+ *
+ * The chat's session rather than one of its own, which is the point: ask from
+ * Siri in the car, then pick it up in the chat at your desk and the assistant
+ * knows what you were talking about. That also means it must never run beside
+ * a turn already going in that chat (two runs resuming one session corrupt
+ * it), so the caller checks isChatBusy first, and this marks the lane so a
+ * chat message arriving mid-turn sees it busy too.
+ *
+ * Returns the raw reply, markers included: what to do with buttons and files
+ * depends on whether the Shortcut is still waiting, which only the caller
+ * knows.
+ */
+export async function runShortcutTurn(chatId: string, rawText: string): Promise<string | null> {
+  markLane(chatId, 'chat')
+  try {
+    const skillIndex = buildSkillIndex()
+    const memoryContext = await contextEngine.buildContext(chatId, rawText)
+    const fullMessage = [skillIndex, memoryContext, SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
+    const sessionId = getSession(chatId) ?? undefined
+    logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
+    const { text, newSessionId } = await runAgent(fullMessage, sessionId)
+    if (newSessionId) setSession(chatId, newSessionId)
+    bumpSessionMessageCount(chatId)
+    if (text) await saveConversationTurn(chatId, rawText, text)
+    return text
+  } finally {
+    clearLane(chatId)
+  }
+}
+
+/**
+ * Put text (and any [[file:]] it carries) into a chat from outside a chat
+ * turn: the voice handoff, a Shortcut answer that outran the phone. Null
+ * until createBot has run, and callers treat that as "nowhere to send it".
+ */
+let boundAdapter: PlatformAdapter | null = null
+
+export async function deliverToChat(chatId: string, text: string): Promise<boolean> {
+  if (!boundAdapter) return false
+  await sendTextWithFiles(boundAdapter, chatId, text)
+  return true
+}
+
 // --- Command handlers ---
 
 async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
@@ -640,6 +704,60 @@ async function handleVoiceUiCommand(
     parts.push('', 'Heads up: speech-to-text is off (no OPENAI_API_KEY), so the page will only accept typed input.')
   }
   await adapter.sendMessage(chatId, parts.join('\n'))
+}
+
+/**
+ * `/shortcut` mints this chat's Apple Shortcuts key and explains how to use
+ * it. See src/shortcut-tokens.ts for why it does not expire.
+ */
+async function handleShortcutCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
+  const action = text.trim().split(/\s+/)[1]?.toLowerCase()
+  if (action === 'revoke') {
+    await adapter.sendMessage(
+      chatId,
+      revokeShortcutToken(chatId) ? 'Shortcut key revoked. Any shortcut using it stops working now.' : 'No shortcut key to revoke.'
+    )
+    return
+  }
+  if (action === 'status') {
+    const info = shortcutTokenInfo(chatId)
+    const when = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+    await adapter.sendMessage(
+      chatId,
+      info
+        ? `Shortcut key made ${when(info.createdAt)}, ${info.lastUsedAt ? `last used ${when(info.lastUsedAt)}` : 'never used yet'}.`
+        : 'No shortcut key. Send /shortcut to make one.'
+    )
+    return
+  }
+  if (action) {
+    await adapter.sendMessage(chatId, 'Usage: /shortcut (set up), /shortcut status, /shortcut revoke')
+    return
+  }
+  const target = shortcutUrl(PUBLIC_HOSTNAME, HTTP_PORT)
+  if (!target) {
+    await adapter.sendMessage(chatId, 'I could not find an address a phone could reach me on, so there is nothing to point a shortcut at yet.')
+    return
+  }
+  const token = mintShortcutToken(chatId)
+  // The file first, so "the file above" is true. A platform that cannot send
+  // it still gets a working setup: the message falls back to building it by
+  // hand.
+  let sentFile = false
+  const template = resolve(PROJECT_ROOT, SHORTCUT_TEMPLATE)
+  if (existsSync(template)) {
+    try {
+      await adapter.sendFile(chatId, template, 'document')
+      sentFile = true
+    } catch (err) {
+      logger.warn({ err }, 'could not send the shortcut file; sending by-hand steps')
+    }
+  }
+  await adapter.sendMessage(chatId, shortcutSetupMessage(target.reach, SHORTCUT_WAIT_SECONDS, sentFile))
+  await adapter.sendMessage(chatId, target.url)
+  // As code: base64url has underscores, and Teams renders every message as
+  // Markdown, so a bare key could come out italicised with characters missing.
+  await adapter.sendMessage(chatId, adapter.formatText('`Bearer ' + token + '`'), { parseMode: 'html' })
 }
 
 async function handleSkillCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
@@ -953,6 +1071,7 @@ export interface BotCore {
 }
 
 export function createBot(adapter: PlatformAdapter): BotCore {
+  boundAdapter = adapter
   // Route incoming messages to the right handler
   adapter.onMessage(async (msg: IncomingMessage) => {
     const { chatId, text, type } = msg
@@ -1140,6 +1259,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       }
       return
     }
+    if (cmd === '/shortcut') {
+      await handleShortcutCommand(adapter, chatId, trimmed)
+      return
+    }
     if (cmd === '/memory') {
       const memories = getMemoriesForChat(chatId, 10)
       if (memories.length === 0) {
@@ -1251,6 +1374,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/memory - Show stored memories',
         '/voice - Toggle voice replies',
         '/voice ui - Get your private link to the voice chat page',
+        '/shortcut - Talk to me from Siri and Apple Shortcuts (status/revoke)',
         '/schedule - Manage scheduled tasks',
         '/dashboard - Dashboard (start/stop)',
         '/browser - Chrome CDP (start/stop/status)',
@@ -1281,6 +1405,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'newchat', description: 'Clear session, start fresh' },
           { command: 'memory', description: 'Show recent stored memories' },
           { command: 'voice', description: 'Toggle voice replies' },
+          { command: 'shortcut', description: 'Use me from Siri and Apple Shortcuts' },
           { command: 'schedule', description: 'Manage scheduled tasks' },
           { command: 'dashboard', description: 'Dashboard (start/stop)' },
           { command: 'browser', description: 'Chrome CDP (start/stop/status)' },
@@ -1302,12 +1427,15 @@ export function createBot(adapter: PlatformAdapter): BotCore {
 }
 
 /**
- * Send a message via the adapter. Used by scheduler and other callers.
- * This is a convenience wrapper -- the actual adapter instance is created in index.ts.
- * For backward compatibility, this function is a no-op if no adapter is available.
+ * Send a message to a chat from outside the bot (the voice page handing an
+ * answer over to the chat).
+ *
+ * This was a stub that logged a warning and sent nothing, so every voice
+ * question that outran VOICE_HANDOFF_SECONDS was acknowledged aloud ("I'll
+ * send the details to Telegram") and then never arrived. It throws when no
+ * adapter is bound so the callers' .catch() logs the loss instead of the
+ * message vanishing quietly.
  */
 export async function sendPlatformMessage(chatId: string, text: string): Promise<void> {
-  // This function exists for backward compatibility with code that imports sendTelegramMessage.
-  // In the new architecture, the scheduler gets its sender function from index.ts directly.
-  logger.warn('sendPlatformMessage called without adapter context. Use adapter.sendMessage instead.')
+  if (!(await deliverToChat(chatId, text))) throw new Error('no platform adapter bound')
 }

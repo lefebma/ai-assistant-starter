@@ -48,6 +48,13 @@ export interface CaddyfileOptions {
    */
   voice?: boolean
   /**
+   * Expose /api/shortcut for Apple Shortcuts (default: true). The route
+   * carries its own per-chat key (src/shortcut-tokens.ts), so like the voice
+   * routes nothing secret lives here, and a box nobody has run /shortcut on
+   * answers every request with 401.
+   */
+  shortcuts?: boolean
+  /**
    * The `caddy version` string of the box this config is for, e.g. "v2.6.2".
    * It decides how request-body buffering is spelled, which is not cosmetic:
    * without buffering the retry below holds the request and then fails it.
@@ -84,13 +91,14 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
 
   const teams = options?.teams !== false
   const voice = options?.voice === true
+  const shortcuts = options?.shortcuts !== false
   const bufferStyle = bufferStyleFor(options?.caddyVersion)
 
   const lines: string[] = [
     `# Havn edge config. Written by scripts/hosted/enable-teams.ts.`,
     // Global options must come first, and only exist here to let a retried
     // webhook be re-sent with its body (see BufferStyle).
-    ...(teams && bufferStyle === 'global'
+    ...((teams || shortcuts) && bufferStyle === 'global'
       ? ['{', '\tservers {', '\t\trequest_buffers 1MB', '\t}', '}', '']
       : []),
     `${hostname} {`,
@@ -181,6 +189,24 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       '\t}',
       '\thandle @api {',
       `\t\treverse_proxy ${APP_UPSTREAM}`,
+      '\t}',
+    )
+  }
+
+  // Apple Shortcuts. Held across a restart like the webhook: a question
+  // asked from Siri that 502s is just gone, while one held for a few seconds
+  // gets answered. Buffered for the same reason the webhook is (BufferStyle):
+  // a held POST can only be re-sent if Caddy kept its body.
+  if (shortcuts) {
+    lines.push(
+      '',
+      '\t# Apple Shortcuts (the app checks the per-chat key)',
+      '\thandle /api/shortcut {',
+      `\t\treverse_proxy ${APP_UPSTREAM} {`,
+      ...(bufferStyle === 'directive' ? ['\t\t\tbuffer_requests'] : []),
+      '\t\t\tlb_try_duration 10s',
+      '\t\t\tlb_try_interval 500ms',
+      '\t\t}',
       '\t}',
     )
   }

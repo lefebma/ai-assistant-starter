@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **New: ask your assistant from Siri.** Send `/shortcut` and your assistant hands you an Apple Shortcut and a private key for it. Open the file on your iPhone, tap Add, paste the two lines it asks for, and "Hey Siri, Ask Havn" works, as do the Action Button, a home screen icon, and your watch. It answers in the same conversation as your chat, so you can ask from the car and carry on at your desk. An answer that takes more than about 20 seconds (longer than an iPhone will wait) comes to your chat instead, and so does anything with a file or something you need to approve. The key is yours alone, never expires, and `/shortcut revoke` turns it off. On a hosted box the operator re-runs `enable-teams` once to open the address.
+- **Fixed: a spoken question that took a while never got its answer.** The voice page says "I'll send the details to Telegram" when an answer is slow, and then sent nothing: the step that was meant to post it had been an empty placeholder all along. It now arrives, and in the chat that asked rather than always the owner's.
+
 ## 1.30.1 - 2026-10-01
 
 A file your assistant offered you is still there after it restarts.

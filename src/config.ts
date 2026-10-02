@@ -47,6 +47,14 @@ export const ELEVENLABS_API_KEY = getSecret('ELEVENLABS_API_KEY') ?? ''
 export const PUBLIC_HOSTNAME = env['PUBLIC_HOSTNAME']?.trim() ?? ''
 // Voice UI links double as the API credential, so the TTL is a session length,
 // not a click window.
+/**
+ * How long /api/shortcut holds the request before saying "still working" and
+ * sending the answer to the chat instead. Apple's Get Contents of URL gives up
+ * at around 25 seconds and cannot be told to wait longer, so the default stays
+ * under that; past the phone's own limit the owner sees an error rather than
+ * the handoff message. Card #152.
+ */
+export const SHORTCUT_WAIT_SECONDS = Math.max(1, parseInt(env['SHORTCUT_WAIT_SECONDS'] ?? '20', 10) || 20)
 export const VOICE_LINK_TTL_HOURS = parseInt(env['VOICE_LINK_TTL_HOURS'] ?? '12', 10) || 12
 /**
  * How long a link stays usable after the first browser opens it.
