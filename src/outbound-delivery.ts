@@ -51,11 +51,21 @@ export async function deliverFiles(
  */
 export async function sendTextWithFiles(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
   const { cleanText, requests } = extractFileMarkers(text)
-  for (const chunk of adapter.splitMessage(adapter.formatText(cleanText))) {
+  // Empty chunks are dropped rather than sent. A reply that was nothing but a
+  // marker leaves no text behind, and an empty send is not a no-op: Teams
+  // answers 400 BadSyntax, which would throw past the delivery below and lose
+  // the file the message existed to carry.
+  const chunks = adapter.splitMessage(adapter.formatText(cleanText)).filter((chunk) => chunk.trim().length > 0)
+  for (const chunk of chunks) {
     try {
       await adapter.sendMessage(chatId, chunk, { parseMode: 'html' })
-    } catch {
-      await adapter.sendMessage(chatId, chunk)
+    } catch (err) {
+      try {
+        await adapter.sendMessage(chatId, chunk)
+      } catch (plainErr) {
+        if (requests.length === 0) throw plainErr
+        logger.error({ err: plainErr, chatId }, 'sending the reply text failed; delivering the files anyway')
+      }
     }
   }
   if (requests.length > 0) await deliverFiles(adapter, chatId, requests)

@@ -305,37 +305,59 @@ async function handleMessage(
     const { cleanText, requests: fileRequests } = extractFileMarkers(withoutButtons)
     const buttonOpts = labels.length > 0 && adapter.supportsButtons ? { buttons: labels } : {}
 
-    // Format and deliver
+    // Format and deliver. Empty chunks are dropped rather than sent: a reply
+    // that was nothing but a [[file:]] marker leaves no text behind, and an
+    // empty send is not a no-op. Teams answers 400 BadSyntax ("Activity must
+    // include non empty 'text' field or at least 1 attachment"), which threw
+    // past the file delivery below and lost the very file the reply was for.
     const formatted = adapter.formatText(cleanText)
-    const chunks = adapter.splitMessage(formatted)
+    const chunks = adapter.splitMessage(formatted).filter((chunk) => chunk.trim().length > 0)
     const lastIdx = chunks.length - 1
 
-    if (previewMessageId != null) {
-      // Replace streaming preview with formatted final
-      const [first, ...rest] = chunks
-      await adapter.editMessage(chatId, previewMessageId, first, {
-        parseMode: 'html',
-        ...(lastIdx === 0 ? buttonOpts : {}),
-      })
-      for (let i = 0; i < rest.length; i++) {
-        await adapter.sendMessage(chatId, rest[i], {
+    // A text send that fails must not take the files with it. The whole
+    // point of the reply was the attachment, and the platform rejecting the
+    // prose is no reason to drop it silently.
+    try {
+      if (chunks.length === 0) {
+        // Nothing to say, something to hand over. The preview, if there is one,
+        // is holding the raw marker, so it has to be replaced by something true.
+        if (previewMessageId != null) {
+          await adapter.editMessage(chatId, previewMessageId, fileRequests.length > 1 ? 'Sending the files.' : 'Sending the file.', {
+            parseMode: 'html',
+          })
+        }
+      } else if (previewMessageId != null) {
+        // Replace streaming preview with formatted final
+        const [first, ...rest] = chunks
+        await adapter.editMessage(chatId, previewMessageId, first, {
           parseMode: 'html',
-          ...(i + 1 === lastIdx ? buttonOpts : {}),
+          ...(lastIdx === 0 ? buttonOpts : {}),
         })
+        for (let i = 0; i < rest.length; i++) {
+          await adapter.sendMessage(chatId, rest[i], {
+            parseMode: 'html',
+            ...(i + 1 === lastIdx ? buttonOpts : {}),
+          })
+        }
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          await adapter.sendMessage(chatId, chunks[i], {
+            parseMode: 'html',
+            ...(i === lastIdx ? buttonOpts : {}),
+          })
+        }
       }
-    } else {
-      for (let i = 0; i < chunks.length; i++) {
-        await adapter.sendMessage(chatId, chunks[i], {
-          parseMode: 'html',
-          ...(i === lastIdx ? buttonOpts : {}),
-        })
-      }
+
+    } catch (err) {
+      if (fileRequests.length === 0) throw err
+      logger.error({ err, chatId }, 'sending the reply text failed; delivering the files anyway')
     }
 
     // Files after the text: the message says what the thing is, then the
     // thing arrives. A file that cannot be sent says so on its own line
     // rather than silently not turning up.
     if (fileRequests.length > 0) await deliverFiles(adapter, chatId, fileRequests)
+
 
     // The reply carrying the offer reached the client, so it is spent. Marked
     // here rather than at the top: a turn that throws before delivery would

@@ -112,6 +112,38 @@ describe('a scheduled reply that carries a file', () => {
   })
 })
 
+describe('a reply that is nothing but a marker', () => {
+  it('sends no empty message, and still delivers the file', async () => {
+    // The live failure on havn-test: the assistant answered "send me the
+    // note" with the marker alone, stripping it left an empty string, and
+    // Teams answered 400 BadSyntax ("Activity must include non empty 'text'
+    // field or at least 1 attachment"). The throw landed before the file was
+    // sent, so the chat got nothing at all.
+    const { adapter, calls } = fakeAdapter()
+    await sendTextWithFiles(adapter, 'chat-1', `[[file: workspace/uploads/${NAME}]]`)
+    expect(calls).toEqual([{ kind: 'file', path: target, type: 'photo' }])
+  })
+
+  it('delivers the file even when the platform rejects the text', async () => {
+    const { adapter, calls } = fakeAdapter({
+      sendMessage: async () => {
+        throw new Error('platform rejected the text')
+      },
+    })
+    await sendTextWithFiles(adapter, 'chat-1', `Here it is.\n\n[[file: workspace/uploads/${NAME}]]`)
+    expect(calls).toEqual([{ kind: 'file', path: target, type: 'photo' }])
+  })
+
+  it('still throws when the text fails and there was no file to save', async () => {
+    const { adapter } = fakeAdapter({
+      sendMessage: async () => {
+        throw new Error('platform rejected the text')
+      },
+    })
+    await expect(sendTextWithFiles(adapter, 'chat-1', 'Just words.')).rejects.toThrow('platform rejected the text')
+  })
+})
+
 describe('deliverFiles on its own', () => {
   it('reports a send that throws, and names where the file still is', async () => {
     const { adapter, calls } = fakeAdapter({
