@@ -135,7 +135,8 @@ describe('the grace window after a link is first used', () => {
 describe('what the page is told, so it can say something true', () => {
   // 5900-6090 avoids the 5100, 5400 and 5700 bands the other HTTP suites draw
   // from. It stops short of 6000 in the draw (6000 is on fetch's blocked-port
-  // list) by using a 10-slot band.
+  // list) by using a 10-slot band. voice-live-routes.test.ts used to draw from
+  // here too; it is on 6100 now. Check both before claiming a band.
   let nextPort = 5900 + Math.floor(Math.random() * 10) * 10
 
   async function startServer(): Promise<number> {
