@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build the generic "Ask Havn" Apple Shortcut (card #152).
+Build the generic "Ask Haven" Apple Shortcut (card #152).
 
 One file serves every owner: it carries no address and no key. On import,
 Shortcuts asks two questions (paste the address, paste the key line) and
@@ -10,7 +10,7 @@ Unsigned output is not importable on iOS. Sign it on a Mac:
 
   python3 scripts/shortcuts/build-ask-shortcut.py /tmp/ask-unsigned.shortcut
   shortcuts sign --mode anyone --input /tmp/ask-unsigned.shortcut \
-    --output "templates/shortcuts/Ask Havn.shortcut"
+    --output "templates/shortcuts/Ask Haven.shortcut"
 
 Pass --address/--key to bake both in instead (for testing on this Mac with
 `shortcuts run`, never for a file that leaves the machine).

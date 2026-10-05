@@ -37,8 +37,15 @@ export function firstLanAddress(): string | null {
   return null
 }
 
-/** The signed, generic shortcut /shortcut hands over (built by scripts/shortcuts/). */
-export const SHORTCUT_TEMPLATE = join('templates', 'shortcuts', 'Ask Havn.shortcut')
+/**
+ * The signed, generic shortcut /shortcut hands over (built by scripts/shortcuts/).
+ *
+ * "Haven", not "Havn": the file name becomes the shortcut's name, and the
+ * name is what Siri has to match against what it heard. Spoken, Havn is
+ * transcribed as Haven, so a shortcut called Ask Havn never runs by voice and
+ * Siri answers the question itself instead. Found on a real iPhone, 2026-10-05.
+ */
+export const SHORTCUT_TEMPLATE = join('templates', 'shortcuts', 'Ask Haven.shortcut')
 
 /**
  * The instructions. The address and the key follow in messages of their own
@@ -52,7 +59,7 @@ export const SHORTCUT_TEMPLATE = join('templates', 'shortcuts', 'Ask Havn.shortc
  */
 export function shortcutSetupMessage(reach: 'public' | 'lan', waitSeconds: number, withFile: boolean): string {
   const byHand = [
-    'In the Shortcuts app, make a new shortcut called "Ask Havn" (that name is what you say to Siri), then add:',
+    'In the Shortcuts app, make a new shortcut called "Ask Haven" (spelled that way, it is what Siri hears), then add:',
     '1. Ask for Input. Prompt: What do you need?',
     '2. Get Contents of URL. URL: the address below. Show more: Method POST. Headers: Authorization, set to the line starting with Bearer. Request Body: JSON, with a Text field named text set to Provided Input.',
     '3. Show Result, showing Contents of URL.',
@@ -62,14 +69,14 @@ export function shortcutSetupMessage(reach: 'public' | 'lan', waitSeconds: numbe
     '',
     ...(withFile
       ? [
-          '1. On your iPhone, open the "Ask Havn" file above and tap Add Shortcut.',
+          '1. On your iPhone, open the "Ask Haven" file above and tap Add Shortcut.',
           '2. It asks two questions. First paste the key (the last message, starting with Bearer), then the address (the message starting with http).',
-          '3. Say "Hey Siri, Ask Havn".',
+          '3. Say "Hey Siri, Ask Haven" and nothing else. When it asks what you need, ask.',
           '',
           'If the file will not open, build it by hand instead.',
           ...byHand,
         ]
-      : [...byHand, '', 'Then say "Hey Siri, Ask Havn".']),
+      : [...byHand, '', 'Then say "Hey Siri, Ask Haven" and nothing else. When it asks what you need, ask.']),
     '',
     `Answers that take longer than about ${waitSeconds} seconds arrive here in the chat instead, and so do files.`,
     ...(reach === 'lan'

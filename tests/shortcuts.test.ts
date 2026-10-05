@@ -323,4 +323,14 @@ describe('/shortcut setup', () => {
     // with "bplist" and iOS refuses to import it.
     expect(bytes.subarray(0, 4).toString('latin1')).toBe('AEA1')
   })
+
+  it('is called Ask Haven, because that is what Siri hears when you say Havn', async () => {
+    const { SHORTCUT_TEMPLATE, shortcutSetupMessage } = await import('../src/shortcut-setup.js')
+    expect(SHORTCUT_TEMPLATE).toMatch(/Ask Haven\.shortcut$/)
+    for (const withFile of [true, false]) {
+      const msg = shortcutSetupMessage('public', 20, withFile)
+      expect(msg).not.toContain('Ask Havn')
+      expect(msg).toContain('Hey Siri, Ask Haven" and nothing else')
+    }
+  })
 })

@@ -1,19 +1,26 @@
 # Apple Shortcuts
 
-Ask your assistant from Siri, the Action Button, a home screen icon, the Share
-Sheet, or an Apple Watch, without installing an app. Card #152.
+Ask your assistant from Siri, the Action Button, or a home screen icon, without
+installing an app. Card #152.
 
 ## For the owner
 
 Send `/shortcut` in your chat. Four messages come back:
 
-1. a file called **Ask Havn**
+1. a file called **Ask Haven**
 2. the setup steps
 3. an address (starts with `https`, or `http` on a box with no public address)
 4. a key (starts with `Bearer hvs_`)
 
 On your iPhone, open the file and tap **Add Shortcut**. It asks two questions:
-paste the key first, then the address. Then say "Hey Siri, Ask Havn".
+paste the key first, then the address. Then say "Hey Siri, Ask Haven" and
+nothing else. It answers "What do you need?", and then you ask.
+
+- **Say only the name.** "Hey Siri, Ask Haven what is on my calendar" does not
+  run the shortcut: Siri treats the whole sentence as a question and answers it
+  itself, without your assistant.
+- **It is spelled Haven on purpose.** Siri hears "Havn" as "Haven", so a
+  shortcut named Ask Havn never matches by voice. Keep the name as it comes.
 
 - Answers that take longer than about 20 seconds come to your chat instead.
   The iPhone stops waiting at around 25 seconds and cannot be told to wait
@@ -34,8 +41,8 @@ Delete the key message from your chat once the shortcut works.
 
 ### If the file will not open
 
-Build it by hand in the Shortcuts app. Name it "Ask Havn" (that name is what
-you say to Siri), then add:
+Build it by hand in the Shortcuts app. Name it "Ask Haven" (spelled that way
+because it is what Siri hears), then add:
 
 1. **Ask for Input**. Prompt: What do you need?
 2. **Get Contents of URL**. URL: your address. Show more: Method `POST`.
@@ -97,12 +104,12 @@ and the shortcut works while the phone is on the same Wi-Fi.
 
 ### Rebuilding the shortcut file
 
-`templates/shortcuts/Ask Havn.shortcut` is generic: no address, no key. It
+`templates/shortcuts/Ask Haven.shortcut` is generic: no address, no key. It
 uses import questions to ask for both. Rebuild and re-sign on a Mac:
 
     python3 scripts/shortcuts/build-ask-shortcut.py /tmp/ask.shortcut
     shortcuts sign --mode anyone --input /tmp/ask.shortcut \
-      --output "templates/shortcuts/Ask Havn.shortcut"
+      --output "templates/shortcuts/Ask Haven.shortcut"
 
 The signature carries an Apple-issued certificate identified by an opaque
 hash, not the signer's name or Apple ID. The current one was signed
