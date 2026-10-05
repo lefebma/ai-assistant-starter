@@ -137,7 +137,9 @@ describe('what the page is told, so it can say something true', () => {
   // from. It stops short of 6000 in the draw (6000 is on fetch's blocked-port
   // list) by using a 10-slot band. voice-live-routes.test.ts used to draw from
   // here too; it is on 6100 now. Check both before claiming a band.
-  let nextPort = 5900 + Math.floor(Math.random() * 10) * 10
+  // Never 5900 itself: that is VNC, and macOS Screen Sharing holds it on any
+  // Mac with remote management on, which failed this suite one draw in ten.
+  let nextPort = 5910 + Math.floor(Math.random() * 9) * 10
 
   async function startServer(): Promise<number> {
     const { startHttpServer } = await import('../src/http-server.js')

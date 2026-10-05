@@ -156,8 +156,14 @@ describe('the edge holds a webhook across a restart', () => {
     expect(secs).toBeLessThanOrEqual(15)
   })
 
-  it('adds nothing when there is no Teams webhook to hold', () => {
-    expect(buildCaddyfile('havn.example.com', { teams: false })).not.toContain('lb_try_duration')
+  it('adds nothing when there is nothing to hold', () => {
+    expect(buildCaddyfile('havn.example.com', { teams: false, shortcuts: false })).not.toContain('lb_try_duration')
+  })
+
+  it('holds a Shortcut question across a restart too', () => {
+    const conf = buildCaddyfile('havn.example.com', { teams: false })
+    const block = conf.slice(conf.indexOf('handle /api/shortcut {'))
+    expect(block).toContain('lb_try_duration 10s')
   })
 })
 
@@ -216,9 +222,15 @@ describe('the generated config matches the binary', () => {
   })
 
   it('buffers nothing when there is no webhook to retry', () => {
-    const off = buildCaddyfile('havn.example.com', { teams: false, caddyVersion: 'v2.8.4' })
+    const off = buildCaddyfile('havn.example.com', { teams: false, shortcuts: false, caddyVersion: 'v2.8.4' })
     expect(off).not.toContain('request_buffers')
     expect(off).not.toContain('buffer_requests')
+  })
+
+  it('buffers a Shortcut question so a held one can be re-sent', () => {
+    expect(buildCaddyfile('havn.example.com', { teams: false, caddyVersion: 'v2.8.4' })).toContain('request_buffers')
+    const old = buildCaddyfile('havn.example.com', { teams: false, caddyVersion: 'v2.6.2' })
+    expect(old.slice(old.indexOf('handle /api/shortcut {'))).toContain('buffer_requests')
   })
 })
 
