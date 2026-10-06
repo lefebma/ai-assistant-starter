@@ -507,7 +507,21 @@ https://platform.openai.com/api-keys.
 **Cost.** Billed per use to your OpenAI account. Voice notes and spoken replies
 cost cents. Live conversation is about $0.05 per minute of talking, billed per
 second, plus whatever the thinking costs on your normal setup. At most two live
-calls run at once, each capped at 45 minutes.
+calls run at once, each capped at 45 minutes. A call also ends when you close
+the page, or after five minutes in which nobody speaks and nothing is being
+looked up, so a phone left in a pocket does not keep billing.
+
+**On a live call.** Spoken answers are kept to a few sentences. Anything longer,
+such as a list, a draft or figures you will want to keep, arrives in your chat
+while the assistant tells you the gist. If you hang up while it is still
+working, the answer goes to your chat. It reads back the exact words of any
+email or message before sending, and sends only after you say yes.
+
+**Past calls.** The Calls button on the live page lists your calls with their
+date and length, and opens each transcript. Delete removes a transcript; things
+the assistant remembered from the call stay in its memory. Set
+`VOICE_TRANSCRIPT_DAYS` in `.env` to delete transcripts automatically after
+that many days.
 
 **Requirements for live conversation.**
 - **Node 22.** Installs that run on your own Node need 22 or later. The

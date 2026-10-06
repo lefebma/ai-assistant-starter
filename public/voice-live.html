@@ -39,6 +39,20 @@
   .round { width:56px; height:56px; border-radius:50%; border:1px solid var(--line); background:var(--panel); font-size:13px; }
   .round:disabled { opacity:.35; cursor:default; }
   .round.on { border-color:#e0c04a; color:#e0c04a; }
+  .head-right { display:flex; gap:8px; align-items:center; }
+  .link { font-size:14px; color:var(--dim); border:1px solid var(--line); border-radius:8px; padding:6px 10px; background:var(--panel); }
+  .link:disabled { opacity:.4; cursor:default; }
+  #calls { display:none; flex:1; min-height:0; overflow-y:auto; margin:12px 0; border-top:1px solid #1a1a20; border-bottom:1px solid #1a1a20; padding:8px 2px; }
+  body.history #calls { display:block; }
+  body.history #log, body.history #status, body.history .controls { display:none; }
+  .call { display:block; width:100%; text-align:left; padding:10px 8px; border-bottom:1px solid #1a1a20; }
+  .call .t { color:var(--fg); overflow-wrap:anywhere; }
+  .call .m { color:var(--dim); font-size:13px; }
+  .detail h2 { font-size:1rem; font-weight:500; margin:6px 0 2px; }
+  .detail .m { color:var(--dim); font-size:13px; margin-bottom:10px; }
+  .detail .msg { margin-bottom:8px; }
+  .detail .bar { display:flex; justify-content:space-between; margin-bottom:6px; }
+  .danger { color:var(--danger); }
 </style>
 </head>
 <body>
@@ -48,8 +62,12 @@
       <h1 id="title">Havn</h1>
       <div class="sub">Live conversation. Talk naturally, interrupt any time. <a href="/voice">Classic voice</a></div>
     </div>
-    <select id="voice" aria-label="Voice"></select>
+    <div class="head-right">
+      <button id="history" class="link" disabled>Calls</button>
+      <select id="voice" aria-label="Voice"></select>
+    </div>
   </header>
+  <div id="calls" aria-live="polite"></div>
   <div id="log"><div class="empty" id="empty">Tap Talk to start. On a laptop, headphones stop the assistant hearing itself.</div></div>
   <div id="status"></div>
   <div class="controls">
@@ -66,7 +84,7 @@
 const $ = (id) => document.getElementById(id)
 const audio = $('audio')
 const LS_VOICE = 'havn_live_voice'
-let peer, events, mic, wakeLock, closeTimer
+let peer, events, mic, wakeLock, closeTimer, clockTimer, sessionId = '', startedAt = 0
 let ready = false, finalized = false, muted = false, connecting = false, pending = 0
 let current = { who: null, el: null, lastEnd: 0 }
 
@@ -86,7 +104,25 @@ function caption(who, delta, startMs = 0, endMs = startMs) {
   current.el.textContent += delta
   current.lastEnd = endMs
 }
-function setWorking() { status(pending > 0 ? 'Working on it…' : (ready ? 'Live' : ''), pending > 0) }
+function clock() {
+  const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0')
+}
+function setWorking() { status(pending > 0 ? 'Working on it… ' + clock() : (ready ? 'Live ' + clock() : ''), pending > 0) }
+
+// Tell the box the call is over when the page goes away, so the session stops
+// billing now rather than at the idle timeout. sendBeacon survives page unload.
+function endOnServer() {
+  if (!sessionId) return
+  const body = JSON.stringify({ sessionId })
+  sessionId = ''
+  try {
+    if (!navigator.sendBeacon?.('/api/live/end', new Blob([body], { type: 'application/json' }))) {
+      fetch('/api/live/end', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body }).catch(() => {})
+    }
+  } catch {}
+}
+window.addEventListener('pagehide', endOnServer)
 
 async function signIn() {
   const params = new URLSearchParams(location.search)
@@ -114,7 +150,7 @@ async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request(
 document.addEventListener('visibilitychange', () => { if (ready && document.visibilityState === 'visible') keepAwake() })
 
 function cleanup() {
-  clearTimeout(closeTimer)
+  clearTimeout(closeTimer); clearInterval(clockTimer)
   // Detach handlers first: closing the channel fires onclose, which would
   // replace the real error on screen with "Disconnected."
   if (events) { events.onclose = null; events.onmessage = null }
@@ -124,12 +160,13 @@ function cleanup() {
   ready = false; connecting = false; pending = 0; muted = false
   $('talk').classList.remove('live'); $('talk').textContent = 'Talk'; $('talk').disabled = false
   $('mute').disabled = true; $('mute').classList.remove('on'); $('mute').textContent = 'Mute'; $('voice').disabled = false
+  $('history').disabled = false
 }
 
 async function start() {
   connecting = true; finalized = false; pending = 0
   current = { who: null, el: null, lastEnd: 0 }
-  $('talk').disabled = true; $('voice').disabled = true; status('Connecting…', true)
+  $('talk').disabled = true; $('voice').disabled = true; $('history').disabled = true; status('Connecting…', true)
   audio.play().catch(() => {}) // iOS only allows playback started from the tap itself
   try {
     mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
@@ -142,6 +179,7 @@ async function start() {
       switch (ev.type) {
         case 'session.started':
           ready = true; connecting = false; keepAwake()
+          startedAt = Date.now(); clockTimer = setInterval(setWorking, 1000)
           $('talk').disabled = false; $('talk').classList.add('live'); $('talk').textContent = 'End'; $('mute').disabled = false
           setWorking(); break
         case 'session.input_transcript.delta': caption('user', ev.delta, ev.start_ms, ev.end_ms); break
@@ -149,11 +187,11 @@ async function start() {
         case 'session.delegation.created': pending++; setWorking(); break
         case 'session.commentary.appended': pending = Math.max(0, pending - 1); setWorking(); break
         case 'error': addMessage('system', 'Error: ' + (ev.error?.message || JSON.stringify(ev.error))); break
-        case 'session.closed': finalized = true; addMessage('system', `Call ended, ${ev.usage?.seconds ?? '?'}s`); status(''); cleanup(); break
+        case 'session.closed': finalized = true; sessionId = ''; addMessage('system', `Call ended, ${ev.usage?.seconds ?? '?'}s`); status(''); cleanup(); break
       }
     }
-    events.onclose = () => { if (!finalized) { status('Disconnected.'); cleanup() } }
-    peer.onconnectionstatechange = () => { if (['failed', 'disconnected'].includes(peer.connectionState) && !finalized) { status('Connection lost.'); cleanup() } }
+    events.onclose = () => { if (!finalized) { status('Disconnected.'); endOnServer(); cleanup() } }
+    peer.onconnectionstatechange = () => { if (['failed', 'disconnected'].includes(peer.connectionState) && !finalized) { status('Connection lost.'); endOnServer(); cleanup() } }
 
     await peer.setLocalDescription(await peer.createOffer())
     if (peer.iceGatheringState !== 'complete') {
@@ -176,6 +214,7 @@ async function start() {
     }
     if (!r.ok) throw new Error('Could not start the call (' + ((await r.json().catch(() => ({}))).error || r.status) + ').')
     const result = await r.json()
+    sessionId = result.session?.id || ''
     await peer.setRemoteDescription({ type: 'answer', sdp: result.transport.sdp })
   } catch (err) {
     status(err?.name === 'NotAllowedError' ? 'Microphone permission denied.' : String(err?.message ?? err))
@@ -190,6 +229,53 @@ function stop() {
   closeTimer = setTimeout(() => { status(''); cleanup() }, 15000)
 }
 
+// --- Past calls -------------------------------------------------------------
+function fmtWhen(ms) { return new Date(ms).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
+function fmtLen(sec) { if (sec == null) return ''; const m = Math.round(sec / 60); return sec < 60 ? sec + ' s' : m + ' min' }
+function el(tag, cls, text) { const d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d }
+
+async function showCalls() {
+  const box = $('calls'); box.replaceChildren(el('div', 'empty', 'Loading…'))
+  document.body.classList.add('history'); $('history').textContent = 'Back'
+  try {
+    const r = await fetch('/api/live/calls', { credentials: 'same-origin' })
+    if (r.status === 404) { box.replaceChildren(el('div', 'empty', 'Call history needs the operator to re-run the edge script with --voice.')); return }
+    if (!r.ok) throw new Error()
+    const { calls } = await r.json()
+    if (!calls.length) { box.replaceChildren(el('div', 'empty', 'No saved calls yet. A call is saved when it ends, if you said something.')); return }
+    box.replaceChildren(...calls.map((c) => {
+      const b = el('button', 'call'); b.append(el('div', 't', c.title), el('div', 'm', [fmtWhen(c.startedAt), fmtLen(c.seconds)].filter(Boolean).join(' · ')))
+      b.onclick = () => showCall(c.id); return b
+    }))
+  } catch { box.replaceChildren(el('div', 'empty', 'Could not load your calls. Check your connection.')) }
+}
+
+async function showCall(id) {
+  const box = $('calls'); box.replaceChildren(el('div', 'empty', 'Loading…'))
+  try {
+    const r = await fetch('/api/live/calls/' + encodeURIComponent(id), { credentials: 'same-origin' })
+    if (!r.ok) throw new Error()
+    const c = await r.json()
+    const wrap = el('div', 'detail')
+    const bar = el('div', 'bar'); const back = el('button', 'link', 'All calls'); back.onclick = showCalls
+    const del = el('button', 'link danger', 'Delete'); let armed = false
+    del.onclick = async () => {
+      if (!armed) { armed = true; del.textContent = 'Tap again to delete'; return }
+      const d = await fetch('/api/live/calls/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'same-origin' }).catch(() => null)
+      if (d?.ok) showCalls(); else del.textContent = 'Could not delete'
+    }
+    bar.append(back, del)
+    wrap.append(bar, el('h2', '', c.title), el('div', 'm', [fmtWhen(c.startedAt), fmtLen(c.seconds), c.lookups ? c.lookups + (c.lookups === 1 ? ' lookup' : ' lookups') : ''].filter(Boolean).join(' · ')))
+    for (const t of c.turns) wrap.append(el('div', 'msg ' + t.who, t.text))
+    box.replaceChildren(wrap)
+  } catch { box.replaceChildren(el('div', 'empty', 'Could not open that call.')) }
+}
+
+$('history').onclick = () => {
+  if (document.body.classList.contains('history')) { document.body.classList.remove('history'); $('history').textContent = 'Calls'; return }
+  showCalls()
+}
+
 $('talk').onclick = () => (ready ? stop() : connecting ? null : start())
 $('mute').onclick = () => {
   if (!ready) return
@@ -200,6 +286,7 @@ $('mute').onclick = () => {
 
 signIn().then((res) => {
   if (!res.ok) { status(SIGN_IN_TROUBLE[res.reason] || SIGN_IN_TROUBLE.spent); $('voice').disabled = true; return }
+  $('history').disabled = false
   const info = res.info
   if (info.assistant) { $('title').textContent = info.assistant; document.title = info.assistant + ' · Live' }
   const saved = localStorage.getItem(LS_VOICE)

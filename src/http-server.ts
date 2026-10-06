@@ -10,7 +10,8 @@ import {
 import { resolveVoiceToken, exchangeVoiceToken } from './voice-links.js'
 import { resolveVoiceSession, sessionIdFromCookies, voiceSessionCookie } from './voice-sessions.js'
 import { runAgent } from './agent.js'
-import { createLiveSession, liveStatus, LiveSessionError } from './voice-live.js'
+import { createLiveSession, liveStatus, LiveSessionError, endLiveSession, memoryChatId } from './voice-live.js'
+import { listVoiceCalls, getVoiceCall, deleteVoiceCall } from './voice-history.js'
 import { sendPlatformMessage, runShortcutTurn, deliverToChat, isChatAllowed } from './bot.js'
 import { isChatBusy } from './agent.js'
 import { resolveShortcutToken } from './shortcut-tokens.js'
@@ -246,7 +247,7 @@ async function handleLiveSession(req: IncomingMessage, res: ServerResponse): Pro
     return
   }
   try {
-    const result = await createLiveSession(payload.sdp, typeof payload.voice === 'string' ? payload.voice : undefined, auth.chatId)
+    const result = await createLiveSession(payload.sdp, typeof payload.voice === 'string' ? payload.voice : undefined, auth.chatId, deliverToChat)
     res.writeHead(201, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
     res.end(JSON.stringify(result))
   } catch (err) {
@@ -256,6 +257,51 @@ async function handleLiveSession(req: IncomingMessage, res: ServerResponse): Pro
     res.writeHead(status, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: code }))
   }
+}
+
+/**
+ * The browser is leaving a call (page closed or hidden, network lost). Sent
+ * with navigator.sendBeacon, so the body may arrive as text/plain. Closing the
+ * session stops the per-second bill instead of waiting for the idle timeout.
+ * Only the chat that opened the call can end it.
+ */
+async function handleLiveEnd(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!requireAuth(req, res)) return
+  const chat = memoryChatId(authContext(req).chatId)
+  let sessionId = ''
+  try {
+    const raw = await readBody(req)
+    if (raw.length > 4_000) throw new Error('too large')
+    const parsed = JSON.parse(raw || '{}') as { sessionId?: unknown }
+    sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
+  } catch {
+    sessionId = ''
+  }
+  const ended = sessionId ? endLiveSession(sessionId, chat) : false
+  res.writeHead(ended ? 204 : 404)
+  res.end()
+}
+
+/**
+ * Past live calls for the caller's chat: GET the list, GET one transcript,
+ * DELETE one. Scoped by the voice session's chat, so one chat never sees
+ * another's calls. The operator bearer maps to the primary chat.
+ */
+function handleLiveCalls(req: IncomingMessage, res: ServerResponse, url: URL): void {
+  if (!requireAuth(req, res)) return
+  const chat = memoryChatId(authContext(req).chatId)
+  const id = url.pathname.startsWith('/api/live/calls/') ? decodeURIComponent(url.pathname.slice('/api/live/calls/'.length)) : ''
+  const json = (status: number, body: unknown) => {
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+    res.end(JSON.stringify(body))
+  }
+  if (!id && req.method === 'GET') return json(200, { calls: listVoiceCalls(chat) })
+  if (id && req.method === 'GET') {
+    const call = getVoiceCall(chat, id)
+    return call ? json(200, call) : json(404, { error: 'not_found' })
+  }
+  if (id && req.method === 'DELETE') return deleteVoiceCall(chat, id) ? json(200, { ok: true }) : json(404, { error: 'not_found' })
+  json(405, { error: 'method_not_allowed' })
 }
 
 /**
@@ -741,6 +787,14 @@ export function startHttpServer(port: number = HTTP_PORT): void {
       if (!requireAuth(req, res)) return
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify(liveStatus()))
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/live/end') {
+      void handleLiveEnd(req, res)
+      return
+    }
+    if (url.pathname === '/api/live/calls' || url.pathname.startsWith('/api/live/calls/')) {
+      handleLiveCalls(req, res, url)
       return
     }
     if (req.method === 'GET' && (url.pathname === '/voice/live' || url.pathname === '/voice/live/')) {
