@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **New: the Siri shortcut is named after your assistant.** `/shortcut` now hands you "Ask Joy" if your assistant is called Joy, and the setup steps tell you to say "Hey Siri, Ask Joy". Before, every shortcut was called "Ask Haven" and had to be renamed by hand. The name comes from your assistant's personality file; one without a name still gets "Ask Haven".
+
 ## 1.31.0 - 2026-10-05
 
 Talk to your assistant from Siri, without installing an app.

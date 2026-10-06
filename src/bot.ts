@@ -5,7 +5,7 @@
  */
 
 import { resolve } from 'node:path'
-import { writeFileSync, existsSync } from 'node:fs'
+import { writeFileSync, existsSync, readFileSync, copyFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
@@ -26,7 +26,15 @@ import { applyReplyContext } from './prompt-safety.js'
 import { extractFileMarkers } from './outbound-files.js'
 import { deliverFiles, sendTextWithFiles } from './outbound-delivery.js'
 import { mintShortcutToken, revokeShortcutToken, shortcutTokenInfo } from './shortcut-tokens.js'
-import { SHORTCUT_TEMPLATE, describeShortcutKey, shortcutSetupMessage, shortcutUrl } from './shortcut-setup.js'
+import {
+  SHORTCUT_TEMPLATE,
+  assistantName,
+  describeShortcutKey,
+  shortcutFileName,
+  shortcutSetupMessage,
+  shortcutUrl,
+  spokenShortcutName,
+} from './shortcut-setup.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
 import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
@@ -706,6 +714,15 @@ async function handleVoiceUiCommand(
   await adapter.sendMessage(chatId, parts.join('\n'))
 }
 
+/** An owner file from the install root, or null. Never throws: a missing file just means no name. */
+function readIfExists(file: string): string | null {
+  try {
+    return readFileSync(resolve(PROJECT_ROOT, file), 'utf-8')
+  } catch {
+    return null
+  }
+}
+
 /**
  * `/shortcut` mints this chat's Apple Shortcuts key and explains how to use
  * it. See src/shortcut-tokens.ts for why it does not expire.
@@ -748,17 +765,24 @@ async function handleShortcutCommand(
   // The file first, so "the file above" is true. A platform that cannot send
   // it still gets a working setup: the message falls back to building it by
   // hand.
+  //
+  // Named after this assistant ("Ask Joy"), not the product. The iPhone takes
+  // the shortcut's name from the file name, so the template is copied under
+  // the right name rather than re-signed, which only a Mac can do.
+  const name = spokenShortcutName(assistantName(readIfExists('PERSONALITY.md'), readIfExists('CLAUDE.md')))
   let sentFile = false
   const template = resolve(PROJECT_ROOT, SHORTCUT_TEMPLATE)
   if (existsSync(template)) {
     try {
-      await adapter.sendFile(chatId, template, 'document')
+      const named = resolve(UPLOADS_DIR, shortcutFileName(name))
+      copyFileSync(template, named)
+      await adapter.sendFile(chatId, named, 'document')
       sentFile = true
     } catch (err) {
       logger.warn({ err }, 'could not send the shortcut file; sending by-hand steps')
     }
   }
-  await adapter.sendMessage(chatId, shortcutSetupMessage(target.reach, SHORTCUT_WAIT_SECONDS, sentFile))
+  await adapter.sendMessage(chatId, shortcutSetupMessage(target.reach, SHORTCUT_WAIT_SECONDS, sentFile, name))
   await adapter.sendMessage(chatId, target.url)
   // As code: base64url has underscores, and Teams renders every message as
   // Markdown, so a bare key could come out italicised with characters missing.

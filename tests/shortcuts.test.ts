@@ -403,3 +403,49 @@ describe('/shortcut status wording', () => {
     expect(whenWords(now - 20_000, now, TZ, true)).toBe('just now')
   })
 })
+
+describe('the shortcut is named after the assistant', () => {
+  const personality = (n: string) => `# Personality\n\nYour name is ${n}. You're not just an assistant, you're Marina's digital right hand.`
+
+  it('reads the name setup wrote, preferring PERSONALITY.md over the CLAUDE.md heading', async () => {
+    const { assistantName } = await import('../src/shortcut-setup.js')
+    expect(assistantName(personality('Joy'), '# Joy\n')).toBe('Joy')
+    expect(assistantName(personality('Joy'), '# Old Name\n')).toBe('Joy')
+    expect(assistantName(null, '# Nami\n\nYou are...')).toBe('Nami')
+    expect(assistantName('no name sentence here', '# Ocean Bot\n')).toBe('Ocean Bot')
+  })
+
+  it('ignores a placeholder, markup, or anything that would make a bad file name', async () => {
+    const { assistantName } = await import('../src/shortcut-setup.js')
+    expect(assistantName(personality('{{ASSISTANT_NAME}}'), '# {{ASSISTANT_NAME}}')).toBeNull()
+    expect(assistantName(personality('**Joy**'), null)).toBe('Joy')
+    expect(assistantName(personality('Joy/../../etc'), null)).toBeNull()
+    expect(assistantName(personality('A name far too long to say to Siri comfortably'), null)).toBeNull()
+    expect(assistantName(null, null)).toBeNull()
+  })
+
+  it('says Havn the way Siri hears it, and falls back to Haven', async () => {
+    const { spokenShortcutName } = await import('../src/shortcut-setup.js')
+    expect(spokenShortcutName('Joy')).toBe('Joy')
+    expect(spokenShortcutName('Havn')).toBe('Haven')
+    expect(spokenShortcutName(null)).toBe('Haven')
+  })
+
+  it('names the file, and every Siri instruction, after the assistant', async () => {
+    const { shortcutFileName, shortcutSetupMessage } = await import('../src/shortcut-setup.js')
+    expect(shortcutFileName('Joy')).toBe('Ask Joy.shortcut')
+    for (const withFile of [true, false]) {
+      const msg = shortcutSetupMessage('public', 20, withFile, 'Joy')
+      expect(msg).toContain('"Hey Siri, Ask Joy" and nothing else')
+      expect(msg).not.toContain('Haven')
+    }
+    expect(shortcutSetupMessage('public', 20, true, 'Joy')).toContain('open the "Ask Joy" file above')
+  })
+
+  it('sends a renamed copy of the signed template, not the template itself', () => {
+    const bot = readFileSync(join(__dirname, '..', 'src', 'bot.ts'), 'utf-8')
+    const fn = bot.slice(bot.indexOf('async function handleShortcutCommand(')).slice(0, 3000)
+    expect(fn).toContain('copyFileSync(template, named)')
+    expect(fn).toContain("adapter.sendFile(chatId, named, 'document')")
+  })
+})
