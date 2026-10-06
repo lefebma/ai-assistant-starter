@@ -81,6 +81,8 @@ export class SlackAdapter implements PlatformAdapter {
 
       // Use DM channel or thread for reply context
       const chatId = message.channel ?? ''
+      // A DM with the bot. Channels and multi-person DMs are not private.
+      const isPrivate = message.channel_type === 'im'
       const replyContext = await this.threadReplyContext(message)
 
       // Handle file attachments
@@ -91,6 +93,7 @@ export class SlackAdapter implements PlatformAdapter {
         await this.messageHandler?.({
           chatId,
           userId,
+          isPrivate,
           text: message.text ?? '',
           type,
           filePath: localPath,
@@ -104,6 +107,7 @@ export class SlackAdapter implements PlatformAdapter {
       await this.messageHandler?.({
         chatId,
         userId,
+        isPrivate,
         text: message.text ?? '',
         type: 'text',
         replyContext,

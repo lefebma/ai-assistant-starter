@@ -134,6 +134,7 @@ export class TelegramAdapter implements PlatformAdapter {
     this.bot.on('message:text', async (ctx) => {
       await this.messageHandler?.({
         chatId: String(ctx.chat.id),
+        isPrivate: ctx.chat.type === 'private',
         userId: String(ctx.from?.id ?? ctx.chat.id),
         text: ctx.message.text,
         type: 'text',
@@ -148,6 +149,7 @@ export class TelegramAdapter implements PlatformAdapter {
         const localPath = await downloadTelegramFile(this.token, ctx.message.voice.file_id, 'voice.ogg')
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: '',
           type: 'voice',
@@ -166,6 +168,7 @@ export class TelegramAdapter implements PlatformAdapter {
         const localPath = await downloadTelegramFile(this.token, largest.file_id)
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: ctx.message.caption ?? '',
           type: 'photo',
@@ -185,6 +188,7 @@ export class TelegramAdapter implements PlatformAdapter {
         const localPath = await downloadTelegramFile(this.token, doc.file_id, doc.file_name ?? undefined)
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: ctx.message.caption ?? '',
           type: 'document',
@@ -205,6 +209,7 @@ export class TelegramAdapter implements PlatformAdapter {
         const localPath = await downloadTelegramFile(this.token, video.file_id, video.file_name ?? undefined)
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: ctx.message.caption ?? '',
           type: 'video',
@@ -226,6 +231,7 @@ export class TelegramAdapter implements PlatformAdapter {
         const localPath = await downloadTelegramFile(this.token, audio.file_id, audio.file_name ?? undefined)
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: ctx.message.caption ?? '',
           type: 'audio',
@@ -246,6 +252,7 @@ export class TelegramAdapter implements PlatformAdapter {
         const localPath = await downloadTelegramFile(this.token, anim.file_id, anim.file_name ?? 'animation.mp4')
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: ctx.message.caption ?? '',
           type: 'animation',
@@ -269,6 +276,7 @@ export class TelegramAdapter implements PlatformAdapter {
           .join(', ')
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: '',
           type: 'sticker',
@@ -288,6 +296,7 @@ export class TelegramAdapter implements PlatformAdapter {
         const localPath = await downloadTelegramFile(this.token, note.file_id, 'video_note.mp4')
         await this.messageHandler?.({
           chatId: String(ctx.chat.id),
+          isPrivate: ctx.chat.type === 'private',
           userId: String(ctx.from?.id ?? ctx.chat.id),
           text: '',
           type: 'video_note',
@@ -304,6 +313,7 @@ export class TelegramAdapter implements PlatformAdapter {
       const data = ctx.callbackQuery.data
       await this.messageHandler?.({
         chatId: String(ctx.chat?.id ?? ''),
+        isPrivate: ctx.chat?.type === 'private',
         userId: String(ctx.from?.id ?? ''),
         text: data,
         type: 'callback',

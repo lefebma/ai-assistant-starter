@@ -58,6 +58,7 @@ describe('mapInbound', () => {
       type: 'text',
       messageId: '1724400000001',
       updateId: '1724400000001',
+      isPrivate: true,
     })
   })
 

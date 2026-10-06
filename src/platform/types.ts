@@ -33,6 +33,13 @@ export interface IncomingMessage {
   messageId?: string
   /** Raw update/event ID for replay protection */
   updateId?: string | number
+  /**
+   * True only when the platform says this is a one-to-one chat with the
+   * assistant (Telegram private chat, Slack DM, Teams personal chat). Unset
+   * means unknown, and anything handing out a credential treats unknown as a
+   * group: a key posted to a group is readable by every member.
+   */
+  isPrivate?: boolean
 }
 
 export interface SendOptions {

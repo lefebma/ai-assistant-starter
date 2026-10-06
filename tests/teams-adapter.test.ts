@@ -93,7 +93,7 @@ describe('TeamsAdapter inbound', () => {
       received.push(m)
     })
     await adapter.processActivity(inbound({ id: 'act-1', text: 'hello' }))
-    expect(received).toEqual([{ chatId: 'a:1conv', userId: 'aad-marc', text: 'hello', type: 'text', messageId: 'act-1', updateId: 'act-1' }])
+    expect(received).toEqual([{ chatId: 'a:1conv', userId: 'aad-marc', text: 'hello', type: 'text', messageId: 'act-1', updateId: 'act-1', isPrivate: false }])
     expect(getConversation('a:1conv')).toMatchObject({ serviceUrl: 'https://smba.trafficmanager.net/amer/', botId: BOT_ID, userId: 'aad-marc', tenantId: 't1' })
   })
 
