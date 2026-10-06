@@ -86,3 +86,41 @@ export function shortcutSetupMessage(reach: 'public' | 'lan', waitSeconds: numbe
     'The key lets anyone holding it talk to me as you. Do not share it, and delete it from this chat once the shortcut works. /shortcut revoke turns it off; /shortcut again replaces it.',
   ].join('\n')
 }
+
+/**
+ * `/shortcut status`, in words the owner can act on.
+ *
+ * This used to print "Shortcut key made 2026-10-06 00:38 UTC, last used
+ * 2026-10-06 00:45 UTC": the right facts in a form that made the owner do
+ * timezone arithmetic to learn whether their phone had just worked. The
+ * question behind the command is "is my shortcut working, and when did it
+ * last get through", so that is what this answers, in the owner's zone, with
+ * recent times relative.
+ */
+export function describeShortcutKey(
+  info: { createdAt: number; lastUsedAt: number | null } | null,
+  now: number,
+  timeZone: string
+): string {
+  if (!info) return 'You do not have a shortcut key. Send /shortcut to set one up.'
+  const made = `You set it up ${whenWords(info.createdAt, now, timeZone)}`
+  const used = info.lastUsedAt
+    ? `it last got through ${whenWords(info.lastUsedAt, now, timeZone, true)}`
+    : 'it has not been used yet. Try it from your phone'
+  return `Your shortcut key is active. ${made}, and ${used}.`
+}
+
+/** "just now", "7 minutes ago", "today at 8:38 PM", "yesterday at 9:05 AM", "on Oct 3 at 2:10 PM". */
+export function whenWords(at: number, now: number, timeZone: string, relativeIfRecent = false): string {
+  const minutes = Math.floor((now - at) / 60_000)
+  if (relativeIfRecent && minutes >= 0 && minutes < 60) {
+    if (minutes < 1) return 'just now'
+    return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`
+  }
+  const day = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(ms)
+  const time = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }).format(at)
+  if (day(at) === day(now)) return `today at ${time}`
+  if (day(at) === day(now - 86_400_000)) return `yesterday at ${time}`
+  const date = new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric' }).format(at)
+  return `on ${date} at ${time}`
+}
