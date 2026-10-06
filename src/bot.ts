@@ -26,7 +26,7 @@ import { applyReplyContext } from './prompt-safety.js'
 import { extractFileMarkers } from './outbound-files.js'
 import { deliverFiles, sendTextWithFiles } from './outbound-delivery.js'
 import { mintShortcutToken, revokeShortcutToken, shortcutTokenInfo } from './shortcut-tokens.js'
-import { SHORTCUT_TEMPLATE, shortcutSetupMessage, shortcutUrl } from './shortcut-setup.js'
+import { SHORTCUT_TEMPLATE, describeShortcutKey, shortcutSetupMessage, shortcutUrl } from './shortcut-setup.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
 import { computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
@@ -39,7 +39,7 @@ import { canSelfRestart } from './service/supervisor.js'
 import { requestRestart, rememberRestartNotice } from './infra/restart.js'
 import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
-import { PROJECT_ROOT } from './env.js'
+import { PROJECT_ROOT, installTimezone } from './env.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { workspaceCommand, workspaceCommandArgs } from './workspace/commands.js'
 import { defaultSyncOne, scheduleWorkspace, unscheduleWorkspace } from './workspace/service.js'
@@ -732,14 +732,7 @@ async function handleShortcutCommand(
     return
   }
   if (action === 'status') {
-    const info = shortcutTokenInfo(chatId)
-    const when = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
-    await adapter.sendMessage(
-      chatId,
-      info
-        ? `Shortcut key made ${when(info.createdAt)}, ${info.lastUsedAt ? `last used ${when(info.lastUsedAt)}` : 'never used yet'}.`
-        : 'No shortcut key. Send /shortcut to make one.'
-    )
+    await adapter.sendMessage(chatId, describeShortcutKey(shortcutTokenInfo(chatId), Date.now(), installTimezone()))
     return
   }
   if (action) {

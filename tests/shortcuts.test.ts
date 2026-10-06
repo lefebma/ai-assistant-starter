@@ -376,3 +376,30 @@ describe('shortcut keys stay out of group chats', () => {
     expect(bot).toContain('handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)')
   })
 })
+
+describe('/shortcut status wording', () => {
+  // 2026-10-06 00:45 UTC is 8:45 PM on Oct 5 in Toronto: the exact case that
+  // read as "made 2026-10-06 00:38 UTC" and made the owner do the arithmetic.
+  const TZ = 'America/Toronto'
+  const now = Date.UTC(2026, 9, 6, 0, 52)
+
+  it('answers whether it works and when it last got through, in the owner\'s time', async () => {
+    const { describeShortcutKey } = await import('../src/shortcut-setup.js')
+    const msg = describeShortcutKey({ createdAt: Date.UTC(2026, 9, 6, 0, 38), lastUsedAt: Date.UTC(2026, 9, 6, 0, 45) }, now, TZ)
+    expect(msg).toBe('Your shortcut key is active. You set it up today at 8:38 PM, and it last got through 7 minutes ago.')
+    expect(msg).not.toContain('UTC')
+  })
+
+  it('says plainly when it has never been used, or does not exist', async () => {
+    const { describeShortcutKey } = await import('../src/shortcut-setup.js')
+    expect(describeShortcutKey({ createdAt: now - 60_000, lastUsedAt: null }, now, TZ)).toContain('has not been used yet')
+    expect(describeShortcutKey(null, now, TZ)).toBe('You do not have a shortcut key. Send /shortcut to set one up.')
+  })
+
+  it('falls back to yesterday and a date for older times', async () => {
+    const { whenWords } = await import('../src/shortcut-setup.js')
+    expect(whenWords(Date.UTC(2026, 9, 4, 13, 5), now, TZ, true)).toBe('yesterday at 9:05 AM')
+    expect(whenWords(Date.UTC(2026, 9, 3, 18, 10), now, TZ)).toBe('on Oct 3 at 2:10 PM')
+    expect(whenWords(now - 20_000, now, TZ, true)).toBe('just now')
+  })
+})
