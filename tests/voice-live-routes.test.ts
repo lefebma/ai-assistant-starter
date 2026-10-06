@@ -184,6 +184,18 @@ describe('/api/live/calls and /api/live/end (#190, #193)', () => {
     })
   })
 
+  it('refuses an oversized end signal without buffering it', async () => {
+    await withServer(async (port) => {
+      const cookie = await signedInCookie(port, 'chat-live-end-big')
+      const resp = await fetch(`http://127.0.0.1:${port}/api/live/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ sessionId: 'x'.repeat(50_000) }),
+      })
+      expect(resp.status).toBe(404)
+    })
+  })
+
   it('answers 404 to an end signal for a call that is not open, without erroring', async () => {
     await withServer(async (port) => {
       const cookie = await signedInCookie(port, 'chat-live-end')

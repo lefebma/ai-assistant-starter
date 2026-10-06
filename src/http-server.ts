@@ -118,6 +118,29 @@ function readBody(req: IncomingMessage): Promise<string> {
   })
 }
 
+/**
+ * readBody with a ceiling: stops buffering and rejects once the body passes
+ * `max` bytes, instead of holding whatever a caller sends in memory first.
+ */
+export function readBodyCapped(req: IncomingMessage, max: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) {
+        req.removeAllListeners('data')
+        req.resume()
+        reject(new Error('body too large'))
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
+    req.on('error', reject)
+  })
+}
+
 /** Bare token from an `Authorization: Bearer <token>` header, or ''. */
 function bearerFrom(req: IncomingMessage): string {
   const h = req.headers.authorization ?? ''
@@ -233,9 +256,7 @@ async function handleLiveSession(req: IncomingMessage, res: ServerResponse): Pro
   const auth = authContext(req)
   let payload: { sdp?: unknown; voice?: unknown }
   try {
-    const raw = await readBody(req)
-    if (raw.length > 64_000) throw new Error('too large')
-    payload = JSON.parse(raw)
+    payload = JSON.parse(await readBodyCapped(req, 64_000))
   } catch {
     res.writeHead(400, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'invalid_json' }))
@@ -270,9 +291,7 @@ async function handleLiveEnd(req: IncomingMessage, res: ServerResponse): Promise
   const chat = memoryChatId(authContext(req).chatId)
   let sessionId = ''
   try {
-    const raw = await readBody(req)
-    if (raw.length > 4_000) throw new Error('too large')
-    const parsed = JSON.parse(raw || '{}') as { sessionId?: unknown }
+    const parsed = JSON.parse((await readBodyCapped(req, 4_000)) || '{}') as { sessionId?: unknown }
     sessionId = typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
   } catch {
     sessionId = ''
