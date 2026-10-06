@@ -710,7 +710,19 @@ async function handleVoiceUiCommand(
  * `/shortcut` mints this chat's Apple Shortcuts key and explains how to use
  * it. See src/shortcut-tokens.ts for why it does not expire.
  */
-async function handleShortcutCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
+async function handleShortcutCommand(
+  adapter: PlatformAdapter,
+  chatId: string,
+  text: string,
+  isPrivate: boolean | undefined
+): Promise<void> {
+  // Private chats only, status and revoke included. In a group the key would
+  // be posted where every member can read it and use it as that chat, and any
+  // member could replace or revoke it. Unknown counts as a group.
+  if (isPrivate !== true) {
+    await adapter.sendMessage(chatId, 'Shortcut keys are only handed out in a one-to-one chat with me. Send /shortcut there.')
+    return
+  }
   const action = text.trim().split(/\s+/)[1]?.toLowerCase()
   if (action === 'revoke') {
     await adapter.sendMessage(
@@ -1260,7 +1272,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
     if (cmd === '/shortcut') {
-      await handleShortcutCommand(adapter, chatId, trimmed)
+      await handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)
       return
     }
     if (cmd === '/memory') {

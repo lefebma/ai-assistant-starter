@@ -147,7 +147,10 @@ export function mapInbound(activity: Activity, botId: string): InboundMapping {
   if (!ref) return { kind: 'ignore', reason: 'message without conversation/serviceUrl' }
 
   const id = activity.id ?? ''
-  const common = { chatId: ref.conversationId, userId: ref.userId, messageId: id, updateId: id }
+  // Teams calls a one-to-one chat with the bot "personal"; group chats and
+  // channels are "groupChat" and "channel". Missing means unknown, not private.
+  const isPrivate = activity.conversation?.conversationType === 'personal'
+  const common = { chatId: ref.conversationId, userId: ref.userId, messageId: id, updateId: id, isPrivate }
   const text = stripMentions(activity.text ?? '')
 
   const label = buttonLabel(activity.value)

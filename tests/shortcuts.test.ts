@@ -334,3 +334,45 @@ describe('/shortcut setup', () => {
     }
   })
 })
+
+describe('shortcut keys stay out of group chats', () => {
+  const REPO = join(__dirname, '..')
+
+  it('reads a Teams personal chat as private, and a group chat, a channel or no type as not', async () => {
+    const { mapInbound } = await import('../src/platform/teams/activities.js')
+    const act = (conversationType?: string) => ({
+      type: 'message',
+      id: 'm1',
+      text: '/shortcut',
+      serviceUrl: 'https://smba.trafficmanager.net/amer/',
+      from: { id: 'u1', name: 'Owner' },
+      recipient: { id: 'bot', name: 'Bot' },
+      conversation: { id: 'c1', tenantId: 't1', ...(conversationType ? { conversationType } : {}) },
+    })
+    const priv = (t?: string) => {
+      const m = mapInbound(act(t) as never, 'bot')
+      return m.kind === 'message' ? m.message.isPrivate : 'not a message'
+    }
+    expect(priv('personal')).toBe(true)
+    expect(priv('groupChat')).toBe(false)
+    expect(priv('channel')).toBe(false)
+    expect(priv(undefined)).toBe(false)
+  })
+
+  it('marks Telegram private chats and Slack DMs, at every place a message is built', () => {
+    const tg = readFileSync(join(REPO, 'src', 'platform', 'telegram.ts'), 'utf-8')
+    const sites = (tg.match(/chatId: String\(ctx\.chat\??\.id/g) ?? []).length
+    expect(sites).toBeGreaterThan(0)
+    expect((tg.match(/isPrivate: ctx\.chat\??\.type === 'private'/g) ?? []).length).toBe(sites)
+    const slack = readFileSync(join(REPO, 'src', 'platform', 'slack.ts'), 'utf-8')
+    expect(slack).toContain("const isPrivate = message.channel_type === 'im'")
+  })
+
+  it('refuses /shortcut anywhere that is not known to be one-to-one', () => {
+    const bot = readFileSync(join(REPO, 'src', 'bot.ts'), 'utf-8')
+    const fn = bot.slice(bot.indexOf('async function handleShortcutCommand(')).slice(0, 900)
+    // Before anything else, status and revoke included: unknown is a group.
+    expect(fn).toMatch(/if \(isPrivate !== true\) \{[\s\S]*?return\s*\}\s*const action/)
+    expect(bot).toContain('handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)')
+  })
+})

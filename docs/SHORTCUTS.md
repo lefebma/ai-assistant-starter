@@ -5,7 +5,9 @@ installing an app. Card #152.
 
 ## For the owner
 
-Send `/shortcut` in your chat. Four messages come back:
+Send `/shortcut` in your one-to-one chat with your assistant. In a group chat or
+channel it refuses, because everyone there could read the key and use it. Four
+messages come back:
 
 1. a file called **Ask Haven**
 2. the setup steps
