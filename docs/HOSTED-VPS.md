@@ -555,6 +555,9 @@ development. 1.20.0 added `/api/speak`, so every box updating into it needs this
 once; the page answers in text and says it could not speak until you do.
 1.22.0 added `/api/voice-session`, which is how the page signs in: a box that
 404s it shows the voice page and then tells every user their link has expired.
+1.32.0 added `/api/live/calls` and `/api/live/end`: without them the Calls list
+says the edge needs updating, and a closed page leaves its call running until
+the five-minute idle close instead of ending it at once.
 
 **Nothing in the edge config is a credential.** Each user mints their own
 link by sending `/voice ui` in their chat; the app validates it. Links

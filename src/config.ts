@@ -86,6 +86,12 @@ export const TTS_VOICE = env['TTS_VOICE']?.trim() || 'fable'
 // real work to the assistant. Its voices are a separate set from TTS_VOICE's.
 // The page can override per browser. Uses OPENAI_API_KEY; billed per second.
 export const LIVE_VOICE = env['LIVE_VOICE']?.trim() || 'gleam'
+/**
+ * Days to keep live-call transcripts (store/voice-transcripts). 0 or unset keeps
+ * them until deleted by hand or from the call list. Pruned after every call and
+ * at startup. Memories made from a call follow the normal memory rules.
+ */
+export const VOICE_TRANSCRIPT_DAYS = Math.max(0, parseInt(env['VOICE_TRANSCRIPT_DAYS'] ?? '0', 10) || 0)
 
 // Support requests (/support). Destination inbox for drafted support emails.
 // Non-secret, so plain .env like other addresses.

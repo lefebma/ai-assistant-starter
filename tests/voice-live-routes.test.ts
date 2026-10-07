@@ -8,7 +8,7 @@
  * input validation, and at the "no key" answer.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -150,6 +150,65 @@ describe('/api/live/*', () => {
   })
 })
 
+describe('/api/live/calls and /api/live/end (#190, #193)', () => {
+  function writeCall(chat: string, id: string, said: string) {
+    const dir = join(STORE, 'voice-transcripts', chat)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, `${id}.md`), ['# Voice call', '', '- Started: 2026-10-05T14:00:00.000Z', '- Seconds: 90', '', `**User:** ${said}`, '', '**Assistant:** Done.', ''].join('\n'))
+  }
+
+  it('refuses the call list, a transcript and the end signal to an anonymous caller', async () => {
+    await withServer(async (port) => {
+      expect((await fetch(`http://127.0.0.1:${port}/api/live/calls`)).status).toBe(401)
+      expect((await fetch(`http://127.0.0.1:${port}/api/live/calls/x`)).status).toBe(401)
+      expect((await fetch(`http://127.0.0.1:${port}/api/live/end`, { method: 'POST', body: '{}' })).status).toBe(401)
+    })
+  })
+
+  it('lists, opens and deletes only the signed-in chat\'s own calls', async () => {
+    writeCall('chat-calls-mine', '2026-10-05-10-00-aaaaaa', 'What is on my calendar today?')
+    writeCall('chat-calls-other', '2026-10-05-11-00-bbbbbb', 'Something private to another chat')
+    await withServer(async (port) => {
+      const cookie = await signedInCookie(port, 'chat-calls-mine')
+      const get = (path: string, init: RequestInit = {}) => fetch(`http://127.0.0.1:${port}${path}`, { ...init, headers: { Cookie: cookie } })
+      const list = await (await get('/api/live/calls')).json()
+      expect(list.calls.map((c: { title: string }) => c.title)).toEqual(['What is on my calendar today?'])
+      expect(list.calls[0].seconds).toBe(90)
+      const one = await get('/api/live/calls/2026-10-05-10-00-aaaaaa')
+      expect(one.status).toBe(200)
+      expect((await one.json()).turns).toHaveLength(2)
+      expect((await get('/api/live/calls/2026-10-05-11-00-bbbbbb')).status).toBe(404)
+      expect((await get('/api/live/calls/2026-10-05-11-00-bbbbbb', { method: 'DELETE' })).status).toBe(404)
+      expect((await get('/api/live/calls/2026-10-05-10-00-aaaaaa', { method: 'DELETE' })).status).toBe(200)
+      expect((await (await get('/api/live/calls')).json()).calls).toEqual([])
+    })
+  })
+
+  it('refuses an oversized end signal without buffering it', async () => {
+    await withServer(async (port) => {
+      const cookie = await signedInCookie(port, 'chat-live-end-big')
+      const resp = await fetch(`http://127.0.0.1:${port}/api/live/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ sessionId: 'x'.repeat(50_000) }),
+      })
+      expect(resp.status).toBe(404)
+    })
+  })
+
+  it('answers 404 to an end signal for a call that is not open, without erroring', async () => {
+    await withServer(async (port) => {
+      const cookie = await signedInCookie(port, 'chat-live-end')
+      const resp = await fetch(`http://127.0.0.1:${port}/api/live/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain', Cookie: cookie },
+        body: JSON.stringify({ sessionId: 'sess_not_open' }),
+      })
+      expect(resp.status).toBe(404)
+    })
+  })
+})
+
 describe('the hosted edge', () => {
   it('proxies the live page and API when the voice UI is on', async () => {
     const { buildCaddyfile } = await import('../src/deploy/teams-edge.js')
@@ -157,6 +216,8 @@ describe('the hosted edge', () => {
     expect(caddy).toContain('/voice/live')
     expect(caddy).toContain('/api/live/session')
     expect(caddy).toContain('/api/live/status')
+    expect(caddy).toContain('/api/live/end')
+    expect(caddy).toContain('/api/live/calls /api/live/calls/*')
   })
 
   it('exposes none of it when the voice UI is off', async () => {

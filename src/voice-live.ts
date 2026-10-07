@@ -21,8 +21,8 @@
  * against real calendar, board, and web lookups of 19 to 34 seconds.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
-import { resolve, relative, sep } from 'node:path'
-import { OPENAI_API_KEY, LIVE_VOICE, PROJECT_ROOT, STORE_DIR, PRIMARY_CHAT_ID } from './config.js'
+import { resolve, relative } from 'node:path'
+import { OPENAI_API_KEY, LIVE_VOICE, PROJECT_ROOT, PRIMARY_CHAT_ID } from './config.js'
 import { installTimezone } from './env.js'
 import { runAgent } from './agent.js'
 import { identity } from './workspace/registry.js'
@@ -31,6 +31,7 @@ import { insertMemory } from './db.js'
 import { createDefaultEngine, type ContextEngine } from './memory/engine.js'
 import { buildSkillIndex } from './skills/index.js'
 import { logger } from './logger.js'
+import { pruneVoiceTranscripts, transcriptDirFor } from './voice-history.js'
 
 const LIVE_MODEL = 'gpt-live-1'
 const LIVE_API = 'https://api.openai.com/v1/live/sessions'
@@ -38,10 +39,18 @@ const RESULT_CHUNK_CHARS = 1500 // appends cap at 500 tokens each
 const MAX_CONCURRENT_SESSIONS = 2
 const MAX_SESSION_MS = 45 * 60_000 // billed per second; don't let a forgotten tab run all day
 const PERSONALITY_EXCERPT_CHARS = 2500
-const TRANSCRIPT_ROOT = () => resolve(STORE_DIR, 'voice-transcripts') // store/ is preserved by updates
 const RECENT_CALLS = 2
 const RECENT_CALL_CHARS = 1200
 const RECENT_CALL_MAX_AGE_DAYS = 7
+/** Longest result the voice model is handed to speak. Anything longer goes to the chat. */
+export const SPOKEN_RESULT_WORDS = 120
+/**
+ * A call nobody is on: no speech either way and no lookup running. The browser
+ * says when it leaves (POST /api/live/end), but a phone that loses signal or a
+ * killed tab cannot, and the session bills per second until something closes it.
+ */
+const IDLE_CLOSE_MS = 5 * 60_000
+const FOR_CHAT_MARKER = /^\s*FOR CHAT:\s*$/im
 
 export const LIVE_VOICES = ['gleam', 'meridian', 'vesper', 'willow', 'stone', 'ripple', 'quartz', 'beacon', 'delta', 'cinder'] as const
 
@@ -97,9 +106,38 @@ function backendPreamble(owner: string): string {
 A separate voice model is talking with them and will speak your answer aloud (paraphrased).
 Transcripts can contain recognition mistakes, unfinished phrases, and later corrections. Use the latest context.
 If a needed detail is unclear, say exactly what to ask instead of guessing.
-Return only the spoken-relevant facts: plain sentences, no markdown, no lists, no URLs, under 120 words.
+Return only the spoken-relevant facts: plain sentences, no markdown, no lists, no URLs, under ${SPOKEN_RESULT_WORDS} words.
+If the full answer does not fit in speech (a list, a draft, links, figures to keep), put the spoken summary first, then a line that says exactly FOR CHAT: and then the full details. The details are sent to ${who}'s chat, not read aloud.
 Say whether the task is complete. Never claim an external action (send, post, delete) happened unless you did it and it succeeded.
-Do not send emails or messages from a voice request unless ${who} explicitly confirmed the exact content in the conversation.`
+Do not send emails or messages from a voice request unless ${who} explicitly confirmed the exact content in the conversation. To get that confirmation, return the exact text to be sent so the voice model reads it back, and do nothing external until a later turn says yes to it.`
+}
+
+/**
+ * Split a backend result into what is spoken and what goes to the chat.
+ * The backend marks details with a FOR CHAT: line. A spoken part that is still
+ * over the word budget is cut at the last sentence that fits (or at the budget
+ * if the first sentence alone is too long), and the whole result goes to chat.
+ */
+export function splitResult(text: string, maxWords: number = SPOKEN_RESULT_WORDS): { spoken: string; forChat: string | null } {
+  const marker = text.match(FOR_CHAT_MARKER)
+  let spoken = (marker ? text.slice(0, marker.index) : text).trim()
+  const details = marker ? text.slice(marker.index! + marker[0].length).trim() : ''
+  let forChat: string | null = details ? details : null
+  const words = spoken.split(/\s+/).filter(Boolean)
+  if (words.length > maxWords) {
+    const sentences = spoken.match(/[^.!?]+[.!?]+(\s+|$)|[^.!?]+$/g) ?? [spoken]
+    let kept = ''
+    for (const sentence of sentences) {
+      const next = kept + sentence
+      if (next.split(/\s+/).filter(Boolean).length > maxWords) break
+      kept = next
+    }
+    const full = details ? `${spoken}\n\n${details}` : spoken
+    spoken = kept.trim() || words.slice(0, maxWords).join(' ') + '...'
+    forChat = full
+  }
+  if (!spoken && forChat) spoken = 'The answer is in your chat.'
+  return { spoken, forChat }
 }
 
 type LiveEvent = { type: string; [k: string]: any }
@@ -123,10 +161,15 @@ export interface Turn {
  * Transcript + delegation handling, independent of the transport so it can be
  * unit-tested with a fake send and backend.
  */
-export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log?: Log; settleMs?: number; cancelWaitMs?: number; preamble?: string }) {
+/** Posts text to the chat that owns the call. Resolves false when it could not. */
+export type DeliverToChat = (text: string) => Promise<boolean>
+
+export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log?: Log; settleMs?: number; cancelWaitMs?: number; preamble?: string; deliver?: DeliverToChat; spokenWords?: number }) {
   // cancelWaitMs: how long a new request waits for the runs it cancelled to
   // wind down, so two Claude subprocesses don't resume the same session at once.
-  const { send, runBackend, log = () => {}, settleMs = 700, cancelWaitMs = 3000, preamble = backendPreamble('') } = opts
+  const { send, runBackend, log = () => {}, settleMs = 700, cancelWaitMs = 3000, preamble = backendPreamble(''), deliver, spokenWords = SPOKEN_RESULT_WORDS } = opts
+  let ended = false
+  let lastActivity = Date.now()
   const turns: Turn[] = []
   let deliveredThrough = 0
   let latestRev = 0
@@ -137,6 +180,7 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
   const nextId = (p: string) => `${p}_${Date.now()}_${++seq}`
 
   function appendTranscript(who: Turn['who'], delta: string, start_ms = 0, end_ms = start_ms) {
+    lastActivity = Date.now()
     const last = turns[turns.length - 1]
     // Same speaker within 1.5s of session timeline is the same turn.
     if (last && last.who === who && start_ms - last.end_ms < 1500) {
@@ -176,9 +220,10 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
     }
     inflight.set(delegationId, { controller, done })
 
-    const finish = (result: string | null) => {
+    const finish = async (result: string | null) => {
       const ms = Date.now() - startedAt
       inflight.delete(delegationId)
+      lastActivity = Date.now()
       markDone()
       const superseded = rev !== latestRev || controller.signal.aborted
       metrics.push({ delegationId, ms, superseded, cancelled: controller.signal.aborted })
@@ -188,8 +233,22 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
         log('delegation superseded', { delegationId, ms, cancelled: controller.signal.aborted })
         return
       }
-      log('delegation done', { delegationId, ms, chars: result.length })
-      sendChunks('session.commentary.append', delegationId, result)
+      if (ended) {
+        // The caller hung up while this ran. The work happened, so the answer
+        // goes to the chat instead of nowhere.
+        const sent = deliver ? await deliver(`From your call:\n\n${result.replace(FOR_CHAT_MARKER, '').trim()}`).catch(() => false) : false
+        log('delegation done after call ended', { delegationId, ms, deliveredToChat: sent })
+        return
+      }
+      const { spoken, forChat } = splitResult(result, spokenWords)
+      let toSpeak = spoken
+      if (forChat) {
+        const sent = deliver ? await deliver(forChat).catch(() => false) : false
+        // Could not reach the chat: speak everything rather than lose it.
+        toSpeak = sent ? `${spoken}\n\n(The full details were sent to the user's chat.)` : result.replace(FOR_CHAT_MARKER, '').trim()
+      }
+      log('delegation done', { delegationId, ms, chars: result.length, spokenChars: toSpeak.length, toChat: !!forChat })
+      sendChunks('session.commentary.append', delegationId, toSpeak)
     }
 
     // The delegation event can land before the tail of the utterance is
@@ -226,6 +285,7 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
     })
 
     let result: string | null
+    lastActivity = Date.now()
     try {
       const text = await runBackend(prompt, controller.signal)
       result = controller.signal.aborted ? null : text.trim() || 'The backend returned nothing.'
@@ -237,7 +297,7 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
         result = 'The backend hit an error and could not finish that request.'
       }
     }
-    finish(result)
+    await finish(result)
   }
 
   return {
@@ -250,6 +310,7 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
           appendTranscript('assistant', String(event.delta ?? ''), event.start_ms, event.end_ms)
           break
         case 'session.delegation.created':
+          lastActivity = Date.now()
           if (event.delegation?.target === 'client' && event.delegation.id) {
             return handleDelegation(String(event.delegation.id))
           }
@@ -272,6 +333,10 @@ export function createLiveBridge(opts: { send: Send; runBackend: RunBackend; log
     turns: () => turns.map((t) => ({ ...t, text: t.text.trim() })).filter((t) => t.text),
     metrics: () => metrics.slice(),
     busy: () => inflight.size > 0,
+    /** The call is over: results still running go to the chat. */
+    end: () => { ended = true },
+    /** Nobody speaking and nothing running for at least `ms`. */
+    idleFor: (ms: number, now: number = Date.now()) => inflight.size === 0 && now - lastActivity >= ms,
   }
 }
 
@@ -285,19 +350,7 @@ export function memoryChatId(chatId: string | null | undefined): string {
   return chatId || PRIMARY_CHAT_ID || 'voice'
 }
 
-/**
- * One directory per chat. Chat ids come from platforms (Teams ids carry ':',
- * '@' and '.'), so map everything but letters, digits, '_' and '-' to '_'.
- * Dots go too: a chat id of '..' must never resolve outside the transcript
- * root. The containment check is the backstop if the mapping ever changes.
- */
-export function transcriptDirFor(chatId: string, root: string = TRANSCRIPT_ROOT()): string {
-  const safe = chatId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'voice'
-  const base = resolve(root)
-  const dir = resolve(base, safe)
-  if (!dir.startsWith(base + sep)) throw new Error('voice transcript path escaped its root')
-  return dir
-}
+export { transcriptDirFor } from './voice-history.js'
 
 export interface VoiceCallRecord {
   sessionId: string
@@ -351,6 +404,8 @@ export async function saveVoiceCall(call: VoiceCallRecord, deps: VoiceCallDeps =
   writeFile(path, [
     `# Voice call, ${when}`,
     '',
+    `- Started: ${call.startedAt.toISOString()}`,
+    `- Seconds: ${call.billedSeconds ?? Math.max(1, Math.round((call.endedAt.getTime() - call.startedAt.getTime()) / 1000))}`,
     `- Duration: ~${minutes} min${call.billedSeconds ? ` (${call.billedSeconds}s billed)` : ''}`,
     `- ${lookups[0].toUpperCase()}${lookups.slice(1)}`,
     `- Session: ${call.sessionId}`,
@@ -440,7 +495,19 @@ export function createAssistantBackend(chatId: string = memoryChatId(null)): Run
   }
 }
 
-const activeSessions = new Map<string, { close: () => void }>()
+const activeSessions = new Map<string, { close: () => void; chatId: string }>()
+
+/**
+ * End a call the browser is leaving (tab closed, page hidden for good, network
+ * gone). Only the chat that opened the call can end it. True when it was open.
+ */
+export function endLiveSession(sessionId: string, chatId: string): boolean {
+  const entry = activeSessions.get(sessionId)
+  if (!entry || entry.chatId !== chatId) return false
+  logger.info({ sessionId }, 'live session ended by the browser')
+  entry.close()
+  return true
+}
 
 /**
  * The sideband needs a WebSocket client with custom headers. Node 22 has one
@@ -466,7 +533,7 @@ export class LiveSessionError extends Error {
  * Exchange a browser SDP offer for an answer, then attach the sideband that
  * runs delegation. Returns OpenAI's JSON ({session:{id}, transport:{sdp}}).
  */
-export async function createLiveSession(sdp: string, voice?: string, chatId?: string | null): Promise<unknown> {
+export async function createLiveSession(sdp: string, voice?: string, chatId?: string | null, deliver?: (chatId: string, text: string) => Promise<boolean>): Promise<unknown> {
   if (!OPENAI_API_KEY) throw new LiveSessionError(503, 'openai_not_configured')
   if (!liveRuntimeSupported()) throw new LiveSessionError(503, 'node_22_required')
   if (activeSessions.size >= MAX_CONCURRENT_SESSIONS) throw new LiveSessionError(429, 'too_many_sessions')
@@ -502,11 +569,11 @@ export async function createLiveSession(sdp: string, voice?: string, chatId?: st
   const sessionId = result.session?.id
   if (!sessionId) throw new LiveSessionError(502, 'no_session_id')
   logger.info({ sessionId, voice: chosenVoice, chatId, recentCalls: !!recent }, 'live session created')
-  attachSideband(sessionId, backendPreamble(who.owner), chat)
+  attachSideband(sessionId, backendPreamble(who.owner), chat, deliver)
   return result
 }
 
-function attachSideband(sessionId: string, preamble: string, chatId: string): void {
+function attachSideband(sessionId: string, preamble: string, chatId: string, deliver?: (chatId: string, text: string) => Promise<boolean>): void {
   const ws = new WebSocket(`${LIVE_API.replace('https://', 'wss://')}/${encodeURIComponent(sessionId)}/attach`, {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
   } as any)
@@ -517,11 +584,13 @@ function attachSideband(sessionId: string, preamble: string, chatId: string): vo
     send,
     runBackend: createAssistantBackend(chatId),
     preamble,
+    // 'voice' is the no-chat fallback (no primary chat configured): nowhere to send.
+    deliver: deliver && chatId !== 'voice' ? (text) => deliver(chatId, text) : undefined,
     log: (msg, extra) => logger.info({ sessionId, ...extra }, `live: ${msg}`),
   })
 
   const close = () => send({ type: 'session.close' })
-  activeSessions.set(sessionId, { close })
+  activeSessions.set(sessionId, { close, chatId })
   const startedAt = new Date()
   let persisted = false
   // Once, on session.closed or on a sideband that dropped before getting there.
@@ -529,13 +598,22 @@ function attachSideband(sessionId: string, preamble: string, chatId: string): vo
     if (persisted) return
     persisted = true
     saveVoiceCall({ sessionId, chatId, startedAt, endedAt: new Date(), turns: bridge.turns(), delegations: bridge.metrics().length, billedSeconds })
-      .then((path) => path && logger.info({ sessionId, path }, 'live call saved to memory'))
+      .then((path) => {
+        if (path) logger.info({ sessionId, path }, 'live call saved to memory')
+        pruneVoiceTranscripts()
+      })
       .catch((err) => logger.error({ err, sessionId }, 'live call save failed'))
   }
   const maxTimer = setTimeout(() => {
     logger.warn({ sessionId }, 'live session hit max duration, closing')
     close()
   }, MAX_SESSION_MS)
+  const idleTimer = setInterval(() => {
+    if (!bridge.idleFor(IDLE_CLOSE_MS)) return
+    logger.warn({ sessionId }, 'live session idle, closing')
+    close()
+  }, 30_000)
+  idleTimer.unref?.()
 
   ws.addEventListener('open', () => {
     logger.info({ sessionId }, 'live sideband attached')
@@ -551,14 +629,17 @@ function attachSideband(sessionId: string, preamble: string, chatId: string): vo
     if (event.type.endsWith('audio.delta')) return
     void bridge.onEvent(event)
     if (event.type === 'session.closed') {
+      bridge.end()
       logger.info({ sessionId, usage: event.usage, delegations: bridge.metrics() }, 'live session closed')
       persist(typeof event.usage?.seconds === 'number' ? event.usage.seconds : undefined)
       ws.close()
     }
   })
   ws.addEventListener('close', () => {
+    bridge.end()
     persist()
     clearTimeout(maxTimer)
+    clearInterval(idleTimer)
     activeSessions.delete(sessionId)
     logger.info({ sessionId }, 'live sideband closed')
   })

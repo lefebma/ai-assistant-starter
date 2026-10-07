@@ -11,6 +11,7 @@ import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './wo
 import { initUpdateNotice, stopUpdateNotice } from './update/notice-service.js'
 import { checkForUpdate, getChangelog, restartPending } from './updater.js'
 import { startHttpServer, stopHttpServer } from './http-server.js'
+import { pruneVoiceTranscripts } from './voice-history.js'
 import { stopChrome, isCdpAvailable } from './browser.js'
 import { runBestEffortCleanup, withTimeout } from './infra/cleanup.js'
 import { createAdapter, detectPlatform } from './platform/index.js'
@@ -251,6 +252,11 @@ async function main(): Promise<void> {
 
   // Start HTTP server (voice / custom-LLM endpoint)
   startHttpServer()
+  try {
+    pruneVoiceTranscripts()
+  } catch (err) {
+    logger.warn({ err }, 'voice transcript prune failed')
+  }
 
   // Polling watchdog: exit for restart once the poller goes quiet.
   // Only for polling-based platforms. Socket-based ones reconnect internally.

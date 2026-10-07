@@ -185,7 +185,7 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       // Exact-match paths, so /api/voice-session has to be listed even though
       // /api/voice is here: a box that 404s the exchange serves a voice page
       // that can never sign in, and it works perfectly on localhost.
-      '\t\tpath /v1/* /chat/* /api/transcribe /api/speak /api/voices /api/voice /api/voice-session /api/live/session /api/live/status',
+      '\t\tpath /v1/* /chat/* /api/transcribe /api/speak /api/voices /api/voice /api/voice-session /api/live/session /api/live/status /api/live/end /api/live/calls /api/live/calls/*',
       '\t}',
       '\thandle @api {',
       `\t\treverse_proxy ${APP_UPSTREAM}`,
