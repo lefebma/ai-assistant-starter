@@ -10,7 +10,8 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD } from './config.js'
+import { readGuardLog, formatGuardReport, guardLogPath, parseGuardMode } from './assurance/tool-guard.js'
 import { getSession, setSession, clearSession, getMemoriesForChat, getSessionMeta, bumpSessionMessageCount } from './db.js'
 import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
@@ -1292,6 +1293,18 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)
       return
     }
+    if (cmd === '/guard') {
+      // The owner's view of the tool guard log (card #194). Commands in it are
+      // redacted, but they are still the assistant's work, so primary chat only.
+      if (!isPrimaryChat(chatId)) {
+        await adapter.sendMessage(chatId, 'The tool guard report is only available in the owner\'s chat.')
+        return
+      }
+      const days = Math.min(90, Math.max(1, parseInt(trimmed.split(/\s+/)[2] ?? '7', 10) || 7))
+      const entries = readGuardLog(guardLogPath(STORE_DIR), Date.now() - days * 86_400_000)
+      await adapter.sendMessage(chatId, formatGuardReport(entries, parseGuardMode(TOOL_GUARD), days))
+      return
+    }
     if (cmd === '/memory') {
       const memories = getMemoriesForChat(chatId, 10)
       if (memories.length === 0) {
@@ -1405,6 +1418,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/voice ui - Get your private link to the voice chat page',
         '/shortcut - Talk to me from Siri and Apple Shortcuts (status/revoke)',
         '/schedule - Manage scheduled tasks',
+        '/guard report [days] - What the tool guard caught (or would have)',
         '/dashboard - Dashboard (start/stop)',
         '/browser - Chrome CDP (start/stop/status)',
         '/steer - Inject mid-run steering message',

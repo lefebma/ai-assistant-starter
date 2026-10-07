@@ -37,6 +37,14 @@ describe('redactSensitive', () => {
     expect(out).toContain('Authorization')
   })
 
+  it('strips an opaque token after "Authorization: Bearer", not just the word Bearer', () => {
+    // The JWT case above is also caught by the JWT shape rule; an opaque token
+    // is not, and used to survive because the key=value rule ran first.
+    const out = redactSensitive('curl -H "Authorization: Bearer abcdefghijklmnop1234" https://x.example')
+    expect(out).not.toContain('abcdefghijklmnop1234')
+    expect(out).toContain('Authorization')
+  })
+
   it('strips well-known token shapes even without a key= prefix', () => {
     // Token shapes are assembled at runtime so secret scanners (GitHub push
     // protection, and any user's own scanning on forks) never match these
