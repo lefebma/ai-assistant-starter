@@ -54,6 +54,12 @@ export const PUBLIC_HOSTNAME = env['PUBLIC_HOSTNAME']?.trim() ?? ''
  * under that; past the phone's own limit the owner sees an error rather than
  * the handoff message. Card #152.
  */
+/**
+ * Tool guard (card #194): every shell and file tool call is checked against the
+ * evasion monitor's rules. log (default) records would-be blocks and lets the
+ * call run; enforce refuses it; off skips the check. See src/assurance/tool-guard.ts.
+ */
+export const TOOL_GUARD = env['TOOL_GUARD']?.trim() || 'log'
 export const SHORTCUT_WAIT_SECONDS = Math.max(1, parseInt(env['SHORTCUT_WAIT_SECONDS'] ?? '20', 10) || 20)
 export const VOICE_LINK_TTL_HOURS = parseInt(env['VOICE_LINK_TTL_HOURS'] ?? '12', 10) || 12
 /**

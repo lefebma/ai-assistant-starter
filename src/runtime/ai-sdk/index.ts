@@ -18,7 +18,8 @@
  */
 import { ToolLoopAgent, stepCountIs, tool, type LanguageModel, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { PROJECT_ROOT } from '../../config.js'
+import { PROJECT_ROOT, STORE_DIR, TOOL_GUARD } from '../../config.js'
+import { getToolGuard, parseGuardMode } from '../../assurance/tool-guard.js'
 import { logger } from '../../logger.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime } from '../types.js'
 import { cachedSystem, historyMaxBytes, reconcileHistory, trimHistory, withCacheBreakpoint } from './history.js'
@@ -91,6 +92,38 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     return this.mcpToolsPromise
   }
 
+  /**
+   * Run every tool through the tool guard first (card #194). A refused call
+   * returns the reason as the tool's result, so the model sees why and what to
+   * do instead. The guard fails open.
+   */
+  private withGuard(tools: ToolSet, session: string): ToolSet {
+    const guard = getToolGuard(parseGuardMode(TOOL_GUARD), STORE_DIR)
+    if (guard.mode === 'off') return tools
+    return Object.fromEntries(
+      Object.entries(tools).map(([name, t]) => {
+        const execute = (t as { execute?: (input: unknown, opts: unknown) => Promise<unknown> }).execute
+        if (!execute) return [name, t]
+        return [
+          name,
+          {
+            ...t,
+            execute: async (input: unknown, opts: unknown) => {
+              try {
+                const v = guard.check({ session, tool: name, input })
+                if (v.entry) logger.warn({ tool: name, rule: v.entry.rule, enforced: v.entry.enforced }, 'tool guard hit')
+                if (!v.allow) return v.reason
+              } catch (err) {
+                logger.warn({ err: String(err) }, 'tool guard failed open')
+              }
+              return execute(input, opts)
+            },
+          },
+        ]
+      })
+    ) as ToolSet
+  }
+
   /** Wrap tool executes so MCP tools also fire onToolProgress. */
   private withProgress(tools: ToolSet, notify?: (toolName: string, status: string) => void): ToolSet {
     if (!notify) return tools
@@ -148,18 +181,18 @@ export class AiSdkAgentRuntime implements AgentRuntime {
   private async buildAgent(
     cwd: string,
     onToolProgress?: (toolName: string, status: string) => void,
-    opts: { subagents?: boolean } = {}
+    opts: { subagents?: boolean; guardSession?: string } = {}
   ) {
     const { model, provider, modelId } = this.modelOverride
       ? { model: this.modelOverride, provider: 'override', modelId: 'override' }
       : resolveModel()
     this.lastResolved = { provider, modelId }
     const mcpTools = this.withProgress(await this.getMcpTools(), onToolProgress)
-    const tools: ToolSet = {
+    const tools: ToolSet = this.withGuard({
       ...createTools(cwd, onToolProgress),
       ...mcpTools,
       ...(opts.subagents ? { dispatch_subagent: this.buildSubagentTool(cwd, onToolProgress) } : {}),
-    }
+    }, opts.guardSession ?? `ai-sdk:${cwd}`)
     logger.info({ provider, modelId, cwd, toolCount: Object.keys(tools).length }, 'AI SDK agent configured')
     return new ToolLoopAgent({
       model,
@@ -232,7 +265,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
         try {
           logger.info({ attempt, sessionId, historyLength: history.length }, 'Starting AI SDK agent turn')
-          const agent = await this.buildAgent(cwd, options.onToolProgress, { subagents: true })
+          const agent = await this.buildAgent(cwd, options.onToolProgress, { subagents: true, guardSession: sessionId })
           const result = await agent.stream({ messages, abortSignal: abort.signal })
 
           for await (const part of result.fullStream) {

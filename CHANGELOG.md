@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **New: a tool guard that watches what the assistant runs.** Every shell and file action is checked before it runs for the things an assistant should never do on its own: read your `.env` or SSH keys, wipe a home directory, upload a file somewhere ad hoc, or pipe a script from the internet straight into a shell. It also catches the disguised versions: encoded, split across several commands, or tried again after a block. Repeated attempts reduce what the assistant may do and then stop the run until you look. It ships in log mode, which blocks nothing and records what it *would* have blocked. `/guard report` shows that, so you can confirm it only catches real problems before you set `TOOL_GUARD=enforce`.
+- **Fixed: a support email could carry an access token.** The redaction that runs over logs before a support request leaves the box removed the word "Bearer" from an `Authorization: Bearer ...` line but not the token after it. The token is now removed too.
+
 ## 1.32.0 - 2026-10-07
 
 Past calls on the live voice page, short spoken answers with the detail in your chat, and a Siri shortcut named after your assistant.

@@ -31,6 +31,19 @@ machine you can snapshot, rebuild, and reach without touching their hardware.
 - **One login on the box:** the `havn` user, which owns the install and runs
   the service. The image's default `ubuntu` user is not created.
 - **unattended-upgrades** keeps the OS patched without anyone logging in.
+- **The tool guard watches what the assistant runs.** Every shell and file
+  tool call is checked for reading a secrets file (`.env`, SSH keys, cloud
+  credentials), deleting from the root or home directory, uploading files ad
+  hoc and piping a downloaded script into a shell. It also catches disguised
+  versions: encoded, split across several commands, or retried after a block.
+  Repeated attempts reduce privileges and then stop the run for the owner.
+  `TOOL_GUARD` in `.env` sets the mode: `log` (the default) records what
+  *would* have been blocked in `store/tool-guard.jsonl` and blocks nothing,
+  `enforce` blocks, `off` skips it. `/guard report` in the owner's chat
+  summarises the log. Run a box in `log` for a week or two, check the report
+  shows only real catches, then set `enforce` and restart. It checks command
+  text, so it is a strong second line, not a sandbox: the first line is still
+  that nothing secret is reachable that doesn't need to be.
 - **No GitHub credential on the box.** The repo is public, so the clone is
   anonymous. If you deploy a private fork and give the generator a deploy
   token, it rides only in the clone URL and the remote is reset right after,

@@ -5,8 +5,9 @@
  * This is the only file in the codebase that may import
  * @anthropic-ai/claude-agent-sdk.
  */
-import { query } from '@anthropic-ai/claude-agent-sdk'
-import { PROJECT_ROOT } from '../config.js'
+import { query, type HookInput, type HookJSONOutput } from '@anthropic-ai/claude-agent-sdk'
+import { PROJECT_ROOT, STORE_DIR, TOOL_GUARD } from '../config.js'
+import { getToolGuard, parseGuardMode } from '../assurance/tool-guard.js'
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
 import { logger } from '../logger.js'
@@ -39,6 +40,24 @@ const DEFAULT_MODEL = 'sonnet'
 function resolveModel(): string {
   const env = readEnvFile()
   return env.AGENT_MODEL?.trim() || process.env.AGENT_MODEL?.trim() || DEFAULT_MODEL
+}
+
+/**
+ * Every tool call passes the tool guard before it runs (card #194). In log
+ * mode this only records; in enforce mode a hit is denied with the reason, and
+ * a PreToolUse deny holds even under bypassPermissions. A guard failure never
+ * blocks a tool: it fails open, like the rest of the assurance layer.
+ */
+export async function guardHook(input: HookInput): Promise<HookJSONOutput> {
+  if (input.hook_event_name !== 'PreToolUse') return {}
+  try {
+    const v = getToolGuard(parseGuardMode(TOOL_GUARD), STORE_DIR).check({ session: input.session_id, tool: input.tool_name, input: input.tool_input })
+    if (v.entry) logger.warn({ tool: input.tool_name, rule: v.entry.rule, enforced: v.entry.enforced }, 'tool guard hit')
+    if (!v.allow) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } }
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'tool guard failed open')
+  }
+  return {}
 }
 
 function isRetryableError(err: unknown): boolean {
@@ -141,6 +160,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         cwd: options.workingDirectory ?? PROJECT_ROOT,
         permissionMode: 'bypassPermissions',
         settingSources: ['project', 'user'],
+        hooks: { PreToolUse: [{ hooks: [guardHook] }] },
       },
     })
     for await (const event of conversation) {
@@ -274,6 +294,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             includePartialMessages: Boolean(onPartial),
             abortController,
             ...(sessionId ? { resume: sessionId } : {}),
+            hooks: { PreToolUse: [{ hooks: [guardHook] }] },
             // Overflow lane: scope the API key to THIS subprocess only. Spread
             // process.env so HOME/PATH/etc still reach the CLI; the explicit key
             // makes it bill against the API instead of the subscription window.
