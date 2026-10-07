@@ -37,16 +37,19 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
 
 /**
  * Strip anything secret-shaped or personal from a log excerpt.
- * Order matters: key=value first (so the value is gone before the looser
- * shape rules run), then auth schemes, then bare token shapes, then emails.
+ * Order matters: auth schemes first (see below), then key=value (so the value
+ * is gone before the looser shape rules run), then bare token shapes, then emails.
  */
 export function redactSensitive(text: string): string {
   let out = text
+  // Auth schemes first: "Authorization: Bearer <token>" also matches the
+  // key=value rule, which would redact only the word "Bearer" and leave the
+  // token itself behind.
+  out = out.replace(AUTH_SCHEME_RE, (_m, scheme: string) => `${scheme} [redacted]`)
   out = out.replace(
     KEY_VALUE_RE,
     (_m, key: string, sep: string, quote: string) => `${key}${sep}${quote}[redacted]`
   )
-  out = out.replace(AUTH_SCHEME_RE, (_m, scheme: string) => `${scheme} [redacted]`)
   for (const re of TOKEN_SHAPE_RES) out = out.replace(re, '[redacted]')
   out = out.replace(EMAIL_RE, '[email redacted]')
   return out
