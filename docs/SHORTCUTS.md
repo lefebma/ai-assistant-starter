@@ -9,19 +9,21 @@ Send `/shortcut` in your one-to-one chat with your assistant. In a group chat or
 channel it refuses, because everyone there could read the key and use it. Four
 messages come back:
 
-1. a file called **Ask Haven**
+1. a file named after your assistant, **Ask Joy** for an assistant called Joy
+   (**Ask Haven** if the assistant has no name set)
 2. the setup steps
 3. an address (starts with `https`, or `http` on a box with no public address)
 4. a key (starts with `Bearer hvs_`)
 
 On your iPhone, open the file and tap **Add Shortcut**. It asks two questions:
-paste the key first, then the address. Then say "Hey Siri, Ask Haven" and
+paste the key first, then the address. Then say "Hey Siri, Ask Joy" (your
+assistant's name) and
 nothing else. It answers "What do you need?", and then you ask.
 
-- **Say only the name.** "Hey Siri, Ask Haven what is on my calendar" does not
+- **Say only the name.** "Hey Siri, Ask Joy what is on my calendar" does not
   run the shortcut: Siri treats the whole sentence as a question and answers it
   itself, without your assistant.
-- **It is spelled Haven on purpose.** Siri hears "Havn" as "Haven", so a
+- **An assistant called Havn becomes Haven.** Siri hears "Havn" as "Haven", so a
   shortcut named Ask Havn never matches by voice. Keep the name as it comes.
 
 - Answers that take longer than about 20 seconds come to your chat instead.
@@ -43,8 +45,8 @@ Delete the key message from your chat once the shortcut works.
 
 ### If the file will not open
 
-Build it by hand in the Shortcuts app. Name it "Ask Haven" (spelled that way
-because it is what Siri hears), then add:
+Build it by hand in the Shortcuts app. Name it "Ask" plus your assistant's
+name, for example "Ask Joy" (that name is what you say to Siri), then add:
 
 1. **Ask for Input**. Prompt: What do you need?
 2. **Get Contents of URL**. URL: your address. Show more: Method `POST`.
@@ -106,7 +108,9 @@ and the shortcut works while the phone is on the same Wi-Fi.
 
 ### Rebuilding the shortcut file
 
-`templates/shortcuts/Ask Haven.shortcut` is generic: no address, no key. It
+`templates/shortcuts/Ask Haven.shortcut` is generic: no address, no key, and no
+name. `/shortcut` sends a copy renamed after the assistant (the iPhone names an
+imported shortcut after its file, so no re-signing is needed). It
 uses import questions to ask for both. Rebuild and re-sign on a Mac:
 
     python3 scripts/shortcuts/build-ask-shortcut.py /tmp/ask.shortcut

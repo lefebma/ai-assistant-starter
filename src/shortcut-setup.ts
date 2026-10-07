@@ -47,6 +47,55 @@ export function firstLanAddress(): string | null {
  */
 export const SHORTCUT_TEMPLATE = join('templates', 'shortcuts', 'Ask Haven.shortcut')
 
+/** What the shortcut is called when the box has no name for its assistant. */
+export const DEFAULT_SHORTCUT_NAME = 'Haven'
+
+/**
+ * The assistant's name, so the shortcut can be "Ask Joy" rather than "Ask
+ * Haven" (card #152; Marina's assistant is Joy, and a reseller's client will
+ * have a name of their own).
+ *
+ * The signed file carries no name of its own (the builder writes none), so
+ * the iPhone names an imported shortcut after the file, and renaming the file
+ * is all it takes. Read from what setup writes: "Your name is Joy." in
+ * PERSONALITY.md, which the owner is most likely to have edited, then the
+ * "# Joy" heading of CLAUDE.md. Anything that still looks like a template
+ * placeholder, or that would make a bad file name or Siri phrase, is ignored.
+ */
+export function assistantName(personality: string | null, claudeMd: string | null): string | null {
+  const fromPersonality = personality?.match(/\bYour name is ([^.\n]+)\./)?.[1]
+  const fromHeading = claudeMd?.match(/^#\s+(.+)$/m)?.[1]
+  for (const raw of [fromPersonality, fromHeading]) {
+    const name = cleanName(raw)
+    if (name) return name
+  }
+  return null
+}
+
+function cleanName(raw: string | undefined): string | null {
+  const name = (raw ?? '').trim().replace(/[*_`]/g, '').replace(/\s+/g, ' ')
+  if (!name || name.includes('{{') || name.length > 24) return null
+  // Letters (any script), digits, spaces, apostrophes, hyphens and dots only:
+  // it becomes a file name on three platforms and a phrase Siri has to match.
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} '.-]*$/u.test(name)) return null
+  return name
+}
+
+/**
+ * The name to put on the shortcut, as Siri will hear it. "Havn" is said
+ * "Haven", and a shortcut called Ask Havn never matched by voice on a real
+ * iPhone (2026-10-05), so the brand's own spelling is the one name rewritten.
+ */
+export function spokenShortcutName(name: string | null): string {
+  if (!name || /^havn$/i.test(name)) return DEFAULT_SHORTCUT_NAME
+  return name
+}
+
+/** "Ask Joy.shortcut": the file name is the shortcut's name once imported. */
+export function shortcutFileName(name: string): string {
+  return `Ask ${name}.shortcut`
+}
+
 /**
  * The instructions. The address and the key follow in messages of their own
  * so each can be copied with one long-press on a phone, which is where the
@@ -57,9 +106,15 @@ export const SHORTCUT_TEMPLATE = join('templates', 'shortcuts', 'Ask Haven.short
  * questions in action order; the wording here has to match that order. The
  * by-hand steps stay as the fallback for a phone that will not open the file.
  */
-export function shortcutSetupMessage(reach: 'public' | 'lan', waitSeconds: number, withFile: boolean): string {
+export function shortcutSetupMessage(
+  reach: 'public' | 'lan',
+  waitSeconds: number,
+  withFile: boolean,
+  name: string = DEFAULT_SHORTCUT_NAME
+): string {
+  const ask = `Ask ${name}`
   const byHand = [
-    'In the Shortcuts app, make a new shortcut called "Ask Haven" (spelled that way, it is what Siri hears), then add:',
+    `In the Shortcuts app, make a new shortcut called "${ask}" (that name is what you say to Siri), then add:`,
     '1. Ask for Input. Prompt: What do you need?',
     '2. Get Contents of URL. URL: the address below. Show more: Method POST. Headers: Authorization, set to the line starting with Bearer. Request Body: JSON, with a Text field named text set to Provided Input.',
     '3. Show Result, showing Contents of URL.',
@@ -69,14 +124,14 @@ export function shortcutSetupMessage(reach: 'public' | 'lan', waitSeconds: numbe
     '',
     ...(withFile
       ? [
-          '1. On your iPhone, open the "Ask Haven" file above and tap Add Shortcut.',
+          `1. On your iPhone, open the "${ask}" file above and tap Add Shortcut.`,
           '2. It asks two questions. First paste the key (the last message, starting with Bearer), then the address (the message starting with http).',
-          '3. Say "Hey Siri, Ask Haven" and nothing else. When it asks what you need, ask.',
+          `3. Say "Hey Siri, ${ask}" and nothing else. When it asks what you need, ask.`,
           '',
           'If the file will not open, build it by hand instead.',
           ...byHand,
         ]
-      : [...byHand, '', 'Then say "Hey Siri, Ask Haven" and nothing else. When it asks what you need, ask.']),
+      : [...byHand, '', `Then say "Hey Siri, ${ask}" and nothing else. When it asks what you need, ask.`]),
     '',
     `Answers that take longer than about ${waitSeconds} seconds arrive here in the chat instead, and so do files.`,
     ...(reach === 'lan'
