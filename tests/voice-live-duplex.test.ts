@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 
 vi.mock('../src/agent.js', () => ({ runAgent: vi.fn() }))
 vi.mock('../src/skills/index.js', () => ({ buildSkillIndex: () => '' }))
@@ -175,7 +175,7 @@ describe('call history (#193)', () => {
   it('opens a transcript with every turn', async () => {
     const dir = root()
     const path = (await saved(dir, 'chat-a', new Date('2026-10-02T14:00:00Z'), 'What is on my calendar tomorrow?'))!
-    const id = path.split('/').pop()!.replace(/\.md$/, '')
+    const id = basename(path, '.md')
     const call = getVoiceCall('chat-a', id, { root: dir })!
     expect(call.turns).toHaveLength(4)
     expect(call.turns[2]).toEqual({ who: 'user', text: 'What is on my calendar tomorrow?' })
@@ -184,7 +184,7 @@ describe('call history (#193)', () => {
   it('keeps chats apart: one chat never sees, opens or deletes another chat\'s call', async () => {
     const dir = root()
     const path = (await saved(dir, 'chat-a', new Date('2026-10-02T14:00:00Z'), 'Private question for chat A'))!
-    const id = path.split('/').pop()!.replace(/\.md$/, '')
+    const id = basename(path, '.md')
     expect(listVoiceCalls('chat-b', { root: dir })).toEqual([])
     expect(getVoiceCall('chat-b', id, { root: dir })).toBeNull()
     expect(deleteVoiceCall('chat-b', id, { root: dir })).toBe(false)
@@ -205,7 +205,7 @@ describe('call history (#193)', () => {
   it('deletes a call', async () => {
     const dir = root()
     const path = (await saved(dir, 'chat-a', new Date('2026-10-02T14:00:00Z'), 'What is on my calendar tomorrow?'))!
-    const id = path.split('/').pop()!.replace(/\.md$/, '')
+    const id = basename(path, '.md')
     expect(deleteVoiceCall('chat-a', id, { root: dir })).toBe(true)
     expect(listVoiceCalls('chat-a', { root: dir })).toEqual([])
   })
