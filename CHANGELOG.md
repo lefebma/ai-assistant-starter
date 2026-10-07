@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.32.0 - 2026-10-07
+
+Past calls on the live voice page, short spoken answers with the detail in your chat, and a Siri shortcut named after your assistant.
+
 - **New: the Siri shortcut is named after your assistant.** `/shortcut` now hands you "Ask Joy" if your assistant is called Joy, and the setup steps tell you to say "Hey Siri, Ask Joy". Before, every shortcut was called "Ask Haven" and had to be renamed by hand. The name comes from your assistant's personality file; one without a name still gets "Ask Haven".
 - **New: past calls on the live page.** A Calls button on `/voice/live` lists your live calls with the date and how long each lasted, and opens the transcript. Delete removes a transcript (what the assistant remembered from the call stays in its memory), and `VOICE_TRANSCRIPT_DAYS` in `.env` deletes transcripts automatically after that many days. You only ever see the calls made from your own chat.
 - **Changed: long answers on a call go to your chat.** A spoken answer is now kept to a few sentences. A list, a draft or figures worth keeping arrive in your chat while the assistant tells you the gist, instead of being read out at length. An answer that comes back after you hung up goes to your chat too, rather than nowhere. Before sending an email or message from a call, the assistant reads back the exact words and waits for a yes.
