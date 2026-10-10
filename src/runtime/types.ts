@@ -11,6 +11,13 @@
 /** Fired once when a billing/provider fallback lane engages mid-turn. */
 export type LaneSwitchInfo = { rateLimitType?: string; resetsAt?: number }
 
+export type RunScope = {
+  /** A role id from src/assurance/roles.ts or roles.json. */
+  role: string
+  /** The scheduled task, so a refusal can name the command that fixes it. */
+  taskId?: string
+}
+
 export type AgentRunOptions = {
   message: string
   /** Provider conversation id to resume; the runtime returns the new one. */
@@ -31,6 +38,11 @@ export type AgentRunOptions = {
    * (never throws). Callers treat a null text after abort as "cancelled".
    */
   signal?: AbortSignal
+  /**
+   * Role-scoped run (card #195): only this role's tools are offered and every
+   * call is checked against it. Scheduled jobs set it; chat never does.
+   */
+  scope?: RunScope
 }
 
 export type AgentRunResult = {

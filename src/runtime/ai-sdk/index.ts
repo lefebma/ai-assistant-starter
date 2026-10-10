@@ -18,10 +18,11 @@
  */
 import { ToolLoopAgent, stepCountIs, tool, type LanguageModel, type ModelMessage, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { PROJECT_ROOT, STORE_DIR, TOOL_GUARD } from '../../config.js'
-import { getToolGuard, parseGuardMode } from '../../assurance/tool-guard.js'
+import { PROJECT_ROOT } from '../../config.js'
+import { gateToolCall, resolveRole } from '../../assurance/scope-gate.js'
+import { canonicalTool, toolAllowed, type RoleSpec } from '../../assurance/roles.js'
 import { logger } from '../../logger.js'
-import type { AgentRunOptions, AgentRunResult, AgentRuntime } from '../types.js'
+import type { AgentRunOptions, AgentRunResult, AgentRuntime, RunScope } from '../types.js'
 import { cachedSystem, historyMaxBytes, reconcileHistory, trimHistory, withCacheBreakpoint } from './history.js'
 import { loadMcpTools } from './mcp.js'
 import { buildSystemPrompt } from './prompt.js'
@@ -93,15 +94,22 @@ export class AiSdkAgentRuntime implements AgentRuntime {
   }
 
   /**
-   * Run every tool through the tool guard first (card #194). A refused call
-   * returns the reason as the tool's result, so the model sees why and what to
-   * do instead. The guard fails open.
+   * Every tool passes one checkpoint first: the job's role for a scoped
+   * scheduled run (card #195), then the tool guard (card #194). Tools the role
+   * cannot use are not offered at all. A refused call returns the reason as
+   * the tool's result, so the model sees why.
    */
-  private withGuard(tools: ToolSet, session: string): ToolSet {
-    const guard = getToolGuard(parseGuardMode(TOOL_GUARD), STORE_DIR)
-    if (guard.mode === 'off') return tools
+  private withGuard(tools: ToolSet, session: string, cwd: string, scope?: RunScope): ToolSet {
+    let role: RoleSpec | null = null
+    try {
+      role = resolveRole(scope)
+    } catch {
+      // run() refuses an undefined role before building tools; nothing to offer.
+      return {}
+    }
+    const offered = role ? Object.entries(tools).filter(([name]) => toolAllowed(role!, canonicalTool(name))) : Object.entries(tools)
     return Object.fromEntries(
-      Object.entries(tools).map(([name, t]) => {
+      offered.map(([name, t]) => {
         const execute = (t as { execute?: (input: unknown, opts: unknown) => Promise<unknown> }).execute
         if (!execute) return [name, t]
         return [
@@ -109,13 +117,8 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           {
             ...t,
             execute: async (input: unknown, opts: unknown) => {
-              try {
-                const v = guard.check({ session, tool: name, input })
-                if (v.entry) logger.warn({ tool: name, rule: v.entry.rule, enforced: v.entry.enforced }, 'tool guard hit')
-                if (!v.allow) return v.reason
-              } catch (err) {
-                logger.warn({ err: String(err) }, 'tool guard failed open')
-              }
+              const v = gateToolCall({ session, tool: name, input, cwd, scope })
+              if (!v.allow) return v.reason
               return execute(input, opts)
             },
           },
@@ -154,7 +157,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
    * further subagent nesting (depth 1). The claude runtime gets this from
    * Claude Code's Agent tool; here it is just another runtime instance turn.
    */
-  private buildSubagentTool(cwd: string, onToolProgress?: (toolName: string, status: string) => void) {
+  private buildSubagentTool(cwd: string, onToolProgress?: (toolName: string, status: string) => void, scope?: RunScope) {
     return tool({
       description:
         'Dispatch a subagent to handle a self-contained task (research, multi-file analysis, a side quest '
@@ -168,7 +171,8 @@ export class AiSdkAgentRuntime implements AgentRuntime {
         const subCwd = working_directory ?? cwd
         logger.info({ cwd: subCwd, prompt: prompt.slice(0, 100) }, 'Dispatching subagent')
         try {
-          const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false })
+          // A subagent inherits the job's role: it can never do more than its parent.
+          const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false, scope })
           const result = await sub.generate({ prompt })
           return result.text.trim() || '(subagent returned no text)'
         } catch (err) {
@@ -181,7 +185,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
   private async buildAgent(
     cwd: string,
     onToolProgress?: (toolName: string, status: string) => void,
-    opts: { subagents?: boolean; guardSession?: string } = {}
+    opts: { subagents?: boolean; guardSession?: string; scope?: RunScope } = {}
   ) {
     const { model, provider, modelId } = this.modelOverride
       ? { model: this.modelOverride, provider: 'override', modelId: 'override' }
@@ -191,8 +195,8 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const tools: ToolSet = this.withGuard({
       ...createTools(cwd, onToolProgress),
       ...mcpTools,
-      ...(opts.subagents ? { dispatch_subagent: this.buildSubagentTool(cwd, onToolProgress) } : {}),
-    }, opts.guardSession ?? `ai-sdk:${cwd}`)
+      ...(opts.subagents ? { dispatch_subagent: this.buildSubagentTool(cwd, onToolProgress, opts.scope) } : {}),
+    }, opts.guardSession ?? `ai-sdk:${cwd}`, cwd, opts.scope)
     logger.info({ provider, modelId, cwd, toolCount: Object.keys(tools).length }, 'AI SDK agent configured')
     return new ToolLoopAgent({
       model,
@@ -216,6 +220,13 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
   async run(options: AgentRunOptions): Promise<AgentRunResult> {
     const cwd = options.workingDirectory ?? PROJECT_ROOT
+    // A job scoped to a role nobody defined does not run: roles fail closed.
+    try {
+      resolveRole(options.scope)
+    } catch (err) {
+      logger.error({ scope: options.scope, err: String(err) }, 'scoped run refused')
+      return { text: `Not run: ${err instanceof Error ? err.message : String(err)}. Fix the job's role with /schedule role${options.scope?.taskId ? ` ${options.scope.taskId}` : ''} <role>.` }
+    }
     const sessionId = options.sessionId ?? this.sessions.newSessionId()
     const loaded: ModelMessage[] = (options.sessionId ? this.sessions.load(options.sessionId) : null) ?? []
     // Bound the replayed conversation; the save below persists the trimmed
@@ -265,7 +276,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
         try {
           logger.info({ attempt, sessionId, historyLength: history.length }, 'Starting AI SDK agent turn')
-          const agent = await this.buildAgent(cwd, options.onToolProgress, { subagents: true, guardSession: sessionId })
+          const agent = await this.buildAgent(cwd, options.onToolProgress, { subagents: true, guardSession: sessionId, scope: options.scope })
           const result = await agent.stream({ messages, abortSignal: abort.signal })
 
           for await (const part of result.fullStream) {

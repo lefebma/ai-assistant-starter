@@ -9,6 +9,7 @@
  * of any one model harness.
  */
 import { getAgentRuntime, type RuntimeLane } from './runtime/index.js'
+import type { RunScope } from './runtime/types.js'
 
 /**
  * Lane-based concurrency tracking (OpenClaw v2026.5.19 -- cron wake-lane isolation).
@@ -53,7 +54,8 @@ export async function runAgent(
   onPartial?: (accumulated: string) => void,
   onToolProgress?: (toolName: string, status: string) => void,
   lane: RuntimeLane = 'chat',
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  scope?: RunScope
 ): Promise<{ text: string | null; newSessionId?: string }> {
   return getAgentRuntime(lane).run({
     message,
@@ -62,5 +64,6 @@ export async function runAgent(
     onPartial,
     onToolProgress,
     signal,
+    scope,
   })
 }
