@@ -16,7 +16,7 @@ import { SecretVault } from '../vault/store.js'
 import { defaultVault } from '../vault/index.js'
 import { readEnvFile } from '../env.js'
 import { createValidator, type ValidateFn, type ValidationResult } from './validate.js'
-import { buildSecretInventory, formatSecretInventory, KNOWN_SECRET_NAMES, maskSecret } from './inventory.js'
+import { buildSecretInventory, formatSecretInventory, isEngineSecret, KNOWN_SECRET_NAMES, maskSecret } from './inventory.js'
 
 export type { ValidationResult, ValidateFn } from './validate.js'
 export { KNOWN_SECRET_NAMES, maskSecret } from './inventory.js'
@@ -215,7 +215,13 @@ export class SecretFlow {
     if (result.status === 'unverified' && (KNOWN_SECRET_NAMES as readonly string[]).includes(name)) {
       lines.push(`Could not verify it with the provider (${result.detail ?? 'unknown'}), so double-check it works.`)
     }
-    if (!(KNOWN_SECRET_NAMES as readonly string[]).includes(name)) {
+    if (name.startsWith('IMAP_PASSWORD_')) {
+      // Read fresh by every mail command, so no restart; and the mailbox is not
+      // connected until a sign-in with it has worked.
+      lines.push('Now ask me to connect that mailbox, and I will check the sign-in.')
+      return { saved: true, reply: lines.join('\n') }
+    }
+    if (!isEngineSecret(name)) {
       lines.push(
         'Note: this is not a key the engine reads from the vault, so nothing picks it up automatically.'
       )
