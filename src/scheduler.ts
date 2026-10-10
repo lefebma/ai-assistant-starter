@@ -114,7 +114,7 @@ export async function runDueTasks(): Promise<void> {
         buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
       )
 
-      const { text } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron')
+      const { text } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)
       const result = text ?? '(no response)'
 
       // Check if the API was overloaded and defer a retry
@@ -124,7 +124,7 @@ export async function runDueTasks(): Promise<void> {
           deferredRetries.delete(task.id)
           try {
             logger.info({ taskId: task.id }, 'Running deferred retry')
-            const { text: retryText } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron')
+            const { text: retryText } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)
             const retryResult = retryText ?? '(no response)'
             updateTaskAfterRun(task.id, retryResult, nextRun)
 

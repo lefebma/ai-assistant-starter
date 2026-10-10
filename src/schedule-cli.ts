@@ -10,13 +10,15 @@ import {
 } from './db.js'
 import { computeNextRun } from './scheduler.js'
 import { installTimezone } from './env.js'
+import { loadRoles } from './assurance/roles.js'
+import { ROLES_FILE } from './config.js'
 
 function usage(): void {
   console.log(`
 AI Assistant Scheduler CLI
 
 Usage:
-  schedule-cli create "<prompt>" "<cron>" <chat_id> [--name "name"] [--silent] [--once] [--tz "<IANA zone>"]
+  schedule-cli create "<prompt>" "<cron>" <chat_id> [--name "name"] [--silent] [--once] [--tz "<IANA zone>"] [--role <role>]
   schedule-cli list
   schedule-cli delete <id>
   schedule-cli pause <id>
@@ -71,10 +73,17 @@ function main(): void {
       const deliveryMode = isSilent ? 'silent' as const : 'announce' as const
       const timezone = parseFlag(args, '--tz') ?? installTimezone()
 
+      const role = parseFlag(args, '--role')
+      if (role && !loadRoles(ROLES_FILE).has(role)) {
+        console.error(`No role called ${role}. Built-in roles: ${[...loadRoles(ROLES_FILE).keys()].join(', ')}`)
+        process.exit(1)
+      }
+
       const id = randomUUID().slice(0, 8)
       const nextRun = computeNextRun(cron, timezone)
-      createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, timezone, isOnce)
+      createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, timezone, isOnce, role && role !== 'full' ? role : null)
       console.log(`Task created: ${id}${name ? ` (${name})` : ''}`)
+      if (role && role !== 'full') console.log(`  Role: ${role}`)
       console.log(`  Mode: ${deliveryMode}${isOnce ? ', one-shot (self-deletes after completion)' : ''}`)
       console.log(`  Schedule: ${cron} (${timezone})`)
       console.log(`  Next run: ${new Date(nextRun * 1000).toLocaleString()}`)

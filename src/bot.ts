@@ -10,10 +10,12 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD, ROLES_FILE } from './config.js'
 import { readGuardLog, formatGuardReport, guardLogPath, parseGuardMode } from './assurance/tool-guard.js'
+import { roleLogPath, formatRoleReport, type RoleLogEntry } from './assurance/scope-gate.js'
 import { getSession, setSession, clearSession, getMemoriesForChat, getSessionMeta, bumpSessionMessageCount } from './db.js'
-import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask } from './db.js'
+import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask, setTaskRole } from './db.js'
+import { loadRoles } from './assurance/roles.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
 import { claimButtonClick } from './db.js'
 import { decideAccess } from './access.js'
@@ -458,7 +460,8 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
     const lines = tasks.map((t) => {
       const label = t.name ?? t.prompt.slice(0, 60)
       const mode = t.delivery_mode === 'silent' ? ' [silent]' : ''
-      return `[${t.status}${mode}] ${t.id}: ${label}\nSchedule: ${t.schedule} | Next: ${new Date(t.next_run * 1000).toLocaleString()}`
+      const role = t.role ? ` | Role: ${t.role}` : ''
+      return `[${t.status}${mode}] ${t.id}: ${label}\nSchedule: ${t.schedule} | Next: ${new Date(t.next_run * 1000).toLocaleString()}${role}`
     })
     await adapter.sendMessage(chatId, lines.join('\n\n'))
     return
@@ -467,10 +470,15 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
   if (subcmd === 'create') {
     const match = text.match(/create\s+"([^"]+)"\s+"([^"]+)"/)
     if (!match) {
-      await adapter.sendMessage(chatId, 'Usage: /schedule create "prompt" "cron" [--name "name"] [--silent]')
+      await adapter.sendMessage(chatId, 'Usage: /schedule create "prompt" "cron" [--name "name"] [--silent] [--role <role>]')
       return
     }
     const [, prompt, cron] = match
+    const roleArg = text.match(/--role\s+([A-Za-z0-9_-]+)/)?.[1] ?? null
+    if (roleArg && !loadRoles(ROLES_FILE).has(roleArg)) {
+      await adapter.sendMessage(chatId, `No role called ${roleArg}. /schedule roles lists them.`)
+      return
+    }
     try {
       CronExpressionParser.parse(cron)
     } catch {
@@ -486,11 +494,33 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
     const env = (await import('./env.js')).readEnvFile()
     const tz = env['TIMEZONE'] ?? 'America/New_York'
     const nextRun = computeNextRun(cron, tz)
-    createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, tz)
+    createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, tz, false, roleArg === 'full' ? null : roleArg)
     await adapter.sendMessage(
       chatId,
-      `Task created: ${id}${name ? ` (${name})` : ''}\nMode: ${deliveryMode}\nSchedule: ${cron}\nNext run: ${new Date(nextRun * 1000).toLocaleString()}`
+      `Task created: ${id}${name ? ` (${name})` : ''}\nMode: ${deliveryMode}\nSchedule: ${cron}\nNext run: ${new Date(nextRun * 1000).toLocaleString()}${roleArg && roleArg !== 'full' ? `\nRole: ${roleArg}` : ''}`
     )
+    return
+  }
+
+  if (subcmd === 'roles') {
+    const roles = [...loadRoles(ROLES_FILE).values()]
+    await adapter.sendMessage(chatId, [
+      'Roles limit what an unattended scheduled job may do (chat is not affected):',
+      ...roles.map((r) => `- ${r.id}: ${r.summary}`),
+      '',
+      'Set one with /schedule role <id> <role>, or /schedule role <id> none for every tool. Add your own in roles.json.',
+    ].join('\n'))
+    return
+  }
+
+  if (subcmd === 'role') {
+    const id = parts[2]
+    const role = parts[3]
+    if (!id || !role) { await adapter.sendMessage(chatId, 'Usage: /schedule role <id> <role|none>. /schedule roles lists them.'); return }
+    const clear = role === 'none' || role === 'full'
+    if (!clear && !loadRoles(ROLES_FILE).has(role)) { await adapter.sendMessage(chatId, `No role called ${role}. /schedule roles lists them.`); return }
+    const ok = setTaskRole(id, clear ? null : role)
+    await adapter.sendMessage(chatId, !ok ? `Task ${id} not found.` : clear ? `Task ${id} now runs with every tool.` : `Task ${id} now runs with the ${role} role.`)
     return
   }
 
@@ -523,7 +553,7 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
     return
   }
 
-  await adapter.sendMessage(chatId, 'Unknown schedule command. Use: list, create, delete, pause, resume')
+  await adapter.sendMessage(chatId, 'Unknown schedule command. Use: list, create, delete, pause, resume, role, roles')
 }
 
 async function handleBrowserCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
@@ -1301,8 +1331,11 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         return
       }
       const days = Math.min(90, Math.max(1, parseInt(trimmed.split(/\s+/)[2] ?? '7', 10) || 7))
-      const entries = readGuardLog(guardLogPath(STORE_DIR), Date.now() - days * 86_400_000)
-      await adapter.sendMessage(chatId, formatGuardReport(entries, parseGuardMode(TOOL_GUARD), days))
+      const since = Date.now() - days * 86_400_000
+      const entries = readGuardLog(guardLogPath(STORE_DIR), since)
+      // Role refusals (card #195) share the JSONL shape and the `at` field.
+      const refused = readGuardLog(roleLogPath(STORE_DIR), since) as unknown as RoleLogEntry[]
+      await adapter.sendMessage(chatId, [formatGuardReport(entries, parseGuardMode(TOOL_GUARD), days), formatRoleReport(refused)].filter(Boolean).join('\n\n'))
       return
     }
     if (cmd === '/memory') {
