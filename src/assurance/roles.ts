@@ -129,11 +129,47 @@ function programWords(segment: string): string[] {
   return t
 }
 
+/**
+ * Split a shell command into the simple commands it runs, on && || ; | and
+ * newlines outside quotes. A backslash-newline continuation joins its lines,
+ * and each quoted argument collapses to one plain token (Q when it holds
+ * spaces or shell characters), so a draft body with line breaks, pipes or ">"
+ * stays one argument instead of reading as extra commands or a redirect.
+ */
+export function splitSegments(cmd: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]
+    if (c === '\\' && cmd[i + 1] === '\n') { cur += ' '; i++; continue }
+    if (c === '\\' && i + 1 < cmd.length) { cur += c + cmd[++i]; continue }
+    if (c === "'" || c === '"') {
+      let j = i + 1
+      let body = ''
+      while (j < cmd.length && cmd[j] !== c) {
+        if (c === '"' && cmd[j] === '\\' && j + 1 < cmd.length) { body += cmd[j + 1]; j += 2; continue }
+        body += cmd[j++]
+      }
+      cur += /[\s;&|<>]/.test(body) || body === '' ? 'Q' : body
+      i = j
+      continue
+    }
+    const two = cmd.slice(i, i + 2)
+    if (two === '&&' || two === '||') { out.push(cur); cur = ''; i++; continue }
+    if (c === ';' || c === '|' || c === '\n') { out.push(cur); cur = ''; continue }
+    // A lone & backgrounds one command and starts the next (2>&1 and &> are redirects).
+    if (c === '&' && cmd[i - 1] !== '>' && cmd[i + 1] !== '>') { out.push(cur); cur = ''; continue }
+    cur += c
+  }
+  out.push(cur)
+  return out.map((s) => s.trim()).filter(Boolean)
+}
+
 export function commandAllowed(role: RoleSpec, cmd: string): { ok: true } | { ok: false; reason: string } {
   const allow = role.commands ?? []
   // Command substitution and process substitution hide what actually runs.
   if (/\$\(|`|<\(|>\(/.test(cmd)) return { ok: false, reason: 'command substitution is not allowed in a scoped job' }
-  const segments = cmd.split(/&&|\|\||[;\n|]/).map((s) => s.trim()).filter(Boolean)
+  const segments = splitSegments(cmd)
   for (const raw of segments) {
     // Output redirection is a write: it needs the same allowance as Write.
     const redirect = raw.match(/(?:^|[^0-9&>])>{1,2}\s*([^\s;&|]+)/)

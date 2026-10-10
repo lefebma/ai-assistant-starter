@@ -99,6 +99,22 @@ describe('checkRole', () => {
     expect(ok('gog gmail send --to x@y.z --subject s --body b')).toBe(false)
   })
 
+  it('reads multi-line commands and quoted bodies as one command (live havn-test run)', () => {
+    const ok = (c: string) => roles.checkRole(R, 'inbox-triage', call('Bash', { command: c })).ok
+    expect(ok('gog gmail drafts create \\\n  --account a@b.c \\\n  --subject "Re: x" \\\n  --body "Hi,\n\nline two | not a pipe; > not a file\n\nMarc"')).toBe(true)
+    expect(ok("gog gmail drafts create --subject 'a && b' --body 'x'")).toBe(true)
+    expect(roles.splitSegments('gog gmail read 1 2>&1 | head -5')).toEqual(['gog gmail read 1 2>&1', 'head -5'])
+  })
+
+  it('still sees every command: background &, quoted program names, continuations', () => {
+    const ok = (c: string) => roles.checkRole(R, 'inbox-triage', call('Bash', { command: c })).ok
+    expect(ok('gog gmail search x & rm -rf output')).toBe(false)
+    expect(ok('"rm" -rf output')).toBe(false)
+    expect(ok("r'm' -rf output")).toBe(false)
+    expect(ok('gog gmail search x \\\n; gog gmail send --to y')).toBe(false)
+    expect(ok('gog gmail search "x" > out.txt')).toBe(false)
+  })
+
   it('keeps writes inside the role\'s folders, including ../ escapes', () => {
     expect(roles.checkRole(R, 'research', call('Write', { file_path: `${CWD}/output/notes.md` }))).toEqual({ ok: true })
     expect(roles.checkRole(R, 'research', call('Write', { file_path: 'output/sub/x.md' }))).toEqual({ ok: true })
