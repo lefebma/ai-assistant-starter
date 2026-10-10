@@ -202,6 +202,10 @@ export function initDatabase(): void {
   if (!colNames.has('run_once')) {
     d.exec('ALTER TABLE scheduled_tasks ADD COLUMN run_once INTEGER NOT NULL DEFAULT 0')
   }
+  // Role-scoped jobs (card #195). NULL means every tool, as before.
+  if (!colNames.has('role')) {
+    d.exec('ALTER TABLE scheduled_tasks ADD COLUMN role TEXT')
+  }
 }
 
 // --- App state (one-shot install flags) ---
@@ -376,6 +380,8 @@ export interface ScheduledTask {
   delivery_mode: 'announce' | 'silent'
   timezone: string
   run_once: number
+  /** Role the unattended run is limited to (card #195); null for every tool. */
+  role?: string | null
   created_at: number
 }
 
@@ -390,13 +396,19 @@ export function createTask(
   // Evaluated per call, so it follows TIMEZONE in .env rather than pinning
   // every customer's scheduled tasks to the author's own city.
   timezone = installTimezone(),
-  runOnce = false
+  runOnce = false,
+  role: string | null = null
 ): void {
   const d = getDb()
   d.prepare(
-    `INSERT INTO scheduled_tasks (id, chat_id, name, prompt, schedule, next_run, delivery_mode, timezone, run_once, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
-  ).run(id, chatId, name ?? null, prompt, schedule, nextRun, deliveryMode, timezone, runOnce ? 1 : 0, now())
+    `INSERT INTO scheduled_tasks (id, chat_id, name, prompt, schedule, next_run, delivery_mode, timezone, run_once, role, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
+  ).run(id, chatId, name ?? null, prompt, schedule, nextRun, deliveryMode, timezone, runOnce ? 1 : 0, role, now())
+}
+
+/** Set or clear (null) the role a task runs with. False when there is no such task. */
+export function setTaskRole(id: string, role: string | null): boolean {
+  return getDb().prepare('UPDATE scheduled_tasks SET role = ? WHERE id = ?').run(role, id).changes > 0
 }
 
 export function getDueTasks(): ScheduledTask[] {

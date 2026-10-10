@@ -207,14 +207,20 @@ export function formatGuardReport(entries: GuardEntry[], mode: GuardMode, days: 
 
 // --- the shared instance ----------------------------------------------------
 
-let shared: ToolGuard | null = null
+const shared = new Map<string, ToolGuard>()
 
-/** One guard per process, so a session's strikes carry across turns. */
+/**
+ * One guard per mode per process, so a session's strikes carry across turns.
+ * Chat runs at TOOL_GUARD's mode; role-scoped scheduled jobs always enforce.
+ */
 export function getToolGuard(mode: GuardMode, storeDir: string): ToolGuard {
-  if (!shared || shared.mode !== mode) {
-    shared = new ToolGuard({ mode, record: appendGuardLog(resolve(storeDir, 'tool-guard.jsonl')) })
+  const key = `${mode}:${storeDir}`
+  let g = shared.get(key)
+  if (!g) {
+    g = new ToolGuard({ mode, record: appendGuardLog(resolve(storeDir, 'tool-guard.jsonl')) })
+    shared.set(key, g)
   }
-  return shared
+  return g
 }
 
 export function guardLogPath(storeDir: string): string {
