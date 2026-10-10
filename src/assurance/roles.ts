@@ -51,6 +51,7 @@ export const BUILTIN_ROLES: RoleSpec[] = [
     commands: [
       ...READ_BASICS,
       'gog gmail search', 'gog gmail read', 'gog gmail labels', 'gog gmail thread',
+      'gog gmail drafts create', 'gog gmail drafts list', 'gog gmail drafts get', 'gog gmail drafts update',
       'ms-mail.js inbox', 'ms-mail.js search', 'ms-mail.js read', 'ms-mail.js draft', 'ms-mail.js reply',
     ],
   },

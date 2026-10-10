@@ -90,6 +90,15 @@ describe('checkRole', () => {
     expect(roles.checkRole(R, 'inbox-triage', call('Bash', { command: 'gog gmail trash 1' }))).toMatchObject({ ok: false, kind: 'command', wouldAllow: 'full' })
   })
 
+  it('inbox-triage saves Gmail drafts but cannot send them', () => {
+    const ok = (c: string) => roles.checkRole(R, 'inbox-triage', call('Bash', { command: c })).ok
+    expect(ok('gog gmail drafts create --account a@b.c --reply-to-message-id 1 --subject "Re: x" --body "hi"')).toBe(true)
+    expect(ok('gog gmail drafts list --account a@b.c')).toBe(true)
+    expect(ok('gog gmail drafts send d1 --account a@b.c')).toBe(false)
+    expect(ok('gog gmail drafts delete d1')).toBe(false)
+    expect(ok('gog gmail send --to x@y.z --subject s --body b')).toBe(false)
+  })
+
   it('keeps writes inside the role\'s folders, including ../ escapes', () => {
     expect(roles.checkRole(R, 'research', call('Write', { file_path: `${CWD}/output/notes.md` }))).toEqual({ ok: true })
     expect(roles.checkRole(R, 'research', call('Write', { file_path: 'output/sub/x.md' }))).toEqual({ ok: true })

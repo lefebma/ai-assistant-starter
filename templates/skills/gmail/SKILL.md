@@ -11,6 +11,10 @@ rather than guessing at an absolute path.
 - Search: `gog gmail search "query" --account {{EMAIL_ADDRESS}}`
 - Read: `gog gmail read <id> --account {{EMAIL_ADDRESS}}`
 - Trash: `gog gmail trash <id> --account {{EMAIL_ADDRESS}}`
+- Draft a reply (saved in the thread, not sent): `gog gmail drafts create --account {{EMAIL_ADDRESS}} --reply-to-message-id <id> --quote --subject "Re: ..." --body "..."`
+- List drafts: `gog gmail drafts list --account {{EMAIL_ADDRESS}}`
+
+When asked to draft, save it with `drafts create` so it waits in Gmail for review. Only send when explicitly told to.
 
 ### Google Calendar
 - Today's events: `gog calendar events --account {{EMAIL_ADDRESS}}`
