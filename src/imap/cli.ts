@@ -101,6 +101,12 @@ function settingsFor(address: string, flags: Flags): ImapAccount {
   if (isRedirect(preset)) throw new Error(preset.message)
   const imapHost = str(flags, 'imap-host')
   const smtpHost = str(flags, 'smtp-host')
+  // A known provider's servers are fixed. Otherwise a prompt-injected
+  // "reconnect with --imap-host evil.example" would hand the stored app
+  // password to whoever runs that host.
+  if (preset && (imapHost || smtpHost || flags['imap-port'] !== undefined || flags['smtp-port'] !== undefined)) {
+    throw new Error(`The servers for ${preset.provider} are fixed and cannot be changed. Run add without --imap-host, --smtp-host or the port flags.`)
+  }
   if (!preset && (!imapHost || !smtpHost)) {
     throw new Error(
       `There is no preset for ${address}'s provider. Give its servers: ` +
@@ -143,9 +149,25 @@ function howToStorePassword(address: string): string {
   ].join('\n')
 }
 
+function sameServers(a: ImapAccount, b: ImapAccount): boolean {
+  const key = (x: ImapAccount) => [x.imap.host.toLowerCase(), x.imap.port, x.smtp.host.toLowerCase(), x.smtp.port].join('|')
+  return key(a) === key(b)
+}
+
 async function addAccount(address: string, flags: Flags, deps: ImapCliDeps): Promise<string> {
   const account = settingsFor(address, flags)
-  if (flags['password-stdin'] === true) {
+  const fresh = flags['password-stdin'] === true
+  const saved = loadAccount(address, deps.vault)
+  if (!fresh && saved && !sameServers(saved, account)) {
+    // The stored password only ever goes to the servers it was first saved
+    // for. Moving it needs the owner to enter it again.
+    throw new Error(
+      `${address} is already connected to ${saved.imap.host} and ${saved.smtp.host}. ` +
+        `Its stored app password will not be sent to different servers. To move it, run remove, ` +
+        `then store the app password again and add with the new servers.`
+    )
+  }
+  if (fresh) {
     const pw = (await deps.readStdin()).trim()
     if (!pw) throw new Error('--password-stdin was given, but nothing came in on stdin.')
     savePassword(address, pw, deps.vault)

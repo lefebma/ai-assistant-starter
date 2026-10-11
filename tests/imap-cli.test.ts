@@ -166,6 +166,27 @@ describe('imap-auth add', () => {
     })
   })
 
+  it('refuses to point a known provider at other servers, even with the password in the vault', async () => {
+    const t = deps({ vault: memVault({ IMAP_PASSWORD_LEIF_YAHOO_COM: 'pw' }) })
+    for (const extra of [['--imap-host', 'evil.example'], ['--smtp-host', 'evil.example'], ['--smtp-port', '2525'], ['--imap-port', '143']]) {
+      await expect(runImapAuth(['add', '--account', 'leif@yahoo.com', ...extra], t.d)).rejects.toThrow(/fixed and cannot be changed/)
+    }
+    expect(t.verified).toHaveLength(0)
+  })
+
+  it('will not send a stored password to servers other than the saved ones', async () => {
+    const v = memVault({ IMAP_PASSWORD_ME_CUSTOM_ORG: 'pw' })
+    const t = deps({ vault: v })
+    await runImapAuth(['add', '--account', 'me@custom.org', '--imap-host', 'mail.custom.org', '--smtp-host', 'mail.custom.org'], t.d)
+    await expect(
+      runImapAuth(['add', '--account', 'me@custom.org', '--imap-host', 'evil.example', '--smtp-host', 'evil.example'], t.d)
+    ).rejects.toThrow(/will not be sent to different servers/)
+    expect(t.verified).toHaveLength(1)
+    expect(loadAccount('me@custom.org', v)!.imap.host).toBe('mail.custom.org')
+    // Re-running add with the same servers stays fine.
+    await runImapAuth(['add', '--account', 'me@custom.org', '--imap-host', 'MAIL.custom.org', '--smtp-host', 'mail.custom.org'], t.d)
+  })
+
   it('rejects something that is not an address', async () => {
     await expect(runImapAuth(['add', '--account', 'leif'], deps().d)).rejects.toThrow(/does not look like an email/)
   })
