@@ -1,7 +1,8 @@
 /**
  * Expose the Teams webhook (and optionally the voice UI) on a hosted Havn box.
  *
- * Run as root, once, after cloud-init has finished and the app is built:
+ * Run as root from the havn-admin login (the havn user has no general sudo),
+ * once, after cloud-init has finished and the app is built:
  *   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname>
  *   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --voice
  *
@@ -144,7 +145,7 @@ function main(): void {
     process.exit(1)
   }
   if (process.getuid?.() !== 0) {
-    console.error('Run as root (sudo).')
+    console.error('Run as root: sudo, from the havn-admin login.')
     process.exit(1)
   }
   if (!isValidHostname(hostname)) {

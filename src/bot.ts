@@ -730,8 +730,8 @@ async function handleVoiceUiCommand(
       [
         'This box has no public address, so there is no voice page to link to.',
         '',
-        'Operator: run',
-        '  sudo node dist/scripts/hosted/enable-teams.js <hostname> --voice',
+        'Operator: as havn-admin, run',
+        '  sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --voice',
         'then restart the service.',
       ].join('\n')
     )

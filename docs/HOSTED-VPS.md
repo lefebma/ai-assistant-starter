@@ -178,6 +178,23 @@ cloud-init status --wait
 tail -f /var/log/havn-provision.log
 ```
 
+The box has two logins, both taking your key (card #196):
+
+- **`havn`** owns the install and runs the service. The assistant's shell runs
+  as this user, so its sudo covers only `systemctl start|stop|restart havn`
+  and `systemctl enable --now havn`. Use it for everything routine.
+- **`havn-admin`** has full sudo, for root work: Caddy and `enable-teams`,
+  apt, swap, reboots. Its home is not writable by `havn`.
+
+The split exists because the assistant can write to `havn`'s own
+`~/.bashrc` and `~/.ssh/authorized_keys`. With full sudo on `havn`, either one
+would be a step to root at the next login. Inside the running service, sudo is
+already blocked by `NoNewPrivileges=true`. One gap remains: root steps that
+run code from the install (`enable-teams`, Playwright's `install-deps`) run
+files `havn` can write, so run them only on a box you have no reason to
+distrust, right after an update. Boxes provisioned before this
+change: run `scripts/hosted/split-admin.sh <ip>` from your machine once.
+
 When it finishes you'll see the MOTD on login:
 
 ```
@@ -344,7 +361,7 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   ```bash
   sudo systemctl restart havn
   PID=$(systemctl show havn --property=MainPID --value)
-  sudo cat /proc/$PID/environ | tr '\0' '\n' | grep GOG_KEYRING_PASSWORD
+  cat /proc/$PID/environ | tr '\0' '\n' | grep GOG_KEYRING_PASSWORD   # same user, no sudo needed
   ```
 
 - **OAuth without a browser.** Use gog's built-in remote flow — no listener,
@@ -448,7 +465,7 @@ the tailnet (Tailscale SSH — no keys to manage per-box), and the public
 internet sees a machine with zero open ports. If you skipped Tailscale at
 provision time you can add it later: install per tailscale.com/download, then
 `sudo tailscale up --ssh`, then close the SSH hole with
-`sudo ufw delete allow OpenSSH`.
+`sudo ufw delete allow OpenSSH` (both as `havn-admin`).
 
 ## Teams instead of Telegram
 
@@ -456,7 +473,7 @@ One Azure Bot per install, like one BotFather bot per install. Do this after
 the box is provisioned and `npm run setup` has run (choose Teams there, leave
 the credentials blank).
 
-1. **Expose the webhook.** On the box, as root:
+1. **Expose the webhook.** On the box, as `havn-admin`:
 
    ```bash
    sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <ip-with-dashes>.sslip.io
@@ -554,12 +571,17 @@ instead, and `/browser start` (your own Chrome with your sessions) does not
 apply here.
 
 Boxes provisioned from this release on get the browser and its system
-libraries at first boot. A box provisioned earlier needs them once, as `havn`:
+libraries at first boot. A box provisioned earlier needs them once, as `havn-admin`:
 
 ```bash
-cd ~/havn
+cd /home/havn/havn
 sudo node node_modules/playwright-core/cli.js install-deps chromium
-node node_modules/playwright-core/cli.js install chromium
+```
+
+then, as `havn` (the browser downloads into its home):
+
+```bash
+cd ~/havn && node node_modules/playwright-core/cli.js install chromium
 ```
 
 No restart needed: the browser launches on demand. Symptoms of a box that is
@@ -602,7 +624,7 @@ assistant simply stops mid-task.
 
 Boxes provisioned from this release on get a 2 GB swapfile at first boot, with
 `vm.swappiness=10` so it is kept for real pressure rather than paging out an
-idle assistant. A box provisioned earlier needs it once, as root:
+idle assistant. A box provisioned earlier needs it once, as `havn-admin`:
 
 ```bash
 sudo fallocate -l 2G /swapfile
@@ -626,7 +648,8 @@ background. It needs `OPENAI_API_KEY` on the box (billed per second of
 conversation to that key) and HTTPS for the microphone. Enable both on the edge:
 
 ```
-sudo node dist/scripts/hosted/enable-teams.js <hostname> --voice
+# as havn-admin
+sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --voice
 sudo systemctl restart havn
 ```
 
@@ -697,7 +720,7 @@ Three fields are redacted as they are written, and all three matter:
 Reading it:
 
 ```
-sudo tail -n 50 /var/log/caddy/access.log | jq -c '{ts,status,uri:.request.uri,ua:.request.headers["User-Agent"][0]}'
+sudo tail -n 50 /var/log/caddy/access.log   # as havn-admin | jq -c '{ts,status,uri:.request.uri,ua:.request.headers["User-Agent"][0]}'
 ```
 
 Existing boxes pick this up on the next `enable-teams` run.
@@ -705,7 +728,7 @@ Existing boxes pick this up on the next `enable-teams` run.
 ## Updates, snapshots, backups
 
 - **OS:** unattended-upgrades applies security patches automatically. Kernel
-  updates still want an occasional reboot: `sudo reboot` in a quiet moment;
+  updates still want an occasional reboot: `sudo reboot` as `havn-admin` in a quiet moment;
   the service starts on boot once enabled.
 - **App:** the `/update` command works as on any install; the repo is public,
   so no token is involved (a private fork would need a fine-grained PAT with
