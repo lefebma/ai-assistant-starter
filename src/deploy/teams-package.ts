@@ -3,6 +3,8 @@
  * shape is testable; scripts/teams-manifest.ts does the argv and file I/O.
  * The zip is written by hand (stored entries) to avoid a dependency.
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { deflateSync } from 'node:zlib'
 
 export interface TeamsPackageSpec {
@@ -10,6 +12,10 @@ export interface TeamsPackageSpec {
   name: string
   developerName?: string
   websiteUrl?: string
+  /** Path to a custom 192x192 color icon PNG. Falls back to deploy/teams/color.png, then generated. */
+  colorIconPath?: string
+  /** Path to a custom 32x32 outline icon PNG (white on transparent). Falls back to deploy/teams/outline.png, then generated. */
+  outlineIconPath?: string
 }
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -179,12 +185,47 @@ export function zipStored(entries: Array<{ name: string; data: Buffer }>, when =
   return Buffer.concat([...locals, centralBytes, eocd])
 }
 
-export function buildTeamsPackage(template: string, spec: TeamsPackageSpec): Buffer {
+/** Try to read a file; return undefined if it doesn't exist. */
+function tryRead(path: string): Buffer | undefined {
+  try { return readFileSync(path) } catch { return undefined }
+}
+
+/**
+ * An icon the operator named explicitly: a missing file or a PNG of the wrong
+ * size is an error, not a silent fall back to the default (Teams rejects the
+ * whole package when an icon is not exactly the size it asks for).
+ */
+function readIcon(path: string, size: number, flag: string): Buffer {
+  const data = tryRead(path)
+  if (!data) throw new Error(`${flag}: cannot read ${path}`)
+  const isPng = data.length >= 24 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  if (!isPng) throw new Error(`${flag}: ${path} is not a PNG`)
+  const w = data.readUInt32BE(16)
+  const h = data.readUInt32BE(20)
+  if (w !== size || h !== size) throw new Error(`${flag}: ${path} is ${w}x${h}, Teams needs ${size}x${size}`)
+  return data
+}
+
+export function buildTeamsPackage(template: string, spec: TeamsPackageSpec, projectRoot?: string): Buffer {
   const problems = validateTeamsPackageSpec(spec)
   if (problems.length) throw new Error(problems.join('; '))
+
+  const root = projectRoot ?? ''
+
+  // Icon resolution: explicit path > convention path (deploy/teams/) > generated fallback
+  const colorIcon =
+    (spec.colorIconPath ? readIcon(spec.colorIconPath, 192, '--color-icon') : undefined) ??
+    (root ? tryRead(resolve(root, 'deploy', 'teams', 'color.png')) : undefined) ??
+    solidPng(192, 192, [31, 41, 55, 255])
+
+  const outlineIcon =
+    (spec.outlineIconPath ? readIcon(spec.outlineIconPath, 32, '--outline-icon') : undefined) ??
+    (root ? tryRead(resolve(root, 'deploy', 'teams', 'outline.png')) : undefined) ??
+    outlinePng(32)
+
   return zipStored([
     { name: 'manifest.json', data: Buffer.from(renderManifest(template, spec), 'utf-8') },
-    { name: 'color.png', data: solidPng(192, 192, [31, 41, 55, 255]) },
-    { name: 'outline.png', data: outlinePng(32) },
+    { name: 'color.png', data: colorIcon },
+    { name: 'outline.png', data: outlineIcon },
   ])
 }

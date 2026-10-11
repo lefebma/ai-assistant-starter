@@ -66,6 +66,11 @@ A laptop install would need a tunnel and is not supported for Teams yet.
 5. Adding the app makes the bot announce your chat id (send `/chatid` to see it again). Put it in
    `ALLOWED_CHAT_ID` and restart.
 
+**Custom icon.** The package includes a default Havn "H" logo. To use your own:
+- Drop a 192x192 `color.png` and a 32x32 `outline.png` (white on transparent) into `deploy/teams/`, then re-run `npm run teams-manifest`.
+- Or pass paths directly: `--color-icon path/to/color.png --outline-icon path/to/outline.png`.
+- Re-upload the zip in Teams (Manage your apps → find the app → Update) to apply the new icon.
+
 ## Signing in
 
 Your assistant needs an account with an AI company before it can answer

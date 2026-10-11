@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inflateSync } from 'node:zlib'
@@ -57,5 +58,35 @@ describe('buildTeamsPackage', () => {
     // end-of-central-directory record says 3 entries
     const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]))
     expect(zip.readUInt16LE(eocd + 10)).toBe(3)
+  })
+
+  it('uses the default Havn icons in deploy/teams when given the project root', () => {
+    const zip = buildTeamsPackage(TEMPLATE, SPEC, ROOT)
+    expect(zip.indexOf(readFileSync(join(ROOT, 'deploy', 'teams', 'color.png')))).toBeGreaterThan(0)
+    expect(zip.indexOf(readFileSync(join(ROOT, 'deploy', 'teams', 'outline.png')))).toBeGreaterThan(0)
+  })
+
+  it('prefers icons passed explicitly, and generates them when nothing is on disk', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'teams-icons-'))
+    const color = solidPng(192, 192, [200, 10, 10, 255])
+    const outline = solidPng(32, 32, [255, 255, 255, 255])
+    writeFileSync(join(dir, 'c.png'), color)
+    writeFileSync(join(dir, 'o.png'), outline)
+    const zip = buildTeamsPackage(TEMPLATE, { ...SPEC, colorIconPath: join(dir, 'c.png'), outlineIconPath: join(dir, 'o.png') }, ROOT)
+    expect(zip.indexOf(color)).toBeGreaterThan(0)
+    expect(zip.indexOf(outline)).toBeGreaterThan(0)
+    const bare = mkdtempSync(join(tmpdir(), 'teams-root-'))
+    mkdirSync(join(bare, 'deploy', 'teams'), { recursive: true })
+    expect(buildTeamsPackage(TEMPLATE, SPEC, bare).indexOf(solidPng(192, 192, [31, 41, 55, 255]))).toBeGreaterThan(0)
+  })
+
+  it('refuses an explicit icon that is missing, not a PNG, or the wrong size', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'teams-bad-'))
+    writeFileSync(join(dir, 'big.png'), solidPng(256, 256, [0, 0, 0, 255]))
+    writeFileSync(join(dir, 'x.png'), 'not a png at all, just text padding')
+    expect(() => buildTeamsPackage(TEMPLATE, { ...SPEC, colorIconPath: join(dir, 'nope.png') })).toThrow(/--color-icon: cannot read/)
+    expect(() => buildTeamsPackage(TEMPLATE, { ...SPEC, colorIconPath: join(dir, 'x.png') })).toThrow(/not a PNG/)
+    expect(() => buildTeamsPackage(TEMPLATE, { ...SPEC, colorIconPath: join(dir, 'big.png') })).toThrow(/256x256, Teams needs 192x192/)
+    expect(() => buildTeamsPackage(TEMPLATE, { ...SPEC, outlineIconPath: join(dir, 'big.png') })).toThrow(/--outline-icon/)
   })
 })
