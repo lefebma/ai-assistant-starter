@@ -886,7 +886,7 @@ export function startHttpServer(port: number = HTTP_PORT): void {
   // Bind to 0.0.0.0 so the dashboard's Cockpit tab can reach Umi from other devices
   // on the LAN. Bearer-token auth (HTTP_BEARER_TOKEN) is the security boundary.
   server.listen(port, '0.0.0.0', () => {
-    logger.info({ port }, 'HTTP server listening (voice/custom-LLM/cockpit)')
+    logger.info({ port: listeningPort() }, 'HTTP server listening (voice/custom-LLM/cockpit)')
     if (PUBLIC_HOSTNAME && !HTTP_BEARER_TOKEN) {
       logger.warn(
         { publicHostname: PUBLIC_HOSTNAME },
@@ -895,4 +895,12 @@ export function startHttpServer(port: number = HTTP_PORT): void {
     }
   })
   httpServer = server
+}
+
+/** The port the HTTP server is actually bound to (useful when started on port 0). */
+export function listeningPort(): number | null {
+  if (!httpServer) return null
+  const addr = httpServer.address()
+  if (!addr || typeof addr === 'string') return null
+  return addr.port
 }
