@@ -423,6 +423,10 @@ the credentials blank).
    ```
 
    Writes `deploy/rendered/<slug>-teams.zip` (the assistant name, lowercased, with dashes).
+   The package includes the default Havn "H" icon. To use a custom icon, drop
+   a 192x192 `color.png` and 32x32 `outline.png` (white on transparent) into
+   `deploy/teams/` before running the command, or pass `--color-icon <path>`
+   and `--outline-icon <path>`.
 
 4. **Install it in Teams.** The user opens Teams → Apps → Manage your apps →
    Upload an app → Upload a custom app, picks the zip, and opens the chat.
