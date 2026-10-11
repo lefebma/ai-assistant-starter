@@ -133,27 +133,25 @@ describe('the grace window after a link is first used', () => {
 })
 
 describe('what the page is told, so it can say something true', () => {
-  // 5900-6090 avoids the 5100, 5400 and 5700 bands the other HTTP suites draw
-  // from. It stops short of 6000 in the draw (6000 is on fetch's blocked-port
-  // list) by using a 10-slot band. voice-live-routes.test.ts used to draw from
-  // here too; it is on 6100 now. Check both before claiming a band.
-  // Never 5900 itself: that is VNC, and macOS Screen Sharing holds it on any
-  // Mac with remote management on, which failed this suite one draw in ten.
-  let nextPort = 5910 + Math.floor(Math.random() * 9) * 10
-
+  // Port 0: the OS hands out a free port, so this suite never collides with
+  // another HTTP suite or with something holding a port on the Mac (5900 is
+  // VNC when Screen Sharing is on, which used to fail it one draw in ten).
   async function startServer(): Promise<number> {
-    const { startHttpServer } = await import('../src/http-server.js')
-    const port = nextPort++
-    startHttpServer(port)
+    const { startHttpServer, listeningPort } = await import('../src/http-server.js')
+    startHttpServer(0) // let the OS pick a free port
     const deadline = Date.now() + 5000
     for (;;) {
-      try {
-        await fetch(`http://127.0.0.1:${port}/__ready__`)
-        return port
-      } catch (err) {
-        if (Date.now() > deadline) throw err
-        await new Promise((r) => setTimeout(r, 25))
+      const port = listeningPort()
+      if (port) {
+        try {
+          await fetch(`http://127.0.0.1:${port}/__ready__`)
+          return port
+        } catch {
+          // server not ready yet
+        }
       }
+      if (Date.now() > deadline) throw new Error('HTTP server did not start within 5s')
+      await new Promise((r) => setTimeout(r, 25))
     }
   }
 
