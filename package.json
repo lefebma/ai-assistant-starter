@@ -19,7 +19,8 @@
     "dream": "node dist/src/dreaming/index.js",
     "dream:dev": "tsx src/dreaming/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "setup:web": "node dist/scripts/setup-web.js"
   },
   "engines": {
     "node": ">=20"

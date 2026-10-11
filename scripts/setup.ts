@@ -7,7 +7,7 @@
  * Usage: npm run setup
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
@@ -17,9 +17,8 @@ import { checkRequirements, planBuildStep } from '../src/setup/requirements.js'
 import { resolveBundledClaude } from '../src/infra/claude-bin.js'
 import { checkClaudeAuth, spawnClaude } from '../src/infra/claude-auth.js'
 import { resolveGogBin } from '../src/infra/gog-bin.js'
-import { buildEnvContent, buildSkillPlan, installedSkillsList } from '../src/setup/plan.js'
+import { writeConfiguration } from '../src/setup/finalize.js'
 import { buildNextSteps, renderNextSteps } from '../src/setup/next-steps.js'
-import { applyPlan } from '../src/setup/execute.js'
 import { ensurePlaywrightMcp } from '../src/setup/mcp-config.js'
 
 const GREEN = '\x1b[32m'
@@ -164,29 +163,12 @@ async function main(): Promise<void> {
 
   header('Generating configuration...')
 
-  const plan = buildSkillPlan(answers, homedir())
-  const result = applyPlan(plan, PROJECT_ROOT)
-  ok(`CLAUDE.md and skills installed (${installedSkillsList(answers)})`)
-  for (const note of result.notes) warn(note)
-  for (const skipped of result.skipped) warn(`kept existing: ${skipped}`)
-
-  const envPath = resolve(PROJECT_ROOT, '.env')
-  if (existsSync(envPath)) {
-    warn('.env already exists — not overwriting (compare against .env.example for new settings)')
-  } else {
-    let env = buildEnvContent(answers)
-    if (botToken) env = env.replace('TELEGRAM_BOT_TOKEN=', `TELEGRAM_BOT_TOKEN=${botToken}`)
-    if (chatId) env = env.replace('ALLOWED_CHAT_ID=', `ALLOWED_CHAT_ID=${chatId}`)
-    if (teamsAppId) env = env.replace('TEAMS_APP_ID=', `TEAMS_APP_ID=${teamsAppId}`)
-    if (teamsAppSecret) env = env.replace('TEAMS_APP_SECRET=', `TEAMS_APP_SECRET=${teamsAppSecret}`)
-    if (teamsTenantId) env = env.replace('TEAMS_TENANT_ID=', `TEAMS_TENANT_ID=${teamsTenantId}`)
-    writeFileSync(envPath, env)
-    ok('.env written')
-  }
-
-  mkdirSync(resolve(PROJECT_ROOT, 'projects'), { recursive: true })
-  mkdirSync(resolve(PROJECT_ROOT, 'store'), { recursive: true })
-  mkdirSync(resolve(PROJECT_ROOT, 'workspace', 'uploads'), { recursive: true })
+  const written = writeConfiguration(answers, { botToken, chatId, teamsAppId, teamsAppSecret, teamsTenantId }, PROJECT_ROOT, homedir())
+  ok(`CLAUDE.md and skills installed (${written.installed})`)
+  for (const note of written.notes) warn(note)
+  for (const skipped of written.skipped) warn(`kept existing: ${skipped}`)
+  if (written.envWritten) ok('.env written')
+  else warn('.env already exists — not overwriting (compare against .env.example for new settings)')
   ok('Directories created')
 
   const buildStep = planBuildStep({

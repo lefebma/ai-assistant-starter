@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Set up your assistant</title>
+<style nonce="{{NONCE}}">
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d232b; --muted: #5b6573; --line: #dde2e8;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --bad: #b42318; --soft: #eef4ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --card: #171b21; --text: #e6e9ee; --muted: #9aa4b2; --line: #2a313a;
+      --accent: #4a8dff; --accent-text: #0b0d10; --ok: #46c46b; --bad: #ff6b5e; --soft: #18243a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 0 0 12px; }
+  p { margin: 0 0 12px; }
+  .sub { color: var(--muted); margin-bottom: 20px; }
+  .steps { display: flex; gap: 6px; margin: 0 0 16px; }
+  .steps span { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+  .steps span.on { background: var(--accent); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  label { display: block; font-weight: 600; margin: 14px 0 4px; }
+  .hint { font-weight: 400; color: var(--muted); font-size: .9rem; }
+  input, select, textarea { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  textarea { min-height: 5rem; resize: vertical; }
+  .choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-weight: 400; cursor: pointer; }
+  .choice input { width: auto; margin-top: 4px; }
+  .choice.sel { border-color: var(--accent); background: var(--soft); }
+  button, .btn { display: inline-block; font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 11px 18px; cursor: pointer; text-decoration: none; text-align: center; }
+  .primary { background: var(--accent); color: var(--accent-text); }
+  .secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  button:disabled { opacity: .55; cursor: default; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  .row > * { flex: 1 1 auto; }
+  ol { padding-left: 1.2rem; margin: 0 0 12px; }
+  li { margin-bottom: 6px; }
+  .err { color: var(--bad); margin-top: 12px; min-height: 1.5em; }
+  .okmsg { color: var(--ok); font-weight: 600; }
+  .wait { display: flex; align-items: center; gap: 10px; color: var(--muted); margin: 12px 0; }
+  .spin { width: 18px; height: 18px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s 1s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+  .who { background: var(--soft); border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 1.1rem; }
+  .gap { margin-top: 16px; }
+  code { background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Set up your assistant</h1>
+  <p class="sub">Three short steps. Nothing here is shared with anyone.</p>
+  <div class="steps" aria-hidden="true"><span id="bar1" class="on"></span><span id="bar2"></span><span id="bar3"></span></div>
+
+  <section id="already" class="hidden">
+    <h2>Already set up</h2>
+    <p>This assistant has been set up. To change anything, just ask it in chat.</p>
+  </section>
+
+  <section id="step1">
+    <h2>1. About you</h2>
+    <label for="ownerName">Your name</label>
+    <input id="ownerName" autocomplete="name" maxlength="80">
+    <label for="assistantName">Your assistant's name <span class="hint">(you can change it later)</span></label>
+    <input id="assistantName" maxlength="40" value="Atlas">
+    <label for="city">Your city <span class="hint">(for the weather)</span></label>
+    <input id="city" autocomplete="address-level2" maxlength="80">
+    <label for="timezone">Time zone</label>
+    <input id="timezone" maxlength="64">
+    <label>How should it talk to you?</label>
+    <label class="choice"><input type="radio" name="vibe" value="0"> <span><b>Professional</b><br><span class="hint">Clear and efficient, no filler.</span></span></label>
+    <label class="choice sel"><input type="radio" name="vibe" value="1" checked> <span><b>Friendly</b><br><span class="hint">Warm and conversational, still to the point.</span></span></label>
+    <label class="choice"><input type="radio" name="vibe" value="2"> <span><b>Direct</b><br><span class="hint">Blunt, opinionated, pushes back.</span></span></label>
+    <label for="ownerBio">What do you do? <span class="hint">(optional, a sentence or two)</span></label>
+    <textarea id="ownerBio" maxlength="600" placeholder="I run a small law firm and need help keeping on top of email and my calendar."></textarea>
+    <div class="err" id="err1" role="alert"></div>
+    <div class="row"><button class="primary" id="next1">Next</button></div>
+  </section>
+
+  <section id="step2" class="hidden">
+    <h2>2. Connect Telegram</h2>
+    <div id="tgToken">
+      <p>Your assistant talks to you in Telegram, through a bot that belongs to you. Make one now:</p>
+      <ol>
+        <li>Open <b>BotFather</b> in Telegram: <a class="btn secondary" href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">Open BotFather</a></li>
+        <li>Send <code>/newbot</code>. Give it a name, then a username ending in <code>bot</code>.</li>
+        <li>BotFather replies with a token, a long line like <code>123456789:AAH…</code>. Copy it and paste it here.</li>
+      </ol>
+      <label for="botToken">Bot token</label>
+      <input id="botToken" type="password" autocomplete="off" spellcheck="false">
+      <div class="row"><button class="primary" id="connectBot">Connect</button></div>
+    </div>
+    <div id="tgPair" class="hidden">
+      <p class="okmsg">Connected to @<span id="botName"></span>.</p>
+      <p>Now open your bot and tap <b>Start</b>, so it knows who you are.</p>
+      <div class="row"><a class="btn primary" id="openBot" target="_blank" rel="noopener noreferrer">Open my bot</a></div>
+      <div class="wait" id="pairWait"><div class="spin"></div><span>Waiting for you to tap Start…</span></div>
+      <div id="pairFound" class="hidden">
+        <div class="who">Is this you? <b id="whoName"></b> <span class="hint" id="whoUser"></span></div>
+        <div class="row"><button class="primary" id="yesMe">Yes, that's me</button><button class="secondary" id="notMe">No</button></div>
+      </div>
+      <div id="pairRetry" class="hidden"><div class="row"><button class="secondary" id="retryPair">Try again</button></div></div>
+      <p id="pairDone" class="okmsg hidden">Got it, you're paired.</p>
+    </div>
+    <div class="err" id="err2" role="alert"></div>
+    <div class="row"><button class="secondary" id="back2">Back</button><button class="primary" id="next2" disabled>Next</button></div>
+  </section>
+
+  <section id="step3" class="hidden">
+    <h2>3. Choose its AI</h2>
+    <p>Your assistant needs an account with an AI company to do its thinking.</p>
+    <label class="choice hidden" id="optSub"><input type="radio" name="engine" value="subscription"> <span><b>My Claude subscription</b><br><span class="hint">Claude Pro or Max. A flat monthly fee; sign in once.</span></span></label>
+    <label class="choice"><input type="radio" name="engine" value="api-key"> <span><b>An API key</b><br><span class="hint">No monthly fee; billed for what you use.</span></span></label>
+    <label class="choice"><input type="radio" name="engine" value="later"> <span><b>I'll do this later</b><br><span class="hint">It won't be able to answer until you do.</span></span></label>
+
+    <div id="subBox" class="hidden">
+      <p id="subState">Click below and sign in with the account that has your Claude plan.</p>
+      <div class="row"><button class="secondary" id="signIn">Sign in with Claude</button></div>
+    </div>
+    <div id="keyBox" class="hidden">
+      <label for="provider">Whose key?</label>
+      <select id="provider">
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="openai">OpenAI</option>
+        <option value="google">Google (Gemini)</option>
+      </select>
+      <p class="hint" id="keyWhere"></p>
+      <label for="apiKey">API key</label>
+      <input id="apiKey" type="password" autocomplete="off" spellcheck="false">
+      <div id="modelBox" class="hidden">
+        <label for="model">Model</label>
+        <input id="model" spellcheck="false">
+      </div>
+    </div>
+    <div class="err" id="err3" role="alert"></div>
+    <div class="row"><button class="secondary" id="back3">Back</button><button class="primary" id="finish">Finish setup</button></div>
+  </section>
+
+  <section id="done" class="hidden">
+    <h2>You're all set</h2>
+    <p id="doneMsg">Your assistant is starting. It has sent you a message in Telegram.</p>
+    <div class="row"><a class="btn primary" id="openTelegram" target="_blank" rel="noopener noreferrer">Open Telegram</a></div>
+    <p class="hint gap">You can close this page. Next, ask your assistant to connect your email.</p>
+  </section>
+</main>
+<script nonce="{{NONCE}}">
+(() => {
+  const $ = (id) => document.getElementById(id)
+  const params = new URLSearchParams(location.search)
+  const token = params.get('token')
+  // Keep the token out of history, bookmarks and screenshots of the address bar.
+  if (token) history.replaceState(null, '', location.pathname)
+
+  const WHERE = {
+    anthropic: 'Get one at console.anthropic.com → API keys.',
+    openai: 'Get one at platform.openai.com → API keys.',
+    google: 'Get one at aistudio.google.com → Get API key.',
+  }
+  const MODELS = { anthropic: '', openai: 'gpt-5', google: 'gemini-2.5-pro' }
+  let state = null
+  let botUser = ''
+
+  async function api(path, body) {
+    const headers = {}
+    if (token) headers.Authorization = 'Bearer ' + token
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
+    const res = await fetch('/setup/api/' + path, { method: body === undefined ? 'GET' : 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) })
+    let data = {}
+    try { data = await res.json() } catch {}
+    if (!res.ok) throw new Error(data.error || (res.status === 404 ? 'This setup page is no longer available.' : 'Something went wrong. Try again.'))
+    return data
+  }
+
+  function show(step) {
+    for (const id of ['step1', 'step2', 'step3', 'done', 'already']) $(id).classList.toggle('hidden', id !== step)
+    const n = { step1: 1, step2: 2, step3: 3, done: 3 }[step] || 0
+    for (let i = 1; i <= 3; i++) $('bar' + i).classList.toggle('on', i <= n)
+    window.scrollTo(0, 0)
+  }
+
+  function radios(name) {
+    for (const r of document.querySelectorAll('input[name="' + name + '"]')) {
+      r.addEventListener('change', () => {
+        for (const o of document.querySelectorAll('input[name="' + name + '"]')) o.closest('.choice').classList.toggle('sel', o.checked)
+        if (name === 'engine') engineChanged()
+      })
+    }
+  }
+  radios('vibe'); radios('engine')
+
+  try { $('timezone').value = Intl.DateTimeFormat().resolvedOptions().timeZone || '' } catch {}
+
+  function profile() {
+    return {
+      ownerName: $('ownerName').value,
+      assistantName: $('assistantName').value,
+      city: $('city').value,
+      timezone: $('timezone').value,
+      vibe: Number((document.querySelector('input[name="vibe"]:checked') || {}).value || 1),
+      ownerBio: $('ownerBio').value,
+    }
+  }
+
+  $('next1').onclick = () => {
+    const p = profile()
+    $('err1').textContent = ''
+    if (!p.ownerName.trim()) return ($('err1').textContent = 'Please fill in your name.')
+    if (!p.assistantName.trim()) return ($('err1').textContent = "Please give your assistant a name.")
+    if (!p.timezone.trim()) return ($('err1').textContent = 'Please fill in your time zone.')
+    show('step2')
+  }
+  $('back2').onclick = () => show('step1')
+  $('back3').onclick = () => show('step2')
+  $('next2').onclick = () => show('step3')
+
+  $('connectBot').onclick = async () => {
+    $('err2').textContent = ''
+    $('connectBot').disabled = true
+    try {
+      const r = await api('telegram/token', { token: $('botToken').value })
+      $('botToken').value = ''
+      onBot(r.username)
+      pollPairing()
+    } catch (e) { $('err2').textContent = e.message } finally { $('connectBot').disabled = false }
+  }
+
+  function onBot(username) {
+    botUser = username
+    $('botName').textContent = username
+    $('openBot').href = 'https://t.me/' + encodeURIComponent(username) + '?start=setup'
+    $('tgToken').classList.add('hidden')
+    $('tgPair').classList.remove('hidden')
+  }
+
+  let polling = false
+  async function pollPairing() {
+    if (polling) return
+    polling = true
+    try {
+      for (;;) {
+        const p = await api('telegram/pairing')
+        renderPairing(p)
+        if (p.state !== 'waiting') break
+        await new Promise((r) => setTimeout(r, 2000))
+      }
+    } catch (e) { $('err2').textContent = e.message } finally { polling = false }
+  }
+
+  function renderPairing(p) {
+    $('pairWait').classList.toggle('hidden', p.state !== 'waiting')
+    $('pairFound').classList.toggle('hidden', p.state !== 'found')
+    $('pairDone').classList.toggle('hidden', p.state !== 'paired')
+    $('pairRetry').classList.toggle('hidden', !(p.state === 'expired' || p.state === 'error'))
+    $('next2').disabled = p.state !== 'paired'
+    if (p.state === 'found') {
+      $('whoName').textContent = p.name
+      $('whoUser').textContent = p.username ? '@' + p.username : ''
+    }
+    if (p.state === 'expired') $('err2').textContent = 'That took too long. Tap Try again, then tap Start in your bot.'
+    if (p.state === 'error') $('err2').textContent = p.error
+  }
+
+  $('yesMe').onclick = async () => { try { renderPairing(await api('telegram/confirm', { yes: true })) } catch (e) { $('err2').textContent = e.message } }
+  $('notMe').onclick = async () => {
+    try { renderPairing(await api('telegram/confirm', { yes: false })); pollPairing() } catch (e) { $('err2').textContent = e.message }
+  }
+  $('retryPair').onclick = async () => {
+    $('err2').textContent = ''
+    try { renderPairing(await api('telegram/restart', {})); pollPairing() } catch (e) { $('err2').textContent = e.message }
+  }
+
+  function engineKind() { return (document.querySelector('input[name="engine"]:checked') || {}).value || '' }
+  function engineChanged() {
+    const k = engineKind()
+    $('subBox').classList.toggle('hidden', k !== 'subscription')
+    $('keyBox').classList.toggle('hidden', k !== 'api-key')
+  }
+  function providerChanged() {
+    const p = $('provider').value
+    $('keyWhere').textContent = WHERE[p]
+    $('modelBox').classList.toggle('hidden', !MODELS[p])
+    $('model').value = MODELS[p]
+  }
+  $('provider').onchange = providerChanged
+  providerChanged()
+
+  $('signIn').onclick = async () => {
+    $('err3').textContent = ''
+    try {
+      await api('claude/sign-in', {})
+      $('subState').textContent = 'A browser window opened. Sign in there, then come back here.'
+      for (let i = 0; i < 150; i++) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const s = await api('state')
+        if (s.subscription && s.subscription.signedIn) { $('subState').innerHTML = '<span class="okmsg">Signed in to Claude.</span>'; return }
+      }
+      $('subState').textContent = 'Still not signed in. Try again.'
+    } catch (e) { $('err3').textContent = e.message }
+  }
+
+  $('finish').onclick = async () => {
+    $('err3').textContent = ''
+    const kind = engineKind()
+    if (!kind) return ($('err3').textContent = 'Choose how your assistant reaches an AI model.')
+    const engine = { kind }
+    if (kind === 'api-key') { engine.provider = $('provider').value; engine.key = $('apiKey').value; engine.model = $('model').value }
+    $('finish').disabled = true
+    $('finish').textContent = 'Setting up…'
+    try {
+      const r = await api('finish', { profile: profile(), engine })
+      $('apiKey').value = ''
+      $('openTelegram').href = 'https://t.me/' + encodeURIComponent(r.bot)
+      if (!r.delivered) $('doneMsg').textContent = 'Your assistant is starting. Open your bot in Telegram and say hello in a minute.'
+      show('done')
+    } catch (e) {
+      $('err3').textContent = e.message
+      $('finish').disabled = false
+      $('finish').textContent = 'Finish setup'
+    }
+  }
+
+  api('state').then((s) => {
+    state = s
+    if (s.alreadySetUp) return show('already')
+    if (s.subscription) {
+      $('optSub').classList.remove('hidden')
+      if (s.subscription.signedIn) $('subState').innerHTML = '<span class="okmsg">Already signed in to Claude on this computer.</span>'
+    }
+    if (s.bot) { onBot(s.bot.username); renderPairing(s.pairing); if (s.pairing.state === 'waiting') pollPairing() }
+  }).catch((e) => { $('err1').textContent = e.message })
+})()
+</script>
+</body>
+</html>

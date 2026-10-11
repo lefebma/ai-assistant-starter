@@ -177,7 +177,43 @@ Fix the template, then rebuild rather than repair: regenerate the user-data,
 `hcloud server delete <name>`, and run the create command again. Ten minutes,
 and it proves the fix instead of leaving a hand-patched box behind.
 
-## Finishing steps (interactive, over SSH)
+## Finishing steps: web setup (recommended)
+
+Send the client a link and let them finish setup themselves, with no SSH
+session for you. As root, once cloud-init has finished:
+
+```bash
+sudo node /home/havn/havn/dist/scripts/hosted/enable-setup.js <ip-with-dashes>.sslip.io
+```
+
+It installs Caddy with an edge that exposes only `/setup`, starts
+`havn-setup.service`, and prints the link. Send it to the client. On the
+page they enter their name, make a Telegram bot, tap Start in it to pair
+(no chat id to look up), and paste their AI key. When they finish:
+
+- their keys go into the vault, and `.env` is written without secrets;
+- the assistant says hello in their Telegram;
+- the setup server (which runs as `havn`, with no sudo) writes
+  `store/setup-finished` and exits, and the root-owned `havn-setup-done.path`
+  retires the setup units and enables and starts `havn.service`;
+- the link is used up, and `/setup` is a 404 from then on.
+
+The link works once and expires in 48 hours. To send a new one (as `havn`):
+
+```bash
+node /home/havn/havn/dist/scripts/setup-web.js --issue-link <hostname>
+```
+
+A Claude subscription sign-in is not offered on a hosted box. Use an API key
+for now (Managed AI, card #159, will remove this step). Email is connected
+afterwards, in chat. Teams boxes still use the SSH steps below.
+
+If the client opens the link while `havn-setup` is down, Caddy's error log
+(the journal, root-only) may record the request URL with the token. Reissue
+the link if that matters to you; the access log always redacts it. Run
+`enable-teams` later as usual; it rewrites the same Caddyfile.
+
+## Finishing steps (interactive, over SSH; Teams, or if you prefer)
 
 The wizard and the credential flows are interactive by design; budget 20–30
 minutes the first time. All as the `havn` user:
