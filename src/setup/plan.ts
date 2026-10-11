@@ -258,6 +258,12 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
   // on when to reach for them and when curl is the better answer.
   p.push({ type: 'copy', from: 'templates/skills/browse', to: 'skills/browse' })
   p.push({ type: 'edit', file: 'skills/browse/SKILL.md', vars: identity })
+  // IMAP mail needs no opt-in either: with no mailbox connected it only tells
+  // the assistant how to connect one, and the app password arrives later
+  // through /secret, not through setup.
+  p.push({ type: 'copy', from: 'templates/skills/imap-mail', to: 'skills/imap-mail' })
+  p.push({ type: 'edit', file: 'skills/imap-mail/SKILL.md', vars: identity })
+  p.push({ type: 'edit', file: 'skills/imap-mail/manifest.json', vars: identity })
   p.push({ type: 'copy', from: 'templates/skills/daily-briefing', to: 'skills/daily-briefing' })
   // OWNER_NAME only: the same file is installed on existing machines by
   // syncAlwaysOnSkills(), which can substitute OWNER_NAME and PROJECT_PATH and

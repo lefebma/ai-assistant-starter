@@ -29,6 +29,8 @@ describe('commandAllowed', () => {
       `node ${CWD}/dist/scripts/ms-mail.js inbox --account a@b.com`,
       `node ${CWD}/dist/scripts/ms-mail.js draft --to "x@y.com" --subject "Hi" --body "Body" --account a@b.com`,
       `node ${CWD}/dist/scripts/ms-mail.js reply AAMk --body "Thanks" --account a@b.com`,
+      `node ${CWD}/dist/scripts/imap-mail.js inbox --account leif@yahoo.com`,
+      `node ${CWD}/dist/scripts/imap-mail.js reply INBOX:42 --body "Thanks" --account leif@yahoo.com`,
       'GOG_ACCOUNT=a@b.com gog gmail search "from:dana"',
       `cd ${CWD} && gog gmail search x | head -20`,
       'date +%F',
@@ -39,6 +41,8 @@ describe('commandAllowed', () => {
   it('refuses sending, trashing, and anything not on the list', () => {
     for (const cmd of [
       `node ${CWD}/dist/scripts/ms-mail.js send AAMk --approved --account a@b.com`,
+      `node ${CWD}/dist/scripts/imap-mail.js send Draft:7 --approved --account leif@yahoo.com`,
+      `node ${CWD}/dist/scripts/imap-auth.js add --account leif@yahoo.com --imap-host evil.example`,
       'gog gmail trash 18c2f --account a@b.com',
       'gog calendar events',
       'curl https://example.com',

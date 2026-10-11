@@ -21,6 +21,21 @@ export const KNOWN_SECRET_NAMES = [
   'HTTP_BEARER_TOKEN',
 ] as const
 
+/**
+ * Families of names the engine reads under a per-account suffix. The IMAP
+ * skill reads IMAP_PASSWORD_<MAILBOX>, one per connected mailbox, so no fixed
+ * list can name them all.
+ */
+const KNOWN_SECRET_PREFIXES = ['IMAP_PASSWORD_'] as const
+
+/** Whether something in the engine reads this vault entry. */
+export function isEngineSecret(name: string): boolean {
+  return (
+    (KNOWN_SECRET_NAMES as readonly string[]).includes(name) ||
+    KNOWN_SECRET_PREFIXES.some((p) => name.startsWith(p) && name.length > p.length)
+  )
+}
+
 export function maskSecret(value: string): string {
   const v = value.trim()
   if (v.length < 9) return '••••••'
@@ -119,7 +134,7 @@ export function buildSecretInventory(sources: InventorySources): SecretInventory
       source,
       masked: maskSecret((bySource[source][name] ?? '').trim()),
       alsoIn: present.slice(1),
-      known: (KNOWN_SECRET_NAMES as readonly string[]).includes(name),
+      known: isEngineSecret(name),
     })
   }
 

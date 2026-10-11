@@ -229,6 +229,80 @@ your own Azure app registration (public client, device code flow enabled, no
 secret) and set `MS_CLIENT_ID` in `.env`. `MS_TENANT_ID` stays unset for
 ordinary work accounts. See the notes in `.env.example`.
 
+## Part 3: Yahoo, AOL, iCloud and other IMAP mailboxes
+
+**Available from the next release.** Mail only (inbox, search, read, drafts,
+reply drafts, send an approved draft). No calendar: these providers do not
+expose one over IMAP.
+
+Presets cover Yahoo (every regional domain, ymail, rocketmail), AOL, iCloud
+(icloud.com, me.com, mac.com), Fastmail, GMX and Zoho. Any other provider
+works if you give its server names. Gmail and Outlook/Hotmail addresses are
+refused with a pointer to Parts 1 and 2: Gmail has a better path, and
+Microsoft has switched app-password sign-in off.
+
+The skill is installed on every box automatically, so there is nothing to
+copy. The client can do all of this from their chat without you; the steps
+below are for doing it with them on a call.
+
+### Step A — 👤 CLIENT: make an app password
+
+Not their normal password. Every one of these providers refuses that over
+IMAP once two-step sign-in is on, and an app password can be revoked on its
+own later.
+
+- **Yahoo / AOL:** login.yahoo.com (or login.aol.com) → Account Info →
+  Account security → **Generate app password**.
+- **iCloud:** account.apple.com → Sign-In and Security → **App-Specific
+  Passwords**.
+
+### Step B — 👤 CLIENT: put it in the vault from their chat
+
+```
+/secret set IMAP_PASSWORD_<ADDRESS IN CAPITALS, @ AND . AS _>
+```
+
+e.g. `/secret set IMAP_PASSWORD_LEIF_YAHOO_COM`, then paste the app password
+as the next message. The bot deletes that message and never shows it to the
+model. Spaces in it (Yahoo shows it in groups of four) are fine.
+
+Running `imap-auth add` before this step prints the exact name for the
+address, so there is no need to work it out by hand.
+
+Over SSH you can skip the chat instead:
+`node dist/scripts/imap-auth.js add --account <address> --password-stdin`
+and paste it there.
+
+### Step C — 🧑‍💻 YOU (or the assistant): connect
+
+```bash
+node dist/scripts/imap-auth.js add --account leif@yahoo.com
+```
+
+It signs in to read (IMAP) and to send (SMTP), and marks the mailbox
+connected only if both work. "Refused the sign-in" means the app password is
+wrong or was revoked: make a new one and repeat Step B with the same name.
+
+For a provider without a preset, add its servers:
+`--imap-host imap.example.com --smtp-host smtp.example.com`, plus
+`--imap-port` / `--smtp-port` if they are not 993 and 465 (587 is treated as
+STARTTLS, and the connection is refused if the upgrade fails).
+
+### Step D — 🧑‍💻 YOU: verify
+
+```bash
+node dist/scripts/imap-auth.js status --check
+node dist/scripts/imap-mail.js inbox --count 3 --account leif@yahoo.com
+```
+
+No restart is needed: every mail command reads the vault fresh.
+
+### Step E — done
+
+Message the bot: "check my Yahoo mail." To disconnect:
+`node dist/scripts/imap-auth.js remove --account <address>`, then revoke the
+app password at the provider.
+
 ---
 
 ## Security recap

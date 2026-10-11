@@ -220,3 +220,17 @@ describe('SecretFlow.capture', () => {
     expect(flow.hasPending(CHAT)).toBe(false)
   })
 })
+
+describe('IMAP app passwords', () => {
+  it('stores one and points at connecting the mailbox, not at a restart', async () => {
+    const flow = makeFlow({ validate: async () => ({ status: 'unverified', detail: 'no validator for this key' }) })
+    await flow.handleCommand(CHAT, '/secret set IMAP_PASSWORD_LEIF_YAHOO_COM')
+    const out = await flow.capture(CHAT, 'abcd efgh ijkl mnop')
+    expect(out?.saved).toBe(true)
+    expect(out?.deleteUserMessage).toBe(true)
+    expect(out?.reply).toContain('connect that mailbox')
+    expect(out?.reply).not.toContain('nothing picks it up')
+    expect(out?.reply).not.toContain('abcd efgh')
+    expect(vault.get('IMAP_PASSWORD_LEIF_YAHOO_COM')).toBe('abcd efgh ijkl mnop')
+  })
+})
