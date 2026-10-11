@@ -52,7 +52,7 @@ describe('setup link', () => {
     const dir = mkdtempSync(join(tmpdir(), 'link-'))
     const store = fileLinkStore(join(dir, 'store', 'setup-link.json'))
     const token = issueLink(store, 0)
-    expect(statSync(join(dir, 'store', 'setup-link.json')).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(join(dir, 'store', 'setup-link.json')).mode & 0o777).toBe(0o600)
     expect(readFileSync(join(dir, 'store', 'setup-link.json'), 'utf-8')).not.toContain(token)
     expect(checkLink(store, token, 1)).toBe('ok')
   })
