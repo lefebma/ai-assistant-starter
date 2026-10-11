@@ -490,6 +490,32 @@ The most valuable scheduled task. Create it with a prompt like:
 
 > **Why the lookup table?** LLMs reliably get day-of-week wrong for dates more than 2-3 days out. The `date` command generates the correct mapping and the LLM just reads it.
 
+### Limit what a scheduled job can do
+
+A scheduled job runs with nobody watching, so it can be given a **role**: the
+job then only gets that role's tools, and anything else it tries is refused
+before it runs. Add `--role briefing` to the create command above, or set one
+later with `/schedule role <id> <role>`. `/schedule roles` lists them:
+
+| Role | What the job may do |
+|---|---|
+| `inbox-triage` | Read, search and draft email. Never sends, trashes, or touches the calendar |
+| `briefing` | Read email and calendar, search the web, fetch a page. Changes nothing |
+| `research` | Search and read the web, use the browser on http(s) pages, save notes under `output/` |
+| `full` | Every tool, the same as no role |
+
+A job with a role also has the tool guard enforced on it (no reading `.env`,
+no uploads, no piped scripts), whatever `TOOL_GUARD` says for chat. When a job
+is refused something, its result says so and names the role that would allow
+it, and `/guard report` lists the refusals per job. Chat is not affected.
+
+To define your own, put a `roles.json` next to `.env`, a list of roles in the
+same shape as the built-ins in `src/assurance/roles.ts`: `id`, `summary`,
+`tools` (tool names, `mcp__server__*` for a whole server), `commands` (shell
+commands as program and verb, e.g. `"gog gmail search"`, `"ms-mail.js draft"`)
+and `writes` (folders it may change). A role with the same id as a built-in
+replaces it. A job whose role is not defined does not run.
+
 ## Voice
 
 Everything voice runs on an OpenAI API key (`OPENAI_API_KEY`), whichever AI

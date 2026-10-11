@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+roles.json
 store/
 # BYOK vault: never commit the encrypted secrets blob or its key, anywhere
 **/vault.key

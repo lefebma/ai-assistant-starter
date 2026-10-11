@@ -176,7 +176,8 @@ describe('the Claude runtime hook (default log mode)', () => {
 
   it('is attached to both Claude query paths', () => {
     const src = readFileSync(join(__dirname, '../src/runtime/claude.ts'), 'utf-8')
-    expect(src.match(/hooks: \{ PreToolUse: \[\{ hooks: \[guardHook\] \}\] \}/g)).toHaveLength(2)
+    expect(src).toContain('hooks: { PreToolUse: [{ hooks: [guardHook] }] }')
+    expect(src).toContain('hooks: { PreToolUse: [{ hooks: [makeGuardHook(options.scope, cwd)] }] }')
   })
 })
 

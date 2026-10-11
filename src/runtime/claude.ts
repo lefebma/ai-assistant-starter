@@ -5,13 +5,13 @@
  * This is the only file in the codebase that may import
  * @anthropic-ai/claude-agent-sdk.
  */
-import { query, type HookInput, type HookJSONOutput } from '@anthropic-ai/claude-agent-sdk'
-import { PROJECT_ROOT, STORE_DIR, TOOL_GUARD } from '../config.js'
-import { getToolGuard, parseGuardMode } from '../assurance/tool-guard.js'
+import { query, type HookInput, type HookJSONOutput, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
+import { PROJECT_ROOT } from '../config.js'
+import { gateToolCall, exposureForScope, resolveRole } from '../assurance/scope-gate.js'
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
 import { logger } from '../logger.js'
-import type { AgentRunOptions, AgentRunResult, AgentRuntime } from './types.js'
+import type { AgentRunOptions, AgentRunResult, AgentRuntime, RunScope } from './types.js'
 
 /** Retry config for transient API errors (429, 529, etc.) */
 const MAX_RETRIES = 3
@@ -43,21 +43,35 @@ function resolveModel(): string {
 }
 
 /**
- * Every tool call passes the tool guard before it runs (card #194). In log
- * mode this only records; in enforce mode a hit is denied with the reason, and
- * a PreToolUse deny holds even under bypassPermissions. A guard failure never
- * blocks a tool: it fails open, like the rest of the assurance layer.
+ * Every tool call passes one checkpoint before it runs: the job's role for a
+ * scoped scheduled run (card #195), then the tool guard (card #194). A
+ * PreToolUse deny holds even under bypassPermissions.
  */
-export async function guardHook(input: HookInput): Promise<HookJSONOutput> {
-  if (input.hook_event_name !== 'PreToolUse') return {}
-  try {
-    const v = getToolGuard(parseGuardMode(TOOL_GUARD), STORE_DIR).check({ session: input.session_id, tool: input.tool_name, input: input.tool_input })
-    if (v.entry) logger.warn({ tool: input.tool_name, rule: v.entry.rule, enforced: v.entry.enforced }, 'tool guard hit')
+export function makeGuardHook(scope: RunScope | undefined, cwd: string) {
+  return async (input: HookInput): Promise<HookJSONOutput> => {
+    if (input.hook_event_name !== 'PreToolUse') return {}
+    const v = gateToolCall({ session: input.session_id, tool: input.tool_name, input: input.tool_input, cwd, scope })
     if (!v.allow) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } }
-  } catch (err) {
-    logger.warn({ err: String(err) }, 'tool guard failed open')
+    return {}
   }
-  return {}
+}
+
+/** The unscoped hook (chat and one-shot runs). */
+export const guardHook = (input: HookInput): Promise<HookJSONOutput> => makeGuardHook(undefined, PROJECT_ROOT)(input)
+
+/** SDK options that hide what a scoped run's role cannot use. Empty for no scope. */
+function scopeOptions(scope: RunScope | undefined, cwd: string): { tools?: string[]; disallowedTools?: string[]; mcpServers?: Record<string, McpServerConfig>; strictMcpConfig?: boolean } {
+  if (!scope) return {}
+  const { builtins, hiddenServers, servers } = exposureForScope(scope, cwd)
+  return {
+    ...(builtins ? { tools: builtins } : {}),
+    ...(hiddenServers.length ? { disallowedTools: hiddenServers.map((s) => `mcp__${s}`) } : {}),
+    // Only the project's servers the role allows: strict mode makes the CLI
+    // ignore every other MCP config (user-level, claude.ai connectors). Without
+    // it a narrowed tool list also turns off deferred tool loading, and every
+    // connector the machine has is sent to the model at once.
+    ...(servers ? { mcpServers: servers as Record<string, McpServerConfig>, strictMcpConfig: true } : {}),
+  }
 }
 
 function isRetryableError(err: unknown): boolean {
@@ -205,6 +219,14 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     const overflowKey = getSecret('ANTHROPIC_API_KEY')
     const cwd = options.workingDirectory ?? PROJECT_ROOT
 
+    // A job scoped to a role nobody defined does not run: roles fail closed.
+    try {
+      resolveRole(options.scope)
+    } catch (err) {
+      logger.error({ scope: options.scope, err: String(err) }, 'scoped run refused')
+      return { text: `Not run: ${err instanceof Error ? err.message : String(err)}. Fix the job's role with /schedule role${options.scope?.taskId ? ` ${options.scope.taskId}` : ''} <role>.` }
+    }
+
     const primary = await this.runOnLane(options, options.sessionId, cwd, undefined)
 
     // Cancelled: never escalate a turn nobody wants any more to paid billing.
@@ -294,7 +316,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             includePartialMessages: Boolean(onPartial),
             abortController,
             ...(sessionId ? { resume: sessionId } : {}),
-            hooks: { PreToolUse: [{ hooks: [guardHook] }] },
+            hooks: { PreToolUse: [{ hooks: [makeGuardHook(options.scope, cwd)] }] },
+            ...scopeOptions(options.scope, cwd),
             // Overflow lane: scope the API key to THIS subprocess only. Spread
             // process.env so HOME/PATH/etc still reach the CLI; the explicit key
             // makes it bill against the API instead of the subscription window.
