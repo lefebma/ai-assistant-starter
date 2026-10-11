@@ -53,6 +53,7 @@ export const BUILTIN_ROLES: RoleSpec[] = [
       'gog gmail search', 'gog gmail read', 'gog gmail labels', 'gog gmail thread',
       'gog gmail drafts create', 'gog gmail drafts list', 'gog gmail drafts get', 'gog gmail drafts update',
       'ms-mail.js inbox', 'ms-mail.js search', 'ms-mail.js read', 'ms-mail.js draft', 'ms-mail.js reply',
+      'imap-mail.js inbox', 'imap-mail.js search', 'imap-mail.js read', 'imap-mail.js draft', 'imap-mail.js reply',
     ],
   },
   {
@@ -63,6 +64,7 @@ export const BUILTIN_ROLES: RoleSpec[] = [
       ...READ_BASICS, 'curl',
       'gog gmail search', 'gog gmail read', 'gog gmail thread', 'gog calendar events',
       'ms-mail.js inbox', 'ms-mail.js search', 'ms-mail.js read',
+      'imap-mail.js inbox', 'imap-mail.js search', 'imap-mail.js read',
       'ms-calendar.js today', 'ms-calendar.js range',
     ],
   },
