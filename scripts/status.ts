@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 // homedir no longer needed for Telegram mode
 import Database from 'better-sqlite3'
 import { PROJECT_ROOT } from '../src/env.js'
+import { getSecret } from '../src/vault/index.js'
 
 // Was resolve(__dirname, '..'), which compiled to dist/ — so status read
 // dist/store and dist/.env, found neither, and reported on an install that
@@ -58,7 +59,7 @@ function main(): void {
     const envContent = readFileSync(envPath, 'utf-8')
 
     // Check bot token
-    if (envContent.includes('TELEGRAM_BOT_TOKEN="') && !envContent.includes('TELEGRAM_BOT_TOKEN=""')) {
+    if (getSecret('TELEGRAM_BOT_TOKEN')) {
       ok('Telegram bot token configured')
     } else {
       fail('TELEGRAM_BOT_TOKEN not set')
