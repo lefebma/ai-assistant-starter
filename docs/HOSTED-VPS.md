@@ -229,9 +229,10 @@ and it proves the fix instead of leaving a hand-patched box behind.
 ## Finishing steps: web setup (recommended)
 
 Send the client a link and let them finish setup themselves, with no SSH
-session for you. As root, once cloud-init has finished:
+session for you. As `havn-admin`, once cloud-init has finished:
 
 ```bash
+# as havn-admin
 sudo node /home/havn/havn/dist/scripts/hosted/enable-setup.js <ip-with-dashes>.sslip.io
 ```
 

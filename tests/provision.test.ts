@@ -47,6 +47,7 @@ function world(opts: {
 } = {}) {
   const calls: Call[] = []
   const sshCalls: string[] = []
+  const sshUsers: string[] = []
   let polls = 0
   let clock = 0
   let sshTries = 0
@@ -72,8 +73,9 @@ function world(opts: {
     return json(404, { error: 'unexpected ' + url })
   }) as unknown as typeof fetch
 
-  const ssh = async (host: string, command: string): Promise<SshResult> => {
+  const ssh = async (host: string, command: string, user?: string): Promise<SshResult> => {
     sshCalls.push(`${host} ${command}`)
+    sshUsers.push(user ?? 'havn')
     if (command.startsWith('cloud-init status')) {
       sshTries++
       if (sshTries === 1) return { code: 255, stdout: '', stderr: 'Connection refused' }
@@ -105,7 +107,7 @@ function world(opts: {
     log: (m) => log.push(m),
     templates,
   }
-  return { deps, calls, sshCalls, log }
+  return { deps, calls, sshCalls, sshUsers, log }
 }
 
 describe('naming and validation', () => {
@@ -151,6 +153,9 @@ describe('provision', () => {
     // Waited through ssh-refused and running before enabling setup.
     expect(w.sshCalls.filter((c) => c.includes('cloud-init status'))).toHaveLength(3)
     expect(w.sshCalls.at(-1)).toBe('45.77.1.2 cd /home/havn/havn && sudo node dist/scripts/hosted/enable-setup.js leif.gethavn.ai')
+    // havn has no general sudo (card #196): the root step logs in as havn-admin, polling as havn.
+    expect(w.sshUsers.at(-1)).toBe('havn-admin')
+    expect(w.sshUsers.slice(0, -1).every((u) => u === 'havn')).toBe(true)
   })
 
   it('puts Canadian clients in Toronto', async () => {
