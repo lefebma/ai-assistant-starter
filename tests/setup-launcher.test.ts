@@ -29,34 +29,41 @@ describe('resolveAppName', () => {
 
 describe('setupLauncherFiles on macOS', () => {
   const files = setupLauncherFiles('darwin', { appName: 'Havn' })
+  const script = files.find((f) => f.path.endsWith('/Contents/MacOS/setup'))!
+  const plist = files.find((f) => f.path.endsWith('/Contents/Info.plist'))!
 
-  it('ships a .command, not a .app', () => {
-    // A .app would need osascript to drive Terminal, which trips the macOS
-    // "wants to control Terminal" consent dialog on first run — the last thing
-    // to put in front of the non-technical owner this exists for. Finder runs
-    // a .command in Terminal directly, no consent prompt.
-    expect(files).toHaveLength(1)
-    expect(files[0].path).toBe('Setup Havn.command')
+  it('ships a Setup .app that opens the browser, not a Terminal .command (#215)', () => {
+    expect(files.map((f) => f.path).sort()).toEqual([
+      'Setup Havn.app/Contents/Info.plist',
+      'Setup Havn.app/Contents/MacOS/setup',
+    ])
+    expect(script.content).toContain('dist/scripts/setup-web.js" --background')
+    expect(script.content).not.toContain('setup.js"')
   })
 
-  it('is executable, or Finder opens it in TextEdit instead of running it', () => {
-    expect(files[0].executable).toBe(true)
+  it('never scripts Terminal, so there is no automation consent prompt', () => {
+    expect(script.content).not.toMatch(/Terminal/)
   })
 
-  it('resolves everything relative to its own location', () => {
+  it('names its executable in the plist and marks it executable', () => {
+    expect(plist.content).toContain('<string>setup</string>')
+    expect(plist.content).toContain('com.havn.setup')
+    expect(script.executable).toBe(true)
+  })
+
+  it('resolves the install folder from its own location', () => {
     // The installer decides where this lands, and the customer can move the
     // folder afterwards. Baking an absolute path in at build time breaks both.
-    expect(files[0].content).toContain('dirname "$0"')
-    expect(files[0].content).not.toMatch(/\/Users\/|\/Applications\//)
+    expect(script.content).toContain('dirname "$0")/../../..')
+    expect(script.content).not.toMatch(/\/Users\/|\/Applications\//)
+    expect(script.content).toContain('runtime/bin/node')
   })
 
-  it('runs the wizard with the bundled runtime', () => {
-    expect(files[0].content).toContain('runtime/bin/node')
-    expect(files[0].content).toContain('dist/scripts/setup.js')
-  })
-
-  it('keeps the window open at the end so the next steps stay readable', () => {
-    expect(files[0].content).toMatch(/read /)
+  it('passes dialog text to osascript as an argument, never spliced in', () => {
+    expect(script.content).toContain('item 1 of argv')
+    expect(script.content).toContain('"$MSG"')
+    expect(script.content).toMatch(/3\) MSG=.*already set up/)
+    expect(script.content).toMatch(/4\) MSG=.*setup port/)
   })
 })
 
@@ -68,18 +75,23 @@ describe('setupLauncherFiles on Windows', () => {
     expect(files[0].path).toBe('Setup Havn.cmd')
   })
 
-  it('resolves relative to its own location via %~dp0', () => {
+  it('starts the web setup in the background with the bundled runtime', () => {
     expect(files[0].content).toContain('%~dp0')
     expect(files[0].content).toContain('runtime\\node.exe')
+    expect(files[0].content).toContain('setup-web.js" --background')
   })
 
-  it('pauses so the window does not vanish', () => {
-    expect(files[0].content).toMatch(/pause/i)
+  it('only keeps the window open when something went wrong', () => {
+    // errorlevel N means "N or higher", so the specific codes come first.
+    const c = files[0].content
+    expect(c.indexOf('errorlevel 4')).toBeLessThan(c.indexOf('errorlevel 3'))
+    expect(c.indexOf('errorlevel 3')).toBeLessThan(c.indexOf('errorlevel 1'))
+    expect(c.match(/pause/gi)).toHaveLength(3)
   })
 })
 
 describe('setupLauncherFiles on Linux', () => {
-  it('falls back to an executable shell script', () => {
+  it('keeps the terminal wizard as an executable shell script', () => {
     const files = setupLauncherFiles('linux', { appName: 'Havn' })
     expect(files).toHaveLength(1)
     expect(files[0].path).toBe('setup-havn.sh')

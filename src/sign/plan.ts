@@ -157,10 +157,10 @@ export function conclusionHtml(o: { appName: string }): string {
 <body>
   <h2>${o.appName} is installed. One more step.</h2>
   <div class="step">1. Open your <b>Applications/${o.appName}</b> folder.</div>
-  <div class="step">2. Double-click <b>Setup ${o.appName}.command</b>.</div>
-  <div class="step">3. Answer the questions. It will tell you when it is done.</div>
-  <p>Setup asks for a few accounts and keys. Have them handy, or leave them blank
-  and add them later.</p>
+  <div class="step">2. Double-click <b>Setup ${o.appName}</b>. Setup opens in your web browser.</div>
+  <div class="step">3. Follow the page. It will tell you when it is done.</div>
+  <p>Have Telegram installed on your phone before you start. The page walks you
+  through the rest.</p>
 </body>
 </html>
 `

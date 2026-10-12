@@ -36,7 +36,7 @@ if (existsSync(join(here, 'runtime'))) {
 function findSetupLauncher(dir) {
   try {
     return (
-      readdirSync(dir).find((f) => /^Setup .+\.(cmd|command)$/.test(f) || /^setup-.+\.sh$/.test(f)) ?? null
+      readdirSync(dir).find((f) => /^Setup .+\.(app|cmd|command)$/.test(f) || /^setup-.+\.sh$/.test(f)) ?? null
     )
   } catch {
     return null
@@ -57,11 +57,14 @@ Installed to ${target}
 
       ${launcher}
 
-  That is the whole setup. It will ask a few questions and offer to start
-  the assistant in the background.
+${/\.(app|cmd)$/.test(launcher)
+  ? `  Setup opens in your web browser and starts the assistant when you finish.`
+  : `  That is the whole setup. It will ask a few questions and offer to start
+  the assistant in the background.`}
 
   If you would rather stay in a terminal:
     Set up:            "${nodeBin}" dist/scripts/setup.js
+    Set up in browser: "${nodeBin}" dist/scripts/setup-web.js
     Verify:            "${nodeBin}" dist/src/index.js --selftest --live
     Run as a service:  "${nodeBin}" dist/scripts/service.js install
 `)

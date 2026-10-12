@@ -127,7 +127,9 @@ describe('conclusionHtml', () => {
   const html = conclusionHtml({ appName: 'Havn' })
 
   it('names the exact thing to double-click', () => {
-    expect(html).toContain('Setup Havn.command')
+    // Finder hides the .app extension, so the name is what the customer sees.
+    expect(html).toContain('<b>Setup Havn</b>')
+    expect(html).toMatch(/web browser/)
   })
 
   it('says where the folder is', () => {

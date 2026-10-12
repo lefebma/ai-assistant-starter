@@ -96,18 +96,27 @@ export interface SetupLauncherOptions {
  * installed assistant and no way to configure it that does not begin with
  * opening a terminal.
  *
- * macOS gets a `.command` rather than a `.app` on purpose. The wizard is
- * interactive, so it needs a real terminal; an .app would have to drive
- * Terminal through osascript, which trips the "wants to control Terminal"
- * consent dialog on first run. Finder runs a `.command` in Terminal directly
- * with no such prompt. It must carry the executable bit or Finder opens it in
- * TextEdit instead of running it.
+ * On macOS and Windows it opens the web setup in the browser (card #215):
+ * `setup-web --background` starts the setup page detached and exits, so no
+ * terminal stays open. macOS gets a small script-backed .app, which Finder
+ * runs without Terminal at all; it never scripts Terminal, so there is no
+ * "wants to control Terminal" consent prompt. Windows gets a .cmd whose
+ * console closes as soon as the page is up, and stays open with a message
+ * only when something went wrong. The terminal wizard is still there for
+ * anyone who wants it (`dist/scripts/setup.js`), and is what Linux gets.
  *
- * Unlike the restart launcher, paths here resolve relative to the script's own
- * location: the installer chooses where this lands, and the customer may move
- * the folder later.
+ * Paths resolve relative to the launcher's own location: the installer
+ * chooses where this lands, and the customer may move the folder later.
  */
 export function setupLauncherFiles(platform: string, o: SetupLauncherOptions): LauncherFile[] {
+  if (platform === 'darwin') {
+    const app = `Setup ${o.appName}.app`
+    return [
+      { path: `${app}/Contents/Info.plist`, content: setupPlist(o), executable: false },
+      { path: `${app}/Contents/MacOS/setup`, content: macSetupScript(o), executable: true },
+    ]
+  }
+
   if (platform === 'win32') {
     return [
       {
@@ -115,19 +124,34 @@ export function setupLauncherFiles(platform: string, o: SetupLauncherOptions): L
         content: `@echo off
 title Set up ${o.appName}
 cd /d "%~dp0"
-"%~dp0runtime\\node.exe" "%~dp0dist\\scripts\\setup.js"
-echo.
-pause
+echo Opening ${o.appName} setup in your web browser...
+"%~dp0runtime\\node.exe" "%~dp0dist\\scripts\\setup-web.js" --background
+if errorlevel 4 (
+  echo.
+  echo Something else is using the setup port. If ${o.appName} is already running, setup is done.
+  pause
+  exit /b
+)
+if errorlevel 3 (
+  echo.
+  echo ${o.appName} is already set up. To change settings, ask your assistant in chat.
+  pause
+  exit /b
+)
+if errorlevel 1 (
+  echo.
+  echo Setup could not start. Details are in logs\\setup-web.log in this folder.
+  pause
+)
 `,
         executable: false,
       },
     ]
   }
 
-  const name = platform === 'darwin' ? `Setup ${o.appName}.command` : `setup-${slug(o.appName)}.sh`
   return [
     {
-      path: name,
+      path: `setup-${slug(o.appName)}.sh`,
       content: `#!/bin/sh
 # Sets up ${o.appName}. Double-click to run.
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -140,6 +164,47 @@ read -r _
       executable: true,
     },
   ]
+}
+
+function setupPlist(o: SetupLauncherOptions): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Setup ${o.appName}</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.${slug(o.appName)}.setup</string>
+  <key>CFBundleExecutable</key>
+  <string>setup</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+`
+}
+
+function macSetupScript(o: SetupLauncherOptions): string {
+  // Fixed messages per exit code, passed to osascript as an argument rather
+  // than spliced into the AppleScript, so no output ever needs quoting.
+  return `#!/bin/sh
+# Opens ${o.appName} setup in the web browser. Double-click this app to run it.
+# The install folder is three levels up: <folder>/Setup ${o.appName}.app/Contents/MacOS.
+DIR=$(cd "$(dirname "$0")/../../.." && pwd)
+cd "$DIR" || exit 1
+"$DIR/runtime/bin/node" "$DIR/dist/scripts/setup-web.js" --background >/dev/null 2>&1
+case $? in
+  0) exit 0 ;;
+  3) MSG="${o.appName} is already set up. To change settings, ask your assistant in chat." ;;
+  4) MSG="Something else is using the setup port. If ${o.appName} is already running, setup is done." ;;
+  *) MSG="Setup could not start. Details are in logs/setup-web.log inside the ${o.appName} folder." ;;
+esac
+osascript -e 'on run argv' -e 'display dialog (item 1 of argv) with title "${o.appName}" buttons {"OK"} default button "OK"' -e 'end run' "$MSG"
+`
 }
 
 export function launcherFiles(platform: string, o: LauncherOptions): LauncherFile[] {

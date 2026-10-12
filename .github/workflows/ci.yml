@@ -57,6 +57,18 @@ jobs:
       # question two. pipefail is off for that one line because the writer is
       # meant to die of SIGPIPE when the wizard finishes; the wizard's own exit
       # status is read back out of PIPESTATUS instead.
+      # What the Setup launcher (.app / .cmd) runs: the web setup starts
+      # detached, the launcher process exits 0, and the page keeps answering.
+      # Before the wizard, which writes .env and would make this refuse.
+      # The server is left running; the runner reaps it at job end.
+      - name: web setup starts in the background on a bundle
+        shell: bash
+        timeout-minutes: 2
+        working-directory: ${{ runner.temp }}/assistant-install
+        run: |
+          HTTP_PORT=3939 node dist/scripts/setup-web.js --background --no-open
+          sleep 1
+          curl -sf http://127.0.0.1:3939/setup/api/state | grep -q '"mode":"local"'
       - name: setup wizard walks to the end on a bundle
         shell: bash
         timeout-minutes: 5
@@ -108,7 +120,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       # APP_NAME names the setup launcher that ships inside the payload
-      # ("Setup Havn.command"). Without it the artifacts say "AI Assistant",
+      # ("Setup Havn.app" / "Setup Havn.cmd"). Without it the artifacts say "AI Assistant",
       # which is the generic starter's name, not the product customers are
       # handed. Note this does not rename the tarball itself — that string is
       # hardcoded in build-installer and is a separate change.
