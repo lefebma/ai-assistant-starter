@@ -38,7 +38,7 @@ export interface WizardHooks {
   ensureGog?: () => Promise<void>
 }
 
-const PERSONALITY_PRESETS = [
+export const PERSONALITY_PRESETS = [
   'Professional, efficient, precise. Communicate clearly without unnecessary filler. Prioritize accuracy and actionability.',
   'Warm but efficient. Conversational tone without being chatty. Personable, remembers context, occasionally lighthearted.',
   'Direct, sharp, no fluff. Say what needs saying and move on. Push back when something doesn\'t make sense. Have opinions.',

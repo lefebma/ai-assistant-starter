@@ -4,6 +4,7 @@
 
 import { readEnvFile } from '../env.js'
 import { logger } from '../logger.js'
+import { getSecret } from '../vault/index.js'
 import type { PlatformAdapter, PlatformName } from './types.js'
 
 export type { PlatformAdapter, PlatformName, IncomingMessage, SendOptions } from './types.js'
@@ -17,9 +18,9 @@ export function detectPlatform(): PlatformName {
   if (explicit === 'telegram') return 'telegram'
 
   // Auto-detect from available tokens
-  if (env['SLACK_BOT_TOKEN'] && env['SLACK_APP_TOKEN']) return 'slack'
-  if (env['TEAMS_APP_ID'] && env['TEAMS_APP_SECRET']) return 'teams'
-  if (env['TELEGRAM_BOT_TOKEN']) return 'telegram'
+  if (getSecret('SLACK_BOT_TOKEN') && getSecret('SLACK_APP_TOKEN')) return 'slack'
+  if (env['TEAMS_APP_ID'] && getSecret('TEAMS_APP_SECRET')) return 'teams'
+  if (getSecret('TELEGRAM_BOT_TOKEN')) return 'telegram'
 
   return 'telegram' // default
 }
@@ -32,15 +33,17 @@ export async function createAdapter(): Promise<PlatformAdapter> {
 
   switch (platform) {
     case 'telegram': {
-      const token = env['TELEGRAM_BOT_TOKEN']
-      if (!token) throw new Error('TELEGRAM_BOT_TOKEN not set in .env')
+      // Secrets resolve vault -> .env -> environment: the web setup stores the
+      // bot token only in the vault.
+      const token = getSecret('TELEGRAM_BOT_TOKEN')
+      if (!token) throw new Error('TELEGRAM_BOT_TOKEN not set (vault or .env)')
       const { TelegramAdapter } = await import('./telegram.js')
       return new TelegramAdapter(token)
     }
 
     case 'slack': {
-      const botToken = env['SLACK_BOT_TOKEN']
-      const appToken = env['SLACK_APP_TOKEN']
+      const botToken = getSecret('SLACK_BOT_TOKEN')
+      const appToken = getSecret('SLACK_APP_TOKEN')
       if (!botToken || !appToken) {
         throw new Error('SLACK_BOT_TOKEN and SLACK_APP_TOKEN must both be set in .env')
       }
@@ -53,7 +56,7 @@ export async function createAdapter(): Promise<PlatformAdapter> {
 
     case 'teams': {
       const appId = env['TEAMS_APP_ID']
-      const appSecret = env['TEAMS_APP_SECRET']
+      const appSecret = getSecret('TEAMS_APP_SECRET')
       if (!appId || !appSecret) {
         throw new Error('TEAMS_APP_ID and TEAMS_APP_SECRET must both be set in .env')
       }

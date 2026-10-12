@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **New: set up your assistant in a browser.** Setup no longer needs a terminal. Run `npm run setup:web` (installers will open it for you next) and a page opens with three short steps: who you are, your Telegram bot, and how your assistant reaches an AI model. You don't need to look up a chat id any more: you tap Start in your new bot, the page asks "Is this you?", and that's it. Keys you type go straight into the encrypted vault, never into `.env`. When you finish, your assistant says hello in Telegram and starts in the background. Everything the page doesn't ask (email, optional skills) you set up later by asking your assistant. `npm run setup` still works for anyone who prefers the terminal.
+- **New: hosted clients set themselves up.** On a new hosted box, `enable-setup` prints a one-time link for the operator to send the client, who finishes setup from any phone or computer. No SSH session is needed. The link works once and expires after 48 hours. A wrong or used link gets a plain "not found", and after setup the page is gone for good. The operator can reissue an expired link from the box.
+
 ## 1.33.0 - 2026-10-10
 
 A guard on everything the assistant runs, scheduled jobs that can only do what their role allows, and Yahoo, AOL and iCloud mail.

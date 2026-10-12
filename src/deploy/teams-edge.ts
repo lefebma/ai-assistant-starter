@@ -61,6 +61,12 @@ export interface CaddyfileOptions {
    * Unknown or missing means "assume modern".
    */
   caddyVersion?: string
+  /**
+   * Expose the web setup page (default: false). Only the holder of the
+   * one-time link gets past it (src/setup/web/link.ts), and once setup is done
+   * the assistant owns the port and has no /setup, so it is a 404 either way.
+   */
+  setup?: boolean
 }
 
 /**
@@ -92,10 +98,11 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
   const teams = options?.teams !== false
   const voice = options?.voice === true
   const shortcuts = options?.shortcuts !== false
+  const setup = options?.setup === true
   const bufferStyle = bufferStyleFor(options?.caddyVersion)
 
   const lines: string[] = [
-    `# Havn edge config. Written by scripts/hosted/enable-teams.ts.`,
+    `# Havn edge config. Written by scripts/hosted/enable-teams.ts or enable-setup.ts.`,
     // Global options must come first, and only exist here to let a retried
     // webhook be re-sent with its body (see BufferStyle).
     ...((teams || shortcuts) && bufferStyle === 'global'
@@ -207,6 +214,19 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       '\t\t\tlb_try_duration 10s',
       '\t\t\tlb_try_interval 500ms',
       '\t\t}',
+      '\t}',
+    )
+  }
+
+  if (setup) {
+    lines.push(
+      '',
+      '\t# Web setup (one-time link; the setup server checks ?token= and the bearer)',
+      '\t@setup {',
+      '\t\tpath /setup /setup/ /setup/api/*',
+      '\t}',
+      '\thandle @setup {',
+      `\t\treverse_proxy ${APP_UPSTREAM}`,
       '\t}',
     )
   }

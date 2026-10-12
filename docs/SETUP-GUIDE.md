@@ -2,6 +2,19 @@
 
 This guide walks you through setting up your personal AI assistant powered by Claude Code. By the end, you'll have a persistent assistant connected to your preferred messaging platform, with email, calendar, and custom skills wired in.
 
+## The quick way: setup in a browser
+
+```bash
+npm run build && npm run setup:web
+```
+
+A page opens at `http://localhost:3030/setup` with three short steps: about
+you, your Telegram bot (you tap Start in it to pair), and your AI. Keys go
+into the encrypted vault. When you finish, the assistant starts in the
+background and says hello in Telegram. Connect email afterwards by asking it.
+The page only answers on this computer. The rest of this guide covers the
+terminal wizard and everything you can set up by hand.
+
 ## Prerequisites
 
 - macOS (Apple Silicon or Intel), Windows, or Linux
