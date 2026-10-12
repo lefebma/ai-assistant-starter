@@ -81,6 +81,61 @@ describe('audit log tamper resistance (card 169)', () => {
   })
 })
 
+describe('audit log head tracking (card 196)', () => {
+  it('never rereads the witness to append', () => {
+    const witness = new MemorySink()
+    const log = new AuditLog({ dir: auditDir, workspace, witness })
+    let reads = 0
+    const orig = witness.readAll.bind(witness)
+    witness.readAll = () => { reads++; return orig() }
+    for (let i = 0; i < 5; i++) log.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: `c${i}` })
+    expect(reads).toBe(0)
+    expect(log.headOf().seq).toBe(5)
+  })
+
+  it('continues from the local file when reopened without a witness', () => {
+    const a = new AuditLog({ dir: auditDir, workspace })
+    for (let i = 0; i < 3; i++) a.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: `c${i}` })
+    const b = new AuditLog({ dir: auditDir, workspace })
+    expect(b.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'next' }).seq).toBe(4)
+    expect(b.verify()).toEqual({ ok: true, issues: [], events: 4 })
+  })
+
+  it('finds the head from the tail of a large log', () => {
+    const a = new AuditLog({ dir: auditDir, workspace })
+    for (let i = 0; i < 1500; i++) a.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'x'.repeat(200) })
+    const b = new AuditLog({ dir: auditDir, workspace })
+    expect(b.headOf()).toEqual(a.headOf())
+  })
+
+  it('starts a fresh line after a torn write', () => {
+    const a = new AuditLog({ dir: auditDir, workspace })
+    a.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'ok' })
+    const file = join(auditDir, 'audit.jsonl')
+    writeFileSync(file, readFileSync(file, 'utf-8') + '{"seq":2,"ts":"half')
+    const b = new AuditLog({ dir: auditDir, workspace })
+    expect(b.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'after' }).seq).toBe(2)
+    const lines = readFileSync(file, 'utf-8').split('\n').filter(Boolean)
+    expect(JSON.parse(lines[2]).detail).toBe('after')
+    expect(b.verify().ok).toBe(false) // the torn line stays visible as evidence
+  })
+
+  it('lists what an asynchronous witness has not acknowledged', () => {
+    const log = new AuditLog({ dir: auditDir, workspace })
+    for (let i = 0; i < 4; i++) log.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: `c${i}` })
+    expect(log.eventsAfter(2).map(e => e.seq)).toEqual([3, 4])
+    expect(log.eventsAfter(4)).toEqual([])
+  })
+
+  it('verifies the local chain alone when there is no witness', () => {
+    const log = new AuditLog({ dir: auditDir, workspace })
+    for (let i = 0; i < 3; i++) log.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: `c${i}` })
+    const file = join(auditDir, 'audit.jsonl')
+    writeFileSync(file, readFileSync(file, 'utf-8').replace('c1', 'cX'))
+    expect(log.verify().issues.join(' ')).toMatch(/hash mismatch/)
+  })
+})
+
 describe('guardAction: tools and shell cannot touch audit evidence', () => {
   const mk = () => new AuditLog({ dir: auditDir, workspace, witness: new MemorySink() })
 

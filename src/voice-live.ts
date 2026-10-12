@@ -25,6 +25,7 @@ import { resolve, relative } from 'node:path'
 import { OPENAI_API_KEY, LIVE_VOICE, PROJECT_ROOT, PRIMARY_CHAT_ID } from './config.js'
 import { installTimezone } from './env.js'
 import { runAgent } from './agent.js'
+import { withActor } from './assurance/audit-trail.js'
 import { identity } from './workspace/registry.js'
 import { saveConversationTurn } from './memory.js'
 import { insertMemory } from './db.js'
@@ -481,7 +482,7 @@ export function createAssistantBackend(chatId: string = memoryChatId(null)): Run
     engine ??= createDefaultEngine()
     const memoryContext = await engine.buildContext(chatId, prompt).catch(() => '')
     const full = [buildSkillIndex(), memoryContext, prompt].filter(Boolean).join('\n\n')
-    const { text, newSessionId } = await runAgent(full, sessionId, undefined, undefined, undefined, 'chat', signal)
+    const { text, newSessionId } = await withActor(`live-voice:${chatId}`, () => runAgent(full, sessionId, undefined, undefined, undefined, 'chat', signal))
     if (signal.aborted) {
       // Never resume a session a cancelled run touched: resuming it right after
       // the abort failed with error_during_execution and then an unhandled

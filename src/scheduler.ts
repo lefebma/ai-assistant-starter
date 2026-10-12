@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
 import { getDueTasks, getAllTasks, updateTaskAfterRun, deleteTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
+import { withActor } from './assurance/audit-trail.js'
 import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
 import { buildAuditPrompt } from './audit/report.js'
@@ -114,7 +115,7 @@ export async function runDueTasks(): Promise<void> {
         buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
       )
 
-      const { text } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)
+      const { text } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
       const result = text ?? '(no response)'
 
       // Check if the API was overloaded and defer a retry
@@ -124,7 +125,7 @@ export async function runDueTasks(): Promise<void> {
           deferredRetries.delete(task.id)
           try {
             logger.info({ taskId: task.id }, 'Running deferred retry')
-            const { text: retryText } = await runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)
+            const { text: retryText } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
             const retryResult = retryText ?? '(no response)'
             updateTaskAfterRun(task.id, retryResult, nextRun)
 

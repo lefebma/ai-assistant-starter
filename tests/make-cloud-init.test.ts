@@ -320,6 +320,18 @@ describe('shipped templates', () => {
     expect(rendered).toContain('chmod 0750 /home/havn-admin')
   })
 
+  it('creates the append-only audit store the app records to (card #196)', async () => {
+    const rendered = renderCloudInit(cloudInitTemplate, unitTemplate, SPEC).replace(/\r\n/g, '\n')
+    const { SETUP, DIR } = await import('../scripts/hosted/enable-audit.js')
+    const { HOSTED_AUDIT_DIR } = await import('../src/assurance/audit-trail.js')
+    expect(DIR).toBe(HOSTED_AUDIT_DIR)
+    // The migration script for existing boxes does exactly what cloud-init does.
+    for (const line of SETUP.split('\n').filter((l) => /^(install|\[ -e|chattr)/.test(l))) {
+      expect(rendered).toContain(line)
+    }
+    expect(rendered).toContain(`chattr +a ${DIR}/audit.jsonl`)
+  })
+
   it('clears the service account expiry before the first user switch', () => {
     // Some images leave the cloud-init-created account password-expired;
     // clear it before anything runs as havn.

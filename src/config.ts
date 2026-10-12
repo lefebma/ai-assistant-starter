@@ -60,6 +60,12 @@ export const PUBLIC_HOSTNAME = env['PUBLIC_HOSTNAME']?.trim() ?? ''
  * call run; enforce refuses it; off skips the check. See src/assurance/tool-guard.ts.
  */
 export const TOOL_GUARD = env['TOOL_GUARD']?.trim() || 'log'
+/**
+ * Audit log of every tool call (card #196). A hosted box always uses
+ * /var/lib/havn-audit when root has created it, whatever this says; elsewhere
+ * set AUDIT_DIR (outside the install) to turn it on. See src/assurance/audit-trail.ts.
+ */
+export const AUDIT_DIR = (env['AUDIT_DIR'] ?? process.env.AUDIT_DIR ?? '').trim()
 /** Owner-defined roles for scheduled jobs (card #195), added to the built-in ones. */
 export const ROLES_FILE = resolve(PROJECT_ROOT, 'roles.json')
 export const SHORTCUT_WAIT_SECONDS = Math.max(1, parseInt(env['SHORTCUT_WAIT_SECONDS'] ?? '20', 10) || 20)

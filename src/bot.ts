@@ -20,6 +20,7 @@ import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthoriz
 import { claimButtonClick } from './db.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
+import { withActor } from './assurance/audit-trail.js'
 import { saveConversationTurn } from './memory.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
@@ -200,7 +201,7 @@ async function handleMessage(
   const rotation = rotationConfig()
   if (needsRotation(getSessionMeta(chatId), rotation)) {
     const { rotated, summary } = await rotateSession(chatId, rotation, async (prompt, oldSessionId) => {
-      const { text } = await runAgent(prompt, oldSessionId)
+      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId))
       return text
     })
     if (rotated) {
@@ -276,7 +277,7 @@ async function handleMessage(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: response, newSessionId } = await runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg)
+    const { text: response, newSessionId } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg))
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
@@ -422,7 +423,7 @@ export async function runShortcutTurn(chatId: string, rawText: string): Promise<
     const fullMessage = [skillIndex, memoryContext, SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
     const sessionId = getSession(chatId) ?? undefined
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
-    const { text, newSessionId } = await runAgent(fullMessage, sessionId)
+    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId))
     if (newSessionId) setSession(chatId, newSessionId)
     bumpSessionMessageCount(chatId)
     if (text) await saveConversationTurn(chatId, rawText, text)

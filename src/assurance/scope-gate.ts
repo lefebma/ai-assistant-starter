@@ -6,12 +6,17 @@
  * guard in enforce mode, whatever TOOL_GUARD says, because the owner chose to
  * restrict it and nobody is watching. Unscoped runs get TOOL_GUARD's mode (log
  * by default). The guard itself fails open.
+ *
+ * Every call is then written to the audit log (card #196) with its outcome,
+ * and a call that would change the audit store is refused before anything
+ * else. See audit-trail.ts.
  */
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { PROJECT_ROOT, ROLES_FILE, STORE_DIR, TOOL_GUARD } from '../config.js'
+import { AUDIT_DIR, PROJECT_ROOT, ROLES_FILE, STORE_DIR, TOOL_GUARD } from '../config.js'
 import { logger } from '../logger.js'
 import { getToolGuard, parseGuardMode } from './tool-guard.js'
+import { getAuditTrail, type ToolOutcome } from './audit-trail.js'
 import { allowedServers, canonicalTool, checkRole, exposureFor, loadRoles, mcpServerConfigs, refusalMessage, type RoleSpec } from './roles.js'
 import type { RunScope } from '../runtime/types.js'
 
@@ -66,33 +71,52 @@ export function resolveRole(scope: RunScope | undefined): RoleSpec | null {
 
 export type GateResult = { allow: true } | { allow: false; reason: string }
 
-export function gateToolCall(call: { session: string; tool: string; input: unknown; cwd: string; scope?: RunScope }): GateResult {
+type ToolCall = { session: string; tool: string; input: unknown; cwd: string; scope?: RunScope }
+
+export function gateToolCall(call: ToolCall): GateResult {
+  const trail = getAuditTrail(AUDIT_DIR, PROJECT_ROOT)
+  const touch = trail?.refuse(call.tool, call.input)
+  if (trail && touch) {
+    trail.record(call, 'blocked', touch)
+    logger.warn({ tool: call.tool }, 'refused a tool call that reaches into the audit log')
+    return { allow: false, reason: 'Refused: the audit log cannot be changed by the assistant. Reading it with the Read tool is fine.' }
+  }
+  const { result, outcome, note } = decide(call)
+  trail?.record(call, outcome, note)
+  return result
+}
+
+function decide(call: ToolCall): { result: GateResult; outcome: ToolOutcome; note?: string } {
   if (call.scope?.role) {
     let v
     try {
       v = checkRole(loadRoles(ROLES_FILE), call.scope.role, { tool: call.tool, input: call.input, cwd: call.cwd })
     } catch (err) {
       logger.warn({ err: String(err) }, 'role check failed closed')
-      return { allow: false, reason: 'Refused: the role check failed, so this scheduled job may not use tools right now.' }
+      return { result: { allow: false, reason: 'Refused: the role check failed, so this scheduled job may not use tools right now.' }, outcome: 'denied', note: `role ${call.scope.role}: check failed` }
     }
     if (!v.ok) {
       recordRole({ at: new Date().toISOString(), role: call.scope.role, task: call.scope.taskId, tool: canonicalTool(call.tool), kind: v.kind, reason: v.reason, wouldAllow: v.wouldAllow })
       logger.warn({ role: call.scope.role, task: call.scope.taskId, tool: call.tool, kind: v.kind }, 'role refused a tool call')
-      return { allow: false, reason: refusalMessage(call.scope.role, v, call.scope.taskId) }
+      return { result: { allow: false, reason: refusalMessage(call.scope.role, v, call.scope.taskId) }, outcome: 'denied', note: `role ${call.scope.role}: ${v.reason}` }
     }
   }
+  let note: string | undefined
   try {
     // A role-scoped job runs unattended with a restriction the owner chose, so
     // the guard's rules are enforced there whatever TOOL_GUARD says. Chat keeps
     // TOOL_GUARD's mode (log by default while it is measured).
     const mode = call.scope?.role ? 'enforce' : parseGuardMode(TOOL_GUARD)
     const g = getToolGuard(mode, STORE_DIR).check({ session: call.session, tool: call.tool, input: call.input })
-    if (g.entry) logger.warn({ tool: call.tool, rule: g.entry.rule, enforced: g.entry.enforced }, 'tool guard hit')
-    if (!g.allow) return { allow: false, reason: g.reason ?? 'Blocked by the tool guard.' }
+    if (g.entry) {
+      logger.warn({ tool: call.tool, rule: g.entry.rule, enforced: g.entry.enforced }, 'tool guard hit')
+      note = `tool guard ${g.entry.enforced ? 'blocked' : 'would block'}: ${g.entry.rule}`
+    }
+    if (!g.allow) return { result: { allow: false, reason: g.reason ?? 'Blocked by the tool guard.' }, outcome: 'blocked', note }
   } catch (err) {
     logger.warn({ err: String(err) }, 'tool guard failed open')
   }
-  return { allow: true }
+  return { result: { allow: true }, outcome: 'allowed', note }
 }
 
 /**

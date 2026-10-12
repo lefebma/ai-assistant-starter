@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { logger } from '../logger.js'
 import { runAgent } from '../agent.js'
+import { withActor } from '../assurance/audit-trail.js'
 import { getSession, setSession } from '../db.js'
 import { findSkill } from './registry.js'
 import { appendActivity } from './activity.js'
@@ -107,7 +108,7 @@ export async function handleRun(req: IncomingMessage, res: ServerResponse): Prom
       sse(res, { type: 'delta', text: accumulated })
     }
 
-    const { text, newSessionId } = await runAgent(tagged, sessionId, undefined, onPartial)
+    const { text, newSessionId } = await withActor(`cockpit:${chatKey}`, () => runAgent(tagged, sessionId, undefined, onPartial))
 
     if (newSessionId) setSession(chatKey, newSessionId)
 
