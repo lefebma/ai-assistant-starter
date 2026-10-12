@@ -150,7 +150,8 @@ describe('renderCloudInit', () => {
     expect(rendered).toContain('      EnvironmentFile=-/home/havn/havn/.env')
     // Registered but never enabled: first-run setup is interactive.
     expect(rendered).toContain('systemctl daemon-reload')
-    expect(rendered).not.toMatch(/systemctl (enable|start) havn/)
+    // (The havn sudoers rule names these verbs; only the provision script matters here.)
+    expect(rendered.slice(rendered.indexOf('provision.sh'))).not.toMatch(/^\s*systemctl (enable|start) havn/m)
   })
 
   it('clones with the deploy token when one is given, then scrubs it from the git remote', () => {
@@ -299,6 +300,24 @@ describe('shipped templates', () => {
     // member name aborts the whole provision under set -e.
     expect(cloudInitTemplate).not.toMatch(/tar -xzf \S+ -C \S+ gog\b/)
     expect(cloudInitTemplate).toContain('find /tmp/gogcli-extract -type f -name gog')
+  })
+
+  it('gives the service user no general sudo, and root work its own login (card #196)', () => {
+    // The assistant's shell runs as havn. Anything it can write (~/.bashrc,
+    // ~/.ssh/authorized_keys) must not be a path to root.
+    // Normalised: a Windows checkout has CRLF line endings.
+    const rendered = renderCloudInit(cloudInitTemplate, unitTemplate, SPEC).replace(/\r\n/g, '\n')
+    const users = rendered.slice(rendered.indexOf('\nusers:\n'), rendered.indexOf('package_update:'))
+    const havn = users.slice(users.indexOf('- name: havn\n'), users.indexOf('- name: havn-admin'))
+    const admin = users.slice(users.indexOf('- name: havn-admin'))
+    expect(havn).not.toContain('NOPASSWD:ALL')
+    expect(havn).not.toMatch(/groups:.*sudo/)
+    expect(havn).toContain('NOPASSWD: /usr/bin/systemctl restart havn')
+    // Only fixed systemctl verbs: no status (pager escape), no journalctl, no wildcards.
+    expect(havn).not.toMatch(/status|journalctl|\*/)
+    expect(admin).toContain('sudo: ALL=(ALL) NOPASSWD:ALL')
+    expect(admin).toContain(FAKE_ED25519)
+    expect(rendered).toContain('chmod 0750 /home/havn-admin')
   })
 
   it('clears the service account expiry before the first user switch', () => {

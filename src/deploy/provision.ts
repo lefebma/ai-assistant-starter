@@ -57,12 +57,15 @@ export interface SshResult {
   stderr: string
 }
 
+export type SshUser = 'havn' | 'havn-admin'
+
 export interface ProvisionDeps {
   fetch: typeof fetch
   vultrApiKey: string
   cloudflareToken: string
   cloudflareZoneId: string
-  ssh: (host: string, command: string) => Promise<SshResult>
+  /** `user` defaults to havn; root steps log in as havn-admin (card #196). */
+  ssh: (host: string, command: string, user?: SshUser) => Promise<SshResult>
   sleep: (ms: number) => Promise<void>
   now: () => number
   log: (message: string) => void
@@ -270,7 +273,8 @@ export async function provision(spec: ProvisionSpec, deps: ProvisionDeps): Promi
 
     deps.log(`Turning on web setup at https://${address}/setup ...`)
     const installDir = DEFAULT_INSTALL_DIR
-    const r = await deps.ssh(ip, `cd ${installDir} && sudo node dist/scripts/hosted/enable-setup.js ${address}`)
+    // havn has no general sudo; root steps go through the admin login.
+    const r = await deps.ssh(ip, `cd ${installDir} && sudo node dist/scripts/hosted/enable-setup.js ${address}`, 'havn-admin')
     const link = r.code === 0 ? extractSetupLink(r.stdout, address) : null
     if (!link) {
       const tail = (r.stderr || r.stdout).trim().split('\n').slice(-5).join('\n')

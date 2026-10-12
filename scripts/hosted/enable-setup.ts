@@ -4,7 +4,7 @@
  * where the operator ran `npm run setup` for them.
  *
  * Run as root, once, after cloud-init has finished:
- *   sudo node /home/havn/havn/dist/scripts/hosted/enable-setup.js <hostname>
+ *   sudo node /home/havn/havn/dist/scripts/hosted/enable-setup.js <hostname>   (as havn-admin)
  *
  * What it does:
  *   - refuses if the box is already set up (.env exists)
@@ -64,7 +64,7 @@ function caddyVersion(): string | undefined {
 function main(): void {
   const hostname = process.argv[2] ?? ''
   if (process.getuid?.() !== 0) {
-    console.error('Run as root (sudo).')
+    console.error('Run as root: sudo, from the havn-admin login.')
     process.exit(1)
   }
   if (!isValidHostname(hostname)) {

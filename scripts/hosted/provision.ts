@@ -33,6 +33,7 @@ import {
   type ProvisionDeps,
   type ProvisionSpec,
   type SshResult,
+  type SshUser,
 } from '../../src/deploy/provision.js'
 import { resolveSshKey } from '../make-cloud-init.js'
 
@@ -86,10 +87,10 @@ export function parseProvisionArgs(argv: string[]): Cli {
   }
 }
 
-/** ssh as havn; a fresh box on a recycled IP must not trip an old host key. */
-function makeSsh(): (host: string, command: string) => Promise<SshResult> {
+/** ssh as havn (or havn-admin for root steps); a fresh box on a recycled IP must not trip an old host key. */
+function makeSsh(): (host: string, command: string, user?: SshUser) => Promise<SshResult> {
   const cleared = new Set<string>()
-  return (host, command) => {
+  return (host, command, user = 'havn') => {
     if (!cleared.has(host)) {
       cleared.add(host)
       try {
@@ -103,7 +104,7 @@ function makeSsh(): (host: string, command: string) => Promise<SshResult> {
         '-o', 'BatchMode=yes',
         '-o', 'ConnectTimeout=10',
         '-o', 'StrictHostKeyChecking=accept-new',
-        `havn@${host}`,
+        `${user}@${host}`,
         command,
       ])
       let stdout = ''
@@ -160,7 +161,7 @@ async function main(): Promise<void> {
 
     const r = await provision(cli.spec, deps)
     console.log(`\nDone. ${r.hostName} (${r.ip}, ${r.region}), Vultr instance ${r.instanceId}.`)
-    console.log(`SSH: ssh havn@${r.address}`)
+    console.log(`SSH: ssh havn@${r.address}   (root work: ssh havn-admin@${r.address})`)
     console.log('\nSend the client this email:\n')
     console.log(clientEmail({ clientName: cli.name, link: r.link }))
     console.log('Monitoring entry (config/hosted-instances.json):')

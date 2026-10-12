@@ -22,12 +22,31 @@ timezone: {{TIMEZONE}}
 # Key-only SSH. Ubuntu cloud images already default to this; be explicit.
 ssh_pwauth: false
 
-# Listing users: replaces the image's default 'ubuntu' account, so the box has
-# exactly one login: havn. It owns the install and runs the service; sudo is
-# for the finishing steps and later maintenance.
+# Listing users: replaces the image's default 'ubuntu' account. Two logins,
+# split on purpose (card #196):
+#
+#   havn        owns the install and runs the service. The assistant's shell
+#               runs as this user, so it gets no general sudo: anything it can
+#               write (its own ~/.bashrc, ~/.ssh/authorized_keys) must not be a
+#               step to root. It may only start, stop and restart its own
+#               service, which is all routine maintenance needs.
+#   havn-admin  root work: Caddy, enable-teams, apt, reboots. Its home is not
+#               writable by havn, so nothing the assistant does reaches it.
+#
+# Both take the operator's key. The service's own NoNewPrivileges=true already
+# stops sudo inside the running app; this closes the paths around it (a
+# poisoned login shell, an added SSH key).
 users:
   - name: havn
     gecos: Havn assistant service
+    shell: /bin/bash
+    sudo:
+      - "ALL=(root) NOPASSWD: /usr/bin/systemctl restart havn, /usr/bin/systemctl start havn, /usr/bin/systemctl stop havn, /usr/bin/systemctl enable --now havn"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "{{SSH_PUBLIC_KEY}}"
+  - name: havn-admin
+    gecos: Havn box administration
     shell: /bin/bash
     groups: [sudo]
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -173,6 +192,9 @@ write_files:
       # (The pilot's chage on havn treated the wrong account; kept because it
       # is harmless and some images do expire new users too.)
       chage -d "$(date +%F)" -M -1 -E -1 havn
+      chage -d "$(date +%F)" -M -1 -E -1 havn-admin
+      # havn must never be able to write into the admin's home.
+      chmod 0750 /home/havn-admin
       # A deploy token, if one was given for a private fork, rides only in the
       # clone URL; the remote is reset immediately after so it never persists
       # in .git/config. The public repo clones anonymously.
@@ -205,6 +227,7 @@ write_files:
       echo "  As the havn user:  cd {{INSTALL_DIR}} && npm run setup"
       echo "  Full finishing steps: docs/HOSTED-VPS.md in the repo."
       echo "  When setup is done:  sudo systemctl enable --now havn"
+      echo "  Root work (Caddy, Teams, apt): ssh in as havn-admin instead."
       echo ""
       MOTD
       chmod 0755 /etc/update-motd.d/99-havn
