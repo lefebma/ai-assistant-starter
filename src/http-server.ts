@@ -10,6 +10,7 @@ import {
 import { resolveVoiceToken, exchangeVoiceToken } from './voice-links.js'
 import { resolveVoiceSession, sessionIdFromCookies, voiceSessionCookie } from './voice-sessions.js'
 import { runAgent } from './agent.js'
+import { withActor } from './assurance/audit-trail.js'
 import { createLiveSession, liveStatus, LiveSessionError, endLiveSession, memoryChatId } from './voice-live.js'
 import { listVoiceCalls, getVoiceCall, deleteVoiceCall } from './voice-history.js'
 import { sendPlatformMessage, runShortcutTurn, deliverToChat, isChatAllowed } from './bot.js'
@@ -414,7 +415,7 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   logger.info({ convoKey, existingSession, stream }, 'voice chat completion')
 
   if (!stream) {
-    const { text, newSessionId } = await runAgent(lastUser.content, existingSession)
+    const { text, newSessionId } = await withActor(`voice:${convoKey}`, () => runAgent(lastUser.content, existingSession))
     if (newSessionId) conversationSessions.set(convoKey, newSessionId)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(openaiComplete(completionId, model, text ?? '')))
@@ -458,7 +459,7 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   }
 
   try {
-    const { text, newSessionId } = await runAgent(lastUser.content, existingSession, undefined, onPartial)
+    const { text, newSessionId } = await withActor(`voice:${convoKey}`, () => runAgent(lastUser.content, existingSession, undefined, onPartial))
     if (newSessionId) conversationSessions.set(convoKey, newSessionId)
 
     if (handedOffToChat) {

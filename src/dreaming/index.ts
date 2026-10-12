@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync, existsSync, mkdirSync, appendFileS
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { getAgentRuntime } from '../runtime/index.js'
+import { withActor } from '../assurance/audit-trail.js'
 import { PROJECT_ROOT } from '../config.js'
 import { logger } from '../logger.js'
 
@@ -157,7 +158,7 @@ RULES:
 async function runDreamingAgent(prompt: string): Promise<string> {
   // Unattended/batch work: route to the cron lane so it can run on a different
   // engine than live chat (see AGENT_RUNTIME_CRON).
-  return getAgentRuntime('cron').runOnce(prompt)
+  return withActor('job:dreaming', () => getAgentRuntime('cron').runOnce(prompt))
 }
 
 function appendDream(body: string): void {

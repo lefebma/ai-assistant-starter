@@ -213,6 +213,15 @@ write_files:
       node {{INSTALL_DIR}}/node_modules/playwright-core/cli.js install-deps chromium || echo "WARNING: browser libraries failed to install; see docs/HOSTED-VPS.md > Browser automation"
       runuser -u havn -- bash -lc 'cd {{INSTALL_DIR}} && node node_modules/playwright-core/cli.js install chromium' || echo "WARNING: browser download failed; see docs/HOSTED-VPS.md > Browser automation"
 
+      # --- Audit log (card #196) ------------------------------------------
+      # Every tool call the assistant makes is appended to audit.jsonl. The
+      # append-only flag lets havn add lines but not edit, truncate, rename or
+      # delete them; clearing it takes root (chattr -a). The app always uses
+      # this store when the file exists. Kept outside the install directory.
+      install -d -m 0750 -o havn -g havn /var/lib/havn-audit
+      [ -e /var/lib/havn-audit/audit.jsonl ] || install -m 0640 -o havn -g havn /dev/null /var/lib/havn-audit/audit.jsonl
+      chattr +a /var/lib/havn-audit/audit.jsonl
+
       # --- Service: registered but NOT started ----------------------------
       systemctl daemon-reload
       # Deliberately no enable/start: .env and credentials do not exist yet.

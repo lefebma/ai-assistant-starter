@@ -195,6 +195,28 @@ files `havn` can write, so run them only on a box you have no reason to
 distrust, right after an update. Boxes provisioned before this
 change: run `npm run split-admin -- <ip>` from your machine once.
 
+### Audit log
+
+Every tool call the assistant makes is recorded in
+`/var/lib/havn-audit/audit.jsonl`: the shell commands it runs, the files it
+reads and writes, and each MCP tool it uses. Each line also records who asked,
+such as `chat:<id>` or `job:<task id>`, along with the run, and whether the
+call was allowed, refused by a job's role, or blocked by the tool guard.
+File contents are never recorded. For MCP tools only the argument names are
+kept, because the values are message bodies and documents.
+
+Lines are hash-chained, so an edited, removed or invented line shows up when
+the chain is checked. Root sets the append-only flag on the file, so `havn`
+can add lines but cannot edit, truncate, rename or delete it. The assistant is
+also refused any write or shell command aimed at the store, but it can read
+the log. To clear the log, as `havn-admin`:
+`sudo chattr -a /var/lib/havn-audit/audit.jsonl`. Note that clearing breaks
+the chain, and the off-box copy (card #196 part 2) will show the break.
+
+New boxes get the store from cloud-init. For a box built earlier, update it to
+a release with the audit log, then run `npm run enable-audit -- <ip>` from your
+machine. The assistant starts recording at its next restart.
+
 When it finishes you'll see the MOTD on login:
 
 ```

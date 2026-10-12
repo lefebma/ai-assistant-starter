@@ -16,9 +16,15 @@
  * that builds the path at runtime defeats it. The real boundary is OS-level:
  * the log directory owned by another user (or append-only flag), and the
  * witness on a different host or volume. FileSink is the local stand-in for
- * that witness. Not yet wired into the runtime tool path.
+ * that witness.
+ *
+ * Card #196 wired it into the tool path (audit-trail.ts). The chain head is
+ * tracked in memory from the last line on disk, so an append never rereads a
+ * log. A synchronous witness is optional: the off-box one is asynchronous, and
+ * ships `eventsAfter(seq)` from the append-only file itself, so the file is
+ * the outbox and nothing the agent can edit sits between it and the witness.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join, resolve, sep } from 'node:path'
 
@@ -38,12 +44,15 @@ export type AuditInput = Omit<AuditEvent, 'seq' | 'ts' | 'prevHash' | 'hash'>
 export interface AuditSink {
   append(event: AuditEvent): void
   readAll(): AuditEvent[]
+  /** The last event, without reading everything. Falls back to readAll(). */
+  last?(): AuditEvent | undefined
 }
 
 export class MemorySink implements AuditSink {
   private events: AuditEvent[] = []
   append(e: AuditEvent): void { this.events.push(structuredClone(e)) }
   readAll(): AuditEvent[] { return structuredClone(this.events) }
+  last(): AuditEvent | undefined { const e = this.events[this.events.length - 1]; return e && structuredClone(e) }
 }
 
 export class FileSink implements AuditSink {
@@ -57,6 +66,7 @@ export class FileSink implements AuditSink {
     if (!existsSync(this.file)) return []
     return readFileSync(this.file, 'utf-8').split('\n').filter(Boolean).map(l => JSON.parse(l) as AuditEvent)
   }
+  last(): AuditEvent | undefined { return tailOf(this.file).last }
 }
 
 const GENESIS = '0'.repeat(64)
@@ -80,13 +90,51 @@ function isInside(child: string, parent: string): boolean {
 
 export type VerifyResult = { ok: boolean; issues: string[]; events: number }
 
+/** How far back from the end to look for the last line. Lines are capped well under this. */
+const TAIL_BYTES = 64 * 1024
+
+/**
+ * The last complete event in a log file, read from its tail, and whether the
+ * file ends mid-line (a crash during a write). Unparseable tails count as no
+ * event: the caller continues from the witness or genesis and verify() flags
+ * the break.
+ */
+function tailOf(file: string): { last?: AuditEvent; torn: boolean } {
+  let fd: number
+  try { fd = openSync(file, 'r') } catch { return { torn: false } }
+  try {
+    const size = fstatSync(fd).size
+    if (size === 0) return { torn: false }
+    const len = Math.min(size, TAIL_BYTES)
+    const buf = Buffer.alloc(len)
+    readSync(fd, buf, 0, len, size - len)
+    const text = buf.toString('utf-8')
+    const torn = !text.endsWith('\n')
+    const lines = text.split('\n').filter(Boolean)
+    if (torn) lines.pop()
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const e = JSON.parse(lines[i]) as AuditEvent
+        if (typeof e.seq === 'number' && typeof e.hash === 'string') return { last: e, torn }
+      } catch {
+        // The first line of the window may be cut; keep looking back.
+      }
+    }
+    return { torn }
+  } finally {
+    closeSync(fd)
+  }
+}
+
 export class AuditLog {
   readonly dir: string
   readonly file: string
-  private witness: AuditSink
+  private witness?: AuditSink
   private workspace: string
+  private head: { seq: number; hash: string }
+  private torn: boolean
 
-  constructor(opts: { dir: string; workspace: string; witness: AuditSink }) {
+  constructor(opts: { dir: string; workspace: string; witness?: AuditSink }) {
     if (isInside(opts.dir, opts.workspace) || isInside(opts.workspace, opts.dir)) {
       throw new Error('audit store must be outside the agent workspace')
     }
@@ -95,7 +143,17 @@ export class AuditLog {
     this.file = join(opts.dir, 'audit.jsonl')
     this.witness = opts.witness
     this.workspace = opts.workspace
+    // Read once. A synchronous witness that is ahead of the local file (a
+    // wiped or truncated primary) wins, so the chain cannot be reset.
+    const tail = tailOf(this.file)
+    this.torn = tail.torn
+    const w = opts.witness ? (opts.witness.last ? opts.witness.last() : opts.witness.readAll().at(-1)) : undefined
+    const from = w && (!tail.last || w.seq > tail.last.seq) ? w : tail.last
+    this.head = { seq: from?.seq ?? 0, hash: from?.hash ?? GENESIS }
   }
+
+  /** The chain head: what the next event links to. */
+  headOf(): { seq: number; hash: string } { return { ...this.head } }
 
   private readLocal(): AuditEvent[] {
     if (!existsSync(this.file)) return []
@@ -104,22 +162,28 @@ export class AuditLog {
     })
   }
 
-  /** Next link continues from the WITNESS head, so a wiped primary cannot reset the chain. */
+  /** Links to the tracked head; the head moves only once the local write succeeded. */
   append(input: AuditInput): AuditEvent {
-    const w = this.witness.readAll()
-    const last = w[w.length - 1]
-    const base = { seq: (last?.seq ?? 0) + 1, ts: new Date().toISOString(), ...input, prevHash: last?.hash ?? GENESIS }
+    const base = { seq: this.head.seq + 1, ts: new Date().toISOString(), ...input, prevHash: this.head.hash }
     const event: AuditEvent = { ...base, hash: hashOf(base) }
-    this.witness.append(event)
+    this.witness?.append(event)
     mkdirSync(this.dir, { recursive: true, mode: 0o700 })
-    appendFileSync(this.file, JSON.stringify(event) + '\n', { mode: 0o600 })
+    // After a torn write, start a fresh line so this event is not glued to it.
+    appendFileSync(this.file, (this.torn ? '\n' : '') + JSON.stringify(event) + '\n', { mode: 0o600 })
+    this.torn = false
+    this.head = { seq: event.seq, hash: event.hash }
     return event
+  }
+
+  /** Events after `seq`, oldest first: what an asynchronous witness has not acknowledged yet. */
+  eventsAfter(seq: number): AuditEvent[] {
+    return this.readLocal().filter(e => e.seq > seq)
   }
 
   verify(): VerifyResult {
     const issues: string[] = []
     const local = this.readLocal()
-    const witness = this.witness.readAll()
+    const witness = this.witness?.readAll()
     let prev = GENESIS
     for (const [i, e] of local.entries()) {
       const { hash, ...rest } = e
@@ -127,10 +191,11 @@ export class AuditLog {
       if (e.prevHash !== prev) issues.push(`event ${i + 1}: chain link broken`)
       if (hashOf(rest) !== hash) issues.push(`event ${i + 1}: hash mismatch (edited)`)
       prev = hash
+      if (!witness) continue
       const w = witness[i]
       if (!w || w.hash !== hash) issues.push(`event ${i + 1}: not in witness (fabricated or altered)`)
     }
-    if (local.length < witness.length) issues.push(`${witness.length - local.length} event(s) missing from primary log (truncated or deleted)`)
+    if (witness && local.length < witness.length) issues.push(`${witness.length - local.length} event(s) missing from primary log (truncated or deleted)`)
     return { ok: issues.length === 0, issues, events: local.length }
   }
 
@@ -179,15 +244,21 @@ function bashTouchesStore(log: AuditLog, command: string): string | null {
   return null
 }
 
+/** Why a write, edit or shell command reaches into the audit store, or null. Exact, no phrasing rules. */
+export function storeTouch(log: AuditLog, action: Exclude<GuardAction, { kind: 'message' }>): string | null {
+  if (action.kind === 'bash') return bashTouchesStore(log, action.command)
+  return log.protects(action.path) ? 'path is inside the audit store' : null
+}
+
 export function guardAction(log: AuditLog, ctx: GuardCtx, action: GuardAction): GuardDecision {
   let reason: string | null = null
   let detail = ''
   if (action.kind === 'write' || action.kind === 'edit') {
     detail = action.path
-    if (log.protects(action.path)) reason = 'path is inside the audit store'
+    reason = storeTouch(log, action)
   } else if (action.kind === 'bash') {
     detail = action.command.slice(0, 500)
-    reason = bashTouchesStore(log, action.command)
+    reason = storeTouch(log, action)
     if (!reason) reason = (() => { const m = detectTraceErasure(action.command); return m ? `trace-erasure phrasing: "${m}"` : null })()
   } else if (action.kind === 'message') {
     detail = `[${action.source}] ${action.text.slice(0, 500)}`

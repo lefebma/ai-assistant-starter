@@ -4,6 +4,8 @@
 
 - **Security: hosted boxes split the assistant's login from the admin login.** The assistant runs as `havn`, which until now also had full sudo. Sudo was already blocked inside the running service, but the assistant could edit `havn`'s own shell startup files or SSH keys, which became a route to root at the next login. New boxes get two logins: `havn`, whose sudo now covers only starting, stopping and restarting its own service, and `havn-admin` for root work (Caddy, Teams, apt, reboots). Run `npm run split-admin -- <ip>` once to move an existing box over. See docs/HOSTED-VPS.md.
 
+- **Security: hosted boxes keep a tamper-evident log of everything the assistant does.** Every command it runs, file it touches and tool it uses is written to `/var/lib/havn-audit/audit.jsonl`. Each line records who asked (which chat or scheduled job) and whether the call went ahead or was refused. Lines are chained together, so editing or removing one is detectable. The file is append-only for the assistant's login: it can add lines but cannot change or delete them, and any attempt to write to the log is refused. File contents and message bodies are never recorded. New boxes get the log automatically. For an existing box, run `npm run enable-audit -- <ip>` after updating. A copy kept off the box comes next. See docs/HOSTED-VPS.md > Audit log.
+
 ## 1.34.0 - 2026-10-12
 
 Set up without a terminal: a browser page for new installs and hosted clients, installers that open it, and one command that builds a hosted box.
