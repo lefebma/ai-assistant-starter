@@ -51,6 +51,38 @@ machine you can snapshot, rebuild, and reach without touching their hardware.
   user-data on the box (root-readable: `/var/lib/cloud/`), so make it
   fine-grained, read-only, and expiring.
 
+## One command on Vultr (recommended)
+
+`npm run provision` does every step below for you on Vultr: it creates the
+server, turns on daily backups, points `<client>.gethavn.ai` at it, waits for
+first boot, runs `enable-setup`, and prints the email to send the client with
+their one-time setup link. Run it from your own machine, in a checkout of
+this repo:
+
+```bash
+export VULTR_API_KEY=...          # from your password manager, not shell history
+export CLOUDFLARE_API_TOKEN=...   # DNS:Edit on the gethavn.ai zone
+export CLOUDFLARE_ZONE_ID=...
+npm run provision -- --client leif --country us --ssh-key ~/.ssh/id_ed25519.pub --name Leif
+```
+
+- `--country us` builds in New Jersey (`ewr`), `--country ca` in Toronto
+  (`yto`) for Canadian data residency. The timezone defaults to New York or
+  Toronto to match; override it with `--timezone`.
+- The box is `havn-<client>`, plan `vc2-1c-2gb` on Ubuntu 24.04, about $12 a
+  month with backups (daily, 07:00 UTC). SSH is `ssh havn@<client>.gethavn.ai`,
+  by key only; root login is off and Vultr's extra `linuxuser` login is locked.
+- `--dry-run` checks the name is free on Vultr and in DNS and that the
+  user-data renders, and creates nothing. Names the site uses (`www`,
+  `staging`, `voice` and others) are refused.
+- It takes 10 to 15 minutes, most of it first boot. It never deletes
+  anything: if a step fails after the server exists, it names the server so
+  you can look before removing it and its DNS record.
+- Add the printed line to the operator's monitoring list
+  (`config/hosted-instances.json` on the operator machine).
+
+On another provider, use the manual steps that follow.
+
 ## Pick a provider
 
 Any provider that takes cloud-init user-data works. Recommendations:

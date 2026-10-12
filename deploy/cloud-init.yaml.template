@@ -53,6 +53,15 @@ write_files:
       APT::Periodic::Update-Package-Lists "1";
       APT::Periodic::Unattended-Upgrade "1";
 
+  # Root never logs in over SSH. Ubuntu's cloud images already say so, but
+  # some providers' images (Vultr's) ship PermitRootLogin yes; sshd takes the
+  # first value it reads, and 10- sorts ahead of their 50-cloud-init.conf.
+  - path: /etc/ssh/sshd_config.d/10-havn-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+
   # Registered but never enabled here: first-run setup is interactive, so the
   # operator starts the service after the finishing steps (docs/HOSTED-VPS.md).
   - path: /etc/systemd/system/havn.service
@@ -111,6 +120,15 @@ write_files:
       # No separate Claude CLI install on purpose: the engine ships inside
       # the app via @anthropic-ai/claude-agent-sdk (npm ci below brings it),
       # and a globally installed claude is a copy the assistant never calls.
+
+      # --- SSH: only havn, only by key ------------------------------------
+      # Vultr's image adds its own login, linuxuser, with a password. Lock it
+      # and expire it so havn stays the box's one way in (havn-leif finding).
+      if id linuxuser >/dev/null 2>&1; then
+        usermod -L -e 1 linuxuser
+      fi
+      mkdir -p /run/sshd  # socket-activated sshd may not have made it yet; sshd -t needs it
+      sshd -t && systemctl try-reload-or-restart ssh || echo "WARNING: sshd config check failed; hardening not applied"
 
       # --- Firewall: zero inbound by default ------------------------------
       # All of Havn's traffic is outbound (Telegram long-polling, Anthropic,
