@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-- **Changed: the installers open setup in the browser.** On macOS the install folder now has `Setup <App>.app` instead of a Terminal `.command`; on Windows `Setup <App>.cmd` starts the web setup and its window closes once the page is up. Both run `setup-web --background`, which starts the setup page detached, opens the browser, and exits; a second double-click reopens the page, and an install that is already set up says so. The .pkg signs the new app bundle and its last screen points at it. The terminal wizard is unchanged and still what Linux gets.
+## 1.34.0 - 2026-10-12
+
+Set up without a terminal: a browser page for new installs and hosted clients, installers that open it, and one command that builds a hosted box.
+
 - **New: set up your assistant in a browser.** Setup no longer needs a terminal. Double-click the Setup launcher in the install folder, or run `npm run setup:web`, and a page opens with three short steps: who you are, your Telegram bot, and how your assistant reaches an AI model. You don't need to look up a chat id any more: you tap Start in your new bot, the page asks "Is this you?", and that's it. Keys you type go straight into the encrypted vault, never into `.env`. When you finish, your assistant says hello in Telegram and starts in the background. Everything the page doesn't ask (email, optional skills) you set up later by asking your assistant. `npm run setup` still works for anyone who prefers the terminal.
 - **New: hosted clients set themselves up.** On a new hosted box, `enable-setup` prints a one-time link for the operator to send the client, who finishes setup from any phone or computer. No SSH session is needed. The link works once and expires after 48 hours. A wrong or used link gets a plain "not found", and after setup the page is gone for good. The operator can reissue an expired link from the box.
-
+- **Changed: the installers open setup in the browser.** On macOS the install folder now has `Setup <App>.app` instead of a Terminal `.command`; on Windows `Setup <App>.cmd` starts the web setup and its window closes once the page is up. Both run `setup-web --background`, which starts the setup page detached, opens the browser, and exits; a second double-click reopens the page, and an install that is already set up says so. The .pkg signs the new app bundle and its last screen points at it. The terminal wizard is unchanged and still what Linux gets.
 - **New: one command builds a hosted box.** `npm run provision -- --client leif --country us --ssh-key ~/.ssh/id_ed25519.pub` creates the server on Vultr with daily backups, gives it the address `leif.gethavn.ai`, waits for it to install, turns on the web setup and prints a ready-to-send email with the client's setup link. Canadian clients (`--country ca`) are built in Toronto. `--dry-run` checks everything without creating anything. See docs/HOSTED-VPS.md.
 - **Changed: hosted boxes lock down SSH on every provider.** First boot now turns off root login and password login explicitly and locks the extra login some providers add (Vultr's `linuxuser`). Before, this was done by hand on Vultr boxes.
 
