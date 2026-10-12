@@ -305,7 +305,8 @@ describe('shipped templates', () => {
   it('gives the service user no general sudo, and root work its own login (card #196)', () => {
     // The assistant's shell runs as havn. Anything it can write (~/.bashrc,
     // ~/.ssh/authorized_keys) must not be a path to root.
-    const rendered = renderCloudInit(cloudInitTemplate, unitTemplate, SPEC)
+    // Normalised: a Windows checkout has CRLF line endings.
+    const rendered = renderCloudInit(cloudInitTemplate, unitTemplate, SPEC).replace(/\r\n/g, '\n')
     const users = rendered.slice(rendered.indexOf('\nusers:\n'), rendered.indexOf('package_update:'))
     const havn = users.slice(users.indexOf('- name: havn\n'), users.indexOf('- name: havn-admin'))
     const admin = users.slice(users.indexOf('- name: havn-admin'))
