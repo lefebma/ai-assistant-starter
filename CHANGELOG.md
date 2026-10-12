@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Security: hosted boxes split the assistant's login from the admin login.** The assistant runs as `havn`, which until now also had full sudo. Sudo was already blocked inside the running service, but the assistant could edit `havn`'s own shell startup files or SSH keys, which became a route to root at the next login. New boxes get two logins: `havn`, whose sudo now covers only starting, stopping and restarting its own service, and `havn-admin` for root work (Caddy, Teams, apt, reboots). Run `scripts/hosted/split-admin.sh <ip>` once to move an existing box over. See docs/HOSTED-VPS.md.
+- **Security: hosted boxes split the assistant's login from the admin login.** The assistant runs as `havn`, which until now also had full sudo. Sudo was already blocked inside the running service, but the assistant could edit `havn`'s own shell startup files or SSH keys, which became a route to root at the next login. New boxes get two logins: `havn`, whose sudo now covers only starting, stopping and restarting its own service, and `havn-admin` for root work (Caddy, Teams, apt, reboots). Run `npm run split-admin -- <ip>` once to move an existing box over. See docs/HOSTED-VPS.md.
 
 ## 1.34.0 - 2026-10-12
 

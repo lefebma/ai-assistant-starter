@@ -193,7 +193,7 @@ already blocked by `NoNewPrivileges=true`. One gap remains: root steps that
 run code from the install (`enable-teams`, Playwright's `install-deps`) run
 files `havn` can write, so run them only on a box you have no reason to
 distrust, right after an update. Boxes provisioned before this
-change: run `scripts/hosted/split-admin.sh <ip>` from your machine once.
+change: run `npm run split-admin -- <ip>` from your machine once.
 
 When it finishes you'll see the MOTD on login:
 
