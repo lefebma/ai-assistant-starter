@@ -13,7 +13,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync, readFileSync, renameSync, readdirSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PROJECT_ROOT } from '../src/env.js'
 import {
@@ -65,6 +65,8 @@ async function main(): Promise<void> {
   const appName = resolveAppName(process.env.APP_NAME, readEnvFile(['APP_NAME'])['APP_NAME'])
   console.log(`product name: ${appName}`)
   for (const f of setupLauncherFiles(process.platform, { appName })) {
+    // The macOS launcher is an .app, so its files sit in nested folders.
+    mkdirSync(dirname(join(app, f.path)), { recursive: true })
     writeFileSync(join(app, f.path), f.content, f.executable ? { mode: 0o755 } : undefined)
   }
   // Stamp the name so the restart launcher, which is generated at install time

@@ -2,6 +2,8 @@
  * Web setup (cards #211-#213): the browser alternative to `npm run setup`.
  *
  *   node dist/scripts/setup-web.js [--no-open]           local: opens http://localhost:3030/setup
+ *   node dist/scripts/setup-web.js --background          local, from the Setup launcher: starts the
+ *                                                        server detached, opens the page, exits
  *   node dist/scripts/setup-web.js --hosted              hosted: serves the one-time link behind the edge
  *   node dist/scripts/setup-web.js --issue-link HOST     hosted: issues a fresh link and prints it
  *
@@ -10,7 +12,7 @@
  * scripts/hosted/enable-setup.ts runs it as the havn-setup service.
  */
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { PROJECT_ROOT } from '../src/env.js'
@@ -21,6 +23,7 @@ import { SETUP_FINISHED_MARKER } from '../src/deploy/setup-edge.js'
 import { defaultVault } from '../src/vault/index.js'
 import { checkLink, fileLinkStore, issueLink } from '../src/setup/web/link.js'
 import { createSetupServer, type ClaudeSignIn, type SetupMode } from '../src/setup/web/server.js'
+import { launchInBackground, probeSetupPort } from '../src/setup/web/launch.js'
 
 const PORT = Number(process.env.HTTP_PORT) || 3030
 const links = fileLinkStore(resolve(PROJECT_ROOT, 'store', 'setup-link.json'))
@@ -38,7 +41,7 @@ function localClaude(): ClaudeSignIn {
     },
     start: () => {
       if (!bin) return
-      const child = spawn(bin, ['auth', 'login'], { detached: true, stdio: 'ignore' })
+      const child = spawn(bin, ['auth', 'login'], { detached: true, stdio: 'ignore', windowsHide: true })
       child.unref()
     },
   }
@@ -47,7 +50,38 @@ function localClaude(): ClaudeSignIn {
 function openBrowser(url: string): void {
   const [cmd, cmdArgs] =
     process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]]
-  execFile(cmd, cmdArgs, () => {})
+  execFile(cmd, cmdArgs, { windowsHide: true }, () => {})
+}
+
+/**
+ * The double-click path: run this same script without --background as a
+ * detached child, logging to logs/setup-web.log, and leave once it answers.
+ */
+async function background(): Promise<never> {
+  const url = `http://localhost:${PORT}/setup`
+  const code = await launchInBackground({
+    alreadySetUp: () => existsSync(resolve(PROJECT_ROOT, '.env')),
+    probe: () => probeSetupPort(fetch, PORT),
+    startServer: () => {
+      mkdirSync(resolve(PROJECT_ROOT, 'logs'), { recursive: true })
+      const log = openSync(resolve(PROJECT_ROOT, 'logs', 'setup-web.log'), 'a')
+      const rest = args.filter((a) => a !== '--background')
+      const child = spawn(process.execPath, [process.argv[1]!, ...rest], {
+        cwd: PROJECT_ROOT,
+        detached: true,
+        stdio: ['ignore', log, log],
+        windowsHide: true,
+      })
+      let exited = false
+      child.on('exit', () => (exited = true))
+      child.unref()
+      return { exited: () => exited }
+    },
+    openBrowser: () => openBrowser(url),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    log: (m) => console.log(m),
+  })
+  process.exit(code)
 }
 
 /** Hand the port to the assistant. */
@@ -68,6 +102,10 @@ function startAssistant(mode: SetupMode): void {
 }
 
 function main(): void {
+  if (args.includes('--background')) {
+    void background()
+    return
+  }
   const issueAt = args.indexOf('--issue-link')
   if (issueAt !== -1) {
     const host = args[issueAt + 1] ?? ''

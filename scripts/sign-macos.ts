@@ -181,6 +181,11 @@ function main(): void {
     info(`${label}  ${rel}\n        ${d.reason}`)
   }
 
+  const setupApps = readdirSync(join(STAGING, 'app'))
+    .filter((f) => /^Setup .+\.app$/.test(f))
+    .map((f) => join(STAGING, 'app', f))
+  for (const bundle of setupApps) info(`${YELLOW}sign${RESET}  ${bundle.slice(STAGING.length + 1)}\n        setup launcher bundle`)
+
   if (DRY_RUN) {
     console.log(`\n${BOLD}Dry run — nothing signed.${RESET}\n`)
     return
@@ -201,10 +206,18 @@ function main(): void {
   }
   ok(`${toSign.length} binaries signed, ${decisions.length - toSign.length} left as-is`)
 
+  // The setup launcher is a script-backed .app, not Mach-O, so the walk above
+  // never sees it. Notarisation rejects an unsigned bundle in the payload.
+  for (const bundle of setupApps) {
+    run('codesign', ['--force', '--sign', appIdentity, '--timestamp', '--options', 'runtime', bundle], { quiet: true })
+    ok(`signed ${bundle.slice(STAGING.length + 1)}`)
+  }
+
   header('Verifying signatures...')
   for (const d of decisions) {
     run('codesign', ['--verify', '--strict', d.path], { quiet: true })
   }
+  for (const bundle of setupApps) run('codesign', ['--verify', '--strict', '--deep', bundle], { quiet: true })
   ok('every Mach-O passes codesign --verify --strict')
 
   // ── 2. Lay out the payload the way an install should look on disk ──
