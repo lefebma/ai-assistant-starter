@@ -23,7 +23,6 @@ set -euo pipefail
 HOST="${1:-}"
 [ -n "$HOST" ] || { echo "Usage: $0 <ip-or-host>" >&2; exit 2; }
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10)
-NARROW='havn ALL=(root) NOPASSWD: /usr/bin/systemctl restart havn, /usr/bin/systemctl start havn, /usr/bin/systemctl stop havn, /usr/bin/systemctl enable --now havn'
 
 echo "== 1. create havn-admin on $HOST"
 # Stage 1 runs through havn's current sudo. A re-run on a box that is already
@@ -61,8 +60,11 @@ fi
 echo "ok"
 
 echo "== 3. narrow havn's sudo"
-"${SSH[@]}" "havn-admin@$HOST" sudo -n env "NARROW=$NARROW" bash -s <<'STAGE3'
+# The rule lives inside the heredoc: ssh joins its arguments into one remote
+# command line, so passing it as an argument loses the quoting.
+"${SSH[@]}" "havn-admin@$HOST" sudo -n bash -s <<'STAGE3'
 set -euo pipefail
+NARROW='havn ALL=(root) NOPASSWD: /usr/bin/systemctl restart havn, /usr/bin/systemctl start havn, /usr/bin/systemctl stop havn, /usr/bin/systemctl enable --now havn'
 backup=/root/sudoers-backup-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$backup"
 cp -a /etc/sudoers.d/. "$backup/"
