@@ -34,7 +34,7 @@ lsattr ${DIR}/audit.jsonl | awk '{print $1}' | grep -q a || { echo "append-only 
 export const PROVE = `f=${DIR}/audit.jsonl
 lsattr "$f" | awk '{print $1}' | grep -q a || { echo "flag missing; not probing"; exit 1; }
 printf '' >> "$f" && echo "append: ok" || { echo "append: FAILED"; exit 1; }
-if : > "$f" 2>/dev/null; then echo "truncate: ALLOWED"; exit 1; else echo "truncate: refused"; fi
+if { : > "$f"; } 2>/dev/null; then echo "truncate: ALLOWED"; exit 1; else echo "truncate: refused"; fi
 if rm -f "$f" 2>/dev/null && [ ! -e "$f" ]; then echo "delete: ALLOWED"; exit 1; else echo "delete: refused"; fi
 if mv "$f" "$f.x" 2>/dev/null; then echo "rename: ALLOWED"; exit 1; else echo "rename: refused"; fi
 `
