@@ -211,7 +211,16 @@ can add lines but cannot edit, truncate, rename or delete it. The assistant is
 also refused any write or shell command aimed at the store, but it can read
 the log. To clear the log, as `havn-admin`:
 `sudo chattr -a /var/lib/havn-audit/audit.jsonl`. Note that clearing breaks
-the chain, and the off-box copy (card #196 part 2) will show the break.
+the chain, and the off-box copy will show the break.
+
+**Off-box copy.** Each box also sends its log to a witness on Cloudflare
+(`deploy/audit-witness/README.md`) every 5 minutes. The witness gets a
+fingerprint of each line's command or path, never the text itself. It keeps
+every batch under a bucket lock, so nothing it holds can be deleted or
+overwritten for 400 days. If a box's log is ever rewritten, the witness refuses
+the box's next send, and the box stops sending and records why in
+`/var/lib/havn-audit/witness-state.json`. To connect a box, run
+`npm run witness-token -- <box-name> <ip>` and then restart the box.
 
 New boxes get the store from cloud-init. For a box built earlier, update it to
 a release with the audit log, then run `npm run enable-audit -- <ip>` from your

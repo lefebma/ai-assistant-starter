@@ -1,0 +1,17 @@
+# Off-box audit witness (card #196). Deploy: deploy/audit-witness/README.md.
+name = "havn-audit"
+main = "worker.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "WITNESS"
+class_name = "BoxWitness"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BoxWitness"]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "havn-audit"

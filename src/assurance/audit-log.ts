@@ -175,6 +175,52 @@ export class AuditLog {
     return event
   }
 
+  /**
+   * Complete events from byte `offset` on, at most `max`, each with the byte
+   * offset just past its line. Lets a shipper resume where it left off
+   * without rereading a log that only grows. Unparseable lines (a torn
+   * write) are skipped; their bytes are still counted.
+   */
+  readFrom(offset: number, max: number): { events: AuditEvent[]; ends: number[] } {
+    const events: AuditEvent[] = []
+    const ends: number[] = []
+    let fd: number
+    try { fd = openSync(this.file, 'r') } catch { return { events, ends } }
+    try {
+      const size = fstatSync(fd).size
+      let pos = offset
+      let carry = Buffer.alloc(0)
+      const chunk = Buffer.alloc(1024 * 1024)
+      while (pos < size && events.length < max) {
+        const n = readSync(fd, chunk, 0, Math.min(chunk.length, size - pos), pos)
+        if (n <= 0) break
+        const buf = Buffer.concat([carry, chunk.subarray(0, n)])
+        const base = pos - carry.length
+        pos += n
+        let start = 0
+        let nl: number
+        while ((nl = buf.indexOf(0x0a, start)) !== -1 && events.length < max) {
+          const line = buf.subarray(start, nl).toString('utf-8')
+          start = nl + 1
+          if (!line) continue
+          try {
+            const e = JSON.parse(line) as AuditEvent
+            if (typeof e.seq === 'number' && typeof e.hash === 'string') {
+              events.push(e)
+              ends.push(base + start)
+            }
+          } catch {
+            // Torn line: not an event.
+          }
+        }
+        carry = Buffer.from(buf.subarray(start))
+      }
+      return { events, ends }
+    } finally {
+      closeSync(fd)
+    }
+  }
+
   /** Events after `seq`, oldest first: what an asynchronous witness has not acknowledged yet. */
   eventsAfter(seq: number): AuditEvent[] {
     return this.readLocal().filter(e => e.seq > seq)
