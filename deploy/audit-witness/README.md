@@ -44,9 +44,6 @@ To check the lock holds, try deleting a stored batch:
 Wrangler prints "Delete complete" whatever happens, so fetch the object
 afterwards: it is still there. Checked this way on 2026-10-13.
 
-The live witness is `https://havn-audit.marc-a61.workers.dev`. The admin
-token is in the ClaudeClaw-Secrets vault as `havn-witness-admin-token`.
-
 ## Connect a box
 
 ```bash
