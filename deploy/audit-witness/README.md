@@ -39,6 +39,14 @@ ADMIN=$(openssl rand -hex 32)          # store this somewhere safe
 printf %s "$ADMIN" | shasum -a 256 | cut -d' ' -f1 | npx wrangler@4 secret put ADMIN_TOKEN_SHA256
 ```
 
+To check the lock holds, try deleting a stored batch:
+`npx wrangler@4 r2 object delete havn-audit/boxes/<box>/<key> --remote`.
+Wrangler prints "Delete complete" whatever happens, so fetch the object
+afterwards: it is still there. Checked this way on 2026-10-13.
+
+The live witness is `https://havn-audit.marc-a61.workers.dev`. The admin
+token is in the ClaudeClaw-Secrets vault as `havn-witness-admin-token`.
+
 ## Connect a box
 
 ```bash
