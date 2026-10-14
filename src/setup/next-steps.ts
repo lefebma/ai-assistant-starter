@@ -64,8 +64,8 @@ export function buildNextSteps(i: NextStepsInput): NextStep[] {
       text: 'Authenticate Gmail with the gog CLI (needs a Google OAuth client — docs/SETUP-GUIDE.md > Gmail):',
       commands: [
         'gog auth credentials set ~/Downloads/client_secret_*.json',
-        `gog auth add ${i.gmailAddress} --services gmail,calendar`,
-        ...(i.gmailAddress2 ? [`gog auth add ${i.gmailAddress2} --services gmail,calendar`] : []),
+        `gog auth add ${i.gmailAddress} --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify`,
+        ...(i.gmailAddress2 ? [`gog auth add ${i.gmailAddress2} --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify`] : []),
       ],
     })
   }

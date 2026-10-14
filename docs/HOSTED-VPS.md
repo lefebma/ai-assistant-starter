@@ -408,7 +408,7 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   the callback (ufw denies all inbound, remember):
 
   ```bash
-  gog auth add you@gmail.com --services gmail,calendar --remote --step 1
+  gog auth add you@gmail.com --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify --remote --step 1
   ```
 
   This prints an `auth_url`. Open it in a local browser, complete consent,
@@ -416,7 +416,7 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   address bar and finish the flow:
 
   ```bash
-  gog auth add you@gmail.com --services gmail,calendar --remote --step 2 \
+  gog auth add you@gmail.com --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify --remote --step 2 \
     --auth-url '<full redirect URL>'
   ```
 

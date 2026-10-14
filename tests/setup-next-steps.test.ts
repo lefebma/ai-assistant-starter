@@ -100,6 +100,8 @@ describe('buildNextSteps', () => {
     // auth add fails without credentials set first, so it must never appear alone.
     expect(out.indexOf('gog auth credentials set')).toBeLessThan(out.indexOf('gog auth add a@g.com'))
     expect(out).toMatch(/gog auth add b@g\.com/)
+    // Only the Gmail access the assistant uses: no settings or forwarding scopes.
+    expect(out).toMatch(/gog auth add a@g\.com --services gmail,calendar --gmail-scope send --extra-scopes https:\/\/www\.googleapis\.com\/auth\/gmail\.modify/)
   })
 
   it('skips Gmail steps entirely when no Gmail account was configured', () => {

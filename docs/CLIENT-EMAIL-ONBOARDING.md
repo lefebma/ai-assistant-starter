@@ -107,7 +107,7 @@ This is the one part best done live — on a call or screen share, not over
 async chat, because the code exchanged at the end is single-use and expires
 fast.
 
-1. 🧑‍💻 On the box: `gog auth add client@gmail.com --services gmail,calendar --remote --step 1`
+1. 🧑‍💻 On the box: `gog auth add client@gmail.com --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify --remote --step 1`
    — prints a Google OAuth URL.
 2. 🧑‍💻 Send the client that URL right away (paste in the call/chat you're
    already on — don't let it sit).
@@ -123,7 +123,7 @@ fast.
    and sends it back to you immediately.
 6. 🧑‍💻 On the box, exchange it — **single-quoted, exact, untouched**:
    ```bash
-   gog auth add client@gmail.com --services gmail,calendar --remote --step 2 --auth-url 'PASTE_FULL_URL_HERE'
+   gog auth add client@gmail.com --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify --remote --step 2 --auth-url 'PASTE_FULL_URL_HERE'
    ```
    The URL contains unescaped `&` characters. Pasted without quotes, bash
    reads each `&` as "run this in the background" and silently truncates the
