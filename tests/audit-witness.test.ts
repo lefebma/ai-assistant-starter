@@ -350,10 +350,11 @@ describe('checks (part 3)', () => {
 describe('operator view (part 3)', () => {
   const HOUR = 3_600_000
   const base: BoxStatus = { box: 'b', head: { seq: 1, hash: GENESIS_HASH }, issuedAt: null, lastAppendAt: null, conflicts: 0, conflictsAcked: 0, lastConflict: null, lastCheck: null, lastFullCheckAt: null }
-  const ago = (h: number) => new Date(Date.now() - h * HOUR).toISOString()
+  // One clock for the whole test: a slow runner must not turn 25 hours into 24.
+  const now = Date.now()
+  const ago = (h: number) => new Date(now - h * HOUR).toISOString()
 
   it('flags silence, unacknowledged conflicts, failed and stale checks', () => {
-    const now = Date.now()
     expect(boxProblems({ ...base, issuedAt: ago(1) }, now)).toEqual([])
     expect(boxProblems({ ...base, issuedAt: ago(30) }, now)).toEqual(['has never sent anything'])
     expect(boxProblems({ ...base, lastAppendAt: ago(30), lastCheck: { at: ago(25), ok: true, problems: [] }, lastFullCheckAt: ago(25) }, now)).toEqual(['silent for 25 hours'])
