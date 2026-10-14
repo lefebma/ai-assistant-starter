@@ -222,6 +222,13 @@ the box's next send, and the box stops sending and records why in
 `/var/lib/havn-audit/witness-state.json`. To connect a box, run
 `npm run witness-token -- <box-name> <ip>` and then restart the box.
 
+**Checks.** A connected box checks its log against the witness every hour and
+tells its owner on Telegram, in plain words, if the two disagree, if the log
+fails its own integrity check, or if sending has been stuck for over an hour.
+The message asks the client to tell you, and repeats daily while the problem
+lasts. The witness sends you its own daily list of boxes that went quiet or
+reported a problem. See `deploy/audit-witness/README.md` > Checks and alerts.
+
 New boxes get the store from cloud-init. For a box built earlier, update it to
 a release with the audit log, then run `npm run enable-audit -- <ip>` from your
 machine. The assistant starts recording at its next restart.

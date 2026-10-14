@@ -62,9 +62,39 @@ minutes. Its progress is in `/var/lib/havn-audit/witness-state.json`.
 curl -s -H "Authorization: Bearer $ADMIN" $HAVN_WITNESS_URL/v1/admin/status
 ```
 
-Each box shows its head, when it last sent, and how many sends were refused.
-A refused send means the box's log and this copy disagree. Shipping on that
-box stops until someone looks: `witness-state.json` has the reason.
+Each box shows its head, when it last sent, how many sends were refused, its
+last check, and a `problems` list in plain words. A refused send means the
+box's log and this copy disagree. Shipping on that box stops until someone
+looks: `witness-state.json` has the reason.
+
+## Checks and alerts
+
+Each box checks itself every hour (`src/assurance/witness-check.ts`): a
+refused send, or events waiting more than an hour to leave. Once a day it also
+verifies its own chain and compares the witness's head with its log, which
+catches an event edited after it was sent. Problems go to the box's owner on
+Telegram, once and then daily while they last. Every check is reported here
+as kinds only, so it doubles as an hourly heartbeat.
+
+Once a day (11:00 UTC) the Worker's cron lists every box that has been silent
+for 24 hours, has unacknowledged refused sends, reports a failed check, or has
+not run a full check in 48 hours. To get that list on Telegram, give the
+Worker a bot token and chat id; without them it only logs:
+
+```bash
+npx wrangler@4 secret put ALERT_TELEGRAM_TOKEN
+npx wrangler@4 secret put ALERT_TELEGRAM_CHAT
+```
+
+After looking into a refused send, acknowledge it so the daily report stops
+repeating it. A box you no longer run can be retired: it drops out of status
+and the report, and everything stored for it stays locked. Issuing it a new
+token brings it back.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $ADMIN" $HAVN_WITNESS_URL/v1/admin/boxes/<box>/ack
+curl -s -X POST -H "Authorization: Bearer $ADMIN" $HAVN_WITNESS_URL/v1/admin/boxes/<box>/retire
+```
 
 ## Changing the Worker
 

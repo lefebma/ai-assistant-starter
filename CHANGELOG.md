@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Security: hosted boxes check their audit log against the off-box copy.** Every hour a box checks that its log still matches the copy on the witness: that nothing was refused, that nothing has been stuck for over an hour, and once a day that its own chain verifies and the copy's latest entry is still in the log unchanged. That daily comparison catches an entry edited after it was sent, which sending alone cannot. If something is wrong, the assistant tells its owner on Telegram in plain words and asks them to pass it on, once and then daily while it lasts. The witness also sends the operator a daily list of boxes that went quiet for a day or reported a problem, so a box that stops checking is noticed too. Refused sends can be acknowledged and old boxes retired; nothing stored is deleted. See `deploy/audit-witness/README.md` > Checks and alerts.
+
 ## 1.36.0 - 2026-10-13
 
 Hosted boxes send their audit log off the box, to a copy nobody can edit or delete.
