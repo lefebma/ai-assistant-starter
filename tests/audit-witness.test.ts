@@ -7,10 +7,11 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import worker, { BoxWitness, type Env } from '../deploy/audit-witness/worker.js'
+import worker, { BoxWitness, dailyReport, type Env } from '../deploy/audit-witness/worker.js'
 import { AuditLog } from '../src/assurance/audit-log.js'
 import { WitnessShipper, readWitnessState } from '../src/assurance/witness.js'
-import { GENESIS_HASH, checkBatch, fingerprint, sha256Hex, batchKey, parseBatchKey } from '../src/assurance/witness-protocol.js'
+import { GENESIS_HASH, checkBatch, fingerprint, sha256Hex, batchKey, parseBatchKey, parseCheckReport, boxProblems, type BoxStatus } from '../src/assurance/witness-protocol.js'
+import { WitnessChecker, OWNER_MESSAGES, checkStatePath } from '../src/assurance/witness-check.js'
 
 const ADMIN = 'admin-secret-token'
 
@@ -235,5 +236,147 @@ describe('shipping a box log to the witness', () => {
     const r = await shipperFor(reopened, token).shipOnce()
     expect(r.shipped).toBe(4)
     expect(r.state.ackedHash).toBe(reopened.headOf().hash)
+  })
+})
+
+describe('checks (part 3)', () => {
+  const HOUR = 3_600_000
+  const checkerFor = (log: AuditLog, token: string, now: () => number, sent: string[] = []) =>
+    new WitnessChecker({
+      log, url: 'https://witness.test', token, now,
+      notify: async (t) => { sent.push(t); return true },
+      fetchImpl: ((u: string, init: RequestInit) => worker.fetch(new Request(u, init), env)) as typeof fetch,
+    })
+  const status = async () => ((await (await call(env, '/v1/admin/status', ADMIN)).json()) as { boxes: (BoxStatus & { problems: string[] })[] }).boxes
+
+  it('a healthy box reports ok and tells nobody', async () => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 3)
+    await shipperFor(log, token).shipOnce()
+    const sent: string[] = []
+    const r = await checkerFor(log, token, Date.now, sent).checkOnce()
+    expect(r.report).toEqual({ ok: true, problems: [], full: true })
+    expect(sent).toEqual([])
+    const [b] = await status()
+    expect(b.lastCheck).toMatchObject({ ok: true, problems: [] })
+    expect(b.lastFullCheckAt).toBeTruthy()
+    expect(b.problems).toEqual([])
+  })
+
+  it('catches an event edited after it was shipped, which shipping alone misses', async () => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 3)
+    await shipperFor(log, token).shipOnce()
+    const file = join(auditDir, 'audit.jsonl')
+    writeFileSync(file, readFileSync(file, 'utf-8').replace('cmd 1', 'cmd X')) // as root
+    const edited = new AuditLog({ dir: auditDir, workspace })
+    expect((await shipperFor(edited, token).shipOnce()).state.conflict).toBeUndefined()
+    const sent: string[] = []
+    const r = await checkerFor(edited, token, Date.now, sent).checkOnce()
+    expect(r.report.problems).toContain('broken')
+    expect(sent).toContain(OWNER_MESSAGES.broken)
+    expect((await status())[0].problems).toEqual(['its own check reports: broken'])
+  })
+
+  it('catches a log cut back behind the witness', async () => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 4)
+    await shipperFor(log, token).shipOnce()
+    const file = join(auditDir, 'audit.jsonl')
+    writeFileSync(file, readFileSync(file, 'utf-8').split('\n').slice(0, 2).join('\n') + '\n')
+    const r = await checkerFor(new AuditLog({ dir: auditDir, workspace }), token, Date.now).checkOnce()
+    expect(r.report.problems).toContain('mismatch')
+    expect(r.notes.mismatch).toMatch(/witness holds event 4/)
+  })
+
+  it('tells the owner about a conflict once, then again a day later, and stops when it clears', async () => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 1)
+    await shipperFor(log, token).shipOnce()
+    writeFileSync(join(auditDir, 'witness-state.json'), JSON.stringify({ ...readWitnessState(join(auditDir, 'witness-state.json')), conflict: { at: 'x', reason: 'expected seq 2, got 1' } }))
+    let t = Date.now()
+    const sent: string[] = []
+    const c = checkerFor(log, token, () => t, sent)
+    await c.checkOnce()
+    t += HOUR; await c.checkOnce()
+    expect(sent).toEqual([OWNER_MESSAGES.conflict])
+    t += 24 * HOUR; await c.checkOnce()
+    expect(sent).toHaveLength(2)
+    writeFileSync(join(auditDir, 'witness-state.json'), JSON.stringify({ ...readWitnessState(join(auditDir, 'witness-state.json')), conflict: undefined }))
+    t += HOUR
+    expect((await c.checkOnce()).report.ok).toBe(true)
+    expect(JSON.parse(readFileSync(checkStatePath(auditDir), 'utf-8')).alerted).toEqual({})
+  })
+
+  it('flags a backlog older than an hour, not a fresh one', async () => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 2)
+    const now = Date.now()
+    expect((await checkerFor(log, token, () => now).checkOnce()).report.problems).not.toContain('backlog')
+    const later = await checkerFor(log, token, () => now + 2 * HOUR).checkOnce()
+    expect(later.report.problems).toContain('backlog')
+  })
+
+  it('keeps a full-check problem open between full checks', async () => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 2)
+    await shipperFor(log, token).shipOnce()
+    const file = join(auditDir, 'audit.jsonl')
+    writeFileSync(file, readFileSync(file, 'utf-8').replace('cmd 0', 'cmd Z'))
+    let t = Date.now()
+    const c = checkerFor(new AuditLog({ dir: auditDir, workspace }), token, () => t)
+    expect((await c.checkOnce()).report).toMatchObject({ full: true, problems: ['broken'] })
+    t += HOUR
+    expect((await c.checkOnce()).report).toMatchObject({ full: false, problems: ['broken'] })
+  })
+
+  it('a box takes only well-formed reports, kinds only', async () => {
+    expect(parseCheckReport({ ok: true, problems: [], full: false })).toEqual({ ok: true, problems: [], full: false })
+    expect(parseCheckReport({ ok: true, problems: ['broken'], full: false })).toBeNull()
+    expect(parseCheckReport({ ok: false, problems: ['rm -rf'], full: false })).toBeNull()
+    expect(parseCheckReport({ ok: false, problems: ['broken'], full: true, conflicts: 0 })).toEqual({ ok: false, problems: ['broken'], full: true })
+    const token = await issue(env, 'box-a')
+    expect((await call(env, '/v1/check', token, { method: 'POST', body: '{"ok":"yes"}' })).status).toBe(400)
+    expect((await call(env, '/v1/check', 'box-a.nope', { method: 'POST', body: '{"ok":true,"problems":[],"full":false}' })).status).toBe(401)
+  })
+})
+
+describe('operator view (part 3)', () => {
+  const HOUR = 3_600_000
+  const base: BoxStatus = { box: 'b', head: { seq: 1, hash: GENESIS_HASH }, issuedAt: null, lastAppendAt: null, conflicts: 0, conflictsAcked: 0, lastConflict: null, lastCheck: null, lastFullCheckAt: null }
+  const ago = (h: number) => new Date(Date.now() - h * HOUR).toISOString()
+
+  it('flags silence, unacknowledged conflicts, failed and stale checks', () => {
+    const now = Date.now()
+    expect(boxProblems({ ...base, issuedAt: ago(1) }, now)).toEqual([])
+    expect(boxProblems({ ...base, issuedAt: ago(30) }, now)).toEqual(['has never sent anything'])
+    expect(boxProblems({ ...base, lastAppendAt: ago(30), lastCheck: { at: ago(25), ok: true, problems: [] }, lastFullCheckAt: ago(25) }, now)).toEqual(['silent for 25 hours'])
+    expect(boxProblems({ ...base, lastAppendAt: ago(30), lastCheck: { at: ago(1), ok: true, problems: [] }, lastFullCheckAt: ago(2) }, now)).toEqual([])
+    expect(boxProblems({ ...base, lastCheck: { at: ago(1), ok: false, problems: ['mismatch'] }, lastFullCheckAt: ago(1) }, now)).toEqual(['its own check reports: mismatch'])
+    expect(boxProblems({ ...base, lastCheck: { at: ago(1), ok: true, problems: [] }, lastFullCheckAt: ago(50) }, now)).toEqual(['has not run a full check in 48 hours'])
+    expect(boxProblems({ ...base, lastCheck: { at: ago(1), ok: true, problems: [] }, lastFullCheckAt: ago(1), conflicts: 2, conflictsAcked: 1, lastConflict: { at: ago(1), reason: 'expected seq 5, got 1' } }, now))
+      .toEqual(['1 unacknowledged conflict(s): expected seq 5, got 1'])
+  })
+
+  it('ack clears a conflict from the report and retire stops watching a box', async () => {
+    const token = await issue(env, 'box-a')
+    await issue(env, 'smoke-1')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 2)
+    await shipperFor(log, token).shipOnce()
+    await call(env, '/v1/append', token, { method: 'POST', body: JSON.stringify({ events: await Promise.all(log.eventsAfter(0).map(fingerprint)) }) })
+    const later = Date.now() + 30 * HOUR
+    expect(await dailyReport(env, later)).toMatch(/box-a: 1 unacknowledged conflict/)
+    expect(await dailyReport(env, later)).toMatch(/smoke-1: has never sent anything/)
+    expect(((await (await call(env, '/v1/admin/boxes/box-a/ack', ADMIN, { method: 'POST' })).json()) as { conflictsAcked: number }).conflictsAcked).toBe(1)
+    expect((await call(env, '/v1/admin/boxes/smoke-1/retire', ADMIN, { method: 'POST' })).status).toBe(200)
+    expect(await dailyReport(env, later)).toBe('Audit witness: 1 problem(s)\n- box-a: silent for 30 hours')
+    expect((await call(env, '/v1/admin/boxes/box-a/ack', token, { method: 'POST' })).status).toBe(401)
   })
 })

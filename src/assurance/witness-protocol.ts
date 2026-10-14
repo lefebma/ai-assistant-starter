@@ -102,3 +102,62 @@ export function parseBatchKey(key: string): { from: number; to: number } | null 
   const m = /\/(\d{12})-(\d{12})\.jsonl$/.exec(key)
   return m ? { from: Number(m[1]), to: Number(m[2]) } : null
 }
+
+// --- part 3: checks ---------------------------------------------------------
+
+/** What a box's own check can find (witness-check.ts). */
+export const CHECK_KINDS = ['conflict', 'backlog', 'broken', 'mismatch'] as const
+export type CheckKind = (typeof CHECK_KINDS)[number]
+
+/** A box's check report: `POST /v1/check`. Kinds only, no detail leaves the box. */
+export type CheckReport = { ok: boolean; problems: CheckKind[]; full: boolean }
+
+/** The report, rebuilt from known fields only, or null when it is not one. */
+export function parseCheckReport(body: unknown): CheckReport | null {
+  if (!body || typeof body !== 'object') return null
+  const o = body as Record<string, unknown>
+  if (typeof o.ok !== 'boolean' || typeof o.full !== 'boolean' || !Array.isArray(o.problems) || o.problems.length > CHECK_KINDS.length) return null
+  if (!o.problems.every((p) => (CHECK_KINDS as readonly unknown[]).includes(p))) return null
+  const problems = [...new Set(o.problems as CheckKind[])]
+  if (o.ok !== (problems.length === 0)) return null
+  return { ok: o.ok, problems, full: o.full }
+}
+
+/** One box as the witness's admin status reports it. */
+export type BoxStatus = {
+  box: string
+  head: Head
+  issuedAt: string | null
+  lastAppendAt: string | null
+  conflicts: number
+  /** Conflicts the operator has looked at (`POST /v1/admin/boxes/<box>/ack`). */
+  conflictsAcked: number
+  lastConflict: { at: string; reason: string } | null
+  lastCheck: { at: string; ok: boolean; problems: CheckKind[] } | null
+  lastFullCheckAt: string | null
+}
+
+export const SILENT_MS = 24 * 60 * 60_000
+export const FULL_CHECK_STALE_MS = 48 * 60 * 60_000
+
+/**
+ * What the operator should hear about a box, in plain words. Shared by the
+ * Worker's daily cron and anything that reads /v1/admin/status. A box checks
+ * in every hour even when nothing happened on it, so 24 hours without an
+ * append or a check means it stopped talking: the service is down, the
+ * shipper is off, or someone turned it off. Conflicts keep being reported
+ * until the operator acknowledges them.
+ */
+export function boxProblems(s: BoxStatus, now: number): string[] {
+  const out: string[] = []
+  const age = (iso: string | null) => (iso ? now - Date.parse(iso) : Infinity)
+  const seen = Math.min(age(s.lastAppendAt), age(s.lastCheck?.at ?? null))
+  const since = age(s.issuedAt)
+  if (seen > SILENT_MS && since > SILENT_MS) {
+    out.push(seen === Infinity ? 'has never sent anything' : `silent for ${Math.floor(seen / 3_600_000)} hours`)
+  }
+  if (s.conflicts > s.conflictsAcked) out.push(`${s.conflicts - s.conflictsAcked} unacknowledged conflict(s): ${s.lastConflict?.reason ?? 'chain mismatch'}`)
+  if (s.lastCheck && !s.lastCheck.ok) out.push(`its own check reports: ${s.lastCheck.problems.join(', ')}`)
+  if (s.lastCheck && age(s.lastFullCheckAt) > FULL_CHECK_STALE_MS && since > FULL_CHECK_STALE_MS) out.push('has not run a full check in 48 hours')
+  return out
+}

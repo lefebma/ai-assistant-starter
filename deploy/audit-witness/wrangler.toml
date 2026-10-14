@@ -15,3 +15,7 @@ new_sqlite_classes = ["BoxWitness"]
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "havn-audit"
+
+# Daily operator report (part 3), 11:00 UTC = 7:00 Toronto in summer, 6:00 in winter.
+[triggers]
+crons = ["0 11 * * *"]

@@ -8,16 +8,23 @@
  *   POST /v1/append        {events: ShippedEvent[]}  -> 200 {head} | 409 {reason, head}
  *   GET  /v1/head                                    -> {head, lastAppendAt}
  *   GET  /v1/events?from=N&limit=M                   -> {events}
+ *   POST /v1/check         {ok, problems, full}      -> {ok}  (the box's own check, hourly)
  *
  * Admin routes take `Authorization: Bearer <admin token>` (its SHA-256 is the
  * ADMIN_TOKEN_SHA256 secret):
- *   POST /v1/admin/boxes/<box>/token  -> {token}  (replaces any earlier token)
- *   GET  /v1/admin/status             -> {boxes: [{box, head, lastAppendAt, conflicts, lastConflict}]}
+ *   POST /v1/admin/boxes/<box>/token   -> {token}  (replaces any earlier token)
+ *   POST /v1/admin/boxes/<box>/ack     -> {conflictsAcked}  (conflicts looked at)
+ *   POST /v1/admin/boxes/<box>/retire  -> {ok}  (stop watching; nothing is deleted)
+ *   GET  /v1/admin/status              -> {boxes: [BoxStatus & {problems}]}
+ *
+ * A daily cron (part 3) runs boxProblems over every box and, when the
+ * ALERT_TELEGRAM_TOKEN and ALERT_TELEGRAM_CHAT secrets are set, sends the
+ * operator one message listing what is wrong. Without them it only logs.
  *
  * There is no route that deletes or rewrites anything. Tokens are stored
  * hashed. Deploy and setup: deploy/audit-witness/README.md.
  */
-import { BOX_NAME, GENESIS_HASH, batchKey, checkBatch, parseBatchKey, sha256Hex, type Head, type ShippedEvent } from '../../src/assurance/witness-protocol.js'
+import { BOX_NAME, GENESIS_HASH, batchKey, boxProblems, checkBatch, parseBatchKey, parseCheckReport, sha256Hex, type BoxStatus, type Head, type ShippedEvent } from '../../src/assurance/witness-protocol.js'
 
 // --- the slice of the Workers runtime this uses -------------------------------
 
@@ -46,6 +53,8 @@ export interface Env {
   WITNESS: DurableObjectNamespace
   BUCKET: R2Bucket
   ADMIN_TOKEN_SHA256: string
+  ALERT_TELEGRAM_TOKEN?: string
+  ALERT_TELEGRAM_CHAT?: string
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -84,18 +93,19 @@ export default {
 
     if (url.pathname.startsWith('/v1/admin/')) {
       if (!env.ADMIN_TOKEN_SHA256 || !sameDigest(await sha256Hex(token), env.ADMIN_TOKEN_SHA256)) return json({ error: 'unauthorized' }, 401)
-      const issue = /^\/v1\/admin\/boxes\/([^/]+)\/token$/.exec(url.pathname)
-      if (issue && req.method === 'POST') {
-        const box = issue[1]
+      const admin = /^\/v1\/admin\/boxes\/([^/]+)\/(token|ack|retire)$/.exec(url.pathname)
+      if (admin && req.method === 'POST') {
+        const [, box, verb] = admin
         if (!BOX_NAME.test(box)) return json({ error: 'bad box name' }, 400)
+        if (verb === 'retire') return stub(env, REGISTRY).fetch(new Request('https://do/unregister', { method: 'POST', body: box }))
+        if (verb === 'ack') return stub(env, box).fetch(new Request('https://do/ack', { method: 'POST' }))
         const res = await stub(env, box).fetch(new Request('https://do/issue', { method: 'POST', headers: { 'x-box': box } }))
         await stub(env, REGISTRY).fetch(new Request('https://do/register', { method: 'POST', body: box }))
         return res
       }
       if (url.pathname === '/v1/admin/status' && req.method === 'GET') {
-        const boxes = (await (await stub(env, REGISTRY).fetch(new Request('https://do/list'))).json()) as string[]
-        const status = await Promise.all(boxes.map(async (box) => ({ box, ...(await (await stub(env, box).fetch(new Request('https://do/status'))).json() as object) })))
-        return json({ boxes: status })
+        const now = Date.now()
+        return json({ boxes: (await allStatus(env)).map((s) => ({ ...s, problems: boxProblems(s, now) })) })
       }
       return json({ error: 'not found' }, 404)
     }
@@ -104,7 +114,7 @@ export default {
     const box = dot > 0 ? token.slice(0, dot) : ''
     if (!BOX_NAME.test(box)) return json({ error: 'unauthorized' }, 401)
     const route = `${req.method} ${url.pathname}`
-    if (!['POST /v1/append', 'GET /v1/head', 'GET /v1/events'].includes(route)) return json({ error: 'not found' }, 404)
+    if (!['POST /v1/append', 'GET /v1/head', 'GET /v1/events', 'POST /v1/check'].includes(route)) return json({ error: 'not found' }, 404)
     if (req.method === 'POST' && Number(req.headers.get('content-length') ?? 0) > MAX_BODY) return json({ error: 'too large' }, 413)
     const fwd = new Request(`https://do${url.pathname}${url.search}`, {
       method: req.method,
@@ -113,6 +123,31 @@ export default {
     })
     return stub(env, box).fetch(fwd)
   },
+
+  /** Daily: tell the operator about every box with a problem. */
+  async scheduled(_event: unknown, env: Env): Promise<void> {
+    const report = await dailyReport(env, Date.now())
+    if (!report) return
+    console.log(report)
+    if (!env.ALERT_TELEGRAM_TOKEN || !env.ALERT_TELEGRAM_CHAT) return
+    const res = await fetch(`https://api.telegram.org/bot${env.ALERT_TELEGRAM_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: env.ALERT_TELEGRAM_CHAT, text: report }),
+    })
+    if (!res.ok) console.log(`alert send failed: ${res.status}`)
+  },
+}
+
+export async function allStatus(env: Env): Promise<BoxStatus[]> {
+  const boxes = (await (await stub(env, REGISTRY).fetch(new Request('https://do/list'))).json()) as string[]
+  return Promise.all(boxes.map(async (box) => ({ box, ...((await (await stub(env, box).fetch(new Request('https://do/status'))).json()) as Omit<BoxStatus, 'box'>) })))
+}
+
+/** The operator's daily message, or null when every box is fine. */
+export async function dailyReport(env: Env, now: number): Promise<string | null> {
+  const lines = (await allStatus(env)).flatMap((s) => boxProblems(s, now).map((p) => `- ${s.box}: ${p}`))
+  return lines.length ? `Audit witness: ${lines.length} problem(s)\n${lines.join('\n')}` : null
 }
 
 function stub(env: Env, name: string): DurableObjectStub {
@@ -134,6 +169,7 @@ export class BoxWitness {
     if (url.pathname === '/issue') {
       const secret = newSecret()
       await s.put('tokenSha256', await sha256Hex(secret))
+      await s.put('issuedAt', new Date().toISOString())
       return json({ token: `${req.headers.get('x-box') ?? ''}.${secret}` })
     }
     if (url.pathname === '/register') {
@@ -142,14 +178,29 @@ export class BoxWitness {
       await s.put('boxes', [...boxes].sort())
       return json({ ok: true })
     }
+    if (url.pathname === '/unregister') {
+      const name = await req.text()
+      await s.put('boxes', ((await s.get<string[]>('boxes')) ?? []).filter((b) => b !== name))
+      return json({ ok: true })
+    }
     if (url.pathname === '/list') return json((await s.get<string[]>('boxes')) ?? [])
+    if (url.pathname === '/ack') {
+      const conflicts = (await s.get<number>('conflicts')) ?? 0
+      await s.put('conflictsAcked', conflicts)
+      return json({ conflictsAcked: conflicts })
+    }
     if (url.pathname === '/status') {
-      return json({
+      const status: Omit<BoxStatus, 'box'> = {
         head: (await s.get<Head>('head')) ?? { seq: 0, hash: GENESIS_HASH },
+        issuedAt: (await s.get<string>('issuedAt')) ?? null,
         lastAppendAt: (await s.get<string>('lastAppendAt')) ?? null,
         conflicts: (await s.get<number>('conflicts')) ?? 0,
+        conflictsAcked: (await s.get<number>('conflictsAcked')) ?? 0,
         lastConflict: (await s.get<Conflict>('lastConflict')) ?? null,
-      })
+        lastCheck: (await s.get<BoxStatus['lastCheck']>('lastCheck')) ?? null,
+        lastFullCheckAt: (await s.get<string>('lastFullCheckAt')) ?? null,
+      }
+      return json(status)
     }
 
     // Box calls: check the box's own token.
@@ -161,6 +212,7 @@ export class BoxWitness {
       return json({ head: (await s.get<Head>('head')) ?? { seq: 0, hash: GENESIS_HASH }, lastAppendAt: (await s.get<string>('lastAppendAt')) ?? null })
     }
     if (url.pathname === '/v1/events') return this.events(box, url)
+    if (url.pathname === '/v1/check') return this.check(req)
     return this.state.blockConcurrencyWhile(() => this.append(box, req))
   }
 
@@ -195,6 +247,16 @@ export class BoxWitness {
     await s.put('head', check.head)
     await s.put('lastAppendAt', new Date().toISOString())
     return json({ head: check.head })
+  }
+
+  /** The box's own check, kinds only. Doubles as its hourly heartbeat. */
+  private async check(req: Request): Promise<Response> {
+    const report = parseCheckReport(await req.json().catch(() => null))
+    if (!report) return json({ error: 'bad report' }, 400)
+    const at = new Date().toISOString()
+    await this.state.storage.put('lastCheck', { at, ok: report.ok, problems: report.problems })
+    if (report.full) await this.state.storage.put('lastFullCheckAt', at)
+    return json({ ok: true })
   }
 
   private async events(box: string, url: URL): Promise<Response> {

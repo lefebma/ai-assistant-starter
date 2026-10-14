@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, AUDIT_DIR, AUDIT_WITNESS_URL, AUDIT_WITNESS_TOKEN } from './config.js'
 import { getAuditTrail } from './assurance/audit-trail.js'
 import { WitnessShipper, startWitnessShipping } from './assurance/witness.js'
+import { WitnessChecker, startWitnessChecks } from './assurance/witness-check.js'
+import { sendTelegram } from './notify.js'
 import { initDatabase } from './db.js'
 import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
@@ -103,6 +105,13 @@ async function main(): Promise<void> {
     ? startWitnessShipping(() => {
         const trail = getAuditTrail(AUDIT_DIR, PROJECT_ROOT)
         return trail ? new WitnessShipper({ log: trail.log, url: AUDIT_WITNESS_URL, token: AUDIT_WITNESS_TOKEN }) : null
+      })
+    : () => {}
+  // Hourly check of that copy; problems go to the owner on Telegram.
+  const stopWitnessChecks = AUDIT_WITNESS_URL && AUDIT_WITNESS_TOKEN
+    ? startWitnessChecks(() => {
+        const trail = getAuditTrail(AUDIT_DIR, PROJECT_ROOT)
+        return trail ? new WitnessChecker({ log: trail.log, url: AUDIT_WITNESS_URL, token: AUDIT_WITNESS_TOKEN, notify: (text) => sendTelegram(text) }) : null
       })
     : () => {}
 
@@ -226,6 +235,7 @@ async function main(): Promise<void> {
 
     clearInterval(decayTimer)
     stopWitness()
+    stopWitnessChecks()
 
     // The listener closes first, and the order is load-bearing on a hosted box.
     // While it stays open, a webhook arriving mid-shutdown is accepted and then
