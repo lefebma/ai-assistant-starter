@@ -247,9 +247,15 @@ no dependency on anyone else's project staying alive.
 
 **3. Authenticate each account**
 ```
-gog auth add primary@gmail.com --services gmail,calendar
-gog auth add secondary@gmail.com --services gmail,calendar
+gog auth add primary@gmail.com --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify
+gog auth add secondary@gmail.com --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify
 ```
+
+The flags keep the request to what the assistant uses: reading, labelling,
+drafting and sending mail (`gmail.modify` plus `gmail.send`) and the calendar.
+gog's default Gmail set also asks to manage mail settings and forwarding,
+which the assistant never touches and which makes the consent screen read
+worse than it needs to.
 
 **4. Grant permissions** in the browser when prompted
 

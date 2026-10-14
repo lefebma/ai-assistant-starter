@@ -41,7 +41,7 @@ because gog ships no shared OAuth client:
 
 1. Create a Google Cloud **Desktop app** OAuth client, enable the Gmail and
    Calendar APIs, then `gog auth credentials set <path-to-client_secret.json>`
-2. `gog auth add {{EMAIL_ADDRESS}} --services gmail,calendar`
+2. `gog auth add {{EMAIL_ADDRESS}} --services gmail,calendar --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify`
 
 While that Google project stays in Testing mode, each address must be added as
 a test user and refresh tokens expire after 7 days. Publishing the app removes

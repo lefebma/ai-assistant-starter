@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Google sign-in asks for less.** Connecting Gmail now requests reading, labelling, drafting and sending mail plus the calendar, and no longer asks to manage mail settings or forwarding, which the assistant never used. Every `gog auth add` in the setup steps, the Gmail skill and the docs carries the new flags. Accounts already connected keep working; reconnecting one drops the unused permissions.
+
 ## 1.37.0 - 2026-10-13
 
 Hosted boxes check their audit log against the off-box copy every hour and say so when they disagree.
