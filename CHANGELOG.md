@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Hosted boxes connect Gmail through the shared Havn Google app.** The client email runbook no longer has the operator create a Google Cloud project, consent screen and test user for every client: the box gets the shared Havn OAuth client file and the client signs in to "Havn" with gethavn.ai's privacy policy and terms on the consent screen. The runbook covers the 100-account limit while the app is unverified, accounts whose own security settings block unverified apps, and a fallback to a dedicated client. Existing boxes keep their own clients until they next reconnect. See `docs/CLIENT-EMAIL-ONBOARDING.md` Part 1.
+
 - **Google sign-in asks for less.** Connecting Gmail now requests reading, labelling, drafting and sending mail plus the calendar, and no longer asks to manage mail settings or forwarding, which the assistant never used. Every `gog auth add` in the setup steps, the Gmail skill and the docs carries the new flags. Accounts already connected keep working; reconnecting one drops the unused permissions.
 
 ## 1.37.0 - 2026-10-13

@@ -146,6 +146,8 @@ Setup supports up to **two accounts per provider**. Pick "Both" if you have Gmai
 
 Gmail and Google Calendar are backed by the [gog CLI](https://github.com/openclaw/gogcli). It needs two things a fresh machine does not have: the `gog` binary, and a Google OAuth client of your own.
 
+If Havn set this machine up for you, or you're on a hosted box, you don't create the OAuth client: the Havn team supplies the shared Havn client file and you skip straight to `gog auth credentials set` with that file (see `docs/CLIENT-EMAIL-ONBOARDING.md` Part 1). The client file is never published, because Google caps the unverified app at 100 accounts in total. The steps below are for running the starter under your own name, with your own client.
+
 **1. Install gog**
 
 - With Homebrew: `brew install gogcli`

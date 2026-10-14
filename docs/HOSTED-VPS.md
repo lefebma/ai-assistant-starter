@@ -431,7 +431,8 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   one — rerun `--step 1` for a fresh code and do `--step 2` once, correctly
   quoted.
 
-**Common follow-on failure:** Gmail works but Calendar 403s with
+**Common follow-on failure** (dedicated clients only; the shared Havn project
+has both APIs on): Gmail works but Calendar 403s with
 `accessNotConfigured`. Cause: the OAuth client's GCP project has the Gmail
 API enabled but not the Calendar API. Fix in Cloud Console → **APIs &
 Services → Library → Google Calendar API → Enable**, wait ~1-2 minutes, no
@@ -446,9 +447,13 @@ authorized, which happens easily once accounts get added by hand outside
 the setup wizard's two-address limit. If you add accounts manually, keep
 that line pointing at whichever address should be the default sender.
 
-The Google OAuth client setup itself (Cloud Console, consent screen,
-publish-to-production) is unchanged from `docs/SETUP-GUIDE.md > Gmail` and
-happens in your browser, not on the box.
+**Which OAuth client.** Hosted boxes use the shared Havn Google app: copy
+`havn-google-oauth-client.json` from the operator's secrets folder to the box
+and run `gog auth credentials set` on it before `auth add`. There is no
+per-client Cloud project to create. The app is unverified for now, so it is
+capped at 100 Google accounts in total; `docs/CLIENT-EMAIL-ONBOARDING.md`
+Part 1 has the details, the step-by-step, and the fallback to a dedicated
+client.
 
 ### 4. Connect Outlook, if the client is on Microsoft 365
 

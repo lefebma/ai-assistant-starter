@@ -18,37 +18,64 @@ browser.
 
 ## Part 1: Gmail + Google Calendar
 
-Fully working today, tested end-to-end on a live hosted box (2026-08-23).
+Fully working today, tested end-to-end on a live hosted box (2026-08-23). The shared Havn client was tested end to end on 2026-10-13 (read, labels, drafts, calendar writes), on a Mac rather than a hosted box.
 
-### Step A — 🧑‍💻 YOU: create a dedicated Google OAuth client (~10 min, before the client is involved)
+### Step A — 🧑‍💻 YOU: nothing to create, use the shared Havn Google app
 
-One OAuth client per install — not shared across clients. Condensed version;
-full click-by-click with every menu name is in
-[SETUP-GUIDE.md § Connect Email](SETUP-GUIDE.md#step-2-connect-email).
+Hosted boxes all connect through one Google app that the operator owns:
+the **Havn** OAuth client in the `havn-assistant` Google Cloud project
+(organisation gethavn.ai). The client sees "Havn" on Google's sign-in screen
+with gethavn.ai's privacy policy and terms, and there is no per-client Cloud
+project, consent screen or test user to set up. The client file is
+`havn-google-oauth-client.json` in the operator's secrets folder; it never goes
+in this repo or any public place.
+
+What to know before using it:
+
+- **The app is published but not yet verified by Google.** Clients see
+  "Google hasn't verified this app" once and click **Advanced → Go to Havn
+  (unsafe)**. Warn them before they get there.
+- **Google caps an unverified app at 100 users, ever.** Every Google account
+  that connects counts, and disconnecting does not give a place back. Check the
+  count in Cloud Console → **Google Auth Platform → Audience** before each
+  onboarding, and start Google verification (a paid security assessment for
+  Gmail access) well before it gets near 100.
+- **Some accounts are hard-blocked** ("This app is blocked", no Advanced link)
+  by their own security settings, Google's Advanced Protection for example. The
+  app can't get past that; for that client, fall back to a dedicated client
+  (below) or to Outlook/IMAP.
+
+Boxes onboarded before October 2026 use their own per-client Google project.
+They keep working; move them to the shared app only when they need to
+reconnect anyway (Step B with the shared file, then Step C).
+
+<details>
+<summary>Fallback: a dedicated OAuth client for one install</summary>
+
+Only when the shared app can't be used for this client. Full click-by-click is
+in [SETUP-GUIDE.md § Connect Email](SETUP-GUIDE.md#step-2-connect-email).
 
 1. [Google Cloud Console](https://console.cloud.google.com/) → new project,
    name it after the install (e.g. `havn-clientname`).
-2. **APIs & Services → Library** → enable **Gmail API**.
-3. Same page → enable **Google Calendar API** too. **Do not skip this** —
-   it's the single most common miss. Gmail works fine without it; Calendar
+2. **APIs & Services → Library** → enable **Gmail API** and **Google Calendar
+   API**. Skipping Calendar is the most common miss: Gmail works, Calendar
    fails later with a 403 that looks unrelated.
-4. **OAuth consent screen** → External → app name (e.g. `Havn`), your email
-   as support/developer contact.
-5. Add the client's Gmail address as a **test user**.
-6. **Publish the app** (Overview/Audience page → Publish app). Must read **In
-   production** before you move on — while it sits in Testing, Google
-   silently kills every refresh token after 7 days and you're back here in a
-   week.
-7. **Credentials → Create credentials → OAuth client ID** → Application type
-   **Desktop app** → **Download JSON** now (only offered once, at creation).
+3. **OAuth consent screen** → External → app name, your email as
+   support/developer contact, add the client's Gmail as a **test user**.
+4. **Publish the app** (Audience → Publish app). In Testing, Google kills every
+   refresh token after 7 days.
+5. **Credentials → Create credentials → OAuth client ID** → **Desktop app** →
+   **Download JSON** (only offered at creation). Use that file in Step B.
+
+</details>
 
 ### Step B — 🧑‍💻 YOU: get the client onto the box, no client involvement yet
 
 ```bash
-scp ~/Downloads/client_secret_*.json havn@<client-ip>:~/
+scp <secrets-folder>/havn-google-oauth-client.json havn@<client-ip>:~/
 ssh havn@<client-ip>
-gog auth credentials set ~/client_secret_*.json
-rm ~/client_secret_*.json               # don't leave the raw secret on disk
+gog auth credentials set ~/havn-google-oauth-client.json
+rm ~/havn-google-oauth-client.json      # don't leave the raw secret on disk
 gog config set keyring_backend file     # headless Linux has no Secret Service
 ```
 
@@ -114,7 +141,7 @@ fast.
 3. 👤 **Client** opens it in **their own browser**, signs into **their own**
    Google account, and clicks through consent (and the one-time "Google
    hasn't verified this app" screen — expected, click **Advanced → Go to
-   \<app name\> (unsafe)**). Warn them about this screen *before* they hit
+   Havn (unsafe)**). Warn them about this screen *before* they hit
    it so they don't bail out thinking something's wrong.
 4. 👤 It redirects to a page that fails to load
    (`http://127.0.0.1:xxxxx/oauth2/callback?...`). That's expected — nothing
@@ -141,9 +168,10 @@ gog gmail search "newer_than:1d" --account client@gmail.com
 gog calendar events --account client@gmail.com
 ```
 
-If calendar comes back `403 accessNotConfigured`, you skipped Step A.3 —
-go enable the Calendar API on that Cloud project (browser, not the box), wait
-a minute, retest. No re-auth needed, same token.
+If calendar comes back `403 accessNotConfigured`, the Cloud project behind the
+client file doesn't have the Calendar API enabled. The shared Havn project has
+it; on a dedicated client, enable it in the Cloud Console (browser, not the
+box), wait a minute, retest. No re-auth needed, same token.
 
 ### Step E — done
 
