@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED } from './config.js'
+import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, AUDIT_DIR, AUDIT_WITNESS_URL, AUDIT_WITNESS_TOKEN } from './config.js'
+import { getAuditTrail } from './assurance/audit-trail.js'
+import { WitnessShipper, startWitnessShipping } from './assurance/witness.js'
 import { initDatabase } from './db.js'
 import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
@@ -95,6 +97,14 @@ async function main(): Promise<void> {
   // Run initial memory decay sweep + schedule daily
   runDecaySweep()
   const decayTimer = setInterval(runDecaySweep, 24 * 60 * 60 * 1000)
+
+  // Off-box copy of the audit log (card #196). Off unless a witness is configured.
+  const stopWitness = AUDIT_WITNESS_URL && AUDIT_WITNESS_TOKEN
+    ? startWitnessShipping(() => {
+        const trail = getAuditTrail(AUDIT_DIR, PROJECT_ROOT)
+        return trail ? new WitnessShipper({ log: trail.log, url: AUDIT_WITNESS_URL, token: AUDIT_WITNESS_TOKEN }) : null
+      })
+    : () => {}
 
   // Cleanup old uploads
   cleanupOldUploads()
@@ -215,6 +225,7 @@ async function main(): Promise<void> {
     hardExit.unref()
 
     clearInterval(decayTimer)
+    stopWitness()
 
     // The listener closes first, and the order is load-bearing on a hosted box.
     // While it stays open, a webhook arriving mid-shutdown is accepted and then

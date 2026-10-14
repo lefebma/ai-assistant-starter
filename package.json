@@ -15,6 +15,7 @@
     "teams-register": "tsx scripts/teams-register.ts",
     "split-admin": "tsx scripts/hosted/split-admin.ts",
     "enable-audit": "tsx scripts/hosted/enable-audit.ts",
+    "witness-token": "tsx scripts/hosted/witness-token.ts",
     "status": "tsx scripts/status.ts",
     "workspace": "tsx scripts/workspace.ts",
     "schedule": "node dist/src/schedule-cli.js",

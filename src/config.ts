@@ -66,6 +66,9 @@ export const TOOL_GUARD = env['TOOL_GUARD']?.trim() || 'log'
  * set AUDIT_DIR (outside the install) to turn it on. See src/assurance/audit-trail.ts.
  */
 export const AUDIT_DIR = (env['AUDIT_DIR'] ?? process.env.AUDIT_DIR ?? '').trim()
+/** Off-box witness for that log (card #196 part 2). Both written by `npm run witness-token`. */
+export const AUDIT_WITNESS_URL = (env['AUDIT_WITNESS_URL'] ?? '').trim()
+export const AUDIT_WITNESS_TOKEN = getSecret('AUDIT_WITNESS_TOKEN') ?? ''
 /** Owner-defined roles for scheduled jobs (card #195), added to the built-in ones. */
 export const ROLES_FILE = resolve(PROJECT_ROOT, 'roles.json')
 export const SHORTCUT_WAIT_SECONDS = Math.max(1, parseInt(env['SHORTCUT_WAIT_SECONDS'] ?? '20', 10) || 20)

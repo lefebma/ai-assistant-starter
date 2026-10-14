@@ -37,3 +37,6 @@ docs/EXTRACTION-PLAN.md
 dist-installer/
 # Rendered cloud-init user-data carries deploy tokens; never commit it
 deploy/rendered/
+
+# wrangler local state (deploy/audit-witness)
+.wrangler/
