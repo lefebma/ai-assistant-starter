@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.36.0 - 2026-10-13
+
+Hosted boxes send their audit log off the box, to a copy nobody can edit or delete.
+
 - **Security: the audit log is copied off the box.** Every few minutes a hosted box sends its log to a separate witness service on Cloudflare. The witness keeps what it receives where it cannot be deleted or overwritten for 400 days. It gets only a fingerprint of each command, never the text, so what clients' assistants do stays on their box. If a box's log is ever edited or wiped, the witness refuses the next send and the box records the conflict. Connect a box with `npm run witness-token -- <box-name> <ip>`. Deploying the witness is a one-time job: see `deploy/audit-witness/README.md`.
 
 ## 1.35.0 - 2026-10-12
