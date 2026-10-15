@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **New: compare a hosted box's audit log with its off-box copy.** `npm run audit-compare -- <ip>` lists, entry by entry, what still matches, what was changed on the box (even if every line after it was rewritten to look consistent), what the box lost, and what it never sent. `--out` saves the off-box record of who did what and when, which survives a wiped or lost box. The runbook for an alert is in `deploy/audit-witness/README.md`.
+- **Fixed: audit alerts never reached owners on Teams.** A box's audit check only knew how to send to Telegram, so a client who talks to their assistant in Teams would never hear about a problem. Alerts now go wherever the assistant talks to its owner. Found in a drill on a test box.
+
 - **Hosted boxes connect Gmail through the shared Havn Google app.** The client email runbook no longer has the operator create a Google Cloud project, consent screen and test user for every client: the box gets the shared Havn OAuth client file and the client signs in to "Havn" with gethavn.ai's privacy policy and terms on the consent screen. The runbook covers the 100-account limit while the app is unverified, accounts whose own security settings block unverified apps, and a fallback to a dedicated client. Existing boxes keep their own clients until they next reconnect. See `docs/CLIENT-EMAIL-ONBOARDING.md` Part 1.
 
 - **Google sign-in asks for less.** Connecting Gmail now requests reading, labelling, drafting and sending mail plus the calendar, and no longer asks to manage mail settings or forwarding, which the assistant never used. Every `gog auth add` in the setup steps, the Gmail skill and the docs carries the new flags. Accounts already connected keep working; reconnecting one drops the unused permissions.

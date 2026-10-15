@@ -16,6 +16,7 @@
     "split-admin": "tsx scripts/hosted/split-admin.ts",
     "enable-audit": "tsx scripts/hosted/enable-audit.ts",
     "witness-token": "tsx scripts/hosted/witness-token.ts",
+    "audit-compare": "tsx scripts/hosted/audit-compare.ts",
     "status": "tsx scripts/status.ts",
     "workspace": "tsx scripts/workspace.ts",
     "schedule": "node dist/src/schedule-cli.js",
