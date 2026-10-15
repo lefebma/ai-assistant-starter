@@ -4,7 +4,6 @@ import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, A
 import { getAuditTrail } from './assurance/audit-trail.js'
 import { WitnessShipper, startWitnessShipping } from './assurance/witness.js'
 import { WitnessChecker, startWitnessChecks } from './assurance/witness-check.js'
-import { sendTelegram } from './notify.js'
 import { initDatabase } from './db.js'
 import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
@@ -107,13 +106,6 @@ async function main(): Promise<void> {
         return trail ? new WitnessShipper({ log: trail.log, url: AUDIT_WITNESS_URL, token: AUDIT_WITNESS_TOKEN }) : null
       })
     : () => {}
-  // Hourly check of that copy; problems go to the owner on Telegram.
-  const stopWitnessChecks = AUDIT_WITNESS_URL && AUDIT_WITNESS_TOKEN
-    ? startWitnessChecks(() => {
-        const trail = getAuditTrail(AUDIT_DIR, PROJECT_ROOT)
-        return trail ? new WitnessChecker({ log: trail.log, url: AUDIT_WITNESS_URL, token: AUDIT_WITNESS_TOKEN, notify: (text) => sendTelegram(text) }) : null
-      })
-    : () => {}
 
   // Cleanup old uploads
   cleanupOldUploads()
@@ -206,6 +198,26 @@ async function main(): Promise<void> {
       if (PRIMARY_CHAT_ID) await adapter.sendMessage(PRIMARY_CHAT_ID, text)
     },
   })
+
+  // Hourly check of the off-box copy (card #196). Problems go to the owner on
+  // whichever platform this box talks on: Telegram, or Teams, where a
+  // Telegram-only path never reached anyone (found in the part 4 drill).
+  const stopWitnessChecks = AUDIT_WITNESS_URL && AUDIT_WITNESS_TOKEN
+    ? startWitnessChecks(() => {
+        const trail = getAuditTrail(AUDIT_DIR, PROJECT_ROOT)
+        return trail
+          ? new WitnessChecker({
+              log: trail.log, url: AUDIT_WITNESS_URL, token: AUDIT_WITNESS_TOKEN,
+              // No owner chat: still check, so the witness keeps its heartbeat.
+              notify: async (text) => {
+                if (!PRIMARY_CHAT_ID) return false
+                await adapter.sendMessage(PRIMARY_CHAT_ID, text)
+                return true
+              },
+            })
+          : null
+      })
+    : () => {}
 
   // Tell the owner once when a release lands. Without a chat to speak into
   // there is nobody to tell, so it does not start at all.

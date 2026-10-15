@@ -71,7 +71,7 @@ export class FileSink implements AuditSink {
 
 const GENESIS = '0'.repeat(64)
 
-function hashOf(e: Omit<AuditEvent, 'hash'>): string {
+export function hashOf(e: Omit<AuditEvent, 'hash'>): string {
   return createHash('sha256').update(JSON.stringify([e.seq, e.ts, e.runId, e.actor, e.action, e.outcome, e.detail, e.prevHash])).digest('hex')
 }
 

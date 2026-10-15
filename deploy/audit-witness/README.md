@@ -96,6 +96,41 @@ curl -s -X POST -H "Authorization: Bearer $ADMIN" $HAVN_WITNESS_URL/v1/admin/box
 curl -s -X POST -H "Authorization: Bearer $ADMIN" $HAVN_WITNESS_URL/v1/admin/boxes/<box>/retire
 ```
 
+## After an alert: compare, recover, resume
+
+From your machine, compare the box's log with the witness copy:
+
+```bash
+npm run audit-compare -- <ip> [--out recovered.jsonl]
+```
+
+It reads the box's log and witness token over SSH and does all the comparing
+locally, so it does not trust the box's code. It lists what matches, which
+entries are different on the box (edited, even if the whole chain was re-hashed
+afterwards), which the box lost, and which it holds that the witness never
+accepted (an ordinary backlog, or entries written after the witness stopped
+accepting). It exits 1 when the box does not match.
+
+`--out` saves the witness copy: every entry's time, actor, tool and outcome,
+in order, with the command as a fingerprint. That is the record that survives
+a wiped or lost box. Any surviving copy of the full log (a backup, a
+snapshot) can be checked against it entry by entry. If the box is gone, issue
+a new token for its name and run with `HAVN_WITNESS_URL` and
+`HAVN_WITNESS_BOX_TOKEN` and no host.
+
+To resume shipping once the box's log is back to a state that continues the
+witness, restore `witness-state.json` from before the conflict (or delete its
+`conflict` field), restart the service, check `audit-compare` reports OK, and
+acknowledge the conflict here. A box whose log cannot be restored has to
+start a new chain under a new box name; the old name and everything stored
+for it stay locked.
+
+The drill on havn-test (2026-10-15) ran both cases: an entry edited as root
+after it was sent, and a wiped log followed by a new entry. Both were caught
+by `audit-compare`, the box's own check, the witness and the morning check.
+The drill found that owner alerts only used Telegram, which a Teams box never
+reaches; they now go through the box's own chat adapter.
+
 ## Changing the Worker
 
 Run `npx tsc -p deploy/audit-witness/tsconfig.json` to typecheck it. The

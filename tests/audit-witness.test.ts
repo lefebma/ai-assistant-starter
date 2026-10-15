@@ -8,10 +8,12 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import worker, { BoxWitness, dailyReport, type Env } from '../deploy/audit-witness/worker.js'
-import { AuditLog } from '../src/assurance/audit-log.js'
+import { AuditLog, hashOf } from '../src/assurance/audit-log.js'
 import { WitnessShipper, readWitnessState } from '../src/assurance/witness.js'
 import { GENESIS_HASH, checkBatch, fingerprint, sha256Hex, batchKey, parseBatchKey, parseCheckReport, boxProblems, type BoxStatus } from '../src/assurance/witness-protocol.js'
 import { WitnessChecker, OWNER_MESSAGES, checkStatePath } from '../src/assurance/witness-check.js'
+import { compareLogs, ranges } from '../src/assurance/audit-compare.js'
+import { fetchWitness } from '../scripts/hosted/audit-compare.js'
 
 const ADMIN = 'admin-secret-token'
 
@@ -379,5 +381,62 @@ describe('operator view (part 3)', () => {
     expect((await call(env, '/v1/admin/boxes/smoke-1/retire', ADMIN, { method: 'POST' })).status).toBe(200)
     expect(await dailyReport(env, later)).toBe('Audit witness: 1 problem(s)\n- box-a: silent for 30 hours')
     expect((await call(env, '/v1/admin/boxes/box-a/ack', token, { method: 'POST' })).status).toBe(401)
+  })
+})
+
+describe('comparing a box log with the witness (part 4)', () => {
+  const shipped = async (n: number) => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, n)
+    await shipperFor(log, token).shipOnce()
+    const fetchImpl = ((u: string, init: RequestInit) => worker.fetch(new Request(u, init), env)) as typeof fetch
+    return { token, log, file: join(auditDir, 'audit.jsonl'), witness: await fetchWitness('https://witness.test', token, fetchImpl) }
+  }
+
+  it('matches an untouched log and lists a backlog as unsent', async () => {
+    const { log, file, witness } = await shipped(4)
+    add(log, 2)
+    const r = compareLogs(readFileSync(file, 'utf-8'), witness)
+    expect(r).toMatchObject({ ok: true, matched: 4, witnessEvents: 4, edited: [], missing: [], unsent: [5, 6], witnessChainOk: true })
+  })
+
+  it('names an edited event, even one re-hashed to look consistent', async () => {
+    const { file, witness } = await shipped(4)
+    const lines = readFileSync(file, 'utf-8').trim().split('\n').map((l) => JSON.parse(l))
+    lines[1].detail = 'cmd changed'
+    // Re-hash from the edit onwards, so the local chain verifies on its own.
+    for (let i = 1; i < lines.length; i++) {
+      lines[i].prevHash = lines[i - 1].hash
+      const { hash: _h, ...rest } = lines[i]
+      lines[i].hash = hashOf(rest)
+    }
+    writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+    expect(new AuditLog({ dir: auditDir, workspace }).verify().ok).toBe(true)
+    expect(compareLogs(readFileSync(file, 'utf-8'), witness)).toMatchObject({ ok: false, edited: [2, 3, 4], matched: 1 })
+  })
+
+  it('shows a wiped log as missing, and what was written after as different or unsent', async () => {
+    const { file, witness } = await shipped(5)
+    writeFileSync(file, '')
+    const fresh = new AuditLog({ dir: auditDir, workspace })
+    add(fresh, 1, 'after wipe')
+    const r = compareLogs(readFileSync(file, 'utf-8'), witness)
+    expect(r).toMatchObject({ ok: false, edited: [1], missing: [2, 3, 4, 5], matched: 0 })
+    expect(ranges(r.missing)).toBe('2-5')
+  })
+
+  it('rebuilds the record from the witness alone, with no detail text', async () => {
+    const { witness } = await shipped(3)
+    const r = compareLogs('', witness)
+    expect(r).toMatchObject({ ok: false, missing: [1, 2, 3], witnessChainOk: true })
+    expect(JSON.stringify(witness)).not.toContain('cmd 0')
+    expect(witness.map((e) => e.seq)).toEqual([1, 2, 3])
+  })
+
+  it('counts unreadable lines as not ok', async () => {
+    const { file, witness } = await shipped(2)
+    writeFileSync(file, readFileSync(file, 'utf-8') + 'garbage\n')
+    expect(compareLogs(readFileSync(file, 'utf-8'), witness)).toMatchObject({ ok: false, unreadable: 1, matched: 2 })
   })
 })
