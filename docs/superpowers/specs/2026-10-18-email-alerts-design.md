@@ -1,6 +1,6 @@
 # Email alerts for Havn (card #179, Havn half)
 
-Status: draft for Marc's approval, 2026-10-18.
+Status: approved by Marc, 2026-10-18.
 
 ## Intent
 
@@ -106,7 +106,7 @@ These follow the box's timezone, 22:00 to 07:00 by default, and the owner can ch
 
 ## Cost guard
 
-- A daily cap on the number of emails triaged by the model, with a sensible default the builder picks.
+- A daily cap of 300 emails triaged by the model (Marc, 2026-10-18). It is a safety net against floods, bugs that re-read the same mail, and burning the owner's subscription limit, not a budget. A real day sits far below it.
 - Past the cap, only VIP rules apply until the next day, and the status command shows that the cap was hit.
 - Each email is triaged at most once.
 
@@ -145,7 +145,7 @@ Success means Leif and Joy keep it on through the soak (Marc, 2026-10-18). Usefu
 - Alert buttons allow several different actions per alert, each once.
 - Replay re-runs triage on re-fetched mail, outside the cap.
 - Triage reads only the sender, the subject and the start of the body, and fails quiet when the model is unavailable.
-- A daily triage cap, with VIP-only behaviour past the cap.
+- VIP-only behaviour past the daily cap.
 - Records stay on the box, with no bodies, and log lines carry counts only.
 - Pause is the fourth button on every alert.
 
