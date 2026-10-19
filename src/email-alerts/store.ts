@@ -6,6 +6,8 @@ export type AlertStatus = 'sent' | 'held' | 'paused' | 'suppressed' | 'retry'
 
 /** Sends per alert, the first included, before it is given up as `suppressed`. */
 export const MAX_SEND_ATTEMPTS = 3
+/** `pause`: the how-long menu. `undo_mute`: the Undo mute button after muting a sender. */
+export type MenuKind = 'pause' | 'undo_mute'
 export type Feedback = 'useful' | 'not_urgent' | null
 
 export interface AlertRow {
@@ -202,6 +204,11 @@ export function findAlertByChatMessage(chatId: string, chatMessageId: string): A
   return row ? toRow(row) : null
 }
 
+export function findAlertById(id: number): AlertRow | null {
+  const row = getDb().prepare('SELECT * FROM email_alerts WHERE id = ?').get(id) as RawAlert | undefined
+  return row ? toRow(row) : null
+}
+
 /** Returns false if this action was already taken on this alert. */
 export function recordAction(id: number, action: string): boolean {
   const db = getDb()
@@ -257,7 +264,7 @@ export function listAll(kind: 'vip' | 'mute'): string[] {
 export function registerMenu(
   chatId: string,
   chatMessageId: string,
-  kind: 'pause',
+  kind: MenuKind,
   alertId: number | null
 ): void {
   getDb()
@@ -271,10 +278,10 @@ export function registerMenu(
 export function findMenu(
   chatId: string,
   chatMessageId: string
-): { kind: 'pause'; alertId: number | null } | null {
+): { kind: MenuKind; alertId: number | null } | null {
   const row = getDb()
     .prepare('SELECT kind, alert_id FROM email_alert_menus WHERE chat_id = ? AND chat_message_id = ?')
-    .get(chatId, chatMessageId) as { kind: 'pause'; alert_id: number | null } | undefined
+    .get(chatId, chatMessageId) as { kind: MenuKind; alert_id: number | null } | undefined
   return row ? { kind: row.kind, alertId: row.alert_id } : null
 }
 
