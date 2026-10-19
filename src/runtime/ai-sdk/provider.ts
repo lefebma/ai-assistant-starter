@@ -37,7 +37,7 @@ const ANTHROPIC_DEFAULT_MODEL = 'claude-sonnet-5'
  * only anthropic gets one; every other provider uses AI_MODEL_CHEAP or falls
  * back to its configured AI_MODEL (never a guessed vendor id).
  */
-const ANTHROPIC_CHEAP_MODEL = 'claude-haiku-4-5'
+const ANTHROPIC_CHEAP_MODEL = 'claude-haiku-5-5'
 /** Env var holding each provider's API key. Also gates the known-provider set. */
 const KEY_ENV: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',

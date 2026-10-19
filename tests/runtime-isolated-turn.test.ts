@@ -239,7 +239,7 @@ describe('ai-sdk model tiers', () => {
   })
 
   it('anthropic has a cheap default; other providers fall back to the default model', () => {
-    expect(modelIdForTier('anthropic', 'claude-sonnet-5', 'haiku', () => undefined)).toBe('claude-haiku-4-5')
+    expect(modelIdForTier('anthropic', 'claude-sonnet-5', 'haiku', () => undefined)).toBe('claude-haiku-5-5')
     expect(modelIdForTier('openai', 'gpt-5', 'haiku', () => undefined)).toBe('gpt-5')
     expect(modelIdForTier('openai', 'gpt-5', 'opus', () => undefined)).toBe('gpt-5')
   })
