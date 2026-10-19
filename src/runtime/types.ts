@@ -43,6 +43,19 @@ export type AgentRunOptions = {
    * call is checked against it. Scheduled jobs set it; chat never does.
    */
   scope?: RunScope
+  /**
+   * Model for this turn only, overriding the configured default. Prefer a
+   * bare tier alias: 'haiku' (cheap), 'sonnet' (default) or 'opus' (strong).
+   * The ai-sdk runtime maps those to the provider's configured models.
+   */
+  model?: string
+  /**
+   * A turn that cannot act, for feeding untrusted text (e.g. email triage):
+   * no tools, no MCP servers, no skills or settings sources (no CLAUDE.md),
+   * no session resume or persistence, a single model turn. Only the text
+   * output comes back. Steer messages are neither consumed nor chained.
+   */
+  isolated?: boolean
 }
 
 export type AgentRunResult = {
@@ -61,7 +74,7 @@ export interface AgentRuntime {
    * dreaming sweep) where the caller owns failure handling and a retry or an
    * error-message-as-text would corrupt the output.
    */
-  runOnce(prompt: string, options?: { workingDirectory?: string }): Promise<string>
+  runOnce(prompt: string, options?: { workingDirectory?: string; model?: string }): Promise<string>
   /** Queue a message to inject as a follow-up after the current run completes. */
   steer(message: string): void
   /** Active session workspaces (sessionId -> cwd) for subagent conflict detection. */
