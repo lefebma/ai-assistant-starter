@@ -36,7 +36,7 @@ export interface AlertClickIo {
 }
 
 /** "3:15 pm" today, "7:00 am tomorrow", or "Mon 9:00 am" further out. */
-function formatWhen(at: Date, now: Date, tz: string): string {
+export function formatWhen(at: Date, now: Date, tz: string): string {
   const time = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     hour: 'numeric',
