@@ -95,8 +95,47 @@ describe('runControl', () => {
     expect(out.split('\n')[0]).toBe('Email alerts are off.')
   })
 
+  it('on with no mailbox connected says so', async () => {
+    expect(await run('on')).toBe('Email alerts are on.\nNo Gmail or Outlook mailbox is connected.')
+  })
+
+  it('off then on clears seeded mailboxes, so nothing old alerts', async () => {
+    const d = deps({ boxes: [box([])] })
+    expect(await run('on', d)).toBe('Email alerts are on.')
+    s.saveSettings({ ...s.getSettings(), seededMailboxes: ['a@x.com'] })
+    // Already on: on again keeps the seeding.
+    await run('on', d)
+    expect(s.getSettings().seededMailboxes).toEqual(['a@x.com'])
+    await run('off', d)
+    expect(s.getSettings().seededMailboxes).toEqual(['a@x.com'])
+    await run('on', d)
+    expect(s.getSettings().seededMailboxes).toEqual([])
+
+    // The next tick seeds again: mail that arrived while off is marked seen, never triaged.
+    const old = mail('old1', 'Client <c@client.com>', 'Site down', 3_600_000)
+    const triaged: string[] = []
+    const sent: string[] = []
+    await svc.tick({
+      boxes: async () => ({ boxes: [box([old])], broken: [] }),
+      triage: async (i) => {
+        triaged.push(i.subject)
+        return { kind: 'verdict', verdict: { critical: true, reason: 'r' } }
+      },
+      send: async (t) => {
+        sent.push(t)
+        return { chatId: 'c', messageId: '1' }
+      },
+      now: () => NOW,
+      tz: TZ,
+    })
+    expect(triaged).toEqual([])
+    expect(sent).toEqual([])
+    expect(s.getSettings().seededMailboxes).toEqual(['a@x.com'])
+    expect(s.isSeen('a@x.com', 'old1')).toBe(true)
+  })
+
   it('on then status shows on', async () => {
-    expect(await run('on')).toBe('Email alerts are on.')
+    expect(await run('on', deps({ boxes: [box([])] }))).toBe('Email alerts are on.')
     expect(s.getSettings().enabled).toBe(true)
     const out = await run('status')
     const lines = out.split('\n')
@@ -141,6 +180,15 @@ describe('runControl', () => {
     }
     expect(s.getSettings().pauseUntil).toBeNull()
     expect(await run('pause sometime')).not.toMatch(/paused until/)
+  })
+
+  it('resume during quiet hours says the summary arrives in the morning', async () => {
+    const night = new Date('2026-10-19T03:00:00Z') // 11:00 pm Toronto
+    const d = { ...deps(), now: () => night }
+    await c.runControl(['pause', '1w'], d)
+    expect(await c.runControl(['resume'], d)).toBe(
+      'Email alerts are back on. VIP emails come through now, and the rest of the summary arrives in the morning.'
+    )
   })
 
   it('resume ends the pause', async () => {
@@ -285,6 +333,20 @@ describe('runControl', () => {
     expect(count('email_alert_seen')).toBe(0)
     expect(count('email_alerts')).toBe(0)
     expect(s.triageCount(day)).toBe(300)
+  })
+
+  it('replay skips the owner\'s own mail and caps subjects at 200 characters on one line', async () => {
+    await run('vip add client.com')
+    const long = 'Line one\nLine two ' + 'x'.repeat(400)
+    const b = box([
+      mail('o1', 'Me <A@X.com>', 'My own reply', 1 * 3_600_000),
+      mail('l1', 'Ann <ann@client.com>', long, 2 * 3_600_000),
+    ])
+    const lines = (await run('replay 1', deps({ boxes: [b] }))).split('\n')
+    expect(lines).toHaveLength(1)
+    const subject = lines[0]!.split('  ')[2]!
+    expect(subject.startsWith('Line one Line two x')).toBe(true)
+    expect(subject).toHaveLength(200)
   })
 
   it('replay says so when nothing would have alerted, and caps at 30 lines', async () => {

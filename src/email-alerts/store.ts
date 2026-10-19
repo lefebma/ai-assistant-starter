@@ -94,6 +94,13 @@ export function initEmailAlertTables(db: Database.Database): void {
   }
 }
 
+/** True when this mailbox already recorded this message id. Cheap: no RFC lookup. */
+export function isSeen(mailbox: string, msgId: string): boolean {
+  return !!getDb()
+    .prepare('SELECT 1 FROM email_alert_seen WHERE mailbox = ? AND msg_id = ? LIMIT 1')
+    .get(mailbox, msgId)
+}
+
 /** Records the email as seen. Returns false if it was already seen (same id or same RFC Message-ID). */
 export function markSeen(mailbox: string, msgId: string, rfcMessageId: string | null): boolean {
   const db = getDb()
@@ -221,6 +228,24 @@ export function recordAction(id: number, action: string): boolean {
     if (actions.includes(action)) return false
     actions.push(action)
     db.prepare('UPDATE email_alerts SET actions = ? WHERE id = ?').run(JSON.stringify(actions), id)
+    return true
+  })()
+}
+
+/** Removes a recorded action so it can be taken again. False if it was not recorded. */
+export function clearAction(id: number, action: string): boolean {
+  const db = getDb()
+  return db.transaction(() => {
+    const row = db.prepare('SELECT actions FROM email_alerts WHERE id = ?').get(id) as
+      | { actions: string }
+      | undefined
+    if (!row) return false
+    const actions = JSON.parse(row.actions) as string[]
+    if (!actions.includes(action)) return false
+    db.prepare('UPDATE email_alerts SET actions = ? WHERE id = ?').run(
+      JSON.stringify(actions.filter((a) => a !== action)),
+      id
+    )
     return true
   })()
 }

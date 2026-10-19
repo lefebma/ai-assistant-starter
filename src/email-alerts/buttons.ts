@@ -1,4 +1,5 @@
 import {
+  clearAction,
   findAlertByChatMessage,
   findAlertById,
   findMenu,
@@ -91,7 +92,7 @@ export async function handleAlertClick(
         if (!recordAction(alert.id, 'not_urgent')) await io.send(ALREADY)
         else {
           setFeedback(alert.id, 'not_urgent')
-          await io.send("Noted, I'll hold back on ones like that.")
+          await io.send('Noted.')
         }
         return true
       case 'Mute sender': {
@@ -123,7 +124,8 @@ export async function handleAlertClick(
   if (menu.kind === 'undo_mute' && label === 'Undo mute') {
     if (menu.alertId !== null) {
       const a = findAlertById(menu.alertId)
-      if (!recordAction(menu.alertId, 'unmute')) {
+      // Undo takes the mute back off the alert, so Mute works again after it.
+      if (!clearAction(menu.alertId, 'mute')) {
         await io.send(ALREADY)
         return true
       }

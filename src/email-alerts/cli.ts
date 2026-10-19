@@ -9,6 +9,7 @@ import { installTimezone } from '../env.js'
 import { logger } from '../logger.js'
 import { runControl, replayTriage } from './control.js'
 import { discoverMailboxes } from './sources.js'
+import { withTimeout } from './triage.js'
 
 export async function main(argv: string[]): Promise<string> {
   initDatabase()
@@ -20,10 +21,10 @@ export async function main(argv: string[]): Promise<string> {
   delete process.env.CLAUDECODE
   delete process.env.CLAUDE_CODE_SSE_PORT
 
-  const run = async (message: string): Promise<string | null> => {
+  const run = withTimeout(async (message, signal) => {
     const { getAgentRuntime } = await import('../runtime/index.js')
-    return (await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true })).text
-  }
+    return (await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })).text
+  })
 
   // The command word only: arguments can be addresses.
   logger.info({ command: argv[0] ?? '' }, 'email-alerts control')

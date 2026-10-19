@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { GraphClient } from '../src/ms/graph.js'
+import { GraphClient, GRAPH_TIMEOUT_MS } from '../src/ms/graph.js'
 import type { MsTokens } from '../src/ms/auth.js'
 
 const CFG = { clientId: 'cid', tenantId: 'common' }
@@ -32,6 +32,30 @@ function harness(opts: { tokens: MsTokens | null; responses: { status: number; b
 }
 
 describe('GraphClient', () => {
+  it('every Graph call carries a timeout signal', async () => {
+    const signals: (AbortSignal | undefined)[] = []
+    const client = new GraphClient({
+      config: CFG,
+      account: 'work',
+      scopes: 'Mail.Read',
+      fetchImpl: (async (_url: string, init?: { signal?: AbortSignal }) => {
+        signals.push(init?.signal)
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '' }
+      }) as never,
+      now: () => 1000,
+      loadTokens: () => FRESH,
+      saveTokens: () => {},
+    })
+    await client.get('/me/messages')
+    await client.post('/me/sendMail', {})
+    expect(signals).toHaveLength(2)
+    for (const s of signals) {
+      expect(s).toBeInstanceOf(AbortSignal)
+      expect(s!.aborted).toBe(false)
+    }
+    expect(GRAPH_TIMEOUT_MS).toBe(30_000)
+  })
+
   it('uses a live token without touching the token endpoint', async () => {
     // The scripts this replaces refreshed before every single request. That is
     // a round trip to a rate-limited endpoint per operation.

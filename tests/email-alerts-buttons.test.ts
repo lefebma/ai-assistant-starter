@@ -70,6 +70,28 @@ describe('alert buttons', () => {
     expect(sent[2]!.text).toBe('Unmuted boss@x.com.')
   })
 
+  it('Mute, Undo mute, Mute works, and a second Undo on the old menu is Already done', async () => {
+    makeAlert()
+    await b.handleAlertClick('c1', '50', 'Mute sender', io()) // menu 100
+    await b.handleAlertClick('c1', '100', 'Undo mute', io())
+    expect(s.listAll('mute')).toEqual([])
+    await b.handleAlertClick('c1', '100', 'Undo mute', io())
+    expect(sent[2]!.text).toBe('Already done.')
+    await b.handleAlertClick('c1', '50', 'Mute sender', io()) // menu 103
+    expect(sent[3]).toEqual({ text: 'Muted boss@x.com.', buttons: ['Undo mute'] })
+    expect(s.listAll('mute')).toEqual(['boss@x.com'])
+    await b.handleAlertClick('c1', '103', 'Undo mute', io())
+    expect(sent[4]!.text).toBe('Unmuted boss@x.com.')
+    expect(s.listAll('mute')).toEqual([])
+  })
+
+  it('Not urgent replies Noted. and records the feedback', async () => {
+    makeAlert()
+    await b.handleAlertClick('c1', '50', 'Not urgent', io())
+    expect(sent.map((m) => m.text)).toEqual(['Noted.'])
+    expect(s.findAlertByChatMessage('c1', '50')?.feedback).toBe('not_urgent')
+  })
+
   it('Useful twice is ignored the second time', async () => {
     makeAlert()
     await b.handleAlertClick('c1', '50', 'Useful', io())

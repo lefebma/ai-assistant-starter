@@ -15,7 +15,7 @@ import {
   stats,
   triageCount,
 } from './store.js'
-import { localDay, preDecide, senderAddress, type PauseDuration } from './rules.js'
+import { inQuietHours, localDay, preDecide, senderAddress, type PauseDuration } from './rules.js'
 import { formatWhen, pauseFor } from './buttons.js'
 import { DAILY_TRIAGE_CAP, triage, type TriageInput, type TriageOutcome } from './triage.js'
 import type { Mailbox, NewMail } from './sources.js'
@@ -96,11 +96,33 @@ function pause(args: string[], deps: ControlDeps): string {
 }
 
 function resume(deps: ControlDeps): string {
-  const nowMs = deps.now().getTime()
+  const now = deps.now()
+  const nowMs = now.getTime()
   if (!pauseActive(nowMs)) return "Email alerts aren't paused."
   // The next tick ends the pause through its normal path, summary included.
-  saveSettings({ ...getSettings(), pauseIndefinite: false, pauseUntil: nowMs })
+  const s = getSettings()
+  saveSettings({ ...s, pauseIndefinite: false, pauseUntil: nowMs })
+  if (inQuietHours(now, deps.tz, s.quietStart, s.quietEnd)) {
+    return 'Email alerts are back on. VIP emails come through now, and the rest of the summary arrives in the morning.'
+  }
   return 'Email alerts are back on. Anything critical from the pause comes through in the next few minutes.'
+}
+
+/**
+ * Off to on forgets which mailboxes were seeded, so the next tick seeds them
+ * again and nothing that arrived while alerts were off alerts now.
+ */
+async function turnOn(deps: ControlDeps): Promise<string> {
+  const s = getSettings()
+  saveSettings({ ...s, enabled: true, ...(s.enabled ? {} : { seededMailboxes: [] }) })
+  const lines = ['Email alerts are on.']
+  try {
+    const { boxes, broken } = await deps.boxes()
+    if (boxes.length === 0 && broken.length === 0) lines.push('No Gmail or Outlook mailbox is connected.')
+  } catch {
+    // Status reports mailbox trouble; turning on still worked.
+  }
+  return lines.join('\n')
 }
 
 function list(kind: 'vip' | 'mute', args: string[]): string {
@@ -175,6 +197,8 @@ function oneLine(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
 }
 
+const MAX_REPLAY_SUBJECT = 200
+
 async function replay(args: string[], deps: ControlDeps): Promise<string> {
   const raw = args[0]
   const days = raw && /^\d+$/.test(raw) ? Number(raw) : NaN
@@ -217,6 +241,8 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
     while (stoppedAt === null && next < unique.length) {
       const idx = next++
       const { box, mail: m } = unique[idx]!
+      // The owner's own mail never alerts.
+      if (senderAddress(m.headers.from) === box.id.trim().toLowerCase()) continue
       const decision = preDecide(m.headers, vip, mute)
       if (decision === 'mute' || decision === 'automated') continue
       let reason: string
@@ -242,7 +268,7 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
         line: [
           replayWhen(m.receivedAt, deps.tz),
           senderAddress(m.headers.from),
-          oneLine(m.subject) || '(no subject)',
+          oneLine(m.subject).slice(0, MAX_REPLAY_SUBJECT) || '(no subject)',
           oneLine(reason),
         ].join('  '),
       })
@@ -268,8 +294,7 @@ export async function runControl(argv: string[], deps: ControlDeps): Promise<str
   const [cmd, ...args] = argv.map((a) => a.trim()).filter(Boolean)
   switch (cmd?.toLowerCase()) {
     case 'on':
-      saveSettings({ ...getSettings(), enabled: true })
-      return 'Email alerts are on.'
+      return turnOn(deps)
     case 'off':
       saveSettings({ ...getSettings(), enabled: false })
       return 'Email alerts are off.'

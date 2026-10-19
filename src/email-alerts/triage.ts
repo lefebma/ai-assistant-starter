@@ -83,6 +83,27 @@ export function parseVerdict(text: string | null): Verdict | null {
   return last
 }
 
+/** How long one triage model turn may take before it counts as failed. */
+export const TRIAGE_TIMEOUT_MS = 90_000
+
+/**
+ * Wraps a model turn with a timeout. The signal goes to the runtime so it
+ * stops the turn; the race makes sure a runtime that ignores it still
+ * yields null (a failed triage, which fails quiet) instead of hanging.
+ */
+export function withTimeout(
+  run: (message: string, signal: AbortSignal) => Promise<string | null>,
+  ms: number = TRIAGE_TIMEOUT_MS
+): (message: string) => Promise<string | null> {
+  return async (message) => {
+    const signal = AbortSignal.timeout(ms)
+    const aborted = new Promise<null>((resolve) => {
+      signal.addEventListener('abort', () => resolve(null), { once: true })
+    })
+    return Promise.race([run(message, signal), aborted])
+  }
+}
+
 export async function triage(
   i: TriageInput,
   deps: {

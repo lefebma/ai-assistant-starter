@@ -5,9 +5,11 @@
  * every few minutes and only asks for a body when the cheap rules cannot
  * decide, so list() fetches headers only and body() is a separate call.
  *
- * Gmail search is thread-scoped (see gmail-cleanup/core.ts): a row can be an
- * older message from a thread that matched. Every row is re-checked against
- * its own date. No log line here carries a subject or a sender.
+ * Gmail is listed per message (`gog gmail messages search`), not per thread,
+ * so an owner reply never stands in for the thread and two inbound messages
+ * in one thread are both listed. Rows that are not in the inbox, or are sent
+ * or drafts, are dropped. Every row is still re-checked against its own
+ * date. No log line here carries a subject or a sender.
  *
  * gog notes (v0.39.1): `gog gmail read` is an alias of `thread get`, which
  * takes a thread id. Message ids from search rows go to `gog gmail raw <id>
@@ -16,7 +18,6 @@
  */
 import { execFile } from 'node:child_process'
 import { resolveGogBin } from '../infra/gog-bin.js'
-import { parseSearchPage } from '../gmail-cleanup/core.js'
 import { readEnvFile } from '../env.js'
 import { GraphClient } from '../ms/graph.js'
 import { cleanBody, listInbox, readMail, type GraphLike } from '../ms/mail.js'
@@ -33,10 +34,13 @@ export interface NewMail {
   subject: string
 }
 
+/** True when this message id was already handled, so its per-message fetch can be skipped. */
+export type IsSeen = (msgId: string) => boolean
+
 export interface Mailbox {
   id: string
   provider: 'gmail' | 'outlook'
-  list(sinceMs: number): Promise<NewMail[]>
+  list(sinceMs: number, isSeen?: IsSeen): Promise<NewMail[]>
   /** Cheap reachability check: the listing call only, no per-message fetches. */
   probe?(): Promise<void>
   body(msgId: string): Promise<string>
@@ -141,6 +145,49 @@ function rowTime(date: string): number {
   return Number.isNaN(t) ? Number.NaN : t
 }
 
+export interface MessageRow {
+  id: string
+  thread: string
+  date: string
+  from: string
+  subject: string
+  labels: string[]
+}
+
+const MESSAGE_ID = /^[0-9a-f]{16,}$/i
+
+/**
+ * `gog gmail messages search --plain`: a header row, then tab-separated
+ * ID, THREAD, DATE, FROM, SUBJECT, LABELS (comma separated). A subject that
+ * carries a tab keeps everything between FROM and the last column.
+ */
+export function parseMessageRows(stdout: string): MessageRow[] {
+  const rows: MessageRow[] = []
+  for (const line of stdout.split('\n')) {
+    const cols = line.replace(/\r$/, '').split('\t')
+    if (cols.length < 6) continue
+    const id = cols[0]!.trim()
+    if (!MESSAGE_ID.test(id)) continue // the header row and anything else that is not a message
+    rows.push({
+      id,
+      thread: cols[1]!.trim(),
+      date: cols[2]!.trim(),
+      from: cols[3]!,
+      subject: cols.slice(4, -1).join('\t'),
+      labels: cols[cols.length - 1]!
+        .split(',')
+        .map((l) => l.trim().toUpperCase())
+        .filter(Boolean),
+    })
+  }
+  return rows
+}
+
+/** Inbound inbox mail only: in INBOX, not sent, not a draft. */
+function inboundRow(r: MessageRow): boolean {
+  return r.labels.includes('INBOX') && !r.labels.includes('SENT') && !r.labels.includes('DRAFT')
+}
+
 export function gmailMailbox(account: string, exec: Exec): Mailbox {
   const bin = gogBin()
   const read = async (id: string, format: 'metadata' | 'full'): Promise<GmailMessage> => {
@@ -152,17 +199,19 @@ export function gmailMailbox(account: string, exec: Exec): Mailbox {
   return {
     id: account,
     provider: 'gmail',
-    async list(sinceMs) {
+    async list(sinceMs, isSeen) {
       const days = Math.max(1, Math.ceil((Date.now() - sinceMs) / DAY))
       const r = await exec(bin, [
-        'gmail', 'search', `in:inbox newer_than:${days}d`, '--plain', '--max', '100', '--account', account,
+        'gmail', 'messages', 'search', `in:inbox newer_than:${days}d`, '--plain', '--max', '100', '--account', account,
       ])
       if (!r.ok) throw new Error('gmail search failed')
       const out: NewMail[] = []
-      for (const row of parseSearchPage(r.stdout).rows) {
+      for (const row of parseMessageRows(r.stdout)) {
+        if (!inboundRow(row)) continue
         // Row dates may be zone-less; allow a day of slack here, the exact check is internalDate below.
         const t = rowTime(row.date)
         if (!Number.isNaN(t) && t < sinceMs - DAY) continue
+        if (isSeen?.(row.id)) continue
         let m: GmailMessage
         try {
           m = await read(row.id, 'metadata')
@@ -184,7 +233,9 @@ export function gmailMailbox(account: string, exec: Exec): Mailbox {
       return out
     },
     async probe() {
-      const r = await exec(bin, ['gmail', 'search', 'in:inbox newer_than:1d', '--plain', '--max', '1', '--account', account])
+      const r = await exec(bin, [
+        'gmail', 'messages', 'search', 'in:inbox newer_than:1d', '--plain', '--max', '1', '--account', account,
+      ])
       if (!r.ok) throw new Error('gmail search failed')
     },
     async body(msgId) {
@@ -206,11 +257,12 @@ export function outlookMailbox(account: string, client: GraphLike): Mailbox {
   return {
     id: account,
     provider: 'outlook',
-    async list(sinceMs) {
+    async list(sinceMs, isSeen) {
       const out: NewMail[] = []
       for (const m of await listInbox(client, 50)) {
         const received = Date.parse(m.received)
         if (Number.isNaN(received) || received < sinceMs) continue
+        if (isSeen?.(m.id)) continue
         let extra: { internetMessageId?: string; internetMessageHeaders?: GraphHeader[] }
         try {
           extra = (await client.get(
@@ -289,12 +341,31 @@ export async function discoverMailboxes(
   const clientFor = deps.client ?? realGraph
 
   const candidates: Mailbox[] = []
-  const auth = await exec(gogBin(), ['auth', 'list', '--plain'])
-  if (auth.ok) for (const a of gmailAccounts(auth.stdout)) candidates.push(gmailMailbox(a, exec))
-  for (const a of msAccounts()) candidates.push(outlookMailbox(a, clientFor(a)))
-
   const boxes: Mailbox[] = []
   const broken: { id: string; why: string }[] = []
+
+  // Each provider's discovery stands alone: a throwing config on one side
+  // marks that side broken and leaves the other working.
+  try {
+    const auth = await exec(gogBin(), ['auth', 'list', '--plain'])
+    if (auth.ok) for (const a of gmailAccounts(auth.stdout)) candidates.push(gmailMailbox(a, exec))
+  } catch {
+    broken.push({ id: 'gmail', why: 'Gmail needs reconnecting.' })
+  }
+  let outlook: string[] = []
+  try {
+    outlook = msAccounts()
+  } catch {
+    broken.push({ id: 'outlook', why: 'Outlook needs reconnecting.' })
+  }
+  for (const a of outlook) {
+    try {
+      candidates.push(outlookMailbox(a, clientFor(a)))
+    } catch {
+      broken.push({ id: a, why: `Outlook needs reconnecting for ${a}.` })
+    }
+  }
+
   for (const box of candidates) {
     try {
       await (box.probe ? box.probe() : box.list(Date.now()))

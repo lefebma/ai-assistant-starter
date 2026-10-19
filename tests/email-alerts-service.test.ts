@@ -150,6 +150,37 @@ describe('format', () => {
   })
   it('overflow copy', () => {
     expect(fmt.formatOverflow(3)).toBe('…and 3 more critical emails in your inbox.')
+    expect(fmt.formatOverflow(1)).toBe('…and 1 more critical email in your inbox.')
+  })
+  it('plural headers', () => {
+    expect(fmt.pauseEndHeader(1)).toBe('Email alerts are back on. 1 critical email came in while paused.')
+    expect(fmt.pauseEndHeader(2)).toBe('Email alerts are back on. 2 critical emails came in while paused.')
+    expect(fmt.quietEndHeader(1)).toBe('While you were offline: 1 critical email.')
+    expect(fmt.quietEndHeader(3)).toBe('While you were offline: 3 critical emails.')
+  })
+  it('email text never becomes a working link', () => {
+    const base = {
+      id: 1, mailbox: 'a@x.com', msgId: 'm', vip: false, status: 'sent' as const, createdAt: 0, sentAt: null,
+      chatId: null, chatMessageId: null, feedback: null, actions: [], attempts: 0,
+    }
+    const LINK = /\[[^\]]*\]\(|<https?:|https?:\/\//i
+    for (const evil of ['[Your invoice](https://evil)', '<https://evil|Bank notice>']) {
+      const text = fmt.formatAlert({
+        ...base,
+        sender: `${evil} <jane@x.com>`,
+        subject: evil,
+        reason: `See ${evil}`,
+      })
+      expect(text).not.toMatch(LINK)
+      // Every bracket that could open link syntax is escaped or replaced.
+      const [senderL, subjectL, reasonL] = text.split('\n')
+      for (const l of [subjectL!, reasonL!]) expect(l.replace(/\\./g, '')).not.toMatch(/[[\]()<>]/)
+      // The sender line's own "(address)" is ours; the name part is neutralised.
+      expect(senderL!.replace(/ \(jane@x\.com\)$/, '').replace(/\\./g, '')).not.toMatch(/[[\]()<>]/)
+      expect(text).toContain('hxxps://evil')
+    }
+    const plain = fmt.formatAlert({ ...base, sender: 'Jane Doe <jane@x.com>', subject: 'Site down', reason: 'Client says so' })
+    expect(plain).toBe('Jane Doe (jane@x.com)\nSite down\nClient says so')
   })
   it('buttons in order', () => {
     expect(fmt.ALERT_BUTTONS).toEqual(['Useful', 'Not urgent', 'Mute sender', 'Pause alerts'])
@@ -177,6 +208,32 @@ describe('tick', () => {
     const r2 = await svc.tick(d)
     expect(r2.sent).toBe(0)
     expect(d.sends).toHaveLength(0)
+  })
+
+  it("an owner reply in a thread is not triaged", async () => {
+    const d = deps([box('a@x.com', [mail({ from: 'Me <A@x.com>' }), mail({ from: 'a@x.com' })])])
+    const r = await svc.tick(d)
+    expect(d.triageSpy).not.toHaveBeenCalled()
+    expect(r.sent).toBe(0)
+    expect(d.sends).toHaveLength(0)
+  })
+
+  it('passes an isSeen predicate so seen ids skip their fetch', async () => {
+    const m = mail()
+    const preds: ((id: string) => boolean)[] = []
+    const b: Mailbox = {
+      id: 'a@x.com',
+      provider: 'gmail',
+      list: async (_since, isSeen) => {
+        if (isSeen) preds.push(isSeen)
+        return [m]
+      },
+      body: async () => 'body',
+    }
+    const d = deps([b])
+    await svc.tick(d)
+    expect(preds[0]!(m.msgId)).toBe(true)
+    expect(preds[0]!('never')).toBe(false)
   })
 
   it('vip alerts without triage', async () => {
@@ -461,7 +518,7 @@ describe('tick', () => {
 
     d.send = realSend
     await svc.tick(d)
-    expect(d.sends[0]!.text).toBe('Email alerts are back on. 1 critical emails came in while paused.')
+    expect(d.sends[0]!.text).toBe('Email alerts are back on. 1 critical email came in while paused.')
     expect(d.sends).toHaveLength(2)
     expect(s.getSettings().pauseUntil).toBeNull()
     expect(s.alertsByStatus('paused')).toHaveLength(0)
@@ -561,6 +618,32 @@ describe('startEmailAlerts', () => {
       stop()
       await vi.advanceTimersByTimeAsync(svc.INTERVAL_MS * 3)
       expect(calls).toBe(4)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a stuck tick releases the overlap guard after the ceiling', async () => {
+    vi.useFakeTimers()
+    try {
+      let calls = 0
+      const d = deps([])
+      d.boxes = () => {
+        calls++
+        return new Promise(() => {}) // never settles
+      }
+      const stop = svc.startEmailAlerts(d)
+      await vi.advanceTimersByTimeAsync(121_000)
+      expect(calls).toBe(1)
+      expect(log.warn.mock.calls.some((c) => c[1] === 'email-alerts tick timed out')).toBe(false)
+      await vi.advanceTimersByTimeAsync(svc.TICK_CEILING_MS)
+      const warn = log.warn.mock.calls.find((c) => c[1] === 'email-alerts tick timed out')
+      expect(warn).toBeDefined()
+      expect(warn![0]).toEqual({})
+      // The guard is free again: the next interval starts a new pass.
+      await vi.advanceTimersByTimeAsync(svc.INTERVAL_MS)
+      expect(calls).toBe(2)
+      stop()
     } finally {
       vi.useRealTimers()
     }

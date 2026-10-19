@@ -26,7 +26,7 @@ import { auditScheduleDeps } from './audit/wiring.js'
 import { readEnvFile, installTimezone } from './env.js'
 import { startEmailAlerts } from './email-alerts/service.js'
 import { discoverMailboxes } from './email-alerts/sources.js'
-import { triage as triageEmail } from './email-alerts/triage.js'
+import { triage as triageEmail, withTimeout as withTriageTimeout } from './email-alerts/triage.js'
 import { localDay } from './email-alerts/rules.js'
 import { getAgentRuntime } from './runtime/index.js'
 import { PROJECT_ROOT } from './env.js'
@@ -233,8 +233,10 @@ async function main(): Promise<void> {
         boxes: () => discoverMailboxes(),
         triage: (i) =>
           triageEmail(i, {
-            run: async (message) =>
-              (await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true })).text,
+            run: withTriageTimeout(
+              async (message, signal) =>
+                (await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })).text
+            ),
             day: localDay(new Date(), emailAlertsTz),
           }),
         send: async (text, buttons) => {

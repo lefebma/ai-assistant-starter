@@ -121,3 +121,33 @@ describe('triage', () => {
     expect(s.triageCount(day)).toBe(0)
   })
 })
+
+describe('withTimeout', () => {
+  it('a run that times out yields a failed outcome', async () => {
+    let seen: AbortSignal | null = null
+    const run = t.withTimeout(async (_m, signal) => {
+      seen = signal
+      return new Promise<string | null>((resolve) => signal.addEventListener('abort', () => resolve(null)))
+    }, 20)
+    const out = await t.triage(input, { run, day: '2026-01-01', countCap: false })
+    expect(out).toEqual({ kind: 'failed' })
+    expect(seen!.aborted).toBe(true)
+  })
+
+  it('a runtime that ignores the signal still fails quiet', async () => {
+    const run = t.withTimeout(() => new Promise<string | null>(() => {}), 20)
+    expect(await t.triage(input, { run, day: '2026-01-02', countCap: false })).toEqual({ kind: 'failed' })
+  })
+
+  it('a prompt answer passes through', async () => {
+    const run = t.withTimeout(async () => '{"critical":true,"reason":"Down"}', 1000)
+    expect(await t.triage(input, { run, day: '2026-01-03', countCap: false })).toEqual({
+      kind: 'verdict',
+      verdict: { critical: true, reason: 'Down' },
+    })
+  })
+
+  it('defaults to 90 seconds', () => {
+    expect(t.TRIAGE_TIMEOUT_MS).toBe(90_000)
+  })
+})

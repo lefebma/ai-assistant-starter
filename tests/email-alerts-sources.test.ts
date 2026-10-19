@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { discoverMailboxes, gmailMailbox, outlookMailbox, type Exec } from '../src/email-alerts/sources.js'
+import { discoverMailboxes, gmailMailbox, outlookMailbox, parseMessageRows, type Exec } from '../src/email-alerts/sources.js'
 
 const T = (iso: string) => Date.parse(iso)
 
@@ -7,8 +7,9 @@ function b64(s: string): string {
   return Buffer.from(s, 'utf-8').toString('base64url')
 }
 
-const row = (id: string, date: string) => `${id}\t${date}\tAlice <a@x.com>\tHello\tINBOX,UNREAD\tthread1`
-const SEARCH_HEADER = 'ID\tDATE\tFROM\tSUBJECT\tLABELS\tTHREAD'
+const row = (id: string, date: string, labels = 'UNREAD,INBOX', thread = 'thread1') =>
+  `${id}\t${thread}\t${date}\tAlice <a@x.com>\tHello\t${labels}`
+const SEARCH_HEADER = 'ID\tTHREAD\tDATE\tFROM\tSUBJECT\tLABELS'
 
 function rawMsg(id: string, internalMs: number, headers: [string, string][], text = 'hi there') {
   return JSON.stringify({
@@ -34,7 +35,7 @@ describe('gmail source', () => {
     const calls: string[][] = []
     const exec: Exec = async (_bin, args) => {
       calls.push(args)
-      if (args[1] === 'search') {
+      if (args[1] === 'messages') {
         return { ok: true, stdout: `${SEARCH_HEADER}\n${row('18c0000000000001', '2026-10-18 09:00')}\n` }
       }
       return {
@@ -60,7 +61,7 @@ describe('gmail source', () => {
     expect(out[0]!.headers.from).toBe('Alice <a@x.com>')
     expect(out[0]!.headers.listUnsubscribe).toBe('<mailto:u@x.com>')
     expect(calls[0]).toEqual(
-      expect.arrayContaining(['gmail', 'search', 'in:inbox newer_than:2d', '--plain', '--max', '100', '--account', 'me@gmail.com'])
+      expect.arrayContaining(['gmail', 'messages', 'search', 'in:inbox newer_than:2d', '--plain', '--max', '100', '--account', 'me@gmail.com'])
     )
   })
 
@@ -80,7 +81,7 @@ describe('gmail source', () => {
   it('gmail thread search does not leak older messages', async () => {
     const reads: string[] = []
     const exec: Exec = async (_bin, args) => {
-      if (args[1] === 'search') {
+      if (args[1] === 'messages') {
         return {
           ok: true,
           stdout: `${SEARCH_HEADER}\n${row('18c0000000000002', '2026-10-01 09:00')}\n${row('18c0000000000003', '2026-10-18 10:00')}\n`,
@@ -96,7 +97,7 @@ describe('gmail source', () => {
 
   it('a failed per-message read skips that message only', async () => {
     const exec: Exec = async (_b, args) => {
-      if (args[1] === 'search') {
+      if (args[1] === 'messages') {
         return { ok: true, stdout: `${SEARCH_HEADER}\n${row('18c0000000000004', '2026-10-18 09:00')}\n${row('18c0000000000005', '2026-10-18 10:00')}\n` }
       }
       if (args[2] === '18c0000000000004') return { ok: false, stdout: '' }
@@ -104,6 +105,65 @@ describe('gmail source', () => {
     }
     const out = await gmailMailbox('me@gmail.com', exec).list(T('2026-10-17T00:00:00Z'))
     expect(out.map((m) => m.msgId)).toEqual(['18c0000000000005'])
+  })
+
+  it('parses the message search layout and skips the header row', () => {
+    const out = parseMessageRows(
+      [
+        SEARCH_HEADER,
+        '19a1b2c3d4e5f6a7\t19a1b2c3d4e5f600\t2026-10-18 20:16\tBob <b@y.com>\tPay\tnow\tUNREAD,CATEGORY_UPDATES,INBOX',
+        '',
+        'not a row',
+      ].join('\n')
+    )
+    expect(out).toEqual([
+      {
+        id: '19a1b2c3d4e5f6a7',
+        thread: '19a1b2c3d4e5f600',
+        date: '2026-10-18 20:16',
+        from: 'Bob <b@y.com>',
+        subject: 'Pay\tnow',
+        labels: ['UNREAD', 'CATEGORY_UPDATES', 'INBOX'],
+      },
+    ])
+  })
+
+  it('drops sent, draft and non-inbox rows; lists both inbound messages of one thread', async () => {
+    const reads: string[] = []
+    const exec: Exec = async (_b, args) => {
+      if (args[1] === 'messages') {
+        return {
+          ok: true,
+          stdout: [
+            SEARCH_HEADER,
+            row('18c00000000000a1', '2026-10-18 09:00', 'UNREAD,INBOX', 'T1'),
+            row('18c00000000000a2', '2026-10-18 09:30', 'SENT,INBOX', 'T1'),
+            row('18c00000000000a3', '2026-10-18 10:00', 'INBOX,UNREAD', 'T1'),
+            row('18c00000000000a4', '2026-10-18 10:30', 'DRAFT', 'T1'),
+            row('18c00000000000a5', '2026-10-18 11:00', 'UNREAD,CATEGORY_UPDATES', 'T2'),
+          ].join('\n'),
+        }
+      }
+      reads.push(args[2]!)
+      return { ok: true, stdout: rawMsg(args[2]!, T('2026-10-18T14:00:00Z'), [['From', 'a@x.com'], ['Subject', 'S']]) }
+    }
+    const out = await gmailMailbox('me@gmail.com', exec).list(T('2026-10-17T00:00:00Z'))
+    expect(out.map((m) => m.msgId)).toEqual(['18c00000000000a1', '18c00000000000a3'])
+    expect(reads).toEqual(['18c00000000000a1', '18c00000000000a3'])
+  })
+
+  it('already-seen rows trigger no gmail raw call', async () => {
+    const reads: string[] = []
+    const exec: Exec = async (_b, args) => {
+      if (args[1] === 'messages') {
+        return { ok: true, stdout: `${SEARCH_HEADER}\n${row('18c00000000000b1', '2026-10-18 09:00')}\n${row('18c00000000000b2', '2026-10-18 10:00')}\n` }
+      }
+      reads.push(args[2]!)
+      return { ok: true, stdout: rawMsg(args[2]!, T('2026-10-18T14:00:00Z'), [['From', 'a@x.com']]) }
+    }
+    const out = await gmailMailbox('me@gmail.com', exec).list(T('2026-10-17T00:00:00Z'), (id) => id === '18c00000000000b1')
+    expect(out.map((m) => m.msgId)).toEqual(['18c00000000000b2'])
+    expect(reads).toEqual(['18c00000000000b2'])
   })
 
   it('gmail body returns decoded plain text, cleaned', async () => {
@@ -179,6 +239,20 @@ describe('outlook source', () => {
     expect(out.map((m) => m.msgId)).toEqual(['GOOD'])
   })
 
+  it('already-seen messages trigger no Graph header GET', async () => {
+    const gets: string[] = []
+    const c = {
+      ...client,
+      async get(path: string) {
+        gets.push(path)
+        return client.get(path)
+      },
+    }
+    const out = await outlookMailbox('o@y.com', c).list(T('2026-10-17T00:00:00Z'), (id) => id === 'AAA')
+    expect(out).toEqual([])
+    expect(gets.some((p) => p.includes('internetMessageHeaders'))).toBe(false)
+  })
+
   it('outlook body is cleaned', async () => {
     expect(await outlookMailbox('o@y.com', client).body('AAA')).toBe('Pay now')
   })
@@ -232,6 +306,31 @@ describe('discoverMailboxes', () => {
     expect(boxes).toHaveLength(2)
     expect(calls.some((a) => a[1] === 'raw')).toBe(false)
     expect(gets.every((p) => !p.includes('internetMessageHeaders'))).toBe(true)
+  })
+
+  it('a throwing Microsoft config marks Outlook broken and Gmail still works', async () => {
+    const exec: Exec = async (_b, args) => {
+      if (args[0] === 'auth') return { ok: true, stdout: authList }
+      return { ok: true, stdout: SEARCH_HEADER + '\n' }
+    }
+    const throwingAccounts = await discoverMailboxes({
+      exec,
+      msAccounts: () => {
+        throw new Error('bad MS config')
+      },
+    })
+    expect(throwingAccounts.boxes.map((b) => b.id)).toEqual(['me@gmail.com'])
+    expect(throwingAccounts.broken).toEqual([{ id: 'outlook', why: 'Outlook needs reconnecting.' }])
+
+    const throwingClient = await discoverMailboxes({
+      exec,
+      msAccounts: () => ['o@y.com'],
+      client: () => {
+        throw new Error('bad MS config')
+      },
+    })
+    expect(throwingClient.boxes.map((b) => b.id)).toEqual(['me@gmail.com'])
+    expect(throwingClient.broken).toEqual([{ id: 'o@y.com', why: 'Outlook needs reconnecting for o@y.com.' }])
   })
 
   it('a failing gog account list yields no gmail boxes and no throw', async () => {

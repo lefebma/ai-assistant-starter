@@ -6,7 +6,7 @@
 
 Your assistant can now message you the moment a critical email lands, on Gmail and Outlook.
 
-- **New: email alerts for critical mail.** Ask for it ("turn on email alerts") and the assistant checks new mail about every 10 minutes and messages you only when waiting until tomorrow would cause real harm. It is off until you ask. Existing mail is marked as seen when you switch it on, so nothing old alerts. It checks at most 300 emails a day. Outlook mailboxes need mail read access, which existing connections already have.
+- **New: email alerts for critical mail.** Ask for it ("turn on email alerts") and the assistant checks new mail about every 10 minutes and messages you only when waiting until tomorrow would cause real harm. It is off until you ask. Existing mail is marked as seen when you switch it on (or back on), so nothing old alerts, and mail you sent yourself never alerts. It checks at most 300 emails a day. Outlook mailboxes need mail read access, which existing connections already have.
 - **VIP and mute lists.** Name people who should always get through, and senders who should never alert. Mute wins over VIP.
 - **Quiet hours.** Nothing alerts between 22:00 and 07:00 by default, except VIPs. What came in overnight arrives as a short batch in the morning. Ask to change the hours.
 - **Pause.** Pause from the button on an alert or by asking: 1 hour, until tomorrow morning, 1 day, 1 week, or until you turn it back on. When the pause ends you get a summary of the 5 most recent critical emails, plus a count of the rest. If a pause ends overnight, VIP emails come through right away and the summary waits for the morning.

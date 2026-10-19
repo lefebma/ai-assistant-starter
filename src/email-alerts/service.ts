@@ -19,6 +19,7 @@ import {
   alertsByStatus,
   getSettings,
   insertAlert,
+  isSeen,
   listAll,
   markAlertSent,
   markAlertSentQuiet,
@@ -28,13 +29,15 @@ import {
   type AlertRow,
   type AlertStatus,
 } from './store.js'
-import { inQuietHours, preDecide } from './rules.js'
+import { inQuietHours, preDecide, senderAddress } from './rules.js'
 import type { Mailbox, NewMail } from './sources.js'
 import type { TriageInput, TriageOutcome } from './triage.js'
 import { ALERT_BUTTONS, formatAlert, formatOverflow, pauseEndHeader, quietEndHeader } from './format.js'
 
 export const INTERVAL_MS = 10 * 60_000
 export const MAX_ALERTS_PER_SEND = 5
+/** A tick that runs longer than this stops holding the overlap guard. */
+export const TICK_CEILING_MS = 8 * 60_000
 const FIRST_PASS_MS = 2 * 60_000
 const LOOKBACK_MS = 2 * 86_400_000
 const VIP_REASON = 'From a VIP'
@@ -212,7 +215,9 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
 
   for (const box of boxes) {
     try {
-      const mails = await box.list(nowMs - LOOKBACK_MS)
+      // Already-seen ids skip their per-message fetch; markSeen below still
+      // catches the same email under another id (RFC Message-ID).
+      const mails = await box.list(nowMs - LOOKBACK_MS, (id) => isSeen(box.id, id))
       if (!getSettings().seededMailboxes.includes(box.id)) {
         for (const m of mails) markSeen(box.id, m.msgId, m.rfcMessageId)
         const fresh = getSettings()
@@ -221,8 +226,11 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
         }
         continue
       }
+      const own = box.id.trim().toLowerCase()
       for (const m of mails) {
         if (!markSeen(box.id, m.msgId, m.rfcMessageId)) continue
+        // The owner's own mail (a reply in a thread, a note to self) never alerts.
+        if (senderAddress(m.headers.from) === own) continue
         const decision = preDecide(m.headers, vip, mute)
         if (decision === 'mute' || decision === 'automated') continue
         if (decision === 'vip') {
@@ -286,18 +294,29 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
   return result
 }
 
-/** First pass after 2 minutes, then every INTERVAL_MS. Never overlaps, never throws. */
+/**
+ * First pass after 2 minutes, then every INTERVAL_MS. Never overlaps, never
+ * throws. A tick still running after TICK_CEILING_MS gives up the overlap
+ * guard, so one hung call can never stop alerts for good.
+ */
 export function startEmailAlerts(deps: TickDeps): () => void {
   let inFlight = false
   let stopped = false
   const run = async (): Promise<void> => {
     if (inFlight || stopped) return
     inFlight = true
+    let ceiling: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      ceiling = setTimeout(() => resolve('timeout'), TICK_CEILING_MS)
+      ceiling.unref?.()
+    })
     try {
-      await tick(deps)
+      const outcome = await Promise.race([tick(deps).then(() => 'done' as const), timedOut])
+      if (outcome === 'timeout') logger.warn({}, 'email-alerts tick timed out')
     } catch (err) {
       logger.warn({ err: err instanceof Error ? err.name : 'unknown' }, 'email-alerts tick failed')
     } finally {
+      clearTimeout(ceiling)
       inFlight = false
     }
   }
