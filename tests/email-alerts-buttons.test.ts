@@ -109,18 +109,17 @@ describe('alert buttons', () => {
 
   it('matches a click after restart', async () => {
     makeAlert()
-    const { join: j } = await import('node:path')
-    const file = j(STORE, 'restart.db')
-    const { default: Database } = await import('better-sqlite3')
-    const live = dbm.getDb()
-    live.exec(`VACUUM INTO '${file}'`)
-    const reopened = new Database(file)
-    const row = reopened
-      .prepare('SELECT chat_id, chat_message_id FROM email_alerts')
-      .get() as { chat_id: string; chat_message_id: string }
-    reopened.close()
-    expect(row).toEqual({ chat_id: 'c1', chat_message_id: '50' })
-    expect(await b.handleAlertClick(row.chat_id, row.chat_message_id, 'Useful', io())).toBe(true)
+    dbm.getDb().close()
+    expect(await b.handleAlertClick('c1', '50', 'Useful', io())).toBe(true)
+    expect(s.findAlertByChatMessage('c1', '50')?.feedback).toBe('useful')
+  })
+
+  it('a pause survives a restart', () => {
+    b.pauseFor('1w', NOW, 'America/Toronto')
+    dbm.getDb().close()
+    const st = s.getSettings()
+    expect(st.pauseUntil).toBe(NOW.getTime() + 7 * 86_400_000)
+    expect(st.pauseIndefinite).toBe(false)
   })
 
   it('non-alert message returns false', async () => {
