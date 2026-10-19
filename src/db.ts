@@ -3,11 +3,12 @@ import { resolve } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { STORE_DIR } from './config.js'
 import { installTimezone } from './env.js'
+import { initEmailAlertTables } from './email-alerts/store.js'
 
 let db: Database.Database
 
 export function getDb(): Database.Database {
-  if (!db) {
+  if (!db || !db.open) {
     mkdirSync(STORE_DIR, { recursive: true })
     db = new Database(resolve(STORE_DIR, 'assistant.db'))
     db.pragma('journal_mode = WAL')
@@ -206,6 +207,8 @@ export function initDatabase(): void {
   if (!colNames.has('role')) {
     d.exec('ALTER TABLE scheduled_tasks ADD COLUMN role TEXT')
   }
+
+  initEmailAlertTables(d)
 }
 
 // --- App state (one-shot install flags) ---
