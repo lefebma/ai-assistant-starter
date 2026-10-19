@@ -38,7 +38,10 @@ export interface NewMail {
 export type IsSeen = (msgId: string) => boolean
 
 export interface Mailbox {
+  /** The account label the box is connected under (for Outlook, the vault label, e.g. `default`). */
   id: string
+  /** The mailbox's own address, when known. The owner's own mail never alerts. */
+  address?: string
   provider: 'gmail' | 'outlook'
   list(sinceMs: number, isSeen?: IsSeen): Promise<NewMail[]>
   /** Cheap reachability check: the listing call only, no per-message fetches. */
@@ -198,6 +201,7 @@ export function gmailMailbox(account: string, exec: Exec): Mailbox {
 
   return {
     id: account,
+    address: account.trim().toLowerCase(),
     provider: 'gmail',
     async list(sinceMs, isSeen) {
       const days = Math.max(1, Math.ceil((Date.now() - sinceMs) / DAY))
@@ -253,9 +257,10 @@ interface GraphHeader {
   value?: string
 }
 
-export function outlookMailbox(account: string, client: GraphLike): Mailbox {
+export function outlookMailbox(account: string, client: GraphLike, address?: string): Mailbox {
   return {
     id: account,
+    ...(address ? { address: address.trim().toLowerCase() } : {}),
     provider: 'outlook',
     async list(sinceMs, isSeen) {
       const out: NewMail[] = []
@@ -360,7 +365,15 @@ export async function discoverMailboxes(
   }
   for (const a of outlook) {
     try {
-      candidates.push(outlookMailbox(a, clientFor(a)))
+      const client = clientFor(a)
+      // The vault label (often `default`) is not an address: ask Graph whose
+      // mailbox this is, once per discovery, so the owner's own mail is known.
+      const me = (await client.get('/me?$select=mail,userPrincipalName')) as {
+        mail?: string | null
+        userPrincipalName?: string | null
+      }
+      const address = (me?.mail || me?.userPrincipalName || '').trim()
+      candidates.push(outlookMailbox(a, client, address.includes('@') ? address : undefined))
     } catch {
       broken.push({ id: a, why: `Outlook needs reconnecting for ${a}.` })
     }

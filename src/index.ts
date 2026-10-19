@@ -249,6 +249,8 @@ async function main(): Promise<void> {
         },
         now: () => new Date(),
         tz: emailAlertsTz,
+        // Telegram sends alerts as plain text, so markdown escapes would show.
+        format: adapter.name === 'telegram' ? 'plain' : 'markdown',
       })
     : () => {}
 

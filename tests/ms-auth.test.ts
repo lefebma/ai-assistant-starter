@@ -8,6 +8,7 @@ import {
   pollDeviceCode,
   refreshTokens,
   REFRESH_MARGIN_SECS,
+  MS_AUTH_TIMEOUT_MS,
   type MsTokens,
 } from '../src/ms/auth.js'
 
@@ -157,5 +158,45 @@ describe('refreshTokens', () => {
   it('throws on a revoked grant so the caller can re-authenticate', async () => {
     const { fn } = jsonFetch(400, { error: 'invalid_grant', error_description: 'revoked' })
     await expect(refreshTokens(CFG, 'Mail.Read', 'r1', fn, 0)).rejects.toThrow(/revoked/)
+  })
+})
+
+describe('token endpoint timeout', () => {
+  it('every token endpoint call carries a 30 second timeout signal', async () => {
+    expect(MS_AUTH_TIMEOUT_MS).toBe(30_000)
+    const signals: (AbortSignal | undefined)[] = []
+    const fn = (async (_url: string, init?: { signal?: AbortSignal }) => {
+      signals.push(init?.signal)
+      const body = { access_token: 'a', refresh_token: 'r', expires_in: 3600, device_code: 'd' }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    }) as never
+    await refreshTokens(CFG, 'scope', 'old', fn, 1000)
+    await startDeviceCode(CFG, 'scope', fn)
+    await pollDeviceCode(CFG, 'd', fn, 1000)
+    expect(signals).toHaveLength(3)
+    for (const sig of signals) {
+      expect(sig).toBeInstanceOf(AbortSignal)
+      expect(sig!.aborted).toBe(false)
+    }
+  })
+
+  it('a token refresh that never answers is abandoned, not left hanging', async () => {
+    const realTimeout = AbortSignal.timeout
+    const timeouts: number[] = []
+    // Shrink the timeout so the test does not wait 30 seconds; record what was asked for.
+    AbortSignal.timeout = ((ms: number) => {
+      timeouts.push(ms)
+      return realTimeout.call(AbortSignal, 5)
+    }) as typeof AbortSignal.timeout
+    try {
+      const hanging = ((_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise((_res, rej) => {
+          init?.signal?.addEventListener('abort', () => rej(init.signal!.reason))
+        })) as never
+      await expect(refreshTokens(CFG, 'scope', 'old', hanging, 1000)).rejects.toThrow()
+      expect(timeouts).toEqual([MS_AUTH_TIMEOUT_MS])
+    } finally {
+      AbortSignal.timeout = realTimeout
+    }
   })
 })

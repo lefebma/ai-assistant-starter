@@ -649,3 +649,302 @@ describe('startEmailAlerts', () => {
     }
   })
 })
+
+describe('abandoned ticks', () => {
+  type Row = Parameters<Store['insertAlert']>[0]
+  function seed(subject: string, over: Partial<Row> = {}): number {
+    return s.insertAlert({
+      mailbox: 'a@x.com',
+      msgId: subject,
+      sender: `Sender <${subject.toLowerCase().replace(/\s/g, '')}@client.com>`,
+      subject,
+      reason: 'Needs you',
+      vip: false,
+      status: 'held',
+      createdAt: NOON.getTime() - 60_000,
+      ...over,
+    })
+  }
+
+  /** A send that hangs on the call whose text matches `stuckOn`, until released. */
+  function stuckSend(d: ReturnType<typeof deps>, stuckOn: (text: string) => boolean) {
+    let release: () => void = () => {}
+    let stuck = false
+    let n = 0
+    d.send = async (text, buttons) => {
+      d.sends.push({ text, buttons })
+      n++
+      const id = String(n)
+      if (!stuck && stuckOn(text)) {
+        stuck = true
+        await new Promise<void>((res) => {
+          release = res
+        })
+      }
+      return { chatId: 'chat1', messageId: id }
+    }
+    return { release: () => release() }
+  }
+
+  const count = (d: ReturnType<typeof deps>, needle: string) => d.sends.filter((x) => x.text.includes(needle)).length
+
+  /** First pass at 2 minutes, abandoned at the ceiling, the next pass at 20 minutes. */
+  async function toSecondPass(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(121_000)
+    await vi.advanceTimersByTimeAsync(2 * svc.INTERVAL_MS - 121_000 + 1_000)
+  }
+
+  it('(a) a flush row stuck past the ceiling: the next tick delivers the rest, nothing goes twice', async () => {
+    vi.useFakeTimers()
+    try {
+      seed('Held 1', { createdAt: NOON.getTime() - 3_000 })
+      seed('Held 2', { createdAt: NOON.getTime() - 2_000 })
+      seed('Held 3', { createdAt: NOON.getTime() - 1_000 })
+      const d = deps([box('a@x.com', [])])
+      let boxCalls = 0
+      d.boxes = async () => {
+        boxCalls++
+        return { boxes: [], broken: [] }
+      }
+      const gate = stuckSend(d, (t) => t.includes('Held 3')) // newest first: the first row
+      const stop = svc.startEmailAlerts(d)
+      await vi.advanceTimersByTimeAsync(121_000)
+      expect(d.sends.map((x) => x.text.split('\n')[0])).toEqual([
+        'While you were offline: 3 critical emails.',
+        expect.stringContaining('held3@client.com'),
+      ])
+      expect(boxCalls).toBe(0)
+      await vi.advanceTimersByTimeAsync(2 * svc.INTERVAL_MS - 121_000 + 1_000)
+      // Tick B: no second header, the in-flight row is left alone, the rest go.
+      expect(count(d, 'While you were offline')).toBe(1)
+      expect(count(d, 'Held 3')).toBe(1)
+      expect(count(d, 'Held 2')).toBe(1)
+      expect(count(d, 'Held 1')).toBe(1)
+      expect(boxCalls).toBe(1)
+      const before = d.sends.length
+      gate.release()
+      await vi.advanceTimersByTimeAsync(0)
+      // A records its one send and stops: no more sends, no mail read.
+      expect(d.sends.length).toBe(before)
+      expect(boxCalls).toBe(1)
+      expect(s.alertsByStatus('sent').map((r) => r.subject).sort()).toEqual(['Held 1', 'Held 2', 'Held 3'])
+      expect(s.alertsByStatus('due')).toEqual([])
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('(a) a stuck quiet-end header: no second header, and the rows go out once afterwards', async () => {
+    vi.useFakeTimers()
+    try {
+      seed('Held 1')
+      seed('Held 2')
+      const d = deps([])
+      d.boxes = async () => ({ boxes: [], broken: [] })
+      const gate = stuckSend(d, (t) => t.startsWith('While you were offline'))
+      const stop = svc.startEmailAlerts(d)
+      await toSecondPass()
+      expect(d.sends).toHaveLength(1)
+      gate.release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(d.sends).toHaveLength(1) // A stopped after its header
+      expect(s.alertsByStatus('due')).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(svc.INTERVAL_MS)
+      expect(count(d, 'While you were offline')).toBe(1)
+      expect(count(d, 'Held 1')).toBe(1)
+      expect(count(d, 'Held 2')).toBe(1)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('(b) a retry row stuck past the ceiling: the next tick sends the other, nothing goes twice', async () => {
+    vi.useFakeTimers()
+    try {
+      seed('Retry 1', { status: 'retry', createdAt: NOON.getTime() - 2_000 })
+      seed('Retry 2', { status: 'retry', createdAt: NOON.getTime() - 1_000 })
+      const d = deps([])
+      let boxCalls = 0
+      d.boxes = async () => {
+        boxCalls++
+        return { boxes: [], broken: [] }
+      }
+      const gate = stuckSend(d, (t) => t.includes('Retry 2'))
+      const stop = svc.startEmailAlerts(d)
+      await toSecondPass()
+      expect(count(d, 'Retry 2')).toBe(1)
+      expect(count(d, 'Retry 1')).toBe(1)
+      expect(boxCalls).toBe(1)
+      const before = d.sends.length
+      gate.release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(d.sends.length).toBe(before)
+      expect(boxCalls).toBe(1)
+      expect(s.alertsByStatus('sent').map((r) => r.subject).sort()).toEqual(['Retry 1', 'Retry 2'])
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('(c) a stuck pause-end header goes out once, and its rows once, with the pause cleared', async () => {
+    vi.useFakeTimers()
+    try {
+      settings({ pauseUntil: NOON.getTime() - HOUR, pauseStartedAt: NOON.getTime() - 3 * HOUR })
+      seed('Paused 1', { status: 'paused' })
+      seed('Paused 2', { status: 'paused' })
+      const d = deps([])
+      d.boxes = async () => ({ boxes: [], broken: [] })
+      const gate = stuckSend(d, (t) => t.startsWith('Email alerts are back on'))
+      const stop = svc.startEmailAlerts(d)
+      await toSecondPass()
+      expect(d.sends).toHaveLength(1)
+      gate.release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(d.sends).toHaveLength(1)
+      expect(s.getSettings().pauseUntil).toBeNull()
+      await vi.advanceTimersByTimeAsync(svc.INTERVAL_MS)
+      expect(count(d, 'Email alerts are back on. 2 critical emails came in while paused.')).toBe(1)
+      expect(count(d, 'Paused 1')).toBe(1)
+      expect(count(d, 'Paused 2')).toBe(1)
+      expect(d.sends).toHaveLength(3)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('mail an abandoned tick already read is recorded for the next tick, never lost or sent twice', async () => {
+    vi.useFakeTimers()
+    try {
+      const m1 = mail({ subject: 'First' })
+      const m2 = mail({ subject: 'Second' })
+      const d = deps([box('a@x.com', [m1, m2])])
+      let release: () => void = () => {}
+      let calls = 0
+      d.triage = async () => {
+        calls++
+        if (calls === 1) {
+          await new Promise<void>((res) => {
+            release = res
+          })
+        }
+        return critical()
+      }
+      const stop = svc.startEmailAlerts(d)
+      await toSecondPass()
+      // B skipped First (A marked it seen) and alerted on Second.
+      expect(count(d, 'First')).toBe(0)
+      expect(count(d, 'Second')).toBe(1)
+      release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(count(d, 'First')).toBe(0)
+      expect(s.alertsByStatus('due').map((r) => r.subject)).toEqual(['First'])
+      await vi.advanceTimersByTimeAsync(svc.INTERVAL_MS)
+      expect(count(d, 'First')).toBe(1)
+      expect(count(d, 'Second')).toBe(1)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a held or retry row another tick already sent is skipped at send time', async () => {
+    const r1 = seed('Retry A', { status: 'retry', createdAt: NOON.getTime() - 1_000 })
+    const r2 = seed('Retry B', { status: 'retry', createdAt: NOON.getTime() - 2_000 })
+    const d = deps([box('a@x.com', [])])
+    const inner = d.send
+    d.send = async (text, buttons) => {
+      // While Retry A goes out, a concurrent tick handles Retry B.
+      if (text.includes('Retry A')) s.markAlertSent(r2, 'chat1', 'other', NOON.getTime())
+      return inner(text, buttons)
+    }
+    await svc.tick(d)
+    expect(count(d, 'Retry A')).toBe(1)
+    expect(count(d, 'Retry B')).toBe(0)
+    expect(s.findAlertById(r1)!.status).toBe('sent')
+    expect(s.findAlertById(r2)!.chatMessageId).toBe('other')
+  })
+
+  it('a pause-end flush re-checks the pause before its header', async () => {
+    seed('Paused X', { status: 'paused' })
+    const d = deps([])
+    // No pause is over: nothing to summarise, no header.
+    expect(await svc.flushHeld(d, 'pause_end')).toBe(0)
+    expect(d.sends).toHaveLength(0)
+  })
+
+  it('a new pause set while the pause-end header goes out is kept, and its rows wait', async () => {
+    settings({ pauseUntil: NOON.getTime() - HOUR })
+    seed('Paused Y', { status: 'paused' })
+    const d = deps([box('a@x.com', [])])
+    const inner = d.send
+    d.send = async (text, buttons) => {
+      if (text.startsWith('Email alerts are back on')) {
+        s.saveSettings({ ...s.getSettings(), pauseUntil: NOON.getTime() + HOUR })
+      }
+      return inner(text, buttons)
+    }
+    await svc.tick(d)
+    expect(d.sends.map((x) => x.text)).toEqual(['Email alerts are back on. 1 critical email came in while paused.'])
+    expect(s.getSettings().pauseUntil).toBe(NOON.getTime() + HOUR)
+    expect(s.alertsByStatus('due').map((r) => r.subject)).toEqual(['Paused Y'])
+  })
+})
+
+describe('format modes', () => {
+  const base = {
+    id: 1, mailbox: 'a@x.com', msgId: 'm', vip: false, status: 'sent' as const, createdAt: 0, sentAt: null,
+    chatId: null, chatMessageId: null, feedback: null, actions: [], attempts: 0,
+  }
+
+  it('plain (Telegram) shows email text without backslash escapes', () => {
+    const text = fmt.formatAlert(
+      { ...base, sender: 'Jane_Doe <jane@x.com>', subject: 'Q3_report (final)', reason: 'Asks for *the* [draft]' },
+      'plain'
+    )
+    expect(text).toBe('Jane_Doe (jane@x.com)\nQ3_report (final)\nAsks for *the* [draft]')
+    expect(text).not.toContain('\\')
+  })
+
+  it('plain still swaps angle brackets and defangs URLs', () => {
+    const text = fmt.formatAlert({ ...base, sender: 'a@x.com', subject: '<https://evil|x> see http://y', reason: 'r' }, 'plain')
+    expect(text.split('\n')[1]).toBe('‹hxxps://evil|x› see hxxp://y')
+  })
+
+  it('markdown (Teams, Slack) still stops [x](https://evil) and <https://evil|x> forming links', () => {
+    const LINK = /\[[^\]]*\]\(|<https?:|https?:\/\//i
+    for (const evil of ['[x](https://evil)', '<https://evil|x>']) {
+      const text = fmt.formatAlert({ ...base, sender: 'a@x.com', subject: evil, reason: evil }, 'markdown')
+      expect(text).not.toMatch(LINK)
+      expect(text.split('\n')[1]!.replace(/\\./g, '')).not.toMatch(/[[\]()<>]/)
+    }
+    expect(fmt.formatAlert({ ...base, sender: 'a@x.com', subject: 'Q3_report (final)', reason: 'r' }, 'markdown')).toContain(
+      'Q3\\_report \\(final\\)'
+    )
+  })
+
+  it('the tick sends in the adapter mode it is given', async () => {
+    const d = deps([box('a@x.com', [mail({ subject: 'Q3_report (final)' })])])
+    d.format = 'plain'
+    await svc.tick(d)
+    expect(d.sends[0]!.text.split('\n')[1]).toBe('Q3_report (final)')
+    const m = deps([box('a@x.com', [mail({ subject: 'Q4_report (final)' })])])
+    await svc.tick(m) // default: markdown
+    expect(m.sends[0]!.text.split('\n')[1]).toBe('Q4\\_report \\(final\\)')
+  })
+})
+
+describe('own-address skip', () => {
+  it('an Outlook box labelled default skips mail from its own /me address', async () => {
+    settings({ seededMailboxes: ['default'] })
+    const own = mail({ from: 'Me <Me@Corp.com>', subject: 'My reply' })
+    const other = mail({ from: 'Client <c@client.com>', subject: 'Their ask' })
+    const b: Mailbox = { ...box('default', [own, other]), provider: 'outlook', address: 'me@corp.com' }
+    const d = deps([b])
+    await svc.tick(d)
+    expect(d.sends.map((x) => x.text.split('\n')[1])).toEqual(['Their ask'])
+  })
+})

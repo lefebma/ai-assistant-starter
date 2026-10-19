@@ -333,6 +333,48 @@ describe('discoverMailboxes', () => {
     expect(throwingClient.broken).toEqual([{ id: 'o@y.com', why: 'Outlook needs reconnecting for o@y.com.' }])
   })
 
+  it('an Outlook box labelled default takes its own address from Graph /me, once per discovery', async () => {
+    const exec: Exec = async () => ({ ok: false, stdout: '' })
+    const gets: string[] = []
+    const c = {
+      ...okClient,
+      async get(p: string) {
+        gets.push(p)
+        if (p.startsWith('/me?')) return { mail: 'Me@Corp.com', userPrincipalName: 'upn@corp.onmicrosoft.com' }
+        return { value: [] }
+      },
+    }
+    const { boxes } = await discoverMailboxes({ exec, msAccounts: () => ['default'], client: () => c })
+    expect(boxes.map((b) => [b.id, b.address])).toEqual([['default', 'me@corp.com']])
+    expect(gets.filter((p) => p.startsWith('/me?'))).toEqual(['/me?$select=mail,userPrincipalName'])
+  })
+
+  it('/me falls back to userPrincipalName, and a failing /me marks that account broken', async () => {
+    const exec: Exec = async () => ({ ok: false, stdout: '' })
+    const upn = {
+      ...okClient,
+      async get(p: string) {
+        return p.startsWith('/me?') ? { mail: null, userPrincipalName: 'U@Corp.com' } : { value: [] }
+      },
+    }
+    const ok = await discoverMailboxes({ exec, msAccounts: () => ['default'], client: () => upn })
+    expect(ok.boxes[0]!.address).toBe('u@corp.com')
+    const failing = {
+      ...okClient,
+      async get(p: string): Promise<unknown> {
+        if (p.startsWith('/me?')) throw new Error('Graph 401')
+        return { value: [] }
+      },
+    }
+    const bad = await discoverMailboxes({ exec, msAccounts: () => ['default'], client: () => failing })
+    expect(bad.boxes).toEqual([])
+    expect(bad.broken).toEqual([{ id: 'default', why: 'Outlook needs reconnecting for default.' }])
+  })
+
+  it('a Gmail box carries its account as its address', () => {
+    expect(gmailMailbox('Me@Gmail.com', async () => ({ ok: true, stdout: '' })).address).toBe('me@gmail.com')
+  })
+
   it('a failing gog account list yields no gmail boxes and no throw', async () => {
     const exec: Exec = async () => ({ ok: false, stdout: '' })
     const { boxes, broken } = await discoverMailboxes({ exec, msAccounts: () => [] })

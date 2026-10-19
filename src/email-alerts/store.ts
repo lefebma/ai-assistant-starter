@@ -1,8 +1,12 @@
 import type Database from 'better-sqlite3'
 import { getDb, getAppState, setAppState } from '../db.js'
 
-/** `held`: waiting for quiet hours to end. `retry`: a send failed and will be tried again. */
-export type AlertStatus = 'sent' | 'held' | 'paused' | 'suppressed' | 'retry'
+/**
+ * `held`: waiting for quiet hours to end. `retry`: a send failed and will be
+ * tried again. `due`: its flush header already went out (or its tick was
+ * abandoned before sending), so it goes out on its own, no header.
+ */
+export type AlertStatus = 'sent' | 'held' | 'paused' | 'suppressed' | 'retry' | 'due'
 
 /** Sends per alert, the first included, before it is given up as `suppressed`. */
 export const MAX_SEND_ATTEMPTS = 3
@@ -194,6 +198,28 @@ export function recordSendFailure(id: number): AlertStatus {
     const status: AlertStatus = attempts >= MAX_SEND_ATTEMPTS ? 'suppressed' : 'retry'
     db.prepare('UPDATE email_alerts SET attempts = ?, status = ? WHERE id = ?').run(attempts, status, id)
     return status
+  })()
+}
+
+/** The row's current status, or null when it no longer exists. */
+export function alertStatus(id: number): AlertStatus | null {
+  const row = getDb().prepare('SELECT status FROM email_alerts WHERE id = ?').get(id) as
+    | { status: AlertStatus }
+    | undefined
+  return row?.status ?? null
+}
+
+/** Moves the given rows to `due`, only those still in one of `from`. Returns how many moved. */
+export function markAlertsDue(ids: number[], from: AlertStatus[]): number {
+  if (ids.length === 0 || from.length === 0) return 0
+  const db = getDb()
+  const stmt = db.prepare(
+    `UPDATE email_alerts SET status = 'due' WHERE id = ? AND status IN (${from.map(() => '?').join(', ')})`
+  )
+  return db.transaction(() => {
+    let moved = 0
+    for (const id of ids) moved += stmt.run(id, ...from).changes
+    return moved
   })()
 }
 

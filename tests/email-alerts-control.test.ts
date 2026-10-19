@@ -349,6 +349,22 @@ describe('runControl', () => {
     expect(subject).toHaveLength(200)
   })
 
+  it('replay skips own mail for an Outlook box labelled default, by its /me address', async () => {
+    await run('vip add corp.com')
+    const b = {
+      ...box([
+        mail('d1', 'Me <me@corp.com>', 'My own note', 1 * 3_600_000),
+        mail('d2', 'Boss <boss@corp.com>', 'Need this today', 2 * 3_600_000),
+      ]),
+      id: 'default',
+      provider: 'outlook' as const,
+      address: 'me@corp.com',
+    }
+    const lines = (await run('replay 1', deps({ boxes: [b] }))).split('\n')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('boss@corp.com')
+  })
+
   it('replay says so when nothing would have alerted, and caps at 30 lines', async () => {
     expect(await run('replay 2', deps({ boxes: [box([])] }))).toBe('Nothing would have alerted in the last 2 days.')
     const many = Array.from({ length: 40 }, (_, i) => mail(`v${i}`, 'boss@x.com', `Note ${i}`, (i + 1) * 60_000))

@@ -242,7 +242,7 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
       const idx = next++
       const { box, mail: m } = unique[idx]!
       // The owner's own mail never alerts.
-      if (senderAddress(m.headers.from) === box.id.trim().toLowerCase()) continue
+      if (senderAddress(m.headers.from) === (box.address ?? box.id).trim().toLowerCase()) continue
       const decision = preDecide(m.headers, vip, mute)
       if (decision === 'mute' || decision === 'automated') continue
       let reason: string
