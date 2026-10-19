@@ -339,9 +339,10 @@ async function runTick(ctx: Ctx, result: TickResult): Promise<void> {
     result.sent += await flush(ctx, 'quiet_end')
   }
 
-  // 2a. Rows whose header already went out, left by a tick that stopped partway.
+  // 2a. Rows whose header already went out, left by a tick that stopped
+  // partway. VIPs go through quiet hours; the rest wait for them to end.
   if (!paused) {
-    const due = alertsByStatus('due')
+    const due = alertsByStatus('due').filter((r) => !quiet || r.vip)
     if (due.length > 0) result.sent += await deliver(ctx, due, ['due'])
   }
 

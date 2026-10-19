@@ -894,6 +894,34 @@ describe('abandoned ticks', () => {
   })
 })
 
+describe('due rows and quiet hours', () => {
+  function due(subject: string, vip: boolean): number {
+    return s.insertAlert({
+      mailbox: 'a@x.com', msgId: subject, sender: `S <${subject.toLowerCase()}@client.com>`, subject,
+      reason: 'Needs you', vip, status: 'due', createdAt: NIGHT.getTime() - 60_000,
+    })
+  }
+
+  it('a non-VIP due row waits through quiet hours and goes out after them, with no header', async () => {
+    const id = due('Plain', false)
+    const night = deps([box('a@x.com', [])], { now: NIGHT })
+    await svc.tick(night)
+    expect(night.sends).toHaveLength(0)
+    expect(s.findAlertById(id)!.status).toBe('due')
+    const morning = deps([box('a@x.com', [])], { now: new Date('2026-10-19T07:05:00Z') })
+    await svc.tick(morning)
+    expect(morning.sends.map((x) => x.text.split('\n')[1])).toEqual(['Plain'])
+    expect(s.findAlertById(id)!.status).toBe('sent')
+  })
+
+  it('a VIP due row goes out during quiet hours', async () => {
+    due('Boss', true)
+    const night = deps([box('a@x.com', [])], { now: NIGHT })
+    await svc.tick(night)
+    expect(night.sends.map((x) => x.text.split('\n')[1])).toEqual(['Boss'])
+  })
+})
+
 describe('format modes', () => {
   const base = {
     id: 1, mailbox: 'a@x.com', msgId: 'm', vip: false, status: 'sent' as const, createdAt: 0, sentAt: null,

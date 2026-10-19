@@ -368,11 +368,18 @@ export async function discoverMailboxes(
       const client = clientFor(a)
       // The vault label (often `default`) is not an address: ask Graph whose
       // mailbox this is, once per discovery, so the owner's own mail is known.
-      const me = (await client.get('/me?$select=mail,userPrincipalName')) as {
-        mail?: string | null
-        userPrincipalName?: string | null
+      // A failed lookup keeps the box (the own-mail skip falls back to its
+      // label); only a failed probe below marks it broken.
+      let address = ''
+      try {
+        const me = (await client.get('/me?$select=mail,userPrincipalName')) as {
+          mail?: string | null
+          userPrincipalName?: string | null
+        }
+        address = (me?.mail || me?.userPrincipalName || '').trim()
+      } catch {
+        address = ''
       }
-      const address = (me?.mail || me?.userPrincipalName || '').trim()
       candidates.push(outlookMailbox(a, client, address.includes('@') ? address : undefined))
     } catch {
       broken.push({ id: a, why: `Outlook needs reconnecting for ${a}.` })

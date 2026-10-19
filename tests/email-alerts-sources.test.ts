@@ -349,7 +349,7 @@ describe('discoverMailboxes', () => {
     expect(gets.filter((p) => p.startsWith('/me?'))).toEqual(['/me?$select=mail,userPrincipalName'])
   })
 
-  it('/me falls back to userPrincipalName, and a failing /me marks that account broken', async () => {
+  it('/me falls back to userPrincipalName, and a failing /me keeps the box with no address', async () => {
     const exec: Exec = async () => ({ ok: false, stdout: '' })
     const upn = {
       ...okClient,
@@ -366,7 +366,17 @@ describe('discoverMailboxes', () => {
         return { value: [] }
       },
     }
-    const bad = await discoverMailboxes({ exec, msAccounts: () => ['default'], client: () => failing })
+    const kept = await discoverMailboxes({ exec, msAccounts: () => ['default'], client: () => failing })
+    expect(kept.broken).toEqual([])
+    expect(kept.boxes.map((b) => [b.id, b.address])).toEqual([['default', undefined]])
+    // Only a failed listing marks it broken.
+    const down = {
+      ...okClient,
+      async get(): Promise<unknown> {
+        throw new Error('Graph 401')
+      },
+    }
+    const bad = await discoverMailboxes({ exec, msAccounts: () => ['default'], client: () => down })
     expect(bad.boxes).toEqual([])
     expect(bad.broken).toEqual([{ id: 'default', why: 'Outlook needs reconnecting for default.' }])
   })
