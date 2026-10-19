@@ -19,8 +19,9 @@ afterEach(() => {
 function runCli(args: string[], env: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((done) => {
     execFile(
-      resolve(REPO, 'node_modules', '.bin', 'tsx'),
-      [resolve(REPO, 'scripts', 'email-alerts.ts'), ...args],
+      // Run tsx's own entry through this Node: the .bin shim is tsx.cmd on Windows.
+      process.execPath,
+      [resolve(REPO, 'node_modules', 'tsx', 'dist', 'cli.mjs'), resolve(REPO, 'scripts', 'email-alerts.ts'), ...args],
       { cwd: REPO, env: { ...process.env, ...env }, timeout: 60_000 },
       (err, stdout, stderr) => done({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stdout, stderr })
     )
