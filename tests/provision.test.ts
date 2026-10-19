@@ -152,7 +152,8 @@ describe('provision', () => {
 
     // Waited through ssh-refused and running before enabling setup.
     expect(w.sshCalls.filter((c) => c.includes('cloud-init status'))).toHaveLength(3)
-    expect(w.sshCalls.at(-1)).toBe('45.77.1.2 cd /home/havn/havn && sudo node dist/scripts/hosted/enable-setup.js leif.gethavn.ai')
+    // havn-admin cannot enter /home/havn (mode 750), so the cd has to happen as root.
+    expect(w.sshCalls.at(-1)).toBe("45.77.1.2 sudo sh -c 'cd /home/havn/havn && node dist/scripts/hosted/enable-setup.js leif.gethavn.ai'")
     // havn has no general sudo (card #196): the root step logs in as havn-admin, polling as havn.
     expect(w.sshUsers.at(-1)).toBe('havn-admin')
     expect(w.sshUsers.slice(0, -1).every((u) => u === 'havn')).toBe(true)
