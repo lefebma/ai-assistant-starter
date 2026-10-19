@@ -787,8 +787,8 @@ access, which connections made through this runbook already have.
 - Two optional settings in `.env` pick the models for the ai-sdk runtime:
   `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`. Leave them unset unless asked.
 - To check it works after an update, have the client say "email alerts on",
-  then "replay 7" to see what would have alerted over the last week. Replay
-  sends nothing.
+  then "replay 7" to see what would have alerted in recent mail (up to 14
+  days back, checking the newest 60 emails). Replay sends nothing.
 
 ## Updates, snapshots, backups
 
