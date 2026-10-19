@@ -21,9 +21,15 @@ export const DAILY_TRIAGE_CAP = 300
 const BODY_LIMIT = 1500
 const REASON_LIMIT = 120
 
+const FIELD_LIMIT = 200
+
 function clean(s: string): string {
-  // Stop the email from closing or reopening its own wrapper.
-  return s.replace(/<\/?email>/gi, '')
+  // No angle brackets survive, so no tag can be formed, nested or otherwise.
+  return s.replace(/</g, '\uFF1C').replace(/>/g, '\uFF1E')
+}
+
+function cleanLine(s: string): string {
+  return clean(s.replace(/\s+/g, ' ').trim().slice(0, FIELD_LIMIT))
 }
 
 export function buildTriagePrompt(i: TriageInput): string {
@@ -43,8 +49,8 @@ export function buildTriagePrompt(i: TriageInput): string {
     'Answer with one line of JSON and nothing else: {"critical":true|false,"reason":"<max 120 chars>"}',
     '',
     '<email>',
-    `From: ${clean(i.from)}`,
-    `Subject: ${clean(i.subject)}`,
+    `From: ${cleanLine(i.from)}`,
+    `Subject: ${cleanLine(i.subject)}`,
     '',
     body,
     '</email>',
@@ -53,7 +59,10 @@ export function buildTriagePrompt(i: TriageInput): string {
 
 export function parseVerdict(text: string | null): Verdict | null {
   if (!text) return null
-  for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
+  let last: Verdict | null = null
+  let start = text.indexOf('{')
+  while (start !== -1) {
+    let next = start + 1
     for (let end = text.indexOf('}', start); end !== -1; end = text.indexOf('}', end + 1)) {
       let parsed: unknown
       try {
@@ -63,14 +72,15 @@ export function parseVerdict(text: string | null): Verdict | null {
       }
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue
       const o = parsed as Record<string, unknown>
-      if (typeof o['critical'] !== 'boolean' || typeof o['reason'] !== 'string') return null
-      return {
-        critical: o['critical'],
-        reason: o['reason'].replace(/[\r\n]+/g, ' ').slice(0, REASON_LIMIT),
+      if (typeof o['critical'] === 'boolean' && typeof o['reason'] === 'string') {
+        last = { critical: o['critical'], reason: o['reason'].replace(/[\r\n]+/g, ' ').slice(0, REASON_LIMIT) }
+        next = end + 1
       }
+      break
     }
+    start = text.indexOf('{', next)
   }
-  return null
+  return last
 }
 
 export async function triage(
