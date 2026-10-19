@@ -297,6 +297,47 @@ describe('runControl', () => {
     expect(lines[29]).toBe('…and 11 more.')
   })
 
+  it('replay stops at 60 model calls, newest first, and says how far it got', async () => {
+    const many = Array.from({ length: 100 }, (_, i) => mail(`n${i}`, `p${i}@client.com`, `Item ${i}`, (i + 1) * 60_000))
+    const seenSubjects: string[] = []
+    const triage = async (i: TriageInput): Promise<TriageOutcome> => {
+      seenSubjects.push(i.subject)
+      return { kind: 'verdict', verdict: { critical: i.subject === 'Item 0', reason: 'Needs you' } }
+    }
+    const lines = (await run('replay 1', deps({ boxes: [box(many)], triage }))).split('\n')
+    expect(seenSubjects).toHaveLength(60)
+    expect(new Set(seenSubjects)).toEqual(new Set(Array.from({ length: 60 }, (_, i) => `Item ${i}`)))
+    expect(lines[0]).toContain('Item 0')
+    expect(lines[lines.length - 1]).toBe('Checked the newest 60 emails.')
+    expect(lines).toHaveLength(2)
+  })
+
+  it('replay with no hits inside the budget still says how far it got', async () => {
+    const many = Array.from({ length: 70 }, (_, i) => mail(`q${i}`, `p${i}@client.com`, `Item ${i}`, (i + 1) * 60_000))
+    const triage = async (): Promise<TriageOutcome> => ({ kind: 'verdict', verdict: { critical: false, reason: 'no' } })
+    expect(await run('replay 1', deps({ boxes: [box(many)], triage }))).toBe(
+      'Nothing would have alerted.\nChecked the newest 60 emails.'
+    )
+  })
+
+  it('replay runs at most 4 model reads at once', async () => {
+    const many = Array.from({ length: 20 }, (_, i) => mail(`r${i}`, `p${i}@client.com`, `Item ${i}`, (i + 1) * 60_000))
+    let active = 0
+    let peak = 0
+    let calls = 0
+    const triage = async (): Promise<TriageOutcome> => {
+      calls++
+      active++
+      peak = Math.max(peak, active)
+      await new Promise((r) => setTimeout(r, 5))
+      active--
+      return { kind: 'verdict', verdict: { critical: false, reason: 'no' } }
+    }
+    await run('replay 1', deps({ boxes: [box(many)], triage }))
+    expect(calls).toBe(20)
+    expect(peak).toBe(4)
+  })
+
   it('replay over 14 days is refused in plain words', async () => {
     const b = box([])
     const out = await run('replay 15', deps({ boxes: [b] }))
@@ -326,7 +367,7 @@ describe('email-alerts skill', () => {
     expect(ALWAYS_ON_SKILLS).toContain('email-alerts')
     expect(manifest.id).toBe('email-alerts')
     expect(manifest.enabled).toBe(true)
-    expect(manifest.triggers).toEqual(['email alert', 'alerts', 'vip', 'pause alerts', 'mute'])
+    expect(manifest.triggers).toEqual(['email alert', 'email alerts', 'alerts', 'alerting', 'tell me when', 'vip', 'pause alerts', 'mute'])
     const used = new Set([...`${skill}${manifestRaw}`.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]))
     expect([...used]).toEqual(['PROJECT_PATH'])
     expect(skill).toContain('node {{PROJECT_PATH}}/dist/scripts/email-alerts.js')

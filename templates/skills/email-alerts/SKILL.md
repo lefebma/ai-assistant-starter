@@ -54,6 +54,7 @@ it up in their mail first. Never guess.
   owner asks how it works, say it messages them when something cannot wait,
   and leave it there.
 - Replay never sends anything and can look back at most 14 days. Run it only
-  when the owner asks.
+  when the owner asks. It reads each email again and can take several
+  minutes, so give the command a long timeout (10 minutes).
 - Turning alerts on, off, or pausing them is the owner's call. Do not change
   these settings unless they asked.

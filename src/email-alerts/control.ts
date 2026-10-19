@@ -18,7 +18,7 @@ import {
 import { localDay, preDecide, senderAddress, type PauseDuration } from './rules.js'
 import { formatWhen, pauseFor } from './buttons.js'
 import { DAILY_TRIAGE_CAP, triage, type TriageInput, type TriageOutcome } from './triage.js'
-import type { Mailbox } from './sources.js'
+import type { Mailbox, NewMail } from './sources.js'
 
 export interface ControlDeps {
   boxes: () => Promise<{ boxes: Mailbox[]; broken: { id: string; why: string }[] }>
@@ -31,6 +31,9 @@ const DAY = 86_400_000
 const MAX_PAUSE_MS = 30 * DAY
 const MAX_REPLAY_DAYS = 14
 const MAX_REPLAY_LINES = 30
+/** Model reads per replay, and how many run at once. */
+const MAX_REPLAY_READS = 60
+const REPLAY_CONCURRENCY = 4
 const VIP_REASON = 'From a VIP'
 const DURATIONS: PauseDuration[] = ['1h', 'tomorrow', '1d', '1w', 'off']
 // A full date and time with its offset, so a box on UTC reads it as meant.
@@ -182,26 +185,48 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
   const vip = listAll('vip')
   const mute = listAll('mute')
   const { boxes } = await deps.boxes()
-  const seen = new Set<string>()
-  const hits: { at: number; line: string }[] = []
 
+  // Everything in range, newest first, each email once.
+  const seen = new Set<string>()
+  const queue: { box: Mailbox; mail: NewMail }[] = []
   for (const box of boxes) {
-    let mails
+    let mails: NewMail[]
     try {
       mails = await box.list(sinceMs)
     } catch {
       continue
     }
-    for (const m of mails) {
-      const keys = [`${box.id}\n${m.msgId}`, ...(m.rfcMessageId ? [`rfc\n${m.rfcMessageId}`] : [])]
-      if (keys.some((k) => seen.has(k))) continue
-      for (const k of keys) seen.add(k)
+    for (const m of mails) queue.push({ box, mail: m })
+  }
+  queue.sort((a, b) => b.mail.receivedAt - a.mail.receivedAt)
+  const unique = queue.filter(({ box, mail: m }) => {
+    const keys = [`${box.id}\n${m.msgId}`, ...(m.rfcMessageId ? [`rfc\n${m.rfcMessageId}`] : [])]
+    if (keys.some((k) => seen.has(k))) return false
+    for (const k of keys) seen.add(k)
+    return true
+  })
 
+  // A small pool of model reads, stopping once the budget is spent. Items
+  // are taken in order and the budget is checked as each is taken, so every
+  // email before the stopping point was examined and none after it was.
+  const hits: { at: number; line: string }[] = []
+  let next = 0
+  let reads = 0
+  let stoppedAt: number | null = null
+  const worker = async (): Promise<void> => {
+    while (stoppedAt === null && next < unique.length) {
+      const idx = next++
+      const { box, mail: m } = unique[idx]!
       const decision = preDecide(m.headers, vip, mute)
       if (decision === 'mute' || decision === 'automated') continue
       let reason: string
       if (decision === 'vip') reason = VIP_REASON
       else {
+        if (reads >= MAX_REPLAY_READS) {
+          stoppedAt = idx
+          return
+        }
+        reads++
         let body: string
         try {
           body = await box.body(m.msgId)
@@ -212,19 +237,31 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
         if (outcome.kind !== 'verdict' || !outcome.verdict.critical) continue
         reason = outcome.verdict.reason
       }
-      const subject = oneLine(m.subject) || '(no subject)'
       hits.push({
         at: m.receivedAt,
-        line: [replayWhen(m.receivedAt, deps.tz), senderAddress(m.headers.from), subject, oneLine(reason)].join('  '),
+        line: [
+          replayWhen(m.receivedAt, deps.tz),
+          senderAddress(m.headers.from),
+          oneLine(m.subject) || '(no subject)',
+          oneLine(reason),
+        ].join('  '),
       })
     }
   }
+  await Promise.all(Array.from({ length: REPLAY_CONCURRENCY }, () => worker()))
 
-  if (hits.length === 0) return `Nothing would have alerted in the last ${days} ${days === 1 ? 'day' : 'days'}.`
+  const tail = stoppedAt === null ? [] : [`Checked the newest ${stoppedAt} emails.`]
+  if (hits.length === 0) {
+    if (tail.length > 0) return ['Nothing would have alerted.', ...tail].join('\n')
+    return `Nothing would have alerted in the last ${days} ${days === 1 ? 'day' : 'days'}.`
+  }
   hits.sort((a, b) => b.at - a.at)
-  if (hits.length <= MAX_REPLAY_LINES) return hits.map((h) => h.line).join('\n')
-  const shown = hits.slice(0, MAX_REPLAY_LINES - 1).map((h) => h.line)
-  return [...shown, `…and ${hits.length - shown.length} more.`].join('\n')
+  const room = MAX_REPLAY_LINES - tail.length
+  const body =
+    hits.length <= room
+      ? hits.map((h) => h.line)
+      : [...hits.slice(0, room - 1).map((h) => h.line), `…and ${hits.length - (room - 1)} more.`]
+  return [...body, ...tail].join('\n')
 }
 
 export async function runControl(argv: string[], deps: ControlDeps): Promise<string> {

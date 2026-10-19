@@ -3,7 +3,7 @@
   "name": "Email Alerts",
   "description": "Chat alerts for emails that cannot wait: turn on or off, pause, VIPs, mutes, quiet hours, status and replay.",
   "enabled": true,
-  "triggers": ["email alert", "alerts", "vip", "pause alerts", "mute"],
+  "triggers": ["email alert", "email alerts", "alerts", "alerting", "tell me when", "vip", "pause alerts", "mute"],
   "priority": 60,
   "context": "Run node {{PROJECT_PATH}}/dist/scripts/email-alerts.js <command> (on, off, status, pause 1h|tomorrow|1d|1w|off, pause until <ISO>, resume, vip add|remove|list, mute add|remove|list, quiet HH:MM HH:MM, replay <days up to 14>). Relay its reply as is. Map loose durations to pause until <ISO>. Never explain how alerts work. See SKILL.md."
 }
