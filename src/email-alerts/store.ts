@@ -152,6 +152,15 @@ export function markAlertSent(id: number, chatId: string, chatMessageId: string,
     .run(at, chatId, chatMessageId, id)
 }
 
+/** Recorded as sent without its own message (it was counted in an overflow line). */
+export function markAlertSentQuiet(id: number, at: number): void {
+  getDb().prepare(`UPDATE email_alerts SET status = 'sent', sent_at = ? WHERE id = ?`).run(at, id)
+}
+
+export function setAlertStatus(id: number, status: AlertStatus): void {
+  getDb().prepare('UPDATE email_alerts SET status = ? WHERE id = ?').run(status, id)
+}
+
 export function alertsByStatus(status: AlertStatus): AlertRow[] {
   const rows = getDb()
     .prepare('SELECT * FROM email_alerts WHERE status = ? ORDER BY created_at DESC, id DESC')
