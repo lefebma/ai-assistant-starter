@@ -49,6 +49,7 @@ function settings(over: Partial<import('../src/email-alerts/store.js').AlertSett
     quietStart: '22:00',
     quietEnd: '07:00',
     seededMailboxes: ['a@x.com', 'b@x.com'],
+    pauseSummaryPending: false,
     ...over,
   })
 }
@@ -138,6 +139,7 @@ describe('format', () => {
       chatMessageId: null,
       feedback: null,
       actions: [],
+      attempts: 0,
     })
     const lines = text.split('\n')
     expect(lines).toHaveLength(3)
@@ -380,12 +382,121 @@ describe('tick', () => {
     expect(s.alertsByStatus('sent')).toHaveLength(7)
   })
 
-  it('a failed send keeps the alert held for the next flush', async () => {
+  it('daytime failed send retries next tick with no header', async () => {
     const d = deps([box('a@x.com', [mail()])])
+    const realSend = d.send
     d.send = async () => null
     const r = await svc.tick(d)
     expect(r.sent).toBe(0)
-    expect(s.alertsByStatus('held')).toHaveLength(1)
+    expect(s.alertsByStatus('retry')).toHaveLength(1)
+    expect(s.alertsByStatus('held')).toHaveLength(0)
+
+    d.send = realSend
+    d.now = () => new Date(NOON.getTime() + 10 * 60_000)
+    const r2 = await svc.tick(d)
+    expect(r2.sent).toBe(1)
+    expect(d.sends).toHaveLength(1)
+    expect(d.sends[0]!.buttons).toEqual(fmt.ALERT_BUTTONS)
+    for (const x of d.sends) expect(x.text).not.toContain('While you were offline')
+    expect(s.alertsByStatus('sent')).toHaveLength(1)
+  })
+
+  it('three failed sends give up as suppressed', async () => {
+    const d = deps([box('a@x.com', [mail()])])
+    const realSend = d.send
+    d.send = async () => null
+    await svc.tick(d)
+    await svc.tick(d)
+    expect(s.alertsByStatus('retry')).toHaveLength(1)
+    log.warn.mockClear()
+    await svc.tick(d)
+    expect(s.alertsByStatus('retry')).toHaveLength(0)
+    const sup = s.alertsByStatus('suppressed')
+    expect(sup).toHaveLength(1)
+    expect(sup[0]!.attempts).toBe(3)
+    const supLines = log.warn.mock.calls.filter((c) => c[1] === 'email-alerts gave up sending')
+    expect(supLines).toEqual([[{ suppressed: 1 }, 'email-alerts gave up sending']])
+    d.send = realSend
+    await svc.tick(d)
+    expect(d.sends).toHaveLength(0)
+  })
+
+  it('vip retry during quiet hours goes out, non-vip retry waits', async () => {
+    const base = { mailbox: 'a@x.com', subject: 'x', reason: 'r', status: 'retry' as const, createdAt: 1 }
+    s.insertAlert({ ...base, msgId: 'v', sender: 'Boss <boss@client.com>', reason: 'From a VIP', vip: true })
+    s.insertAlert({ ...base, msgId: 'n', sender: 'P <p@client.com>', vip: false })
+    const night = deps([box('a@x.com', [])], { now: NIGHT })
+    const r = await svc.tick(night)
+    expect(r.sent).toBe(1)
+    expect(night.sends).toHaveLength(1)
+    expect(night.sends[0]!.text).toContain('From a VIP')
+    expect(s.alertsByStatus('retry')).toHaveLength(1)
+
+    const morning = deps([box('a@x.com', [])], { now: new Date('2026-10-19T07:05:00Z') })
+    await svc.tick(morning)
+    expect(morning.sends).toHaveLength(1)
+    expect(morning.sends[0]!.text).not.toContain('While you were offline')
+    expect(s.alertsByStatus('retry')).toHaveLength(0)
+  })
+
+  it('retries respect the 5 cap per tick', async () => {
+    for (let i = 0; i < 7; i++) {
+      s.insertAlert({ mailbox: 'a@x.com', msgId: `r${i}`, sender: 'P <p@c.com>', subject: 's', reason: 'r', vip: false, status: 'retry', createdAt: i })
+    }
+    const d = deps([box('a@x.com', [])])
+    await svc.tick(d)
+    expect(d.sends).toHaveLength(5)
+    expect(s.alertsByStatus('retry')).toHaveLength(2)
+  })
+
+  it('failed pause-end header leaves the pause, next tick sends the pause-end header', async () => {
+    settings({ pauseUntil: NOON.getTime() - 1000, pauseStartedAt: NOON.getTime() - HOUR })
+    s.insertAlert({ mailbox: 'a@x.com', msgId: 'p1', sender: 'P <p@c.com>', subject: 's', reason: 'r', vip: false, status: 'paused', createdAt: 1 })
+    const d = deps([box('a@x.com', [])])
+    const realSend = d.send
+    d.send = async () => null
+    await svc.tick(d)
+    expect(s.alertsByStatus('paused')).toHaveLength(1)
+    expect(s.getSettings().pauseUntil).toBe(NOON.getTime() - 1000)
+
+    d.send = realSend
+    await svc.tick(d)
+    expect(d.sends[0]!.text).toBe('Email alerts are back on. 1 critical emails came in while paused.')
+    expect(d.sends).toHaveLength(2)
+    expect(s.getSettings().pauseUntil).toBeNull()
+    expect(s.alertsByStatus('paused')).toHaveLength(0)
+  })
+
+  it('pause ending in quiet hours sends vip now and the summary at quiet end', async () => {
+    const end = new Date('2026-10-18T23:30:00Z')
+    settings({ pauseUntil: end.getTime(), pauseStartedAt: end.getTime() - HOUR })
+    const base = { mailbox: 'a@x.com', subject: 'sub', reason: 'r', status: 'paused' as const, createdAt: 1 }
+    s.insertAlert({ ...base, msgId: 'v', sender: 'Boss <boss@client.com>', reason: 'From a VIP', vip: true })
+    s.insertAlert({ ...base, msgId: 'n1', sender: 'P1 <p1@client.com>', vip: false })
+    s.insertAlert({ ...base, msgId: 'n2', sender: 'P2 <p2@client.com>', vip: false })
+
+    const at = deps([box('a@x.com', [])], { now: end })
+    await svc.tick(at)
+    expect(at.sends).toHaveLength(1)
+    expect(at.sends[0]!.text).toContain('From a VIP')
+    expect(at.sends[0]!.buttons).toEqual(fmt.ALERT_BUTTONS)
+    expect(s.getSettings().pauseUntil).toBeNull()
+
+    const later = deps([box('a@x.com', [])], { now: new Date(end.getTime() + 10 * 60_000) })
+    await svc.tick(later)
+    expect(later.sends).toHaveLength(0)
+
+    const morning = deps([box('a@x.com', [])], { now: new Date('2026-10-19T07:00:00Z') })
+    await svc.tick(morning)
+    expect(morning.sends[0]!.text).toBe('Email alerts are back on. 2 critical emails came in while paused.')
+    expect(morning.sends).toHaveLength(3)
+    expect(morning.sends[1]!.buttons).toEqual(fmt.ALERT_BUTTONS)
+    expect(s.alertsByStatus('paused')).toHaveLength(0)
+    expect(s.getSettings().pauseSummaryPending).toBe(false)
+
+    const after = deps([box('a@x.com', [])], { now: new Date('2026-10-19T07:10:00Z') })
+    await svc.tick(after)
+    expect(after.sends).toHaveLength(0)
   })
 
   it('log line carries counts only', async () => {

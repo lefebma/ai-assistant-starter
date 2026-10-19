@@ -122,4 +122,34 @@ describe('email alerts store', () => {
     expect(s.bumpTriageCount('2026-10-18')).toBe(2)
     expect(s.triageCount('2026-10-19')).toBe(0)
   })
+  it('recordSendFailure retries, then suppresses at the third attempt', () => {
+    const id = s.insertAlert({ ...base, status: 'sent' })
+    expect(s.alertsByStatus('sent')[0]!.attempts).toBe(0)
+    expect(s.recordSendFailure(id)).toBe('retry')
+    expect(s.recordSendFailure(id)).toBe('retry')
+    expect(s.alertsByStatus('retry')[0]!.attempts).toBe(2)
+    expect(s.recordSendFailure(id)).toBe('suppressed')
+    expect(s.alertsByStatus('suppressed')[0]!.attempts).toBe(3)
+  })
+
+  it('adds the attempts column to an older table', async () => {
+    const Database = (await import('better-sqlite3')).default
+    const old = new Database(':memory:')
+    old.exec(`CREATE TABLE email_alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, mailbox TEXT NOT NULL, msg_id TEXT NOT NULL,
+      sender TEXT NOT NULL, subject TEXT NOT NULL, reason TEXT NOT NULL, vip INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL, created_at INTEGER NOT NULL, sent_at INTEGER, chat_id TEXT,
+      chat_message_id TEXT, feedback TEXT, actions TEXT NOT NULL DEFAULT '[]')`)
+    old.exec(`INSERT INTO email_alerts (mailbox, msg_id, sender, subject, reason, status, created_at)
+      VALUES ('a', 'm', 's', 'x', 'r', 'held', 1)`)
+    s.initEmailAlertTables(old)
+    s.initEmailAlertTables(old)
+    const row = old.prepare('SELECT attempts FROM email_alerts').get() as { attempts: number }
+    expect(row.attempts).toBe(0)
+    old.close()
+  })
+
+  it('settings default pauseSummaryPending to false', () => {
+    expect(s.getSettings().pauseSummaryPending).toBe(false)
+  })
 })

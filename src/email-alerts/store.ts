@@ -1,7 +1,11 @@
 import type Database from 'better-sqlite3'
 import { getDb, getAppState, setAppState } from '../db.js'
 
-export type AlertStatus = 'sent' | 'held' | 'paused' | 'suppressed'
+/** `held`: waiting for quiet hours to end. `retry`: a send failed and will be tried again. */
+export type AlertStatus = 'sent' | 'held' | 'paused' | 'suppressed' | 'retry'
+
+/** Sends per alert, the first included, before it is given up as `suppressed`. */
+export const MAX_SEND_ATTEMPTS = 3
 export type Feedback = 'useful' | 'not_urgent' | null
 
 export interface AlertRow {
@@ -19,6 +23,7 @@ export interface AlertRow {
   chatMessageId: string | null
   feedback: Feedback
   actions: string[]
+  attempts: number
 }
 
 export interface AlertSettings {
@@ -29,6 +34,8 @@ export interface AlertSettings {
   quietStart: string
   quietEnd: string
   seededMailboxes: string[]
+  /** A pause ended during quiet hours; its summary goes out when they end. */
+  pauseSummaryPending: boolean
 }
 
 const SETTINGS_KEY = 'email_alerts.settings'
@@ -57,7 +64,8 @@ export function initEmailAlertTables(db: Database.Database): void {
       chat_id TEXT,
       chat_message_id TEXT,
       feedback TEXT,
-      actions TEXT NOT NULL DEFAULT '[]'
+      actions TEXT NOT NULL DEFAULT '[]',
+      attempts INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_email_alerts_status ON email_alerts(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_email_alerts_chat ON email_alerts(chat_id, chat_message_id);
@@ -78,6 +86,10 @@ export function initEmailAlertTables(db: Database.Database): void {
       count INTEGER NOT NULL
     );
   `)
+  const cols = db.prepare('PRAGMA table_info(email_alerts)').all() as { name: string }[]
+  if (!cols.some((c) => c.name === 'attempts')) {
+    db.exec('ALTER TABLE email_alerts ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0')
+  }
 }
 
 /** Records the email as seen. Returns false if it was already seen (same id or same RFC Message-ID). */
@@ -111,6 +123,7 @@ interface RawAlert {
   chat_message_id: string | null
   feedback: Feedback
   actions: string
+  attempts: number
 }
 
 function toRow(r: RawAlert): AlertRow {
@@ -129,11 +142,12 @@ function toRow(r: RawAlert): AlertRow {
     chatMessageId: r.chat_message_id,
     feedback: r.feedback,
     actions: JSON.parse(r.actions) as string[],
+    attempts: r.attempts,
   }
 }
 
 export function insertAlert(
-  a: Omit<AlertRow, 'id' | 'sentAt' | 'chatId' | 'chatMessageId' | 'feedback' | 'actions'>
+  a: Omit<AlertRow, 'id' | 'sentAt' | 'chatId' | 'chatMessageId' | 'feedback' | 'actions' | 'attempts'>
 ): number {
   const res = getDb()
     .prepare(
@@ -157,8 +171,21 @@ export function markAlertSentQuiet(id: number, at: number): void {
   getDb().prepare(`UPDATE email_alerts SET status = 'sent', sent_at = ? WHERE id = ?`).run(at, id)
 }
 
-export function setAlertStatus(id: number, status: AlertStatus): void {
-  getDb().prepare('UPDATE email_alerts SET status = ? WHERE id = ?').run(status, id)
+/**
+ * Counts a failed send. Below MAX_SEND_ATTEMPTS the alert goes to `retry`;
+ * at it, the alert is given up as `suppressed`. Returns the new status.
+ */
+export function recordSendFailure(id: number): AlertStatus {
+  const db = getDb()
+  return db.transaction(() => {
+    const row = db.prepare('SELECT attempts FROM email_alerts WHERE id = ?').get(id) as
+      | { attempts: number }
+      | undefined
+    const attempts = (row?.attempts ?? 0) + 1
+    const status: AlertStatus = attempts >= MAX_SEND_ATTEMPTS ? 'suppressed' : 'retry'
+    db.prepare('UPDATE email_alerts SET attempts = ?, status = ? WHERE id = ?').run(attempts, status, id)
+    return status
+  })()
 }
 
 export function alertsByStatus(status: AlertStatus): AlertRow[] {
@@ -276,6 +303,7 @@ function defaultSettings(): AlertSettings {
     quietStart: '22:00',
     quietEnd: '07:00',
     seededMailboxes: [],
+    pauseSummaryPending: false,
   }
 }
 
