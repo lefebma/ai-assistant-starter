@@ -12,6 +12,7 @@ Your assistant can now message you the moment a critical email lands, on Gmail a
 - **Pause.** Pause from the button on an alert or by asking: 1 hour, until tomorrow morning, 1 day, 1 week, or until you turn it back on. When the pause ends you get a summary of the 5 most recent critical emails, plus a count of the rest. If a pause ends overnight, VIP emails come through right away and the summary waits for the morning.
 - **Feedback buttons.** Each alert has Useful, Not urgent and Mute sender buttons, plus Pause alerts.
 - **Status and replay.** Ask for the status to see what is on, who is on your lists and when it is paused. Ask for a replay of recent mail (up to 14 days back, checking the newest 60 emails) to see which would have alerted, without sending anything.
+- **Fixed: one-command provisioning stopped before web setup.** Since the admin login was split out, `npm run provision` ran the web-setup step as havn-admin from inside `/home/havn/havn`, a folder that login cannot enter, so a new box finished installing with no setup page and no link. The step now changes folder as root. Found on havn-joel, the first box built after the split.
 - **Operators:** the assistant runtime gained a per-turn model choice and isolated tool-less turns. The ai-sdk runtime reads two new optional settings, `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`. The email-alerts skill is always on and arrives with the update.
 
 ## 1.38.0 - 2026-10-15
