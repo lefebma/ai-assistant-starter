@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: one-command provisioning stopped before web setup.** Since the admin login was split out, `npm run provision` ran the web-setup step as havn-admin from inside `/home/havn/havn`, a folder that login cannot enter, so a new box finished installing with no setup page and no link. The step now changes folder as root. Found on havn-joel, the first box built after the split.
+
 ## 1.38.0 - 2026-10-15
 
 Gmail setup on hosted boxes gets simpler and asks for less, and audit alerts reach owners on Teams too.

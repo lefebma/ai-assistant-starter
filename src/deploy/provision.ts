@@ -273,8 +273,13 @@ export async function provision(spec: ProvisionSpec, deps: ProvisionDeps): Promi
 
     deps.log(`Turning on web setup at https://${address}/setup ...`)
     const installDir = DEFAULT_INSTALL_DIR
-    // havn has no general sudo; root steps go through the admin login.
-    const r = await deps.ssh(ip, `cd ${installDir} && sudo node dist/scripts/hosted/enable-setup.js ${address}`, 'havn-admin')
+    // havn has no general sudo; root steps go through the admin login. That
+    // login cannot enter /home/havn (mode 750), so the cd runs as root too.
+    const r = await deps.ssh(
+      ip,
+      `sudo sh -c 'cd ${installDir} && node dist/scripts/hosted/enable-setup.js ${address}'`,
+      'havn-admin',
+    )
     const link = r.code === 0 ? extractSetupLink(r.stdout, address) : null
     if (!link) {
       const tail = (r.stderr || r.stdout).trim().split('\n').slice(-5).join('\n')
