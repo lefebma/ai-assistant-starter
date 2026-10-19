@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.39.0 - 2026-10-18
+
+Your assistant can now message you the moment a critical email lands, on Gmail and Outlook.
+
+- **New: email alerts for critical mail.** Ask for it ("turn on email alerts") and the assistant checks new mail about every 10 minutes and messages you only when waiting until tomorrow would cause real harm. It is off until you ask. Existing mail is marked as seen when you switch it on, so nothing old alerts. It checks at most 300 emails a day. Outlook mailboxes need mail read access, which existing connections already have.
+- **VIP and mute lists.** Name people who should always get through, and senders who should never alert. Mute wins over VIP.
+- **Quiet hours.** Nothing alerts between 22:00 and 07:00 by default, except VIPs. What came in overnight arrives as a short batch in the morning. Ask to change the hours.
+- **Pause.** Pause from the button on an alert or by asking: 1 hour, until tomorrow morning, 1 day, 1 week, or until you turn it back on. When the pause ends you get a summary of the 5 most recent critical emails that came in meanwhile.
+- **Feedback buttons.** Each alert has Useful, Not urgent and Mute sender buttons, plus Pause alerts.
+- **Status and replay.** Ask for the status to see what is on, who is on your lists and when it is paused. Ask for a replay of the last few days to see which emails would have alerted, without sending anything.
+- **Operators:** the assistant runtime gained a per-turn model choice and isolated tool-less turns. The ai-sdk runtime reads two new optional settings, `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`. The email-alerts skill is always on and arrives with the update.
+
 ## 1.38.0 - 2026-10-15
 
 Gmail setup on hosted boxes gets simpler and asks for less, and audit alerts reach owners on Teams too.
