@@ -15,7 +15,7 @@ export type PauseDuration = '1h' | 'tomorrow' | '1d' | '1w' | 'off'
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
 const AUTOMATED_LOCAL =
-  /^(no-?reply|do-?not-?reply|notifications?|mailer-daemon|bounce|alerts?|news(letter)?|billing|receipts?|support|info|marketing)\b/
+  /^(no-?reply|do-?not-?reply|notifications?|mailer-daemon|bounce|alerts?|news(letter)?|receipts?|marketing)\b/
 
 /** Lowercased address from `"Name <a@b>"` or a bare address. */
 export function senderAddress(from: string): string {
@@ -26,9 +26,12 @@ export function senderAddress(from: string): string {
 /** An entry with "@" is an exact address; a bare domain covers its subdomains too. */
 export function matchesList(address: string, entries: string[]): boolean {
   const addr = address.trim().toLowerCase()
+  if (!addr.includes('@')) return false
   const domain = addr.slice(addr.lastIndexOf('@') + 1)
   for (const raw of entries) {
-    const e = raw.trim().toLowerCase()
+    let e = raw.trim().toLowerCase()
+    if (e.startsWith('*@')) e = e.slice(2)
+    else if (e.startsWith('@')) e = e.slice(1)
     if (!e) continue
     if (e.includes('@')) {
       if (addr === e) return true

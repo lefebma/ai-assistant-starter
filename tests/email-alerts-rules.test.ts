@@ -26,6 +26,13 @@ describe('matchesList', () => {
     expect(matchesList('a@acme.com', ['acme.com'])).toBe(true)
     expect(matchesList('a@notacme.com', ['acme.com'])).toBe(false)
   })
+  it('normalises @domain and *@domain entries', () => {
+    expect(matchesList('a@acme.com', ['@acme.com'])).toBe(true)
+    expect(matchesList('a@mail.acme.com', ['*@acme.com'])).toBe(true)
+  })
+  it('an address with no @ never matches', () => {
+    expect(matchesList('acme.com', ['acme.com'])).toBe(false)
+  })
   it('address entry matches exactly', () => {
     expect(matchesList('a@acme.com', ['A@acme.com'])).toBe(true)
     expect(matchesList('b@acme.com', ['a@acme.com'])).toBe(false)
@@ -45,6 +52,7 @@ describe('isAutomated', () => {
     expect(isAutomated({ from: 'noreply@x.com' })).toBe(true)
     expect(isAutomated({ from: 'GitHub <notifications@github.com>' })).toBe(true)
     expect(isAutomated({ from: 'jane@x.com' })).toBe(false)
+    for (const a of ['support', 'info', 'billing']) expect(isAutomated({ from: `${a}@x.com` })).toBe(false)
   })
 })
 
