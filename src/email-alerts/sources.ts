@@ -37,6 +37,8 @@ export interface Mailbox {
   id: string
   provider: 'gmail' | 'outlook'
   list(sinceMs: number): Promise<NewMail[]>
+  /** Cheap reachability check: the listing call only, no per-message fetches. */
+  probe?(): Promise<void>
   body(msgId: string): Promise<string>
 }
 
@@ -161,7 +163,12 @@ export function gmailMailbox(account: string, exec: Exec): Mailbox {
         // Row dates may be zone-less; allow a day of slack here, the exact check is internalDate below.
         const t = rowTime(row.date)
         if (!Number.isNaN(t) && t < sinceMs - DAY) continue
-        const m = await read(row.id, 'metadata')
+        let m: GmailMessage
+        try {
+          m = await read(row.id, 'metadata')
+        } catch {
+          continue // one unreadable message must not hide the rest
+        }
         const received = Number(m.internalDate)
         if (!Number.isFinite(received) || received < sinceMs) continue
         const hm = headerMap(m)
@@ -175,6 +182,10 @@ export function gmailMailbox(account: string, exec: Exec): Mailbox {
         })
       }
       return out
+    },
+    async probe() {
+      const r = await exec(bin, ['gmail', 'search', 'in:inbox newer_than:1d', '--plain', '--max', '1', '--account', account])
+      if (!r.ok) throw new Error('gmail search failed')
     },
     async body(msgId) {
       const m = await read(msgId, 'full')
@@ -200,9 +211,14 @@ export function outlookMailbox(account: string, client: GraphLike): Mailbox {
       for (const m of await listInbox(client, 50)) {
         const received = Date.parse(m.received)
         if (Number.isNaN(received) || received < sinceMs) continue
-        const extra = (await client.get(
-          `/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders,internetMessageId`
-        )) as { internetMessageId?: string; internetMessageHeaders?: GraphHeader[] }
+        let extra: { internetMessageId?: string; internetMessageHeaders?: GraphHeader[] }
+        try {
+          extra = (await client.get(
+            `/me/messages/${encodeURIComponent(m.id)}?$select=internetMessageHeaders,internetMessageId`
+          )) as typeof extra
+        } catch {
+          continue // one unreadable message must not hide the rest
+        }
         const map = new Map<string, string>()
         for (const h of extra.internetMessageHeaders ?? []) {
           const k = (h.name ?? '').toLowerCase()
@@ -219,6 +235,9 @@ export function outlookMailbox(account: string, client: GraphLike): Mailbox {
         })
       }
       return out
+    },
+    async probe() {
+      await listInbox(client, 1)
     },
     async body(msgId) {
       return cleanBody((await readMail(client, msgId)).body)
@@ -278,7 +297,7 @@ export async function discoverMailboxes(
   const broken: { id: string; why: string }[] = []
   for (const box of candidates) {
     try {
-      await box.list(Date.now())
+      await (box.probe ? box.probe() : box.list(Date.now()))
       boxes.push(box)
     } catch {
       const name = box.provider === 'gmail' ? 'Gmail' : 'Outlook'

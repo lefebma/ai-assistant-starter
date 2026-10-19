@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { discoverMailboxes, gmailMailbox, outlookMailbox, type Exec } from '../src/email-alerts/sources.js'
 
 const T = (iso: string) => Date.parse(iso)
@@ -25,8 +25,12 @@ function rawMsg(id: string, internalMs: number, headers: [string, string][], tex
   })
 }
 
+afterEach(() => vi.useRealTimers())
+
 describe('gmail source', () => {
   it('gmail list maps rows and headers', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(T('2026-10-19T12:00:00Z'))
     const calls: string[][] = []
     const exec: Exec = async (_bin, args) => {
       calls.push(args)
@@ -90,6 +94,18 @@ describe('gmail source', () => {
     expect(reads).toEqual(['18c0000000000003'])
   })
 
+  it('a failed per-message read skips that message only', async () => {
+    const exec: Exec = async (_b, args) => {
+      if (args[1] === 'search') {
+        return { ok: true, stdout: `${SEARCH_HEADER}\n${row('18c0000000000004', '2026-10-18 09:00')}\n${row('18c0000000000005', '2026-10-18 10:00')}\n` }
+      }
+      if (args[2] === '18c0000000000004') return { ok: false, stdout: '' }
+      return { ok: true, stdout: rawMsg(args[2]!, T('2026-10-18T14:00:00Z'), [['From', 'a@x.com'], ['Subject', 'S']]) }
+    }
+    const out = await gmailMailbox('me@gmail.com', exec).list(T('2026-10-17T00:00:00Z'))
+    expect(out.map((m) => m.msgId)).toEqual(['18c0000000000005'])
+  })
+
   it('gmail body returns decoded plain text, cleaned', async () => {
     const exec: Exec = async () => ({
       ok: true,
@@ -143,6 +159,26 @@ describe('outlook source', () => {
     expect(out[0]!.headers).toMatchObject({ from: 'Bob <b@y.com>', listUnsubscribe: '<https://u>', precedence: 'bulk' })
   })
 
+  it('a failed per-message header fetch skips that message only', async () => {
+    const two = {
+      value: [
+        { id: 'BAD', subject: 'a', receivedDateTime: '2026-10-18T12:00:00Z' },
+        { id: 'GOOD', subject: 'b', receivedDateTime: '2026-10-18T12:30:00Z' },
+      ],
+    }
+    const c = {
+      async get(path: string) {
+        if (path.includes('/mailFolders/inbox/messages')) return two
+        if (path.includes('/BAD')) throw new Error('Graph 500')
+        return { internetMessageId: '<g@y.com>', internetMessageHeaders: [] }
+      },
+      async post() { return {} },
+      async patch() { return {} },
+    }
+    const out = await outlookMailbox('o@y.com', c).list(T('2026-10-17T00:00:00Z'))
+    expect(out.map((m) => m.msgId)).toEqual(['GOOD'])
+  })
+
   it('outlook body is cleaned', async () => {
     expect(await outlookMailbox('o@y.com', client).body('AAA')).toBe('Pay now')
   })
@@ -181,6 +217,21 @@ describe('discoverMailboxes', () => {
     expect(broken.map((b) => b.id).sort()).toEqual(['me@gmail.com', 'o@y.com'])
     expect(broken.find((b) => b.id === 'me@gmail.com')!.why).toBe('Gmail needs reconnecting for me@gmail.com.')
     expect(broken.find((b) => b.id === 'o@y.com')!.why).toBe('Outlook needs reconnecting for o@y.com.')
+  })
+
+  it('discovery probes without any per-message fetch', async () => {
+    const calls: string[][] = []
+    const exec: Exec = async (_b, args) => {
+      calls.push(args)
+      if (args[0] === 'auth') return { ok: true, stdout: authList }
+      return { ok: true, stdout: `${SEARCH_HEADER}\n${row('18c0000000000001', '2026-10-18 09:00')}\n` }
+    }
+    const gets: string[] = []
+    const c = { ...okClient, async get(p: string) { gets.push(p); return { value: [{ id: 'X', receivedDateTime: new Date().toISOString() }] } } }
+    const { boxes } = await discoverMailboxes({ exec, msAccounts: () => ['o@y.com'], client: () => c })
+    expect(boxes).toHaveLength(2)
+    expect(calls.some((a) => a[1] === 'raw')).toBe(false)
+    expect(gets.every((p) => !p.includes('internetMessageHeaders'))).toBe(true)
   })
 
   it('a failing gog account list yields no gmail boxes and no throw', async () => {
