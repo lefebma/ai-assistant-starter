@@ -21,9 +21,10 @@ You can change your name, the assistant's name, your city, its tone or your
 bio at any time by saying so in chat. A new city moves the time zone and
 restarts the assistant after it replies; a box that cannot restart itself
 says so. A fresh terminal install (`npm run setup`) asks the same way: the
-messaging platform and its credentials, then AI access, then two optional
-questions that default to no ("Connect email now?" and "Set up optional skills
-now?"). The profile is asked in the first chat, as with web setup. It never
+messaging platform, then AI access, then two optional questions that default
+to no ("Connect email now?" and "Set up optional skills now?"), and only then
+your bot credentials (the Telegram bot token and chat ID, or Teams
+credentials). The profile is asked in the first chat, as with web setup. It never
 asks for a time zone or coordinates, because both come from your city. An
 install set up before this release (it has a `CLAUDE.md` but no saved answers)
 still gets the profile questions when you re-run setup, minus time zone and
