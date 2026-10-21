@@ -42,6 +42,16 @@ function text(raw: Record<string, unknown>, key: string, max: number, required: 
   return v
 }
 
+/**
+ * A name that is safe everywhere it lands: markdown, .env, and the JSON skill
+ * manifests it is substituted into raw. So no control characters, no quotation
+ * marks or backslashes, something left after trimming, and at most `max` long.
+ */
+export function validName(v: string, max: number): boolean {
+  const t = v.trim()
+  return t.length > 0 && t.length <= max && !/[\u0000-\u001f\u007f"\\]/.test(t)
+}
+
 export function isTimezone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: tz })
@@ -96,6 +106,8 @@ export interface Place {
   tempUnit: 'celsius' | 'fahrenheit'
   /** The name the lookup matched, e.g. "Toronto, Ontario, Canada". */
   label: string
+  /** The city's IANA timezone, when the lookup gave one this computer knows. */
+  timezone?: string
 }
 
 const FAHRENHEIT = new Set(['US', 'LR', 'MM', 'BS', 'BZ', 'KY', 'PW'])
@@ -111,7 +123,7 @@ export async function lookUpCity(f: Fetch, city: string): Promise<Place | null> 
     const res = await f(`https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=${encodeURIComponent(city)}`, {
       signal: AbortSignal.timeout(5000),
     })
-    const body = (await res.json()) as { results?: Array<{ latitude: number; longitude: number; country_code?: string; name: string; admin1?: string; country?: string }> }
+    const body = (await res.json()) as { results?: Array<{ latitude: number; longitude: number; country_code?: string; name: string; admin1?: string; country?: string; timezone?: unknown }> }
     const r = body.results?.[0]
     if (!r) return null
     return {
@@ -119,6 +131,7 @@ export async function lookUpCity(f: Fetch, city: string): Promise<Place | null> 
       longitude: r.longitude.toFixed(2),
       tempUnit: FAHRENHEIT.has((r.country_code ?? '').toUpperCase()) ? 'fahrenheit' : 'celsius',
       label: [r.name, r.admin1, r.country].filter(Boolean).join(', '),
+      ...(typeof r.timezone === 'string' && isTimezone(r.timezone) ? { timezone: r.timezone } : {}),
     }
   } catch {
     return null

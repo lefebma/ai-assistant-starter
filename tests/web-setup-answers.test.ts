@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { answersFromWeb, InputError, parseEngine, parseProfile } from '../src/setup/web/answers.js'
+import { answersFromWeb, InputError, lookUpCity, parseEngine, parseProfile, validName } from '../src/setup/web/answers.js'
+import type { Fetch } from '../src/setup/web/telegram.js'
 import { PERSONALITY_PRESETS } from '../src/setup/wizard.js'
 import { renderEnv } from '../src/setup/finalize.js'
 import { buildCaddyfile } from '../src/deploy/teams-edge.js'
@@ -68,6 +69,36 @@ describe('answersFromWeb', () => {
   it("uses the wizard's default coordinates when the city lookup fails", () => {
     const a = answersFromWeb(parseProfile(RAW), { kind: 'later' }, null, '/p')
     expect([a.latitude, a.longitude]).toEqual(['40.71', '-74.01'])
+  })
+})
+
+describe('lookUpCity', () => {
+  const answer = (r: Record<string, unknown>): Fetch =>
+    (async () => ({ json: async () => ({ results: [r] }) }) as Response) as unknown as Fetch
+  const LONDON = { latitude: 51.5072, longitude: -0.1276, country_code: 'GB', name: 'London', timezone: 'Europe/London' }
+  it('lookUpCity returns timezone', async () => {
+    expect(await lookUpCity(answer(LONDON), 'London')).toMatchObject({ latitude: '51.51', longitude: '-0.13', tempUnit: 'celsius', timezone: 'Europe/London' })
+  })
+  it('drops an invalid timezone', async () => {
+    const place = await lookUpCity(answer({ ...LONDON, timezone: 'Mars/Olympus' }), 'London')
+    expect(place?.latitude).toBe('51.51')
+    expect(place?.timezone).toBeUndefined()
+    expect((await lookUpCity(answer({ ...LONDON, timezone: 42 }), 'London'))?.timezone).toBeUndefined()
+  })
+})
+
+describe('validName', () => {
+  it('accepts a plain name within the limit', () => {
+    expect(validName('Jane', 80)).toBe(true)
+    expect(validName('x'.repeat(40), 40)).toBe(true)
+  })
+  it('refuses empty, long, quoted, backslashed and control-character names', () => {
+    expect(validName('   ', 80)).toBe(false)
+    expect(validName('x'.repeat(41), 40)).toBe(false)
+    expect(validName('Ja"ne', 80)).toBe(false)
+    expect(validName('Ja\\ne', 80)).toBe(false)
+    expect(validName('Ja\nne', 80)).toBe(false)
+    expect(validName('Ja\u0000ne', 80)).toBe(false)
   })
 })
 
