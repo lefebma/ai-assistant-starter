@@ -282,7 +282,7 @@ assistant asks in the first Telegram chat. When they finish:
 
 - their keys go into the vault, and `.env` is written without secrets;
 - the assistant says hello in their Telegram and asks its welcome questions
-  (name, its own name, city, tone), at most three replies' worth;
+  (name, its own name, city, tone, what they do), at most three replies' worth;
 - the setup server (which runs as `havn`, with no sudo) writes
   `store/setup-finished` and exits, and the root-owned `havn-setup-done.path`
   retires the setup units and enables and starts `havn.service`;
