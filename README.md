@@ -84,7 +84,7 @@ npm install
 npm run setup
 ```
 
-The setup wizard asks your name, your assistant's name, its tone and your city, walks you through Telegram bot creation, and optionally installs a background service. Email and optional skills sit behind one question that defaults to no. Time zone and weather location come from your city. Prefer a browser? `npm run setup:web` asks only for your Telegram bot and AI access, then the assistant asks the rest in your first chat.
+The setup wizard asks for your messaging platform and its credentials, then AI access, walks you through Telegram bot creation, and optionally installs a background service. Email and optional skills are two separate questions that default to no. Your name, the assistant's name, tone and city are asked in your first chat, and the time zone and weather location come from your city. Prefer a browser? `npm run setup:web` asks only for your Telegram bot and AI access, then the assistant asks the rest in your first chat.
 
 ### Step 4: Create your Telegram bot
 
