@@ -86,6 +86,13 @@ describe('profile CLI', () => {
     expect(status.stdout).toContain('Profile: set. Owner: Jane.')
   }, 60_000)
 
+  it('treats a blank city as absent: no lookup, no weather line', async () => {
+    const root = project()
+    const res = await runCli(['set', '--owner-name', 'Jane', '--city', ''], root)
+    expect(res.code).toBe(0)
+    expect(res.stdout).toBe('Saved.\n')
+  }, 60_000)
+
   it('prints an InputError as the only stdout line with exit code 1', async () => {
     const root = project()
     const res = await runCli(['set', '--owner-name', 'Ja"ne'], root)

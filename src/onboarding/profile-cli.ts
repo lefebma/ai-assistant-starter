@@ -49,7 +49,7 @@ export async function main(argv: string[], root: string = process.env.AGENT_PROJ
   const input = parseSet(rest)
   const res = await applyProfile(root, homedir(), input, { fetch: globalThis.fetch })
   const lines = ['Saved.']
-  if (input.city !== undefined) {
+  if (input.city?.trim()) {
     lines.push(
       res.placeNotFound
         ? `I could not find "${input.city.trim()}", so the weather location and time zone stay as they were.`
