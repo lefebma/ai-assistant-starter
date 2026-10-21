@@ -74,7 +74,7 @@ async function pairOwner(t: Awaited<ReturnType<typeof boot>>) {
 }
 
 const TZ = 'America/New_York'
-const HELLO = "Hi, I'm set up. I'll be ready in a minute or two. Say hello then and I'll ask a few quick questions so I can be useful."
+const HELLO = "Hi, I'm set up. I'll be ready in a minute or two, and then I'll ask a few quick questions so I can be useful."
 
 describe('web setup, hosted', () => {
   it('404s the page and the API without the link token', async () => {

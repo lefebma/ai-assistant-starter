@@ -20,7 +20,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { resolve } from 'node:path'
 import { writeConfiguration } from '../finalize.js'
 import type { AiProvider } from '../plan.js'
-import { answersFromWeb, InputError, lookUpCity, parseEngine, parseTimezone, provisionalProfile } from './answers.js'
+import { answersFromWeb, InputError, parseEngine, parseTimezone, provisionalProfile } from './answers.js'
 import { checkLink, completeLink, FailureLimiter, type LinkStore } from './link.js'
 import { checkBotToken, Pairing, sendMessage, TelegramError, type BotInfo, type Fetch } from './telegram.js'
 
@@ -208,17 +208,16 @@ export function createSetupServer(deps: SetupDeps): Server {
       return
     }
     finishing = true
-    // Snapshot before the first await: a token POST during the city lookup
-    // must not mix one bot's token with another bot's chat.
+    // Snapshot: a token POST while the welcome message is being sent must
+    // not mix one bot's token with another bot's chat.
     const owner = bot
     const paired = pairing
     try {
       const chatId = pairing.state.candidate.chatId
       // The owner is not asked who they are here; the first chat does that.
       const profile = provisionalProfile(pairing.state.candidate.name, owner.info.firstName, parseTimezone(body['timezone']))
-      // Empty city: no lookup, no fetch. Kept so the answers path stays one shape.
-      const place = await lookUpCity(deps.fetch, profile.city)
-      const answers = answersFromWeb(profile, engine, place, deps.projectRoot)
+      // No city is asked here, so there is nothing to look up.
+      const answers = answersFromWeb(profile, engine, null, deps.projectRoot)
       // Vault first: if it cannot be written, nothing else is, and the page
       // can simply be submitted again.
       deps.vault.set('TELEGRAM_BOT_TOKEN', owner.token)
@@ -236,7 +235,7 @@ export function createSetupServer(deps: SetupDeps): Server {
           deps.fetch,
           owner.token,
           chatId,
-          "Hi, I'm set up. I'll be ready in a minute or two. Say hello then and I'll ask a few quick questions so I can be useful."
+          "Hi, I'm set up. I'll be ready in a minute or two, and then I'll ask a few quick questions so I can be useful."
         )
       } catch {
         delivered = false

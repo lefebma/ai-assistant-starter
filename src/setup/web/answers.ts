@@ -1,10 +1,10 @@
 /**
  * The web setup asks for far less than the terminal wizard: your messaging
  * app and how the assistant reaches a model. Who you are comes from the first
- * chat. Everything else
- * gets the answer the wizard would get from someone who skipped the optional
- * questions (no email yet, no optional skills, no monthly audit). Email comes
- * later through the connectors, and keys through /secret in chat.
+ * chat. Everything else gets the answer the wizard would get from someone who
+ * skipped the optional questions (no email yet, no optional skills, no monthly
+ * audit). Email comes later through the connectors, and keys through /secret
+ * in chat.
  */
 import { buildEmailSignature, type AiProvider, type Answers, type EngineChoice } from '../plan.js'
 import { PROVISIONAL } from '../saved.js'
