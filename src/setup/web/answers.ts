@@ -1,11 +1,13 @@
 /**
- * The web setup asks for far less than the terminal wizard: who you are,
- * your messaging app, and how the assistant reaches a model. Everything else
+ * The web setup asks for far less than the terminal wizard: your messaging
+ * app and how the assistant reaches a model. Who you are comes from the first
+ * chat. Everything else
  * gets the answer the wizard would get from someone who skipped the optional
  * questions (no email yet, no optional skills, no monthly audit). Email comes
  * later through the connectors, and keys through /secret in chat.
  */
 import { buildEmailSignature, type AiProvider, type Answers, type EngineChoice } from '../plan.js'
+import { PROVISIONAL } from '../saved.js'
 import { PERSONALITY_PRESETS } from '../wizard.js'
 import type { Fetch } from './telegram.js'
 
@@ -33,15 +35,6 @@ export const DEFAULT_MODELS: Record<AiProvider, string> = {
 
 export class InputError extends Error {}
 
-function text(raw: Record<string, unknown>, key: string, max: number, required: boolean): string {
-  const v = typeof raw[key] === 'string' ? (raw[key] as string).trim() : ''
-  if (required && !v) throw new InputError(`Please fill in ${key === 'ownerName' ? 'your name' : key === 'assistantName' ? "your assistant's name" : key}.`)
-  if (v.length > max) throw new InputError(`That ${key} is too long.`)
-  // No control characters: these end up in markdown and .env.
-  if (/[\u0000-\u001f\u007f]/.test(v.replace(/\n/g, ''))) throw new InputError(`That ${key} has characters it cannot use.`)
-  return v
-}
-
 /**
  * A name that is safe everywhere it lands: markdown, .env, and the JSON skill
  * manifests it is substituted into raw. So no control characters, no quotation
@@ -61,24 +54,26 @@ export function isTimezone(tz: string): boolean {
   }
 }
 
-export function parseProfile(input: unknown): WebProfile {
-  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  const timezone = text(raw, 'timezone', 64, true)
-  if (!isTimezone(timezone)) throw new InputError(`"${timezone}" is not a timezone this computer knows.`)
-  const vibe = Number(raw['vibe'])
-  // These three are substituted raw into skill manifests, which are JSON.
-  const plain = (key: string, max: number, required: boolean): string => {
-    const v = text(raw, key, max, required).replace(/\n/g, ' ')
-    if (/["\\]/.test(v)) throw new InputError('Please leave out quotation marks and backslashes.')
-    return v
-  }
+/** The browser's timezone, or UTC when it is missing or not one this computer knows. */
+export function parseTimezone(raw: unknown): string {
+  return typeof raw === 'string' && isTimezone(raw.trim()) ? raw.trim() : 'UTC'
+}
+
+/**
+ * Stand-ins for the profile the web setup no longer asks for. The first chat
+ * replaces them. The owner is the first word of the Telegram pairing name; the
+ * assistant borrows the bot's own name.
+ */
+export function provisionalProfile(pairingName: string, botFirstName: string | undefined, timezone: string): WebProfile {
+  const first = pairingName.trim().split(/\s+/)[0] ?? ''
+  const bot = botFirstName?.trim() ?? ''
   return {
-    ownerName: plain('ownerName', 80, true),
-    assistantName: plain('assistantName', 40, true),
+    ownerName: first !== 'Unknown' && validName(first, 80) ? first : PROVISIONAL.ownerName,
+    assistantName: validName(bot, 40) ? bot : PROVISIONAL.assistantName,
     timezone,
-    city: plain('city', 80, false),
-    vibe: Number.isInteger(vibe) && vibe >= 0 && vibe < PERSONALITY_PRESETS.length ? vibe : 1,
-    ownerBio: text(raw, 'ownerBio', 600, false),
+    city: '',
+    vibe: PROVISIONAL.vibeIndex,
+    ownerBio: '',
   }
 }
 

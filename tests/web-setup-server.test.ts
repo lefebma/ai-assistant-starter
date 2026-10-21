@@ -73,7 +73,8 @@ async function pairOwner(t: Awaited<ReturnType<typeof boot>>) {
   expect(c).toMatchObject({ state: 'paired', name: 'Leif' })
 }
 
-const PROFILE = { ownerName: 'Leif Becker', assistantName: 'Avery', timezone: 'America/New_York', city: 'Toronto', vibe: 2, ownerBio: 'I run an AI consultancy.' }
+const TZ = 'America/New_York'
+const HELLO = "Hi, I'm set up. I'll be ready in a minute or two. Say hello then and I'll ask a few quick questions so I can be useful."
 
 describe('web setup, hosted', () => {
   it('404s the page and the API without the link token', async () => {
@@ -120,7 +121,7 @@ describe('web setup, hosted', () => {
     const t = await boot('hosted')
     await pairOwner(t)
     t.tg.failSend = true
-    const res = await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'later' } })
+    const res = await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'later' } })
     expect(await res.json()).toMatchObject({ ok: true, delivered: false })
     expect(t.links.state).toMatchObject({ hash: null })
   })
@@ -130,16 +131,16 @@ describe('web setup, hosted', () => {
     const s = (await (await t.req('/setup/api/state')).json()) as { subscription: unknown }
     expect(s.subscription).toBeNull()
     await pairOwner(t)
-    const r = await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'subscription' } })
+    const r = await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'subscription' } })
     expect(r.status).toBe(400)
   })
 
   it('finishes: secrets in the vault only, config written, hello sent, link consumed, then 404', async () => {
     const t = await boot('hosted')
     await pairOwner(t)
-    const res = await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'api-key', provider: 'openai', key: OPENAI_KEY } })
+    const res = await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'api-key', provider: 'openai', key: OPENAI_KEY } })
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, bot: 'avery_test_bot', delivered: true, city: 'Toronto, Ontario, Canada' })
+    expect(await res.json()).toMatchObject({ ok: true, bot: 'avery_test_bot', delivered: true, city: null })
 
     expect(t.vault.get('TELEGRAM_BOT_TOKEN')).toBe(BOT_TOKEN)
     expect(t.vault.get('OPENAI_API_KEY')).toBe(OPENAI_KEY)
@@ -151,9 +152,15 @@ describe('web setup, hosted', () => {
     expect(env).toMatch(/^AI_MODEL=gpt-5$/m)
     expect(env).toMatch(/^TIMEZONE=America\/New_York$/m)
     expect(existsSync(join(t.root, 'CLAUDE.md'))).toBe(true)
-    expect(readFileSync(join(t.root, 'skills', 'weather', 'manifest.json'), 'utf-8')).toContain('43.70')
+    expect(readFileSync(join(t.root, 'skills', 'weather', 'manifest.json'), 'utf-8')).toContain('40.71')
 
-    expect(t.tg.sent).toEqual([{ chat_id: 4242, text: expect.stringContaining("Hi Leif Becker, I'm Avery.") }])
+    // No profile was asked for: the first chat finishes it, and no city was looked up.
+    const saved = JSON.parse(readFileSync(join(t.root, 'store', 'setup-answers.json'), 'utf-8'))
+    expect(saved).toMatchObject({ profilePending: true, ownerName: 'Leif', assistantName: 'Avery', city: '' })
+    expect(JSON.stringify(saved)).not.toContain(OPENAI_KEY)
+    expect(t.tg.calls).not.toContain('geocode')
+
+    expect(t.tg.sent).toEqual([{ chat_id: 4242, text: HELLO }])
     expect(t.links.state).toMatchObject({ hash: null })
     await new Promise((r) => setImmediate(r))
     expect(t.finished()).toBe(1)
@@ -164,7 +171,7 @@ describe('web setup, hosted', () => {
 
   it('refuses to finish before Telegram is paired', async () => {
     const t = await boot('hosted')
-    const r = await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'later' } })
+    const r = await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'later' } })
     expect(r.status).toBe(400)
     expect(await r.json()).toMatchObject({ error: 'Connect Telegram first.' })
   })
@@ -173,7 +180,7 @@ describe('web setup, hosted', () => {
     const t = await boot('hosted')
     writeFileSync(join(t.root, '.env'), 'EXISTING=1\n')
     await pairOwner(t)
-    const r = await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'later' } })
+    const r = await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'later' } })
     expect(r.status).toBe(409)
     expect(readFileSync(join(t.root, '.env'), 'utf-8')).toBe('EXISTING=1\n')
     expect(t.vault.size).toBe(0)
@@ -193,10 +200,20 @@ describe('web setup, hosted', () => {
   it('never echoes a bad input back with secrets in it', async () => {
     const t = await boot('hosted')
     await pairOwner(t)
-    const r = await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'api-key', provider: 'openai', key: 'short' } })
+    const r = await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'api-key', provider: 'openai', key: 'short' } })
     const body = await r.text()
     expect(r.status).toBe(400)
     expect(body).not.toContain('short')
+  })
+})
+
+describe('web setup, no profile', () => {
+  it('finishes with only a timezone and an engine, falling back to UTC on a bad timezone', async () => {
+    const t = await boot('local')
+    await pairOwner(t)
+    const res = await t.req('/setup/api/finish', { timezone: 'Not/AZone', engine: { kind: 'later' } })
+    expect(res.status).toBe(200)
+    expect(readFileSync(join(t.root, '.env'), 'utf-8')).toMatch(/^TIMEZONE=UTC$/m)
   })
 })
 
@@ -223,13 +240,13 @@ describe('web setup, local', () => {
     await t.req('/setup/api/claude/sign-in', {})
     expect(t.signInStarted()).toBe(1)
     await pairOwner(t)
-    expect((await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'subscription' } })).status).toBe(400)
+    expect((await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'subscription' } })).status).toBe(400)
   })
 
   it('finishes on the subscription once signed in, with no key anywhere', async () => {
     const t = await boot('local', { signedIn: true })
     await pairOwner(t)
-    const r = await t.req('/setup/api/finish', { profile: PROFILE, engine: { kind: 'subscription' } })
+    const r = await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'subscription' } })
     expect(r.status).toBe(200)
     expect([...t.vault.keys()]).toEqual(['TELEGRAM_BOT_TOKEN'])
     expect(readFileSync(join(t.root, '.env'), 'utf-8')).toContain('Using the Claude subscription')

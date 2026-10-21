@@ -20,7 +20,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { resolve } from 'node:path'
 import { writeConfiguration } from '../finalize.js'
 import type { AiProvider } from '../plan.js'
-import { answersFromWeb, InputError, lookUpCity, parseEngine, parseProfile } from './answers.js'
+import { answersFromWeb, InputError, lookUpCity, parseEngine, parseTimezone, provisionalProfile } from './answers.js'
 import { checkLink, completeLink, FailureLimiter, type LinkStore } from './link.js'
 import { checkBotToken, Pairing, sendMessage, TelegramError, type BotInfo, type Fetch } from './telegram.js'
 
@@ -198,7 +198,6 @@ export function createSetupServer(deps: SetupDeps): Server {
       json(res, 400, { error: 'Connect Telegram first.' })
       return
     }
-    const profile = parseProfile(body['profile'])
     const engine = parseEngine(body['engine'], subscriptionAllowed)
     if (engine.kind === 'subscription' && !deps.claude?.signedIn()) {
       json(res, 400, { error: 'Sign in to Claude first, or choose an API key.' })
@@ -215,13 +214,16 @@ export function createSetupServer(deps: SetupDeps): Server {
     const paired = pairing
     try {
       const chatId = pairing.state.candidate.chatId
+      // The owner is not asked who they are here; the first chat does that.
+      const profile = provisionalProfile(pairing.state.candidate.name, owner.info.firstName, parseTimezone(body['timezone']))
+      // Empty city: no lookup, no fetch. Kept so the answers path stays one shape.
       const place = await lookUpCity(deps.fetch, profile.city)
       const answers = answersFromWeb(profile, engine, place, deps.projectRoot)
       // Vault first: if it cannot be written, nothing else is, and the page
       // can simply be submitted again.
       deps.vault.set('TELEGRAM_BOT_TOKEN', owner.token)
       if (engine.kind === 'api-key' && engine.provider) deps.vault.set(KEY_NAME[engine.provider], engine.key)
-      writeConfiguration(answers, { chatId: String(chatId) }, deps.projectRoot, deps.home)
+      writeConfiguration(answers, { chatId: String(chatId) }, deps.projectRoot, deps.home, { profilePending: true })
       // Consumed the moment the config exists, so a crash below cannot leave
       // a configured box with a live link.
       if (deps.mode === 'hosted') completeLink(deps.links, deps.now())
@@ -234,12 +236,12 @@ export function createSetupServer(deps: SetupDeps): Server {
           deps.fetch,
           owner.token,
           chatId,
-          `Hi ${profile.ownerName}, I'm ${profile.assistantName}. Setup is done. I'll be ready in a minute or two; say hello then.`
+          "Hi, I'm set up. I'll be ready in a minute or two. Say hello then and I'll ask a few quick questions so I can be useful."
         )
       } catch {
         delivered = false
       }
-      json(res, 200, { ok: true, bot: owner.info.username, delivered, city: place?.label ?? null })
+      json(res, 200, { ok: true, bot: owner.info.username, delivered, city: null })
       setImmediate(deps.onFinished)
     } catch (err) {
       finishing = false

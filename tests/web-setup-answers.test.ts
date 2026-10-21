@@ -1,31 +1,40 @@
 import { describe, it, expect } from 'vitest'
-import { answersFromWeb, InputError, lookUpCity, parseEngine, parseProfile, validName } from '../src/setup/web/answers.js'
+import { answersFromWeb, InputError, lookUpCity, parseEngine, parseTimezone, provisionalProfile, validName } from '../src/setup/web/answers.js'
 import type { Fetch } from '../src/setup/web/telegram.js'
 import { PERSONALITY_PRESETS } from '../src/setup/wizard.js'
 import { renderEnv } from '../src/setup/finalize.js'
 import { buildCaddyfile } from '../src/deploy/teams-edge.js'
 import { buildHandoffPath, buildHandoffService, buildSetupUnit, UNIT_LOGS } from '../src/deploy/setup-edge.js'
 
-const RAW = { ownerName: '  Leif ', assistantName: 'Avery', timezone: 'America/Toronto', city: 'Toronto', vibe: 0, ownerBio: '' }
+const PROFILE = provisionalProfile('Leif Becker', 'Avery', 'America/Toronto')
 
-describe('parseProfile', () => {
-  it('trims and keeps a valid profile', () => {
-    expect(parseProfile(RAW)).toEqual({ ownerName: 'Leif', assistantName: 'Avery', timezone: 'America/Toronto', city: 'Toronto', vibe: 0, ownerBio: '' })
+describe('provisionalProfile', () => {
+  it('takes the first word of the pairing name and the bot name, with the friendly tone and no city', () => {
+    expect(provisionalProfile('Jane Doe', 'Nami', 'Europe/London')).toEqual({
+      ownerName: 'Jane',
+      assistantName: 'Nami',
+      timezone: 'Europe/London',
+      city: '',
+      vibe: 1,
+      ownerBio: '',
+    })
   })
-  it('requires a name and a real timezone', () => {
-    expect(() => parseProfile({ ...RAW, ownerName: '' })).toThrow(InputError)
-    expect(() => parseProfile({ ...RAW, timezone: 'Mars/Olympus' })).toThrow(/not a timezone/)
-    expect(() => parseProfile({ ...RAW, timezone: 'UTC; rm -rf /' })).toThrow(InputError)
+  it('falls back when the pairing name or bot name is unusable', () => {
+    expect(provisionalProfile('Ja"ne', undefined, 'UTC')).toMatchObject({ ownerName: 'the owner', assistantName: 'Atlas' })
+    expect(provisionalProfile('', undefined, 'UTC').ownerName).toBe('the owner')
+    expect(provisionalProfile('Unknown', undefined, 'UTC').ownerName).toBe('the owner')
+    expect(provisionalProfile('Jane', 'Bad\\Name', 'UTC').assistantName).toBe('Atlas')
+    expect(provisionalProfile('Jane', 'x'.repeat(41), 'UTC').assistantName).toBe('Atlas')
   })
-  it('refuses control characters that would break .env or markdown', () => {
-    expect(() => parseProfile({ ...RAW, assistantName: 'Av\u0000ery' })).toThrow(InputError)
-  })
-  it('refuses quotes and backslashes, which would break the JSON skill manifests', () => {
-    expect(() => parseProfile({ ...RAW, ownerName: 'Marc "Mo" L' })).toThrow(/quotation marks/)
-    expect(() => parseProfile({ ...RAW, city: 'C:\\x' })).toThrow(/quotation marks/)
-  })
-  it('falls back to the friendly preset on a bad vibe', () => {
-    expect(parseProfile({ ...RAW, vibe: 99 }).vibe).toBe(1)
+})
+
+describe('parseTimezone', () => {
+  it('keeps a real timezone and falls back to UTC otherwise', () => {
+    expect(parseTimezone('America/Toronto')).toBe('America/Toronto')
+    expect(parseTimezone('Not/AZone')).toBe('UTC')
+    expect(parseTimezone('UTC; rm -rf /')).toBe('UTC')
+    expect(parseTimezone(undefined)).toBe('UTC')
+    expect(parseTimezone(42)).toBe('UTC')
   })
 })
 
@@ -50,12 +59,12 @@ describe('parseEngine', () => {
 
 describe('answersFromWeb', () => {
   it('maps to the answers a skip-everything wizard run gives, with no secrets', () => {
-    const a = answersFromWeb(parseProfile(RAW), { kind: 'api-key', provider: 'openai', model: 'gpt-5' }, { latitude: '43.70', longitude: '-79.42', tempUnit: 'celsius', label: 'Toronto' }, '/p')
+    const a = answersFromWeb(PROFILE, { kind: 'api-key', provider: 'openai', model: 'gpt-5' }, { latitude: '43.70', longitude: '-79.42', tempUnit: 'celsius', label: 'Toronto' }, '/p')
     expect(a).toMatchObject({
       platform: 'Telegram',
       engine: 'api-key',
       aiProvider: 'openai',
-      personalityVibe: PERSONALITY_PRESETS[0],
+      personalityVibe: PERSONALITY_PRESETS[1],
       emailProvider: 'Skip for now',
       latitude: '43.70',
       monthlyAudit: false,
@@ -67,7 +76,7 @@ describe('answersFromWeb', () => {
     expect(env).toMatch(/^ALLOWED_CHAT_ID=42$/m)
   })
   it("uses the wizard's default coordinates when the city lookup fails", () => {
-    const a = answersFromWeb(parseProfile(RAW), { kind: 'later' }, null, '/p')
+    const a = answersFromWeb(PROFILE, { kind: 'later' }, null, '/p')
     expect([a.latitude, a.longitude]).toEqual(['40.71', '-74.01'])
   })
 })
@@ -104,13 +113,13 @@ describe('validName', () => {
 
 describe('renderEnv', () => {
   it('fills platform credentials exactly as the terminal wizard did', () => {
-    const a = answersFromWeb(parseProfile(RAW), { kind: 'later' }, null, '/p')
+    const a = answersFromWeb(PROFILE, { kind: 'later' }, null, '/p')
     const env = renderEnv(a, { botToken: '1:abc', chatId: '42' })
     expect(env).toMatch(/^TELEGRAM_BOT_TOKEN=1:abc$/m)
     expect(env).toMatch(/^ALLOWED_CHAT_ID=42$/m)
   })
   it('keeps a $ in a value literal', () => {
-    const a = answersFromWeb(parseProfile(RAW), { kind: 'later' }, null, '/p')
+    const a = answersFromWeb(PROFILE, { kind: 'later' }, null, '/p')
     expect(renderEnv(a, { botToken: "1:a$&b$1c$'" })).toMatch(/^TELEGRAM_BOT_TOKEN=1:a\$&b\$1c\$'$/m)
   })
 })
