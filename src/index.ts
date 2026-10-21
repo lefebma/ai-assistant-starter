@@ -21,6 +21,8 @@ import { createAdapter, detectPlatform } from './platform/index.js'
 import { syncAlwaysOnSkills } from './skills/sync.js'
 import { reloadSkills } from './skills/index.js'
 import { interviewGreeting, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
+import { welcomeGreeting } from './onboarding/welcome.js'
+import { PROVISIONAL, isProfilePending, loadSetupAnswers } from './setup/saved.js'
 import { auditWanted, ensureAuditTask } from './audit/index.js'
 import { auditScheduleDeps } from './audit/wiring.js'
 import { readEnvFile, installTimezone } from './env.js'
@@ -165,7 +167,20 @@ async function main(): Promise<void> {
     }
   }
 
-  if (PRIMARY_CHAT_ID && shouldOfferInterview(PROJECT_ROOT)) {
+  // A minimal setup greets with the profile questions instead. The greeting
+  // is not one of the welcome turns: those count inbound replies (bot.ts).
+  if (PRIMARY_CHAT_ID && isProfilePending(PROJECT_ROOT)) {
+    const saved = loadSetupAnswers(PROJECT_ROOT)
+    const ownerName = typeof saved?.ownerName === 'string' ? saved.ownerName : PROVISIONAL.ownerName
+    const assistantName =
+      typeof saved?.assistantName === 'string' && saved.assistantName.trim() ? saved.assistantName.trim() : PROVISIONAL.assistantName
+    try {
+      await adapter.sendMessage(PRIMARY_CHAT_ID, welcomeGreeting(ownerName, assistantName))
+      logger.info('Sent the welcome questions on startup')
+    } catch (err) {
+      logger.info({ err }, 'Could not greet on startup; the questions ride the first inbound message')
+    }
+  } else if (PRIMARY_CHAT_ID && shouldOfferInterview(PROJECT_ROOT)) {
     try {
       await adapter.sendMessage(PRIMARY_CHAT_ID, interviewGreeting())
       markInterviewOffered()

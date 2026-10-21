@@ -21,6 +21,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { getAppState, setAppState } from '../db.js'
+import { isProfilePending } from '../setup/saved.js'
 
 /**
  * Marker carried by the scaffolded PROFILE.md. The interview writes the file
@@ -50,6 +51,8 @@ export interface OfferDeps {
 export function shouldOfferInterview(projectRoot: string, deps: OfferDeps = {}): boolean {
   const read = deps.getState ?? getAppState
   if (read(OFFER_STATE_KEY)) return false
+  // The welcome questions own the first chat on a minimal setup (welcome.ts).
+  if (isProfilePending(projectRoot)) return false
   return profileIsUnwritten(projectRoot)
 }
 

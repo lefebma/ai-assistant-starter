@@ -54,6 +54,8 @@ import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT, installTimezone } from './env.js'
 import { handleAlertClick } from './email-alerts/buttons.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
+import { noteWelcomeTurn, shouldWelcome, takeRestartAfterReply, welcomeNudge } from './onboarding/welcome.js'
+import { loadSetupAnswers } from './setup/saved.js'
 import { workspaceCommand, workspaceCommandArgs } from './workspace/commands.js'
 import { defaultSyncOne, scheduleWorkspace, unscheduleWorkspace } from './workspace/service.js'
 import { makeJoinIO } from './workspace/io.js'
@@ -189,8 +191,11 @@ async function handleMessage(
   // once, folded into this reply. The startup greeting covers platforms that
   // can open a conversation; this covers the ones that cannot, and any install
   // whose service was already running when the offer shipped.
-  const offerInterview = isPrimaryChat(chatId) && shouldOfferInterview(PROJECT_ROOT)
-  const onboardingNudge = offerInterview ? interviewNudge() : ''
+  // A minimal setup's first chat collects the profile instead (welcome.ts).
+  // The two never ride the same turn.
+  const welcomeSetup = isPrimaryChat(chatId) && shouldWelcome(PROJECT_ROOT) ? loadSetupAnswers(PROJECT_ROOT) : null
+  const offerInterview = !welcomeSetup && isPrimaryChat(chatId) && shouldOfferInterview(PROJECT_ROOT)
+  const onboardingNudge = welcomeSetup ? welcomeNudge(welcomeSetup) : offerInterview ? interviewNudge() : ''
 
   const fullMessage = [skillIndex, memoryContext, onboardingNudge, rawText]
     .filter(Boolean)
@@ -378,6 +383,25 @@ async function handleMessage(
     // here rather than at the top: a turn that throws before delivery would
     // otherwise burn the one offer this install gets.
     if (offerInterview) markInterviewOffered()
+
+    // A welcome turn is counted on delivery for the same reason. The third
+    // skips a profile still pending, so the welcome cannot ride forever.
+    if (welcomeSetup) noteWelcomeTurn(PROJECT_ROOT)
+
+    // The profile CLI changed the time zone during this turn, and only a fresh
+    // process picks it up. The reply already told the owner, so no extra
+    // message: just the notice for when we are back, then the same restart
+    // path /update uses. The key is cleared on read, so a crash cannot loop.
+    if (isPrimaryChat(chatId) && takeRestartAfterReply()) {
+      if (canSelfRestart()) {
+        rememberRestartNotice({ chatId, toVersion: '' })
+        requestRestart()
+        logger.info('Restarting so the new time zone takes effect')
+        process.kill(process.pid, 'SIGTERM')
+      } else {
+        logger.info('Time zone changed; it applies on the next restart')
+      }
+    }
   } finally {
     if (pendingEditTimer) clearTimeout(pendingEditTimer)
     clearInterval(typingInterval)
