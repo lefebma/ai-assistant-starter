@@ -18,6 +18,8 @@ import { resolveBundledClaude } from '../src/infra/claude-bin.js'
 import { checkClaudeAuth, spawnClaude } from '../src/infra/claude-auth.js'
 import { resolveGogBin } from '../src/infra/gog-bin.js'
 import { writeConfiguration } from '../src/setup/finalize.js'
+import { loadSetupAnswers } from '../src/setup/saved.js'
+import { checkBotToken } from '../src/setup/web/telegram.js'
 import { buildNextSteps, renderNextSteps } from '../src/setup/next-steps.js'
 import { ensurePlaywrightMcp } from '../src/setup/mcp-config.js'
 
@@ -139,7 +141,19 @@ async function main(): Promise<void> {
   }
 
   header('Configuration')
-  const answers = await runWizard(prompter, PROJECT_ROOT, { signIn, ensureGog })
+  // An install with a CLAUDE.md but no saved answers predates the first-chat
+  // profile, so it keeps the profile questions. A fresh one gets a provisional
+  // profile that the first chat finishes.
+  const saved = loadSetupAnswers(PROJECT_ROOT)
+  const legacyInstall = existsSync(resolve(PROJECT_ROOT, 'CLAUDE.md')) && !saved
+  const answers = await runWizard(
+    prompter,
+    PROJECT_ROOT,
+    { signIn, ensureGog },
+    { saved, legacyInstall, hostTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+  )
+  const provisional = !legacyInstall && !saved
+  const profilePending = legacyInstall ? false : saved ? saved.profilePending === true : true
 
   // Telegram-specific extras the platform env template leaves blank.
   let botToken = ''
@@ -148,6 +162,15 @@ async function main(): Promise<void> {
     prompter.say('Create a bot via @BotFather on Telegram (/newbot), then paste the token. Blank = fill in later.')
     botToken = await prompter.ask('Telegram bot token', '')
     chatId = await prompter.ask('Your Telegram chat ID (send /chatid to the bot later if unknown)', '')
+    // The bot's own name is a better default than Atlas. A failed check keeps
+    // Atlas quietly: the token may simply be blank or not pasted yet.
+    if (provisional && botToken) {
+      try {
+        answers.assistantName = (await checkBotToken(fetch, botToken)).firstName || answers.assistantName
+      } catch {
+        /* keep the provisional name */
+      }
+    }
   }
 
   let teamsAppId = ''
@@ -163,7 +186,7 @@ async function main(): Promise<void> {
 
   header('Generating configuration...')
 
-  const written = writeConfiguration(answers, { botToken, chatId, teamsAppId, teamsAppSecret, teamsTenantId }, PROJECT_ROOT, homedir())
+  const written = writeConfiguration(answers, { botToken, chatId, teamsAppId, teamsAppSecret, teamsTenantId }, PROJECT_ROOT, homedir(), { profilePending })
   ok(`CLAUDE.md and skills installed (${written.installed})`)
   for (const note of written.notes) warn(note)
   for (const skipped of written.skipped) warn(`kept existing: ${skipped}`)
@@ -278,6 +301,9 @@ async function main(): Promise<void> {
     })
   )) {
     console.log(line)
+  }
+  if (profilePending) {
+    console.log("  Your assistant will ask for your name, city and preferences in the first chat.")
   }
   console.log('')
 
