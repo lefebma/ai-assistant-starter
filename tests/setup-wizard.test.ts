@@ -10,7 +10,7 @@ import {
   hostOsLabel,
   shouldSkipSecret,
 } from '../src/setup/plan.js'
-import { runWizard, provisionalAssistantName, PERSONALITY_PRESETS, type Prompter } from '../src/setup/wizard.js'
+import { isLegacyInstall, runWizard, provisionalAssistantName, PERSONALITY_PRESETS, type Prompter } from '../src/setup/wizard.js'
 import type { Answers } from '../src/setup/plan.js'
 
 const BASE: Answers = {
@@ -376,6 +376,41 @@ describe('runWizard', () => {
     expect(a.timezone).toBe('America/Toronto')
   })
 
+  it('a re-run keeps saved email and skills when both gates are no', async () => {
+    const saved = {
+      ...BASE,
+      emailProvider: 'Gmail' as const,
+      gmailAddress: 'a@b.c',
+      emailAddress: 'a@b.c',
+      skills: { ...BASE.skills, notion: true, wordpress: true },
+      skillConfig: { wpSiteUrl: 'https://example.com', wpUsername: 'jane' },
+      profilePending: false,
+      version: 1 as const,
+    }
+    const asked: string[] = []
+    const inner = scripted(['Telegram', 0, ...NO_EXTRAS])
+    const p: Prompter = {
+      ...inner,
+      ask: async (q, d) => (asked.push(q), inner.ask(q, d)),
+      yesNo: async (q) => (asked.push(q), inner.yesNo(q)),
+    }
+    const a = await runWizard(p, '/repo', undefined, { saved })
+    expect(asked).toEqual(['Change email setup?', 'Change optional skills?'])
+    expect(a.gmailAddress).toBe('a@b.c')
+    expect(a.emailProvider).toBe('Gmail')
+    expect(a.emailSignature).toContain('a@b.c')
+    expect(a.skills.notion).toBe(true)
+    expect(a.skills.wordpress).toBe(true)
+    expect(a.keys).toEqual({ wpSiteUrl: 'https://example.com', wpUsername: 'jane' })
+  })
+
+  it('a re-run that changes email starts the email questions fresh', async () => {
+    const saved = { ...BASE, emailProvider: 'Gmail' as const, gmailAddress: 'a@b.c', profilePending: false, version: 1 as const }
+    const a = await runWizard(scripted(['Telegram', 0, true, 'Outlook/Microsoft 365', 'o@x.com', false, false]), '/repo', undefined, { saved })
+    expect(a.gmailAddress).toBe('')
+    expect(a.outlookAddress).toBe('o@x.com')
+  })
+
   it('email behind gate', async () => {
     const a = await runWizard(scripted(['Telegram', 0, true, 'Gmail', 'a@g.com', false, false]), '/repo')
     expect(a.gmailAddress).toBe('a@g.com')
@@ -526,5 +561,18 @@ describe('runWizard', () => {
     const a = await runWizard(scripted(['Telegram', 2, ...NO_EXTRAS]), '/repo')
     expect(a.engine).toBe('later')
     expect(a.aiProvider).toBeUndefined()
+  })
+})
+
+describe('isLegacyInstall', () => {
+  const saved = { ...BASE, profilePending: false, version: 1 as const }
+  it('a fresh clone is not legacy, even with the shipped CLAUDE.md', () => {
+    expect(isLegacyInstall({ envExists: false, saved: null })).toBe(false)
+  })
+  it('a .env without saved answers is legacy', () => {
+    expect(isLegacyInstall({ envExists: true, saved: null })).toBe(true)
+  })
+  it('a .env with saved answers is not legacy', () => {
+    expect(isLegacyInstall({ envExists: true, saved })).toBe(false)
   })
 })

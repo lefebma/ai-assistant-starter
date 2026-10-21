@@ -11,7 +11,7 @@ import {
   type EngineChoice,
   type Platform,
 } from './plan.js'
-import { PROVISIONAL, type SavedSetup } from './saved.js'
+import { answersFromSaved, PROVISIONAL, type SavedSetup } from './saved.js'
 import { lookUpCity, validName } from './web/answers.js'
 import type { Fetch } from './web/telegram.js'
 
@@ -59,11 +59,6 @@ type ProfileAnswers = Pick<
 
 const VIBE_LABELS = ['Professional and efficient', 'Friendly and conversational', 'Direct and no-nonsense']
 
-/**
- * The profile questions an older install still gets. Timezone, coordinates and
- * temperature unit are never asked: they come from the city, and the host's
- * timezone and the provisional values stand in when the lookup finds nothing.
- */
 /** Asks until the answer passes validName. `optional` lets a blank answer through. */
 async function askName(p: Prompter, question: string, max: number, def?: string, optional = false): Promise<string> {
   for (;;) {
@@ -87,6 +82,20 @@ export function provisionalAssistantName(botFirstName: string | undefined): stri
   return botFirstName !== undefined && validName(botFirstName, 40) ? botFirstName.trim() : PROVISIONAL.assistantName
 }
 
+/**
+ * An install that ran setup before the first-chat profile existed: it has a
+ * .env (gitignored, written only by setup) but no saved answers. CLAUDE.md is
+ * no signal, because the repo ships a placeholder one.
+ */
+export function isLegacyInstall(state: { envExists: boolean; saved: SavedSetup | null | undefined }): boolean {
+  return state.envExists && !state.saved
+}
+
+/**
+ * The profile questions an older install still gets. Timezone, coordinates and
+ * temperature unit are never asked: they come from the city, and the host's
+ * timezone and the provisional values stand in when the lookup finds nothing.
+ */
 async function askLegacyProfile(p: Prompter, opts: WizardOptions): Promise<ProfileAnswers> {
   const ownerName = await askName(p, 'Your name', 80)
   const assistantName = await askName(p, 'Name for your assistant', 40, 'Atlas')
@@ -310,12 +319,19 @@ export async function runWizard(
   const profile = opts.legacyInstall ? await askLegacyProfile(p, opts) : profileFor(opts.saved, opts)
   const { ownerName } = profile
 
-  let emailProvider: EmailProvider = 'Skip for now'
-  let gmailAddress = ''
-  let gmailAddress2 = ''
-  let outlookAddress = ''
-  let outlookAddress2 = ''
-  if (await p.yesNo('Connect email now?')) {
+  // A re-run keeps what the last run chose unless the owner asks to change it.
+  const saved = opts.saved
+  let emailProvider: EmailProvider = saved ? saved.emailProvider : 'Skip for now'
+  let gmailAddress = saved?.gmailAddress ?? ''
+  let gmailAddress2 = saved?.gmailAddress2 ?? ''
+  let outlookAddress = saved?.outlookAddress ?? ''
+  let outlookAddress2 = saved?.outlookAddress2 ?? ''
+  if (await p.yesNo(saved ? 'Change email setup?' : 'Connect email now?')) {
+    emailProvider = 'Skip for now'
+    gmailAddress = ''
+    gmailAddress2 = ''
+    outlookAddress = ''
+    outlookAddress2 = ''
     emailProvider = (await p.choice('Email provider?', ['Gmail', 'Outlook/Microsoft 365', 'Both'])) as EmailProvider
     if (emailProvider === 'Gmail' || emailProvider === 'Both') {
       gmailAddress = await p.ask('Gmail address')
@@ -344,8 +360,16 @@ export async function runWizard(
     wordpress: false,
   }
 
-  if (await p.yesNo('Set up optional skills now (web research, Apollo, Anti-library, Notion, Kanban Zone, voice, WordPress)?')) {
+  const skillsQuestion = saved
+    ? 'Change optional skills?'
+    : 'Set up optional skills now (web research, Apollo, Anti-library, Notion, Kanban Zone, voice, WordPress)?'
+  if (await p.yesNo(skillsQuestion)) {
     await askOptionalSkills(p, skills, keys)
+  } else if (saved) {
+    // The skills stay on with their non-secret config (site URL, vault path).
+    // Their keys are already on disk from the last run and are not asked again.
+    Object.assign(skills, saved.skills)
+    Object.assign(keys, answersFromSaved(saved, projectPath).keys)
   }
 
   return {

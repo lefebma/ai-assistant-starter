@@ -12,7 +12,7 @@ import { isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { PROJECT_ROOT } from '../src/env.js'
-import { provisionalAssistantName, runWizard, type Prompter } from '../src/setup/wizard.js'
+import { isLegacyInstall, provisionalAssistantName, runWizard, type Prompter } from '../src/setup/wizard.js'
 import { checkRequirements, planBuildStep } from '../src/setup/requirements.js'
 import { resolveBundledClaude } from '../src/infra/claude-bin.js'
 import { checkClaudeAuth, spawnClaude } from '../src/infra/claude-auth.js'
@@ -141,11 +141,11 @@ async function main(): Promise<void> {
   }
 
   header('Configuration')
-  // An install with a CLAUDE.md but no saved answers predates the first-chat
-  // profile, so it keeps the profile questions. A fresh one gets a provisional
-  // profile that the first chat finishes.
+  // An install that ran setup before (it has a .env) but has no saved answers
+  // predates the first-chat profile, so it keeps the profile questions. A fresh
+  // one gets a provisional profile that the first chat finishes.
   const saved = loadSetupAnswers(PROJECT_ROOT)
-  const legacyInstall = existsSync(resolve(PROJECT_ROOT, 'CLAUDE.md')) && !saved
+  const legacyInstall = isLegacyInstall({ envExists: existsSync(resolve(PROJECT_ROOT, '.env')), saved })
   const answers = await runWizard(
     prompter,
     PROJECT_ROOT,
