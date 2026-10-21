@@ -10,7 +10,7 @@ import {
   hostOsLabel,
   shouldSkipSecret,
 } from '../src/setup/plan.js'
-import { runWizard, PERSONALITY_PRESETS, type Prompter } from '../src/setup/wizard.js'
+import { runWizard, provisionalAssistantName, PERSONALITY_PRESETS, type Prompter } from '../src/setup/wizard.js'
 import type { Answers } from '../src/setup/plan.js'
 
 const BASE: Answers = {
@@ -335,6 +335,33 @@ describe('runWizard', () => {
     expect(a.timezone).toBe('America/Toronto')
     expect(a.latitude).toBe('43.65')
     expect(a.longitude).toBe('-79.38')
+  })
+
+  it('legacy install re-asks a blank or unsafe name', async () => {
+    for (const bad of ['', 'Ja"ne']) {
+      const a = await runWizard(scripted(['Telegram', 0, bad, 'Jane', 'Atlas', 'Toronto', 0, 'Bio', ...NO_EXTRAS]), '/repo', undefined, {
+        legacyInstall: true,
+        fetch: offline,
+      })
+      expect(a.ownerName).toBe('Jane')
+    }
+  })
+
+  it('legacy install re-asks an unsafe assistant name and city, and a bad bio', async () => {
+    const a = await runWizard(
+      scripted(['Telegram', 0, 'Jane', 'A\\b', 'Ada', 'To"ronto', 'Toronto', 0, 'x'.repeat(601), 'Bio', ...NO_EXTRAS]),
+      '/repo',
+      undefined,
+      { legacyInstall: true, fetch: offline }
+    )
+    expect(a.assistantName).toBe('Ada')
+    expect(a.city).toBe('Toronto')
+    expect(a.ownerBio).toBe('Bio')
+  })
+
+  it('provisionalAssistantName keeps a valid bot name and falls back to Atlas', () => {
+    expect(provisionalAssistantName('Umi')).toBe('Umi')
+    for (const bad of ['Um"i', 'Um\\i', 'x'.repeat(41), '', undefined]) expect(provisionalAssistantName(bad)).toBe('Atlas')
   })
 
   it('saved answers reused', async () => {

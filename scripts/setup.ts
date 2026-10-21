@@ -12,7 +12,7 @@ import { isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { PROJECT_ROOT } from '../src/env.js'
-import { runWizard, type Prompter } from '../src/setup/wizard.js'
+import { provisionalAssistantName, runWizard, type Prompter } from '../src/setup/wizard.js'
 import { checkRequirements, planBuildStep } from '../src/setup/requirements.js'
 import { resolveBundledClaude } from '../src/infra/claude-bin.js'
 import { checkClaudeAuth, spawnClaude } from '../src/infra/claude-auth.js'
@@ -166,7 +166,7 @@ async function main(): Promise<void> {
     // Atlas quietly: the token may simply be blank or not pasted yet.
     if (provisional && botToken) {
       try {
-        answers.assistantName = (await checkBotToken(fetch, botToken)).firstName || answers.assistantName
+        answers.assistantName = provisionalAssistantName((await checkBotToken(fetch, botToken)).firstName)
       } catch {
         /* keep the provisional name */
       }
@@ -303,7 +303,7 @@ async function main(): Promise<void> {
     console.log(line)
   }
   if (profilePending) {
-    console.log("  Your assistant will ask for your name, city and preferences in the first chat.")
+    console.log('  Your assistant will ask for your name, city and preferences in the first chat.')
   }
   console.log('')
 

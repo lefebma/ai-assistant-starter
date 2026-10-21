@@ -12,7 +12,7 @@ import {
   type Platform,
 } from './plan.js'
 import { PROVISIONAL, type SavedSetup } from './saved.js'
-import { lookUpCity } from './web/answers.js'
+import { lookUpCity, validName } from './web/answers.js'
 import type { Fetch } from './web/telegram.js'
 
 export interface Prompter {
@@ -64,17 +64,40 @@ const VIBE_LABELS = ['Professional and efficient', 'Friendly and conversational'
  * temperature unit are never asked: they come from the city, and the host's
  * timezone and the provisional values stand in when the lookup finds nothing.
  */
+/** Asks until the answer passes validName. `optional` lets a blank answer through. */
+async function askName(p: Prompter, question: string, max: number, def?: string, optional = false): Promise<string> {
+  for (;;) {
+    const v = (await p.ask(question, def)).trim()
+    if (optional && v === '') return v
+    if (validName(v, max)) return v
+    p.say(`Use ${max} characters or fewer, with no quotation marks or backslashes.${optional ? '' : ' This one cannot be blank.'}`)
+  }
+}
+
+async function askBio(p: Prompter): Promise<string> {
+  for (;;) {
+    const v = (await p.ask('About you')).trim()
+    if (v.length <= 600 && !/[\u0000-\u001f\u007f]/.test(v)) return v
+    p.say('Keep it to 600 characters or fewer, on one line.')
+  }
+}
+
+/** The bot's own name when it is a valid assistant name, otherwise the provisional one. */
+export function provisionalAssistantName(botFirstName: string | undefined): string {
+  return botFirstName !== undefined && validName(botFirstName, 40) ? botFirstName.trim() : PROVISIONAL.assistantName
+}
+
 async function askLegacyProfile(p: Prompter, opts: WizardOptions): Promise<ProfileAnswers> {
-  const ownerName = await p.ask('Your name')
-  const assistantName = await p.ask('Name for your assistant', 'Atlas')
-  const city = await p.ask('Your city (for weather)', 'New York')
+  const ownerName = await askName(p, 'Your name', 80)
+  const assistantName = await askName(p, 'Name for your assistant', 40, 'Atlas')
+  const city = await askName(p, 'Your city (for weather)', 80, 'New York', true)
 
   const vibeChoice = await p.choice('How should your assistant communicate?', [...VIBE_LABELS, 'Custom (you will write it)'])
   const presetIndex = VIBE_LABELS.indexOf(vibeChoice)
   const personalityVibe = presetIndex >= 0 ? PERSONALITY_PRESETS[presetIndex] : await p.ask('Describe the vibe in 1-2 sentences')
 
   p.say('Tell the assistant about yourself (1-3 sentences): role, business, what help you need.')
-  const ownerBio = await p.ask('About you')
+  const ownerBio = await askBio(p)
 
   const place = await lookUpCity(opts.fetch ?? fetch, city)
   return {
