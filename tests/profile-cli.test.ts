@@ -97,7 +97,7 @@ describe('profile CLI', () => {
     const root = project()
     const res = await runCli(['set', '--owner-name', 'Ja"ne'], root)
     expect(res.code).toBe(1)
-    expect(res.stdout).toBe('That name cannot be used. Keep it under 80 characters, with no quotation marks or backslashes.\n')
+    expect(res.stdout).toBe('That name cannot be used. Use 80 characters or fewer, with no quotation marks or backslashes.\n')
   }, 60_000)
 
   it('rejects an unknown command and an empty set', async () => {

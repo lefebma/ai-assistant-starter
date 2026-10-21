@@ -53,6 +53,26 @@ describe('saved setup answers', () => {
     expect('keys' in JSON.parse(text)).toBe(false)
   })
 
+  it('keeps the non-secret skill config and no secret', () => {
+    const root = tmp()
+    const keys = {
+      anthropic: 'sk-ant-secret',
+      perplexity: 'pplx-secret',
+      kanbanzone: 'kz-secret',
+      wpAppPassword: 'wp-secret',
+      wpSiteUrl: 'https://example.com',
+      wpUsername: 'jane',
+      obsidianVaultPath: '~/Vault',
+      kzBoardId: 'board-1',
+    }
+    saveSetupAnswers(root, answers({ keys }), true)
+    const text = readFileSync(join(root, SETUP_ANSWERS_PATH), 'utf-8')
+    for (const secret of ['sk-ant-secret', 'pplx-secret', 'kz-secret', 'wp-secret']) expect(text).not.toContain(secret)
+    const skillConfig = { wpSiteUrl: 'https://example.com', wpUsername: 'jane', obsidianVaultPath: '~/Vault', kzBoardId: 'board-1' }
+    expect(JSON.parse(text).skillConfig).toEqual(skillConfig)
+    expect(answersFromSaved(loadSetupAnswers(root)!, root).keys).toEqual(skillConfig)
+  })
+
   it('round trips', () => {
     const root = tmp()
     saveSetupAnswers(root, answers(), true)

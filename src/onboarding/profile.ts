@@ -88,7 +88,7 @@ function usableSetup(projectRoot: string): SavedSetup {
 
 function name(v: string | undefined, max: number, what: string): string | undefined {
   if (v === undefined) return undefined
-  if (!validName(v, max)) throw new InputError(`That ${what} cannot be used. Keep it under ${max} characters, with no quotation marks or backslashes.`)
+  if (!validName(v, max)) throw new InputError(`That ${what} cannot be used. Use ${max} characters or fewer, with no quotation marks or backslashes.`)
   return v.trim()
 }
 
@@ -98,7 +98,7 @@ function vibe(v: string | undefined): string | undefined {
   const preset = PRESET_BY_VIBE[t.toLowerCase()]
   if (preset) return preset
   if (!t || t.length > 300 || /[\u0000-\u001f\u007f]/.test(t)) {
-    throw new InputError('Describe the vibe in a sentence or two, under 300 characters.')
+    throw new InputError('Describe the vibe in a sentence or two, 300 characters or fewer.')
   }
   return t
 }
@@ -108,7 +108,7 @@ function bio(v: string | undefined): string | undefined {
   const t = v.trim()
   // Newlines are fine in a bio; it only lands in markdown.
   if (t.length > 600 || /[\u0000-\u001f\u007f]/.test(t.replace(/\n/g, ''))) {
-    throw new InputError('That bio cannot be used. Keep it under 600 characters.')
+    throw new InputError('That bio cannot be used. Keep it to 600 characters or fewer.')
   }
   return t
 }
@@ -233,13 +233,11 @@ export async function applyProfile(projectRoot: string, home: string, input: Pro
   const actions = selectActions(buildSkillPlan(merged, home), buildSkillPlan(old, home), pending, projectRoot, kept)
   const changed = applyPlan(actions, projectRoot).written
 
-  let timezoneChanged = false
-  if (merged.timezone !== old.timezone && writeEnvTimezone(projectRoot, merged.timezone)) {
-    timezoneChanged = true
-    ;(deps.setState ?? setAppState)(RESTART_AFTER_REPLY_KEY, new Date().toISOString())
-  }
-
+  const timezoneChanged = merged.timezone !== old.timezone && writeEnvTimezone(projectRoot, merged.timezone)
   saveSetupAnswers(projectRoot, merged, false)
+  // Only once the answers are saved, so a failed save cannot leave a restart
+  // queued for a change that was never recorded.
+  if (timezoneChanged) (deps.setState ?? setAppState)(RESTART_AFTER_REPLY_KEY, new Date().toISOString())
   return { changed, kept, place, placeNotFound, timezone: merged.timezone, timezoneChanged }
 }
 

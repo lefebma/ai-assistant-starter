@@ -6,7 +6,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { Answers } from './plan.js'
 
-export type SavedSetup = Omit<Answers, 'keys'> & { profilePending: boolean; version: 1 }
+/**
+ * The key-derived fields that are not secrets: skill templates are rendered
+ * from them, so re-rendering a skill without them would blank its config.
+ */
+export const SKILL_CONFIG_FIELDS = ['wpSiteUrl', 'wpUsername', 'obsidianVaultPath', 'kzBoardId'] as const
+export type SkillConfig = Partial<Pick<Answers['keys'], (typeof SKILL_CONFIG_FIELDS)[number]>>
+
+export type SavedSetup = Omit<Answers, 'keys'> & { skillConfig?: SkillConfig; profilePending: boolean; version: 1 }
 
 export const SETUP_ANSWERS_PATH = 'store/setup-answers.json'
 
@@ -20,10 +27,20 @@ export const PROVISIONAL = {
   tempUnit: 'celsius',
 } as const
 
-/** Drops `keys` entirely, so a secret cannot reach the file. */
+/** Copies only the named non-secret fields, so nothing else in `keys` can follow. */
+function pickSkillConfig(from: Record<string, unknown> | undefined): SkillConfig {
+  const out: SkillConfig = {}
+  for (const field of SKILL_CONFIG_FIELDS) {
+    const v = from?.[field]
+    if (typeof v === 'string' && v) out[field] = v
+  }
+  return out
+}
+
+/** Drops `keys` except the named skill config, so a secret cannot reach the file. */
 export function saveSetupAnswers(projectRoot: string, answers: Answers, profilePending: boolean): void {
-  const { keys: _keys, ...rest } = answers
-  const saved: SavedSetup = { ...rest, profilePending, version: 1 }
+  const { keys, ...rest } = answers
+  const saved: SavedSetup = { ...rest, skillConfig: pickSkillConfig(keys), profilePending, version: 1 }
   const file = resolve(projectRoot, SETUP_ANSWERS_PATH)
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, JSON.stringify(saved, null, 2) + '\n', { mode: 0o600 })
@@ -44,7 +61,8 @@ export function isProfilePending(projectRoot: string): boolean {
   return loadSetupAnswers(projectRoot)?.profilePending === true
 }
 
+/** The skill config comes back as `keys`; every secret stays absent. */
 export function answersFromSaved(saved: SavedSetup, projectPath: string): Answers {
-  const { profilePending: _pending, version: _version, ...rest } = saved
-  return { ...rest, keys: {}, projectPath }
+  const { profilePending: _pending, version: _version, skillConfig, ...rest } = saved
+  return { ...rest, keys: pickSkillConfig(skillConfig), projectPath }
 }

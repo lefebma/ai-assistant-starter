@@ -222,9 +222,39 @@ describe('applyProfile', () => {
   })
 
   it('secrets never written', async () => {
-    const { root, home } = project({ skills: { webResearch: true, apollo: true, antilibrary: false, notion: true, kanbanzone: true, wordpress: true } })
-    await applyProfile(root, home, FULL, { fetch: fakeFetch(), setState: () => {} })
-    expect(readdirSync(home)).toEqual([])
+    const keys = { perplexity: 'pplx-real-secret', apollo: 'apollo-secret', notion: 'ntn-secret', kanbanzone: 'kz-secret', wpAppPassword: 'wp-secret' }
+    const { root, home } = project({
+      skills: { webResearch: true, apollo: true, antilibrary: false, notion: true, kanbanzone: true, wordpress: true },
+      keys,
+    })
+    // The setup run wrote the real secrets into its home; set gets a fresh one.
+    expect(readFileSync(join(home, '.perplexity-api-key'), 'utf-8')).toBe('pplx-real-secret')
+    const setHome = mkdtempSync(join(tmpdir(), 'onboarding-home-'))
+    await applyProfile(root, setHome, FULL, { fetch: fakeFetch(), setState: () => {} })
+    expect(readdirSync(setHome)).toEqual([])
+    const answersFile = read(root, 'store/setup-answers.json')
+    for (const secret of Object.values(keys)) expect(answersFile).not.toContain(secret)
+  })
+
+  it('a pending set keeps the WordPress and Anti-library config', async () => {
+    const { root, home } = project({
+      skills: { webResearch: false, apollo: false, antilibrary: true, notion: false, kanbanzone: false, wordpress: true },
+      keys: { wpSiteUrl: 'https://example.com', wpUsername: 'jane', obsidianVaultPath: '/vaults/notes' },
+    })
+    expect(read(root, 'skills/wordpress/wp-api.mjs')).toContain("const SITE = 'https://example.com'")
+    await applyProfile(root, home, { ownerName: 'Jane' }, { fetch: fakeFetch(), setState: () => {} })
+    expect(read(root, 'skills/wordpress/wp-api.mjs')).toContain("const SITE = 'https://example.com'")
+    expect(read(root, 'skills/wordpress/wp-api.mjs')).toContain('jane')
+    expect(read(root, 'skills/antilibrary/SKILL.md')).toContain('/vaults/notes')
+    expect(loadSetupAnswers(root)?.skillConfig).toEqual({ wpSiteUrl: 'https://example.com', wpUsername: 'jane', obsidianVaultPath: '/vaults/notes' })
+  })
+
+  it('requests the restart only after the answers are saved', async () => {
+    const { root, home } = project()
+    writeFileSync(join(root, '.env'), 'TIMEZONE=America/New_York\n')
+    let pendingAtRestart: boolean | undefined
+    await applyProfile(root, home, FULL, { fetch: fakeFetch(), setState: () => (pendingAtRestart = isProfilePending(root)) })
+    expect(pendingAtRestart).toBe(false)
   })
 })
 
