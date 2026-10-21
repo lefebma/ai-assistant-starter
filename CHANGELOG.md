@@ -18,6 +18,16 @@ Your assistant can now message you the moment a critical email lands, on Gmail a
 - **Fixed: one-command provisioning stopped before web setup.** Since the admin login was split out, `npm run provision` ran the web-setup step as havn-admin from inside `/home/havn/havn`, a folder that login cannot enter, so a new box finished installing with no setup page and no link. The step now changes folder as root. Found on havn-joel, the first box built after the split.
 - **Operators:** the assistant runtime gained a per-turn model choice and isolated tool-less turns. The ai-sdk runtime reads two new optional settings, `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`. The email-alerts skill is always on and arrives with the update.
 
+## 1.40.0 - 2026-10-20
+
+Setup is two steps, and the assistant asks the rest in your first chat.
+
+- **Changed: web setup asks only for Telegram and AI access.** The "about you" step is gone. Your name, the assistant's name, your city and its tone are no longer asked on the setup page, and there is no time zone or coordinates question anywhere. Both come from your city.
+- **New: the assistant asks the welcome questions in your first chat.** After it says hello it asks what to call you, what to call it, your city and the tone you want. Reply in your own words. The questions are sent once and ride at most three of your replies, then the assistant stops asking and keeps its best guesses.
+- **New: change your profile any time by saying so.** Tell the assistant to change your name, its name, your city, its tone or your bio and it updates them. A new city moves the time zone, and the assistant restarts after its reply. A box that cannot restart itself says so.
+- **Changed: the terminal wizard asks only the core.** `npm run setup` asks your name, the assistant's name, tone, city and Telegram. Email and optional skills sit behind one question that defaults to no, so nothing optional is asked unless you opt in. Re-running it on an existing install still asks the profile questions, but no longer asks time zone or coordinates.
+- **Unchanged: existing installs.** A box that was already set up is not asked anything new, and this release does not rewrite its `CLAUDE.md`, `PERSONALITY.md`, `PROFILE.md` or skills on update.
+
 ## 1.38.0 - 2026-10-15
 
 Gmail setup on hosted boxes gets simpler and asks for less, and audit alerts reach owners on Teams too.

@@ -8,10 +8,24 @@ This guide walks you through setting up your personal AI assistant powered by Cl
 npm run build && npm run setup:web
 ```
 
-A page opens at `http://localhost:3030/setup` with three short steps: about
-you, your Telegram bot (you tap Start in it to pair), and your AI. Keys go
-into the encrypted vault. When you finish, the assistant starts in the
-background and says hello in Telegram. Connect email afterwards by asking it.
+A page opens at `http://localhost:3030/setup` with two short steps: your
+Telegram bot (you tap Start in it to pair) and your AI. Keys go into the
+encrypted vault. When you finish, the assistant starts in the background and
+says hello in Telegram, then asks a few welcome questions in that first chat:
+what to call you, what to call it, your city and the tone you want. Reply in
+your own words. The questions are sent once and ride at most three of your
+replies; after that the assistant stops asking and keeps its best guesses.
+Connect email afterwards by asking it.
+
+You can change your name, the assistant's name, your city, its tone or your
+bio at any time by saying so in chat. A new city moves the time zone and
+restarts the assistant after it replies; a box that cannot restart itself
+says so. The terminal wizard (`npm run setup`) asks only the core: your
+name, the assistant's name, tone and city, plus the Telegram bot, with email
+and optional skills behind one question that defaults to no. It never asks for
+a time zone or coordinates, because both come from your city. Re-running it on
+an existing install still asks the profile questions, but no longer asks time
+zone or coordinates.
 The page only answers on this computer. The rest of this guide covers the
 terminal wizard and everything you can set up by hand.
 

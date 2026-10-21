@@ -276,11 +276,13 @@ sudo node /home/havn/havn/dist/scripts/hosted/enable-setup.js <ip-with-dashes>.s
 
 It installs Caddy with an edge that exposes only `/setup`, starts
 `havn-setup.service`, and prints the link. Send it to the client. On the
-page they enter their name, make a Telegram bot, tap Start in it to pair
-(no chat id to look up), and paste their AI key. When they finish:
+page they make a Telegram bot, tap Start in it to pair (no chat id to look
+up), and paste their AI key. They are not asked their name or city there: the
+assistant asks in the first Telegram chat. When they finish:
 
 - their keys go into the vault, and `.env` is written without secrets;
-- the assistant says hello in their Telegram;
+- the assistant says hello in their Telegram and asks its welcome questions
+  (name, its own name, city, tone), at most three replies' worth;
 - the setup server (which runs as `havn`, with no sudo) writes
   `store/setup-finished` and exits, and the root-owned `havn-setup-done.path`
   retires the setup units and enables and starts `havn.service`;
