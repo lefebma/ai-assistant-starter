@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { applyPlan } from './execute.js'
+import { saveSetupAnswers } from './saved.js'
 import { buildEnvContent, buildSkillPlan, installedSkillsList, type Answers } from './plan.js'
 
 /** Platform values the questions collect but the env template leaves blank. */
@@ -42,8 +43,15 @@ export interface WriteResult {
 /**
  * Skills, CLAUDE.md, .env and the working directories. Never overwrites an
  * existing .env: a re-run must not wipe a working install's credentials.
+ * With `opts`, also saves the non-secret answers for the first-chat profile.
  */
-export function writeConfiguration(answers: Answers, creds: PlatformCredentials, projectRoot: string, home: string): WriteResult {
+export function writeConfiguration(
+  answers: Answers,
+  creds: PlatformCredentials,
+  projectRoot: string,
+  home: string,
+  opts?: { profilePending?: boolean }
+): WriteResult {
   const result = applyPlan(buildSkillPlan(answers, home), projectRoot)
   const envPath = resolve(projectRoot, '.env')
   const envWritten = !existsSync(envPath)
@@ -51,5 +59,6 @@ export function writeConfiguration(answers: Answers, creds: PlatformCredentials,
   for (const dir of ['projects', 'store', 'logs', 'workspace/uploads']) {
     mkdirSync(resolve(projectRoot, dir), { recursive: true })
   }
+  if (opts) saveSetupAnswers(projectRoot, answers, opts.profilePending === true)
   return { installed: installedSkillsList(answers), notes: result.notes, skipped: result.skipped, envWritten }
 }
