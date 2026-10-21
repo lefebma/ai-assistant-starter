@@ -15,7 +15,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
   MAX_WELCOME_TURNS,
+  NO_RESTART_MESSAGE,
+  WELCOME_GREETED_KEY,
   WELCOME_TURNS_KEY,
+  markWelcomeGreeted,
+  shouldGreetWelcome,
   noteWelcomeTurn,
   shouldWelcome,
   takeRestartAfterReply,
@@ -97,6 +101,39 @@ describe('shouldWelcome', () => {
   })
 })
 
+describe('the startup greeting is sent once', () => {
+  it('is due on a pending install that has not been greeted', () => {
+    expect(shouldGreetWelcome(install(true), stateMap().getState)).toBe(true)
+  })
+
+  it('is never due without a pending profile', () => {
+    expect(shouldGreetWelcome(install(), stateMap().getState)).toBe(false)
+    expect(shouldGreetWelcome(install(false), stateMap().getState)).toBe(false)
+  })
+
+  it('greeting check false once marked', () => {
+    const root = install(true)
+    const s = stateMap()
+    markWelcomeGreeted(s.setState)
+    expect(Object.keys(s.store)).toEqual([WELCOME_GREETED_KEY])
+    expect(new Date(s.store[WELCOME_GREETED_KEY]!).getTime()).not.toBeNaN()
+    expect(shouldGreetWelcome(root, s.getState)).toBe(false)
+    // The inbound nudge is a separate budget and still rides.
+    expect(shouldWelcome(root, s.getState)).toBe(true)
+  })
+
+  it('not marked on failed send: index.ts marks after the send, never in its catch', () => {
+    const index = readFileSync(resolve(__dirname, '..', 'src', 'index.ts'), 'utf-8')
+    const block = index.slice(index.indexOf('shouldGreetWelcome(PROJECT_ROOT)'))
+    const send = block.indexOf('adapter.sendMessage')
+    const mark = block.indexOf('markWelcomeGreeted()')
+    const caught = block.indexOf('} catch')
+    expect(send).toBeGreaterThan(-1)
+    expect(mark).toBeGreaterThan(send)
+    expect(mark).toBeLessThan(caught)
+  })
+})
+
 describe('noteWelcomeTurn', () => {
   it('third call skips', () => {
     const root = install(true)
@@ -167,6 +204,13 @@ describe('welcomeNudge', () => {
 
   it('survives a saved file with missing fields', () => {
     expect(() => welcomeNudge({} as never)).not.toThrow()
+  })
+})
+
+describe('NO_RESTART_MESSAGE', () => {
+  it('says the time zone waits for a restart, with no em dash', () => {
+    expect(NO_RESTART_MESSAGE).toBe("I couldn't restart myself here, so the new time zone applies the next time I'm restarted.")
+    expect(NO_RESTART_MESSAGE).not.toContain('\u2014')
   })
 })
 

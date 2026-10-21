@@ -25,6 +25,15 @@ export const WELCOME_TURNS_KEY = 'welcome_turns'
 
 export const MAX_WELCOME_TURNS = 3
 
+/** app_state key holding an ISO timestamp: the startup greeting reached the owner. */
+export const WELCOME_GREETED_KEY = 'welcome_greeted'
+
+/**
+ * Sent when the profile CLI promised a restart for a new time zone but no
+ * supervisor will bring the process back, so the promise cannot be kept.
+ */
+export const NO_RESTART_MESSAGE = "I couldn't restart myself here, so the new time zone applies the next time I'm restarted."
+
 const SET_COMMAND =
   'node dist/scripts/profile.js set [--owner-name "..."] [--assistant-name "..."] [--city "..."] ' +
   '[--vibe professional|friendly|direct|"<their words>"] [--bio "..."]'
@@ -38,6 +47,22 @@ function turnsSoFar(getState: (k: string) => string | null): number {
 /** Whether this inbound turn should carry the welcome instruction. */
 export function shouldWelcome(projectRoot: string, getState: (k: string) => string | null = getAppState): boolean {
   return isProfilePending(projectRoot) && turnsSoFar(getState) < MAX_WELCOME_TURNS
+}
+
+/**
+ * Whether to send the startup greeting. Once, like the interview greeting:
+ * an owner who never replies should not hear the questions on every boot.
+ */
+export function shouldGreetWelcome(projectRoot: string, getState: (k: string) => string | null = getAppState): boolean {
+  return !getState(WELCOME_GREETED_KEY) && isProfilePending(projectRoot)
+}
+
+/**
+ * Record that the greeting reached the owner. Call only after a successful
+ * send: a failed one leaves the questions to the nudge on the first turns.
+ */
+export function markWelcomeGreeted(setState: (k: string, v: string) => void = setAppState): void {
+  setState(WELCOME_GREETED_KEY, new Date().toISOString())
 }
 
 export interface WelcomeTurnDeps {

@@ -54,7 +54,7 @@ import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT, installTimezone } from './env.js'
 import { handleAlertClick } from './email-alerts/buttons.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
-import { noteWelcomeTurn, shouldWelcome, takeRestartAfterReply, welcomeNudge } from './onboarding/welcome.js'
+import { NO_RESTART_MESSAGE, noteWelcomeTurn, shouldWelcome, takeRestartAfterReply, welcomeNudge } from './onboarding/welcome.js'
 import { loadSetupAnswers } from './setup/saved.js'
 import { workspaceCommand, workspaceCommandArgs } from './workspace/commands.js'
 import { defaultSyncOne, scheduleWorkspace, unscheduleWorkspace } from './workspace/service.js'
@@ -399,7 +399,11 @@ async function handleMessage(
         logger.info('Restarting so the new time zone takes effect')
         process.kill(process.pid, 'SIGTERM')
       } else {
+        // The CLI already promised a restart in this reply; say it cannot happen.
         logger.info('Time zone changed; it applies on the next restart')
+        await adapter.sendMessage(chatId, NO_RESTART_MESSAGE).catch((err) => {
+          logger.warn({ err }, 'Could not say the restart is not possible here')
+        })
       }
     }
   } finally {
