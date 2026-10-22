@@ -10,6 +10,23 @@ import { logger } from '../logger.js'
 import { runControl, replayTriage } from './control.js'
 import { discoverMailboxes } from './sources.js'
 import { withTimeout } from './triage.js'
+import { getSecret } from '../vault/index.js'
+
+/**
+ * The agent's shell does not hand the subscription token to the commands it
+ * runs, so a replay asked for in chat failed every model read with "Not
+ * logged in". Read it where the service's own lookups do (vault, then .env).
+ * Only this token: an API key in the environment would move every turn onto
+ * API billing, which the runtime keeps to its overflow lane.
+ */
+export function loadAgentToken(
+  env: NodeJS.ProcessEnv = process.env,
+  lookup: (name: string) => string | undefined = getSecret
+): void {
+  if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return
+  const token = lookup('CLAUDE_CODE_OAUTH_TOKEN')
+  if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token
+}
 
 export async function main(argv: string[]): Promise<string> {
   initDatabase()
@@ -20,6 +37,7 @@ export async function main(argv: string[]): Promise<string> {
   // refuses to nest under that marker, and replay needs the model.
   delete process.env.CLAUDECODE
   delete process.env.CLAUDE_CODE_SSE_PORT
+  loadAgentToken()
 
   const run = withTimeout(async (message, signal) => {
     const { getAgentRuntime } = await import('../runtime/index.js')

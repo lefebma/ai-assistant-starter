@@ -325,9 +325,10 @@ describe('runControl', () => {
     )
     const out = await run('replay 3', deps({ boxes: [b], triage }))
     const lines = out.split('\n')
-    expect(lines).toHaveLength(2)
+    expect(lines).toHaveLength(3)
     expect(lines[0]).toMatch(/^Oct 18 10:00 am {2}boss@x\.com {2}Lunch\? {2}From a VIP$/)
     expect(lines[1]).toMatch(/^Oct 18 9:00 am {2}ops@client\.com {2}Server down {2}Production outage$/)
+    expect(lines[2]).toBe('Could not check 1 email, so this replay is incomplete.')
     expect(b.listedSince).toEqual([NOW.getTime() - 3 * DAY])
     expect(prompts).toHaveLength(2) // m2 and m3; VIP, mute, automated and body failure skip the model
     expect(count('email_alert_seen')).toBe(0)
@@ -388,6 +389,13 @@ describe('runControl', () => {
     expect(lines[0]).toContain('Item 0')
     expect(lines[lines.length - 1]).toBe('Checked the newest 60 emails.')
     expect(lines).toHaveLength(2)
+  })
+
+  it('replay never reports a failed model read as nothing to alert', async () => {
+    const two = [mail('f1', 'a@client.com', 'One', 60_000), mail('f2', 'b@client.com', 'Two', 120_000)]
+    expect(await run('replay 1', deps({ boxes: [box(two)] }))).toBe(
+      'Nothing would have alerted.\nCould not check 2 emails, so this replay is incomplete.'
+    )
   })
 
   it('replay with no hits inside the budget still says how far it got', async () => {

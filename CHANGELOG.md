@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.40.1 - 2026-10-22
+
+An email-alerts replay now works when you ask for it in chat, and says when it could not check something.
+
+- **Fixed: a replay asked for in chat could not read any email.** The assistant runs the replay as a command, and that command did not get the subscription sign-in, so every model read failed with "Not logged in". It now reads the sign-in from `.env`, where the assistant's service gets it. Live alerts were not affected: they run inside the assistant itself.
+- **Fixed: a replay reported "Nothing would have alerted" when it had not checked everything.** An email it could not read, or that the model could not judge, was counted as not critical. The reply now says how many emails could not be checked.
+
 ## 1.40.0 - 2026-10-20
 
 Setup is two steps, and the assistant asks the rest in your first chat.

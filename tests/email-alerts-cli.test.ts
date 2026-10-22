@@ -54,6 +54,29 @@ describe('email-alerts CLI', () => {
   }, 60_000)
 })
 
+describe('email-alerts CLI agent token', () => {
+  it('fills a missing subscription token from the vault or .env, and nothing else', async () => {
+    const { loadAgentToken } = await import('../src/email-alerts/cli.js')
+    const asked: string[] = []
+    const lookup = (name: string) => (asked.push(name), 'tok-from-env-file')
+    const env: NodeJS.ProcessEnv = {}
+    loadAgentToken(env, lookup)
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok-from-env-file')
+    expect(asked).toEqual(['CLAUDE_CODE_OAUTH_TOKEN'])
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+  })
+
+  it('keeps a token already in the environment and leaves it unset when none is stored', async () => {
+    const { loadAgentToken } = await import('../src/email-alerts/cli.js')
+    const set: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: 'already' }
+    loadAgentToken(set, () => 'other')
+    expect(set.CLAUDE_CODE_OAUTH_TOKEN).toBe('already')
+    const none: NodeJS.ProcessEnv = {}
+    loadAgentToken(none, () => undefined)
+    expect('CLAUDE_CODE_OAUTH_TOKEN' in none).toBe(false)
+  })
+})
+
 describe('email-alerts skill triggers', () => {
   it('match the owner phrasings through the loader', async () => {
     const root = mkdtempSync(join(tmpdir(), 'havn-email-alerts-skill-'))
