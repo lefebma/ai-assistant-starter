@@ -5,6 +5,16 @@
 - **Fixed: the service log on hosted boxes grew forever.** New boxes rotate the logs in `logs/` weekly, or past 20 MB, keeping four compressed copies. The log is now created as the havn user so rotation can empty it in place. Existing boxes need a one-time step as `havn-admin`, in `docs/HOSTED-VPS.md` > Service log rotation. Found on havn-marina, at 11 MB after two months.
 - **Fixed: web setup left its log owned by root.** `enable-setup` now creates `logs/setup.log` and `logs/service.log` as havn before starting web setup, so rotation can empty them. Found on havn-joel when rotation was first applied.
 
+## 1.40.0 - 2026-10-20
+
+Setup is two steps, and the assistant asks the rest in your first chat.
+
+- **Changed: web setup asks only for Telegram and AI access.** The "about you" step is gone. Your name, the assistant's name, your city and its tone are no longer asked on the setup page, and there is no time zone or coordinates question anywhere. The time zone and weather location come from your city.
+- **New: the assistant asks the welcome questions in your first chat.** After it says hello it asks what to call you, what to call it, your city, the tone you want and, in a sentence, what you do. Reply in your own words. The questions are sent once and ride at most three of your replies, then the assistant stops asking and keeps its best guesses.
+- **New: change your profile any time by saying so.** Tell the assistant to change your name, its name, your city, its tone or your bio and it updates them. A new city moves the time zone, and the assistant restarts after its reply. A box that cannot restart itself says so.
+- **Changed: the terminal wizard asks only the core.** A fresh `npm run setup` asks for your messaging app, AI access and bot credentials. Email and optional skills are two separate questions that default to no, so nothing optional is asked unless you opt in. Your name, the assistant's name, tone and city are asked in the first chat, as with web setup. The monthly-audit and email-signature questions are gone too: the audit is off by default (send `/audit monthly on` to schedule it) and the signature is built from your name. An install set up before this release (it has a `.env` but no saved answers) still gets the profile questions when you re-run setup, but no longer time zone or coordinates. A re-run on an install with saved answers reuses them without asking, and keeps its email accounts and skills unless you say yes to "Change email setup?" or "Change optional skills?".
+- **Unchanged: existing installs.** A box that was already set up is not asked anything new, and this release does not rewrite its `CLAUDE.md`, `PERSONALITY.md`, `PROFILE.md` or skills on update.
+
 ## 1.39.0 - 2026-10-18
 
 Your assistant can now message you the moment a critical email lands, on Gmail and Outlook.
@@ -17,16 +27,6 @@ Your assistant can now message you the moment a critical email lands, on Gmail a
 - **Status and replay.** Ask for the status to see what is on, who is on your lists and when it is paused. Ask for a replay of recent mail (up to 14 days back, checking the newest 60 emails) to see which would have alerted, without sending anything.
 - **Fixed: one-command provisioning stopped before web setup.** Since the admin login was split out, `npm run provision` ran the web-setup step as havn-admin from inside `/home/havn/havn`, a folder that login cannot enter, so a new box finished installing with no setup page and no link. The step now changes folder as root. Found on havn-joel, the first box built after the split.
 - **Operators:** the assistant runtime gained a per-turn model choice and isolated tool-less turns. The ai-sdk runtime reads two new optional settings, `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`. The email-alerts skill is always on and arrives with the update.
-
-## 1.40.0 - 2026-10-20
-
-Setup is two steps, and the assistant asks the rest in your first chat.
-
-- **Changed: web setup asks only for Telegram and AI access.** The "about you" step is gone. Your name, the assistant's name, your city and its tone are no longer asked on the setup page, and there is no time zone or coordinates question anywhere. The time zone and weather location come from your city.
-- **New: the assistant asks the welcome questions in your first chat.** After it says hello it asks what to call you, what to call it, your city, the tone you want and, in a sentence, what you do. Reply in your own words. The questions are sent once and ride at most three of your replies, then the assistant stops asking and keeps its best guesses.
-- **New: change your profile any time by saying so.** Tell the assistant to change your name, its name, your city, its tone or your bio and it updates them. A new city moves the time zone, and the assistant restarts after its reply. A box that cannot restart itself says so.
-- **Changed: the terminal wizard asks only the core.** A fresh `npm run setup` asks for your messaging app, AI access and bot credentials. Email and optional skills are two separate questions that default to no, so nothing optional is asked unless you opt in. Your name, the assistant's name, tone and city are asked in the first chat, as with web setup. The monthly-audit and email-signature questions are gone too: the audit is off by default (send `/audit monthly on` to schedule it) and the signature is built from your name. An install set up before this release (it has a `.env` but no saved answers) still gets the profile questions when you re-run setup, but no longer time zone or coordinates. A re-run on an install with saved answers reuses them without asking, and keeps its email accounts and skills unless you say yes to "Change email setup?" or "Change optional skills?".
-- **Unchanged: existing installs.** A box that was already set up is not asked anything new, and this release does not rewrite its `CLAUDE.md`, `PERSONALITY.md`, `PROFILE.md` or skills on update.
 
 ## 1.38.0 - 2026-10-15
 
