@@ -394,8 +394,21 @@ describe('runControl', () => {
   it('replay never reports a failed model read as nothing to alert', async () => {
     const two = [mail('f1', 'a@client.com', 'One', 60_000), mail('f2', 'b@client.com', 'Two', 120_000)]
     expect(await run('replay 1', deps({ boxes: [box(two)] }))).toBe(
-      'Nothing would have alerted.\nCould not check 2 emails, so this replay is incomplete.'
+      'Could not check any of the 2 emails that needed a read, so this replay has no result.'
     )
+  })
+
+  it('replay past the budget with some failed reads says both in one reading', async () => {
+    const many = Array.from({ length: 70 }, (_, i) => mail(`u${i}`, `p${i}@client.com`, `Item ${i}`, (i + 1) * 60_000))
+    const triage = async (i: TriageInput): Promise<TriageOutcome> =>
+      i.subject === 'Item 3' || i.subject === 'Item 7'
+        ? { kind: 'failed' }
+        : { kind: 'verdict', verdict: { critical: i.subject === 'Item 0', reason: 'Needs you' } }
+    const lines = (await run('replay 1', deps({ boxes: [box(many)], triage }))).split('\n')
+    expect(lines).toHaveLength(3)
+    expect(lines[0]).toContain('Item 0')
+    expect(lines[1]).toBe('Checked the newest 60 emails.')
+    expect(lines[2]).toBe('Could not check 2 of them, so this replay is incomplete.')
   })
 
   it('replay with no hits inside the budget still says how far it got', async () => {

@@ -239,6 +239,7 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
   // Emails whose body or model read failed. They were not judged, so the
   // reply must say so rather than count them as not critical.
   let unchecked = 0
+  let judged = 0
   let stoppedAt: number | null = null
   const worker = async (): Promise<void> => {
     while (stoppedAt === null && next < unique.length) {
@@ -268,6 +269,7 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
           unchecked++
           continue
         }
+        judged++
         if (!outcome.verdict.critical) continue
         reason = outcome.verdict.reason
       }
@@ -284,11 +286,19 @@ async function replay(args: string[], deps: ControlDeps): Promise<string> {
   }
   await Promise.all(Array.from({ length: REPLAY_CONCURRENCY }, () => worker()))
 
-  const tail = [
-    ...(unchecked > 0 ? [`Could not check ${unchecked} ${unchecked === 1 ? 'email' : 'emails'}, so this replay is incomplete.`] : []),
-    ...(stoppedAt === null ? [] : [`Checked the newest ${stoppedAt} emails.`]),
-  ]
+  const stopped = stoppedAt === null ? [] : [`Checked the newest ${stoppedAt} emails.`]
+  const missed =
+    unchecked === 0
+      ? []
+      : stoppedAt === null
+        ? [`Could not check ${unchecked} ${unchecked === 1 ? 'email' : 'emails'}, so this replay is incomplete.`]
+        : [`Could not check ${unchecked} of them, so this replay is incomplete.`]
+  const tail = [...stopped, ...missed]
   if (hits.length === 0) {
+    // Every read failed: there is no result to report, only the failure.
+    if (unchecked > 0 && judged === 0) {
+      return `Could not check any of the ${unchecked} ${unchecked === 1 ? 'email' : 'emails'} that needed a read, so this replay has no result.`
+    }
     if (tail.length > 0) return ['Nothing would have alerted.', ...tail].join('\n')
     return `Nothing would have alerted in the last ${days} ${days === 1 ? 'day' : 'days'}.`
   }

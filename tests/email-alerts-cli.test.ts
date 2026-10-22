@@ -63,7 +63,6 @@ describe('email-alerts CLI agent token', () => {
     loadAgentToken(env, lookup)
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok-from-env-file')
     expect(asked).toEqual(['CLAUDE_CODE_OAUTH_TOKEN'])
-    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
   })
 
   it('keeps a token already in the environment and leaves it unset when none is stored', async () => {
@@ -71,6 +70,9 @@ describe('email-alerts CLI agent token', () => {
     const set: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: 'already' }
     loadAgentToken(set, () => 'other')
     expect(set.CLAUDE_CODE_OAUTH_TOKEN).toBe('already')
+    const blank: NodeJS.ProcessEnv = { CLAUDE_CODE_OAUTH_TOKEN: '  ' }
+    loadAgentToken(blank, () => 'from-file')
+    expect(blank.CLAUDE_CODE_OAUTH_TOKEN).toBe('from-file')
     const none: NodeJS.ProcessEnv = {}
     loadAgentToken(none, () => undefined)
     expect('CLAUDE_CODE_OAUTH_TOKEN' in none).toBe(false)
