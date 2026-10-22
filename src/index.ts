@@ -23,7 +23,12 @@ import { reloadSkills } from './skills/index.js'
 import { interviewGreeting, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { auditWanted, ensureAuditTask } from './audit/index.js'
 import { auditScheduleDeps } from './audit/wiring.js'
-import { readEnvFile } from './env.js'
+import { readEnvFile, installTimezone } from './env.js'
+import { startEmailAlerts } from './email-alerts/service.js'
+import { discoverMailboxes } from './email-alerts/sources.js'
+import { triage as triageEmail, withTimeout as withTriageTimeout } from './email-alerts/triage.js'
+import { localDay } from './email-alerts/rules.js'
+import { getAgentRuntime } from './runtime/index.js'
 import { PROJECT_ROOT } from './env.js'
 import { clearRestartNotice, pendingRestartNotice, restartNoticeMessage, shutdownExitCode } from './infra/restart.js'
 import { RESTART_EXIT_CODE } from './service/supervisor.js'
@@ -219,6 +224,36 @@ async function main(): Promise<void> {
       })
     : () => {}
 
+  // Critical-email alerts. Off until the owner turns them on in chat; the
+  // tick is a no-op while disabled. Without an owner chat there is nobody to
+  // alert, so it does not start at all.
+  const emailAlertsTz = installTimezone()
+  const stopEmailAlerts = PRIMARY_CHAT_ID
+    ? startEmailAlerts({
+        boxes: () => discoverMailboxes(),
+        triage: (i) =>
+          triageEmail(i, {
+            run: withTriageTimeout(
+              async (message, signal) =>
+                (await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })).text
+            ),
+            day: localDay(new Date(), emailAlertsTz),
+          }),
+        send: async (text, buttons) => {
+          const messageId = await adapter.sendMessage(
+            PRIMARY_CHAT_ID,
+            text,
+            buttons && adapter.supportsButtons ? { buttons } : undefined
+          )
+          return { chatId: PRIMARY_CHAT_ID, messageId }
+        },
+        now: () => new Date(),
+        tz: emailAlertsTz,
+        // Telegram sends alerts as plain text, so markdown escapes would show.
+        format: adapter.name === 'telegram' ? 'plain' : 'markdown',
+      })
+    : () => {}
+
   // Tell the owner once when a release lands. Without a chat to speak into
   // there is nobody to tell, so it does not start at all.
   if (PRIMARY_CHAT_ID && UPDATE_NOTICE_ENABLED) {
@@ -248,6 +283,7 @@ async function main(): Promise<void> {
     clearInterval(decayTimer)
     stopWitness()
     stopWitnessChecks()
+    stopEmailAlerts()
 
     // The listener closes first, and the order is load-bearing on a hosted box.
     // While it stays open, a webhook arriving mid-shutdown is accepted and then

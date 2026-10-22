@@ -52,6 +52,7 @@ import { requestRestart, rememberRestartNotice } from './infra/restart.js'
 import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT, installTimezone } from './env.js'
+import { handleAlertClick } from './email-alerts/buttons.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { workspaceCommand, workspaceCommandArgs } from './workspace/commands.js'
 import { defaultSyncOne, scheduleWorkspace, unscheduleWorkspace } from './workspace/service.js'
@@ -1154,6 +1155,25 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       const data = msg.callbackData ?? ''
       if (!data.startsWith('btn:')) return
       const label = data.slice(4)
+      // Email alert buttons are reusable (several actions per alert), so they
+      // skip the one-click claim and keep their keyboard.
+      if (
+        msg.messageId &&
+        (await handleAlertClick(chatId, msg.messageId, label, {
+          send: async (text, buttons) => {
+            const messageId = await adapter.sendMessage(
+              chatId,
+              text,
+              buttons && adapter.supportsButtons ? { buttons } : undefined
+            )
+            return { chatId, messageId }
+          },
+          now: () => new Date(),
+          tz: installTimezone(),
+        }))
+      ) {
+        return
+      }
       // Claim the card's one allowed click BEFORE doing anything with it.
       // Clearing the keyboard is a visual change the client may not apply
       // (Teams desktop ignores the edit and leaves the buttons live), so it

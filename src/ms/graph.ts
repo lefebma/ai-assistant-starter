@@ -11,6 +11,8 @@ import { needsRefresh, refreshTokens, type FetchLike, type MsConfig, type MsToke
 import { loadTokens as defaultLoad, saveTokens as defaultSave } from './store.js'
 
 const GRAPH = 'https://graph.microsoft.com/v1.0'
+/** A Graph call that has not answered by now is abandoned, so no caller hangs on it. */
+export const GRAPH_TIMEOUT_MS = 30_000
 
 export interface GraphClientOptions {
   config: MsConfig
@@ -77,6 +79,7 @@ export class GraphClient {
       method,
       headers: { ...extraHeaders, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
     })
     if (res.status === 204) return {}
     const parsed = await res.json().catch(() => ({}))

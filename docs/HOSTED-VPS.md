@@ -769,6 +769,27 @@ sudo tail -n 50 /var/log/caddy/access.log   # as havn-admin | jq -c '{ts,status,
 
 Existing boxes pick this up on the next `enable-teams` run.
 
+## Email alerts
+
+Off by default. The client turns it on by asking ("turn on email alerts"); no
+file is edited and nothing needs setting up on the box. It works on Gmail and
+Outlook mailboxes the box is already connected to. Outlook needs mail read
+access, which connections made through this runbook already have.
+
+- It checks new mail about every 10 minutes and messages the client only for
+  mail that cannot wait until tomorrow. The first run marks existing mail as
+  seen, so nothing old alerts.
+- A daily limit of 300 emails checked applies. Past it, only VIP mail alerts
+  until the next day.
+- Quiet hours are 22:00 to 07:00 box time; VIPs come through. Pause (1 hour,
+  until tomorrow morning, 1 day, 1 week, or until turned back on) beats quiet
+  hours and survives a restart.
+- Two optional settings in `.env` pick the models for the ai-sdk runtime:
+  `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`. Leave them unset unless asked.
+- To check it works after an update, have the client say "email alerts on",
+  then "replay 7" to see what would have alerted in recent mail (up to 14
+  days back, checking the newest 60 emails). Replay sends nothing.
+
 ## Updates, snapshots, backups
 
 - **OS:** unattended-upgrades applies security patches automatically. Kernel

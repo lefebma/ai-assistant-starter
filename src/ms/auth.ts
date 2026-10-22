@@ -65,7 +65,7 @@ interface RawToken {
 
 export type FetchLike = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string }
+  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }
 ) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> }>
 
 export function resolveMsConfig(env: Record<string, string | undefined>): MsConfig {
@@ -94,11 +94,15 @@ function form(fields: Record<string, string>): string {
     .join('&')
 }
 
+/** A token endpoint call that has not answered by now is abandoned, so no caller hangs on it. */
+export const MS_AUTH_TIMEOUT_MS = 30_000
+
 async function post(url: string, body: string, fetchImpl: FetchLike): Promise<RawToken> {
   const res = await fetchImpl(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(MS_AUTH_TIMEOUT_MS),
   })
   return (await res.json()) as RawToken
 }

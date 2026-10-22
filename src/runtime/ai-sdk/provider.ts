@@ -32,6 +32,12 @@ import { getSecret } from '../../vault/index.js'
 const DEFAULT_PROVIDER = 'anthropic'
 /** Only anthropic gets a default model; other providers must set AI_MODEL. */
 const ANTHROPIC_DEFAULT_MODEL = 'claude-sonnet-5'
+/**
+ * Cheap-tier default for a per-turn `model: 'haiku'`. Like the main default,
+ * only anthropic gets one; every other provider uses AI_MODEL_CHEAP or falls
+ * back to its configured AI_MODEL (never a guessed vendor id).
+ */
+const ANTHROPIC_CHEAP_MODEL = 'claude-haiku-5-5'
 /** Env var holding each provider's API key. Also gates the known-provider set. */
 const KEY_ENV: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
@@ -104,13 +110,34 @@ export function configuredProvider(): string {
   return env['AI_PROVIDER']?.trim() || process.env.AI_PROVIDER?.trim() || DEFAULT_PROVIDER
 }
 
-export function resolveModel(): ResolvedModel {
+/**
+ * Map a per-turn model (AgentRunOptions.model) onto this provider's ids.
+ * The tier aliases the claude runtime understands map to the configured
+ * models: 'haiku' -> AI_MODEL_CHEAP, 'sonnet' -> AI_MODEL, 'opus' ->
+ * AI_MODEL_STRONG. An unset tier falls back to AI_MODEL (anthropic's cheap
+ * tier has a default). Anything else is taken as a full model id.
+ */
+export function modelIdForTier(
+  provider: string,
+  defaultModelId: string,
+  tier: string | undefined,
+  read: (key: string) => string | undefined
+): string {
+  const t = tier?.trim()
+  if (!t || t === 'sonnet') return defaultModelId
+  if (t === 'haiku') return read('AI_MODEL_CHEAP') || (provider === 'anthropic' ? ANTHROPIC_CHEAP_MODEL : defaultModelId)
+  if (t === 'opus') return read('AI_MODEL_STRONG') || defaultModelId
+  return t
+}
+
+export function resolveModel(tier?: string): ResolvedModel {
   const env = readEnvFile()
   const read = (key: string): string | undefined =>
     env[key]?.trim() || process.env[key]?.trim() || undefined
 
   const provider = read('AI_PROVIDER') || DEFAULT_PROVIDER
-  const modelId = read('AI_MODEL') || (provider === 'anthropic' ? ANTHROPIC_DEFAULT_MODEL : '')
+  const defaultModelId = read('AI_MODEL') || (provider === 'anthropic' ? ANTHROPIC_DEFAULT_MODEL : '')
+  const modelId = defaultModelId ? modelIdForTier(provider, defaultModelId, tier, read) : ''
   if (!modelId) {
     throw new Error(
       `AI SDK runtime: provider '${provider}' needs AI_MODEL set in .env (only 'anthropic' has a default model id).`
