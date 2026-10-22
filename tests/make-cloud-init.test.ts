@@ -233,6 +233,24 @@ describe('renderCloudInit', () => {
     expect(rendered).toContain('fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile')
   })
 
+  it('rotates the service logs by copy-truncate, as havn', () => {
+    expect(rendered).toContain('- path: /etc/logrotate.d/havn')
+    expect(rendered).toContain(`/home/havn/havn/logs/*.log {`)
+    // systemd holds the log open in append mode; a rename would orphan it.
+    expect(rendered).toMatch(/^\s+copytruncate$/m)
+    // Rotating as root in a folder havn can write would let a planted symlink
+    // truncate any file on the box.
+    expect(rendered).toMatch(/^\s+su havn havn$/m)
+    expect(rendered).toMatch(/^\s+rotate 4$/m)
+  })
+
+  it('creates the service log as havn so rotation can truncate it', () => {
+    const touch = `runuser -u havn -- touch /home/havn/havn/logs/service.log`
+    expect(rendered).toContain(touch)
+    // Before anything could start the service and have systemd create it as root.
+    expect(rendered.indexOf(touch)).toBeLessThan(rendered.indexOf('systemctl daemon-reload'))
+  })
+
   it('keeps unattended-upgrades on', () => {
     expect(rendered).toContain('unattended-upgrades')
     expect(rendered).toContain('APT::Periodic::Unattended-Upgrade "1";')

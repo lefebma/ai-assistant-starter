@@ -682,6 +682,48 @@ sudo sysctl -w vm.swappiness=10
 
 Check it with `swapon --show` and `free -m`. Nothing needs restarting.
 
+## Service log rotation
+
+The service writes everything to `/home/havn/havn/logs/service.log`, which
+otherwise only grows (about 5 MB a month on a busy box). Boxes provisioned
+from this release on rotate every `*.log` in that folder weekly, or as soon
+as one passes 20 MB, keeping four compressed copies
+(`/etc/logrotate.d/havn`).
+
+Two details matter if you ever change it:
+
+- **It copies, then truncates.** systemd holds the log open in append mode.
+  Renaming it would leave the service writing to the renamed file while the
+  new `service.log` stays empty, which looks like a quiet, healthy box.
+- **It runs as havn** (`su havn havn`). havn owns the logs folder, and root
+  rotating in a folder the assistant can write would let a planted symlink
+  truncate any file on the box. That is also why the log itself must be
+  owned by havn: systemd creates it as root unless it already exists.
+
+A box provisioned earlier needs it once, as `havn-admin`. The first command
+fixes the log's owner, the last rotates once now and checks the config:
+
+```bash
+sudo chown havn:havn /home/havn/havn/logs/service.log
+sudo tee /etc/logrotate.d/havn >/dev/null <<'EOF'
+/home/havn/havn/logs/*.log {
+  su havn havn
+  weekly
+  maxsize 20M
+  rotate 4
+  compress
+  delaycompress
+  missingok
+  notifempty
+  copytruncate
+}
+EOF
+sudo logrotate -v -f /etc/logrotate.d/havn
+```
+
+Nothing needs restarting. The audit log in `/var/lib/havn-audit` is
+append-only on purpose and is not rotated.
+
 ## Voice UI
 
 The voice page is a browser UI for talking to the assistant: hold to speak,

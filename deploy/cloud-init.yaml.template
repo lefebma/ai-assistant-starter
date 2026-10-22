@@ -81,6 +81,26 @@ write_files:
       PasswordAuthentication no
       KbdInteractiveAuthentication no
 
+  # The service log only ever grows otherwise (11 MB on havn-marina after two
+  # months). copytruncate, not a rename: systemd holds the file open in append
+  # mode, and a renamed log keeps receiving every line while the new one stays
+  # empty. Runs as havn because havn owns the logs folder; as root, a symlink
+  # planted there would let the assistant truncate any file on the box.
+  # maxsize rotates a noisy week early (logrotate itself runs daily).
+  - path: /etc/logrotate.d/havn
+    content: |
+      {{INSTALL_DIR}}/logs/*.log {
+        su havn havn
+        weekly
+        maxsize 20M
+        rotate 4
+        compress
+        delaycompress
+        missingok
+        notifempty
+        copytruncate
+      }
+
   # Registered but never enabled here: first-run setup is interactive, so the
   # operator starts the service after the finishing steps (docs/HOSTED-VPS.md).
   - path: /etc/systemd/system/havn.service
@@ -201,6 +221,10 @@ write_files:
       runuser -u havn -- git clone --branch {{GIT_REF}} "{{GIT_CLONE_URL}}" {{INSTALL_DIR}}
       runuser -u havn -- git -C {{INSTALL_DIR}} remote set-url origin "https://github.com/{{GIT_REPO}}.git"
       runuser -u havn -- mkdir -p {{INSTALL_DIR}}/logs
+      # Create the service log as havn. systemd opens it as root and would
+      # otherwise make it root-owned, which log rotation (running as havn)
+      # cannot truncate. An existing file keeps its owner when systemd appends.
+      runuser -u havn -- touch {{INSTALL_DIR}}/logs/service.log
       runuser -u havn -- bash -lc 'cd {{INSTALL_DIR}} && npm ci --no-audit --no-fund && npm run build'
 
       # --- Browser for the Playwright tools -------------------------------
