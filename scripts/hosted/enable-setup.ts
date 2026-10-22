@@ -35,6 +35,7 @@ import {
   SETUP_FINISHED_MARKER,
   SETUP_UNIT_NAME,
   SETUP_UNIT_PATH,
+  UNIT_LOGS,
 } from '../../src/deploy/setup-edge.js'
 
 const INSTALL_DIR = '/home/havn/havn'
@@ -102,6 +103,12 @@ function main(): void {
 
   mkdirSync(`${INSTALL_DIR}/logs`, { recursive: true })
   run('chown', ['havn:havn', `${INSTALL_DIR}/logs`])
+  // Owned by havn, never root, so log rotation can empty them (UNIT_LOGS).
+  for (const log of UNIT_LOGS) {
+    const path = `${INSTALL_DIR}/${log}`
+    if (!existsSync(path)) writeFileSync(path, '')
+    run('chown', ['havn:havn', path])
+  }
   writeFileSync(SETUP_UNIT_PATH, buildSetupUnit(INSTALL_DIR))
   writeFileSync(`/etc/systemd/system/${HANDOFF_PATH_UNIT}`, buildHandoffPath(INSTALL_DIR))
   writeFileSync(`/etc/systemd/system/${HANDOFF_SERVICE_UNIT}`, buildHandoffService())

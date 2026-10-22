@@ -701,10 +701,11 @@ Two details matter if you ever change it:
   owned by havn: systemd creates it as root unless it already exists.
 
 A box provisioned earlier needs it once, as `havn-admin`. The first command
-fixes the log's owner, the last rotates once now and checks the config:
+fixes the logs' owner (web setup's `setup.log` was root-owned too), the last
+rotates once now and checks the config:
 
 ```bash
-sudo chown havn:havn /home/havn/havn/logs/service.log
+sudo chown havn:havn /home/havn/havn/logs/*.log
 sudo tee /etc/logrotate.d/havn >/dev/null <<'EOF'
 /home/havn/havn/logs/*.log {
   su havn havn
