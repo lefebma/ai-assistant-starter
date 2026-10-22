@@ -226,6 +226,9 @@ export async function applyProfile(projectRoot: string, home: string, input: Pro
     } else {
       place = null
       placeNotFound = true
+      // The old city's coordinates would answer for the wrong place.
+      merged.latitude = ''
+      merged.longitude = ''
     }
   }
 

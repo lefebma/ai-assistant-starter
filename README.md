@@ -21,7 +21,7 @@ Ships with these skills. The always-on ones need no key and no decision at setup
 
 | Skill | What it does | What you need |
 |---|---|---|
-| **weather** | Current conditions + short forecast | Coordinates (setup asks) |
+| **weather** | Current conditions + short forecast, for home or any city you name | Nothing (your city comes from the first chat) |
 | **decision-log** | Append-only record of decisions — captures Why, Alternatives, What would change my mind | Nothing (always on) |
 | **daily-briefing** | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
 | **exec-interview** | Discovery interview that teaches the assistant your business, role, priorities and preferences | Nothing (always on) |

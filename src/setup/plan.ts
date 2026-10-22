@@ -228,6 +228,22 @@ export function hostOsLabel(platform: string): string {
   return 'computer'
 }
 
+/**
+ * The weather skill's line about home, by what setup knows. Coordinates come
+ * from a city lookup; without them the skill looks the city up itself, and
+ * without a city it asks for one and saves it (card #126). JSON-escaped: it
+ * lands inside a string in manifest.json.
+ */
+export function weatherHome(a: Pick<Answers, 'city' | 'latitude' | 'longitude'>): string {
+  const city = a.city.trim()
+  const line = !city
+    ? "The owner's city is not known yet. When they ask about the weather without naming a place, ask which city they are in, answer for it, then save it so you never ask again: node dist/scripts/profile.js set --city \"<city>\""
+    : a.latitude && a.longitude
+      ? `Home is ${city} (latitude ${a.latitude}, longitude ${a.longitude}). Use these when no other place is named.`
+      : `Home is ${city}. Its coordinates are not saved: look it up as for any other place.`
+  return JSON.stringify(line).slice(1, -1)
+}
+
 export function buildSkillPlan(a: Answers, home: string, platform: string = process.platform): PlanAction[] {
   const p: PlanAction[] = []
   const identity = { OWNER_NAME: a.ownerName, PROJECT_PATH: a.projectPath }
@@ -237,7 +253,7 @@ export function buildSkillPlan(a: Answers, home: string, platform: string = proc
   p.push({
     type: 'edit',
     file: 'skills/weather/manifest.json',
-    vars: { LATITUDE: a.latitude, LONGITUDE: a.longitude, TEMP_UNIT: a.tempUnit, TIMEZONE: a.timezone, CITY: a.city },
+    vars: { WEATHER_HOME: weatherHome(a), TEMP_UNIT: a.tempUnit },
   })
   p.push({ type: 'copy', from: 'templates/skills/decision-log', to: 'skills/decision-log' })
   p.push({ type: 'edit', file: 'skills/decision-log/SKILL.md', vars: identity })

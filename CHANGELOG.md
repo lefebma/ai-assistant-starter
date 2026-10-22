@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: weather answered for New York until your city was known.** Setup used to fill in New York's coordinates whenever it had no city yet, or could not find the one you typed. Now the weather skill knows when it has no city: it asks which city you are in, answers for it and remembers it. A city it has no coordinates for is looked up when you ask. Changing your city to one that cannot be found drops the old coordinates instead of reporting the weather for the old city.
+- **New: weather for any city.** Ask "what's the weather in Paris?" and the assistant looks the city up and answers for it. You never enter coordinates anywhere. Forecasts now include the next three days' highs, lows and chance of rain, which the morning briefing uses.
+
 ## 1.40.1 - 2026-10-22
 
 An email-alerts replay now works when you ask for it in chat, and says when it could not check something.

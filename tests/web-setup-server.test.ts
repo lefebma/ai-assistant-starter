@@ -152,7 +152,10 @@ describe('web setup, hosted', () => {
     expect(env).toMatch(/^AI_MODEL=gpt-5$/m)
     expect(env).toMatch(/^TIMEZONE=America\/New_York$/m)
     expect(existsSync(join(t.root, 'CLAUDE.md'))).toBe(true)
-    expect(readFileSync(join(t.root, 'skills', 'weather', 'manifest.json'), 'utf-8')).toContain('40.71')
+    // No city yet: the weather skill asks for one rather than answering for New York.
+    const weather = readFileSync(join(t.root, 'skills', 'weather', 'manifest.json'), 'utf-8')
+    expect(weather).not.toContain('40.71')
+    expect(JSON.parse(weather).context).toContain("The owner's city is not known yet")
 
     // No profile was asked for: the first chat finishes it, and no city was looked up.
     const saved = JSON.parse(readFileSync(join(t.root, 'store', 'setup-answers.json'), 'utf-8'))
