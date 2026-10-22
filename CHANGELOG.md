@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Fixed: the service log on hosted boxes grew forever.** New boxes rotate the logs in `logs/` weekly, or past 20 MB, keeping four compressed copies. The log is now created as the havn user so rotation can empty it in place. Existing boxes need a one-time step as `havn-admin`, in `docs/HOSTED-VPS.md` > Service log rotation. Found on havn-marina, at 11 MB after two months.
+- **Fixed: web setup left its log owned by root.** `enable-setup` now creates `logs/setup.log` and `logs/service.log` as havn before starting web setup, so rotation can empty them. Found on havn-joel when rotation was first applied.
 
 ## 1.39.0 - 2026-10-18
 

@@ -3,7 +3,7 @@ import { answersFromWeb, InputError, parseEngine, parseProfile } from '../src/se
 import { PERSONALITY_PRESETS } from '../src/setup/wizard.js'
 import { renderEnv } from '../src/setup/finalize.js'
 import { buildCaddyfile } from '../src/deploy/teams-edge.js'
-import { buildHandoffPath, buildHandoffService, buildSetupUnit } from '../src/deploy/setup-edge.js'
+import { buildHandoffPath, buildHandoffService, buildSetupUnit, UNIT_LOGS } from '../src/deploy/setup-edge.js'
 
 const RAW = { ownerName: '  Leif ', assistantName: 'Avery', timezone: 'America/Toronto', city: 'Toronto', vibe: 0, ownerBio: '' }
 
@@ -104,6 +104,14 @@ describe('setup edge', () => {
     expect(u).toContain('User=havn')
     expect(u).toContain('NoNewPrivileges=true')
     expect(() => buildSetupUnit('/home/havn/havn; rm -rf /')).toThrow()
+  })
+  it('appends to a log enable-setup pre-creates as havn, so rotation can empty it', () => {
+    const u = buildSetupUnit('/home/havn/havn')
+    const logs = [...u.matchAll(/^Standard(?:Output|Error)=append:(\S+)$/gm)].map((m) => m[1])
+    expect(logs).toHaveLength(2)
+    for (const l of logs) expect(UNIT_LOGS.map((x) => `/home/havn/havn/${x}`)).toContain(l)
+    // The assistant's own log too: havn.service appends to it after the handoff.
+    expect(UNIT_LOGS).toContain('logs/service.log')
   })
   it('hands off through a root path unit watching the marker, not sudo', () => {
     expect(buildHandoffPath('/home/havn/havn')).toContain('PathExists=/home/havn/havn/store/setup-finished')
