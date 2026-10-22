@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: the service log on hosted boxes grew forever.** New boxes rotate the logs in `logs/` weekly, or past 20 MB, keeping four compressed copies. The log is now created as the havn user so rotation can empty it in place. Existing boxes need a one-time step as `havn-admin`, in `docs/HOSTED-VPS.md` > Service log rotation. Found on havn-marina, at 11 MB after two months.
+
 ## 1.39.0 - 2026-10-18
 
 Your assistant can now message you the moment a critical email lands, on Gmail and Outlook.
