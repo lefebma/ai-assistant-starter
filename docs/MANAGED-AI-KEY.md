@@ -32,7 +32,7 @@ API keys cannot be created by any API, and workspace spend limits are set only i
    sudo -u havn bash -lc 'cd ~/havn && node dist/scripts/managed-ai.js set'
    ```
 
-   The command waits for input. Paste the key, press Enter, then press Ctrl-D. The key goes over stdin only, so it never lands in shell history or on a command line. The command refuses a key given as an argument, and it never prints the key back.
+   The command waits for input. Paste the key, press Enter, then press Ctrl-D. The key goes over stdin only, so it never lands in shell history or on a command line. The command refuses a key given as an argument, and it never prints the key back. The prompt does echo what you paste, so the key is visible on your screen: run `clear` straight after, and close the terminal window if you are sharing your screen.
 5. If the box is already set up (it has a `.env`), restart it so it picks up the key:
 
    ```bash
@@ -42,7 +42,7 @@ API keys cannot be created by any API, and workspace spend limits are set only i
    On a box that has not been set up yet, no restart is needed. When the client opens the setup link, they are asked only for the messaging step. The AI and voice questions are skipped.
 6. Record in your private notes: the box, the workspace id, the key name and the limit. Never the key. Keep amounts out of this repo.
 
-Check the state at any time with `node dist/scripts/managed-ai.js status`. It says whether the box is managed, whether a key is stored, and whether a limit is in force. It never prints the key.
+Check the state at any time with `node dist/scripts/managed-ai.js status`. It says whether the box is managed, whether a key is stored, whether a limit is in force, and which runtime the assistant uses. It never prints the key. A managed box always runs on the claude runtime: an `AGENT_RUNTIME` line in `.env` is ignored while the box is managed, and `status` says so.
 
 ## What a managed box does differently
 
@@ -50,18 +50,23 @@ Check the state at any time with `node dist/scripts/managed-ai.js status`. It sa
 - Voice and video are off. The client gets "Voice messages aren't available on this assistant." and cannot change the AI keys from chat.
 - The box runs the full assistant on this key, including scheduled jobs and email alerts.
 
+### What the key can reach
+
+The assistant's own tools can read its key, the same way they can read any file on the box. So a client, or text the assistant reads (an email, a web page), could get it to reveal the key. The workspace spend limit bounds what a leaked key can cost. One key per client keeps a leak to that client, and rotating the key (below) ends it.
+
 ## When the limit is reached
 
 The box stops. It does not retry and it does not switch to anything else.
 
 - The box writes `store/ai-limit.json` (kind, start time and request id only, never the key).
 - The client is told once: "I've reached this month's AI allowance, so I'm paused for now. Your provider has been told and will be in touch." After that, at most a short reminder once a day: "Still paused: this month's AI allowance is used up. Your provider has been told."
-- Scheduled jobs, email-alert mail reading and the nightly memory job pause. Alerts that were already triaged still go out. One-time scheduled tasks wait until the pause lifts.
+- Scheduled jobs, email-alert mail reading and the nightly memory job pause. A repeating job skips its runs during the pause and picks up at its next normal time. A one-time task is kept and runs once the pause lifts. Alerts that were already triaged still go out.
+- Email alerts look back 48 hours when mail reading resumes. After a longer pause, mail older than that is not checked for alerts.
 - You get a Telegram alert from Umi within about 10 minutes, naming the box and what to do. For a client who comes through Marina, the alert has a Send to Marina button with a plain-language draft. Nothing goes to her until you press it. When the box recovers, you get a second alert with a matching "it's back" draft.
 
 ### Raising the limit
 
-In the Console, raise the spend limit on that client's workspace (or wait for the month to reset). Nothing to do on the box. Every 15 minutes the box makes one real request; the first one that succeeds clears the pause and the assistant resumes by itself, with no restart.
+In the Console, raise the spend limit on that client's workspace (or wait for the month to reset). Nothing to do on the box. While paused, the box checks about every 15 minutes with one small request (a message from the client at that point can serve as the check instead). The first one that succeeds clears the pause and the assistant resumes by itself, with no restart.
 
 ## Rotating a key
 
@@ -74,4 +79,12 @@ In the Console, raise the spend limit on that client's workspace (or wait for th
 
 Archive the client's workspace in the Console. This archives its keys within seconds and cannot be undone.
 
-To take a box off managed mode without archiving anything, run `node dist/scripts/managed-ai.js off`. It removes the managed flag and leaves the stored key where it is.
+To take a box off managed mode without archiving anything, run `node dist/scripts/managed-ai.js off`. It removes the managed flag and any pause marker, and leaves the stored key where it is.
+
+On a box that is no longer managed, that leftover key becomes the overflow lane: when the client's own subscription window runs out, the assistant carries on billed to your key. If that is not what you want, remove it from the vault:
+
+```bash
+sudo -u havn bash -lc 'cd ~/havn && node dist/scripts/vault-cli.js rm ANTHROPIC_API_KEY'
+```
+
+Archive the key in the Console as well.
