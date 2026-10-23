@@ -99,3 +99,17 @@ export function ownerPauseReply(m: AiLimitMarker, now: Date): { text: string; ne
   if (now.getTime() - told >= REPEAT_AFTER_MS) return { text: REPEAT_REPLY, next: stamp }
   return null
 }
+
+/**
+ * Thrown by a one-shot run (runOnce) on a managed box instead of calling the
+ * model while paused, or when the call itself hits a limit. Batch callers
+ * own failure handling, so they get a typed error, not error text.
+ */
+export class AiPausedError extends Error {
+  readonly kind: AiLimitKind
+  constructor(kind: AiLimitKind) {
+    super(`AI paused: ${kind}`)
+    this.name = 'AiPausedError'
+    this.kind = kind
+  }
+}

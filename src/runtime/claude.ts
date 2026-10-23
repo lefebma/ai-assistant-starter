@@ -11,6 +11,17 @@ import { gateToolCall, exposureForScope, resolveRole } from '../assurance/scope-
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
 import { logger } from '../logger.js'
+import {
+  AiPausedError,
+  classifyAiError,
+  clearAiLimit,
+  isManagedAi,
+  readAiLimit,
+  recoveryDue,
+  writeAiLimit,
+  type AiLimitKind,
+  type AiLimitMarker,
+} from '../ai-limit.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime, RunScope } from './types.js'
 
 /** Retry config for transient API errors (429, 529, etc.) */
@@ -187,6 +198,56 @@ type LaneOutcome = {
   usageLimitHit?: boolean
   rateLimitType?: string
   resetsAt?: number
+  /** Managed lane only: the call hit the AI allowance and the marker is written. */
+  aiPaused?: AiLimitKind
+  /** Managed lane only: the model gave a real answer (clears a pause marker). */
+  answered?: boolean
+}
+
+/** Managed box (card #158) with no key in the vault yet. */
+const MANAGED_NOT_SET_UP = 'The AI connection for this assistant is not set up yet.'
+
+/** Replace every occurrence of `secret` in `text`. A no-op when there is no secret. */
+function scrubSecret(text: string, secret: string | undefined): string {
+  return secret ? text.split(secret).join('[redacted]') : text
+}
+
+/**
+ * Managed pre-check. Paused and not yet due a recovery probe: the kind to
+ * report, and no model call may happen. Due: stamp lastProbeAt first, so a
+ * failing probe waits a full interval before the next one, then allow the call.
+ */
+function managedPauseCheck(now: Date = new Date()): { paused?: AiLimitKind; hadMarker: boolean } {
+  const marker = readAiLimit()
+  if (!marker) return { hadMarker: false }
+  if (!recoveryDue(marker, now)) return { paused: marker.kind, hadMarker: true }
+  writeAiLimit({ ...marker, lastProbeAt: now.toISOString() })
+  return { hadMarker: true }
+}
+
+/**
+ * Record a limit hit. A fresh pause starts `since` now; a failed recovery probe
+ * keeps the existing since, probe stamp and what the owner has been told, and
+ * only refreshes the kind and request id.
+ */
+function recordAiLimit(hit: { kind: AiLimitKind; requestId?: string }): void {
+  const existing = readAiLimit()
+  const base = existing ?? { since: new Date().toISOString() }
+  const next: AiLimitMarker = { ...base, kind: hit.kind }
+  if (hit.requestId) next.lastRequestId = hit.requestId
+  writeAiLimit(next)
+  logger.warn({ kind: hit.kind, requestId: hit.requestId }, 'AI allowance reached; managed box paused')
+}
+
+/**
+ * Text to classify from a result event. Error subtypes carry `errors[]`
+ * instead of `result`; `api_error_status` (success subtype) is prefixed so a
+ * status-keyed pattern still matches when the text omits it.
+ */
+function resultEventText(event: any): string {
+  const status = typeof event.api_error_status === 'number' ? `API Error: ${event.api_error_status} ` : ''
+  const errors = Array.isArray(event.errors) ? event.errors.join(' ') : ''
+  return `${status}${typeof event.result === 'string' ? event.result : ''} ${errors}`.trim()
 }
 
 export class ClaudeAgentRuntime implements AgentRuntime {
@@ -212,6 +273,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
 
   /** One-shot turn, moved verbatim from src/dreaming/index.ts runDreamingAgent(). */
   async runOnce(prompt: string, options: { workingDirectory?: string; model?: string } = {}): Promise<string> {
+    if (isManagedAi()) return this.runOnceManaged(prompt, options)
     let fullText = ''
     const conversation = query({
       prompt,
@@ -228,6 +290,58 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         fullText = event.result ?? ''
       }
     }
+    return fullText.trim()
+  }
+
+  /**
+   * runOnce on a managed box (card #158): the vault key is the only lane. While
+   * paused, or when the call hits a limit, throws AiPausedError instead of
+   * calling the model or returning error text. Other errors still propagate,
+   * with the key scrubbed from the message.
+   */
+  private async runOnceManaged(prompt: string, options: { workingDirectory?: string; model?: string }): Promise<string> {
+    const key = getSecret('ANTHROPIC_API_KEY')
+    if (!key) throw new Error(MANAGED_NOT_SET_UP)
+    const pre = managedPauseCheck()
+    if (pre.paused) throw new AiPausedError(pre.paused)
+
+    let fullText = ''
+    try {
+      const conversation = query({
+        prompt,
+        options: {
+          model: options.model ?? resolveModel(),
+          cwd: options.workingDirectory ?? PROJECT_ROOT,
+          permissionMode: 'bypassPermissions',
+          settingSources: ['project', 'user'],
+          hooks: { PreToolUse: [{ hooks: [guardHook] }] },
+          env: { ...process.env, ANTHROPIC_API_KEY: key },
+        },
+      })
+      for await (const event of conversation) {
+        if (event.type === 'result' && event.is_error) {
+          const hit = classifyAiError(resultEventText(event))
+          if (hit) {
+            recordAiLimit(hit)
+            throw new AiPausedError(hit.kind)
+          }
+        }
+        if (event.type === 'result' && event.subtype === 'success') {
+          fullText = event.result ?? ''
+        }
+      }
+    } catch (err) {
+      if (err instanceof AiPausedError) throw err
+      const message = String((err as any)?.message ?? err)
+      const hit = classifyAiError(message)
+      if (hit) {
+        recordAiLimit(hit)
+        throw new AiPausedError(hit.kind)
+      }
+      if (message.includes(key)) throw new Error(scrubSecret(message, key))
+      throw err
+    }
+    if (pre.hadMarker) clearAiLimit()
     return fullText.trim()
   }
 
@@ -273,6 +387,10 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       return { text: `Not run: ${err instanceof Error ? err.message : String(err)}. Fix the job's role with /schedule role${options.scope?.taskId ? ` ${options.scope.taskId}` : ''} <role>.` }
     }
 
+    // Managed box (card #158): the key is the only lane. No subscription
+    // attempt, no overflow block, nothing to fall back to.
+    if (isManagedAi()) return this.runManaged(options, cwd, overflowKey)
+
     const primary = await this.runOnLane(options, options.sessionId, cwd, undefined)
 
     // Cancelled: never escalate a turn nobody wants any more to paid billing.
@@ -303,6 +421,25 @@ export class ClaudeAgentRuntime implements AgentRuntime {
   }
 
   /**
+   * One turn on a managed box. Paused and not due a probe: report the pause
+   * without calling the model. Otherwise a single call on the key; a limit hit
+   * pauses, a real answer after a probe clears the marker.
+   */
+  private async runManaged(options: AgentRunOptions, cwd: string, key: string | undefined): Promise<AgentRunResult> {
+    if (!key) return { text: MANAGED_NOT_SET_UP }
+    const pre = managedPauseCheck()
+    if (pre.paused) return { text: null, aiPaused: pre.paused }
+
+    const outcome = await this.runOnLane(options, options.sessionId, cwd, key, true)
+    if (outcome.aiPaused) return { text: null, newSessionId: outcome.newSessionId, aiPaused: outcome.aiPaused }
+    if (pre.hadMarker && outcome.answered) {
+      clearAiLimit()
+      logger.info('AI allowance recovery probe succeeded; managed box resumed')
+    }
+    return { text: outcome.text, newSessionId: outcome.newSessionId }
+  }
+
+  /**
    * Run one agent turn on a single billing lane.
    *
    * `apiKeyOverride` scopes an ANTHROPIC_API_KEY to this subprocess only (via the
@@ -318,7 +455,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     options: AgentRunOptions,
     sessionId: string | undefined,
     cwd: string,
-    apiKeyOverride?: string
+    apiKeyOverride?: string,
+    managed = false
   ): Promise<LaneOutcome> {
     const { onTyping, onPartial, onToolProgress } = options
     let lastError: unknown
@@ -336,6 +474,10 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       let usageLimitHit = false
       let rateLimitType: string | undefined
       let resetsAt: number | undefined
+      let aiLimitHit: { kind: AiLimitKind; requestId?: string } | null = null
+      // Managed lane: the result event was an API error that is not a limit.
+      // Its text is still delivered (as today) but it does not end a pause.
+      let resultWasError = false
 
       if (options.signal?.aborted) {
         logger.info({ attempt }, 'Agent turn cancelled before starting')
@@ -426,7 +568,18 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             }
           }
 
-          if (event.type === 'result' && event.subtype === 'success') {
+          // Managed lane: an API error can arrive as a result event with
+          // is_error set (even subtype 'success') instead of a throw. A limit
+          // must pause the box, never be delivered as the answer.
+          if (managed && event.type === 'result' && event.is_error) {
+            aiLimitHit = classifyAiError(resultEventText(event))
+            resultWasError = true
+          }
+
+          if (aiLimitHit) {
+            // Nothing from this turn is an answer. Stop reading.
+            break
+          } else if (event.type === 'result' && event.subtype === 'success') {
             responseText = event.result ?? null
             logger.info({ length: responseText?.length }, 'Agent result received')
           } else if (event.type === 'result') {
@@ -441,6 +594,14 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           if (newSessionId) this.activeWorkspaces.delete(newSessionId)
           if (!options.isolated) this.pendingSteer = null
           return { text: null, newSessionId }
+        }
+
+        // Managed lane hit the AI allowance: pause, no retry, no steer chain.
+        if (aiLimitHit) {
+          recordAiLimit(aiLimitHit)
+          if (newSessionId) this.activeWorkspaces.delete(newSessionId)
+          if (!options.isolated) this.pendingSteer = null
+          return { text: null, newSessionId, aiPaused: aiLimitHit.kind }
         }
 
         // Subscription window rejected with no usable turn: bubble up so the caller
@@ -474,7 +635,11 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             // A cancel must reach the steered follow-up too, not just the original run.
             signal: options.signal,
           })
-          return { text: steered.text, newSessionId: steered.newSessionId ?? newSessionId }
+          return {
+            text: steered.text,
+            newSessionId: steered.newSessionId ?? newSessionId,
+            ...(steered.aiPaused ? { aiPaused: steered.aiPaused } : {}),
+          }
         }
         this.pendingSteer = null
 
@@ -498,7 +663,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         }
 
         // Success, return the result
-        return { text: responseText, newSessionId }
+        return { text: responseText, newSessionId, ...(managed && responseText && !resultWasError ? { answered: true } : {}) }
       } catch (err) {
         lastError = err
         // Cancellation surfaces as a thrown AbortError from the killed
@@ -508,7 +673,25 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           if (newSessionId) this.activeWorkspaces.delete(newSessionId)
           return { text: null, newSessionId }
         }
-        logger.error({ err, attempt }, 'Agent query failed')
+
+        // Managed lane: a limit (seen in a result event, or thrown) pauses the
+        // box. Checked before the usage-limit and retry paths, so a tier-cap
+        // 429 is never retried and nothing falls back to another lane.
+        if (managed) {
+          const hit = aiLimitHit ?? classifyAiError(String((err as any)?.message ?? err))
+          if (hit) {
+            recordAiLimit(hit)
+            if (newSessionId) this.activeWorkspaces.delete(newSessionId)
+            return { text: null, newSessionId, aiPaused: hit.kind }
+          }
+        }
+
+        if (managed) {
+          // Never hand the key to the logger: log a scrubbed message only.
+          logger.error({ err: scrubSecret(String((err as any)?.message ?? err), apiKeyOverride), attempt }, 'Agent query failed')
+        } else {
+          logger.error({ err, attempt }, 'Agent query failed')
+        }
 
         // The turn's real answer arrived before the subprocess died: the CLI emitted a
         // success result, then exited non-zero on teardown (observed with claude 2.1.204,
@@ -517,7 +700,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         // a good reply behind a generic error.
         if (responseText) {
           logger.warn({ attempt }, 'Result received before subprocess error; delivering it anyway')
-          return { text: coerceMcpResult(responseText), newSessionId }
+          return { text: coerceMcpResult(responseText), newSessionId, ...(managed && !resultWasError ? { answered: true } : {}) }
         }
         // Same call for a partial stream: a truncated real answer beats a fabricated one.
         if (streamedText.trim().length > 0) {
@@ -543,7 +726,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
 
         // Anything else is a real, non-transient failure (subprocess crash, bad config,
         // MCP error). Surface it truthfully instead of mislabeling it as an API overload.
-        const detail = String((err as any)?.message ?? err).replace(/\s+/g, ' ').trim().slice(0, 300)
+        // Scrub the lane's key before trimming, so a cut can't leave part of it.
+        const detail = scrubSecret(String((err as any)?.message ?? err), apiKeyOverride).replace(/\s+/g, ' ').trim().slice(0, 300)
         return { text: `Ran into an error and couldn't finish that: ${detail}` }
       } finally {
         options.signal?.removeEventListener('abort', onAbort)
@@ -553,7 +737,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
 
     // Should not reach here (retryable errors return above; the loop never exhausts
     // without a return), but stay honest if it somehow does.
-    logger.error({ lastError }, 'Exhausted all retries')
+    logger.error({ lastError: managed ? scrubSecret(String(lastError), apiKeyOverride) : lastError }, 'Exhausted all retries')
     return { text: 'API is temporarily overloaded. Will try again on the next run.' }
   }
 }
