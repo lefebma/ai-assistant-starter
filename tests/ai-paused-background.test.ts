@@ -3,7 +3,8 @@
  * marker is set (and no recovery probe is due), and behave as before otherwise.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
-import { rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const { runAgentSpy, runtimeSpy } = vi.hoisted(() => {
   // Own store dir: real db and the real marker file live here.
@@ -26,10 +27,13 @@ vi.mock('../src/runtime/index.js', () => ({
 
 import { initDatabase, createTask, getDb } from '../src/db.js'
 import { runDueTasks, initScheduler } from '../src/scheduler.js'
-import { writeAiLimit, clearAiLimit, aiPausedNow } from '../src/ai-limit.js'
+import { writeAiLimit, clearAiLimit, aiPausedForBackground, MANAGED_AI_FILE, readAiLimit } from '../src/ai-limit.js'
 import { STORE_DIR } from '../src/config.js'
 
 rmSync(STORE_DIR, { recursive: true, force: true })
+// Background pause only applies on a managed box.
+mkdirSync(STORE_DIR, { recursive: true })
+writeFileSync(join(STORE_DIR, MANAGED_AI_FILE), '{}')
 
 const pause = (over: Record<string, string> = {}): void =>
   writeAiLimit({ kind: 'spend_limit', since: new Date().toISOString(), ...over })
@@ -43,12 +47,15 @@ beforeEach(() => {
 })
 afterEach(() => clearAiLimit())
 
-describe('aiPausedNow', () => {
-  it('is false without a marker, true when fresh, false once recovery is due', () => {
-    expect(aiPausedNow()).toBe(false)
+const DUE = (): string => new Date(Date.now() - 20 * 60_000).toISOString()
+
+describe('aiPausedForBackground', () => {
+  it('is false without a marker, true with one, due or not', () => {
+    expect(aiPausedForBackground()).toBe(false)
     pause()
-    expect(aiPausedNow()).toBe(true)
-    expect(aiPausedNow(new Date(Date.now() + 16 * 60_000))).toBe(false)
+    expect(aiPausedForBackground()).toBe(true)
+    pause({ since: DUE() })
+    expect(aiPausedForBackground()).toBe(true)
   })
 })
 
@@ -111,6 +118,53 @@ describe('scheduler while paused', () => {
     expect(row.next_run - nowS).toBeLessThanOrEqual(15 * 60 + 2)
   })
 
+  it('a marker with recovery due still skips: the scheduler is never the probe', async () => {
+    const sent: string[] = []
+    initScheduler(async (_c: string, t: string) => void sent.push(t))
+    const nowS = Math.floor(Date.now() / 1000)
+    createTask('due-rec', '123', 'work', '0 9 * * *', nowS - 60, 'Due rec', 'announce')
+    createTask('due-once', '123', 'once', '0 9 1 1 *', nowS - 60, 'Due once', 'announce', 'America/Toronto', true)
+    pause({ since: DUE() })
+    await runDueTasks()
+    expect(runAgentSpy).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+    const rec = getDb().prepare('SELECT last_result FROM scheduled_tasks WHERE id = ?').get('due-rec') as { last_result: string }
+    expect(rec.last_result).toBe('SKIPPED: AI allowance used up')
+    const once = getDb().prepare('SELECT next_run FROM scheduled_tasks WHERE id = ?').get('due-once') as { next_run: number }
+    expect(once.next_run - nowS).toBeGreaterThan(14 * 60)
+    getDb().prepare("DELETE FROM scheduled_tasks WHERE id IN ('due-rec','due-once')").run()
+  })
+
+  it('a run that comes back aiPaused sends nothing, skips a recurring task and keeps a one-shot', async () => {
+    const sent: string[] = []
+    initScheduler(async (_c: string, t: string) => void sent.push(t))
+    const nowS = Math.floor(Date.now() / 1000)
+    createTask('mid-rec', '123', 'work', '0 9 * * *', nowS - 60, 'Mid rec', 'silent')
+    createTask('mid-once', '123', 'once', '0 9 1 1 *', nowS - 60, 'Mid once', 'silent', 'America/Toronto', true)
+    runAgentSpy.mockImplementation(async () => {
+      if (!readAiLimit()) pause()
+      return { text: null, aiPaused: 'spend_limit' } as never
+    })
+    try {
+      await runDueTasks()
+    } finally {
+      runAgentSpy.mockImplementation(async () => ({ text: 'done' }))
+    }
+    expect(sent).toEqual([])
+    expect(sent.some((t) => t.includes('(no response)'))).toBe(false)
+    const rec = getDb().prepare('SELECT next_run, last_result FROM scheduled_tasks WHERE id = ?').get('mid-rec') as {
+      next_run: number
+      last_result: string
+    }
+    expect(rec.last_result).toBe('SKIPPED: AI allowance used up')
+    expect(rec.next_run).toBeGreaterThan(nowS)
+    const once = getDb().prepare('SELECT next_run FROM scheduled_tasks WHERE id = ?').get('mid-once') as { next_run: number } | undefined
+    expect(once).toBeDefined()
+    expect(once!.next_run - nowS).toBeGreaterThan(14 * 60)
+    expect(once!.next_run - nowS).toBeLessThanOrEqual(15 * 60 + 2)
+    getDb().prepare("DELETE FROM scheduled_tasks WHERE id IN ('mid-rec','mid-once')").run()
+  })
+
   it('runs normally with no marker', async () => {
     createTask('paused-2', '123', 'real work', '0 9 * * *', Math.floor(Date.now() / 1000) - 60, 'Normal', 'silent')
     await runDueTasks()
@@ -158,6 +212,56 @@ describe('email alerts tick while paused', () => {
     const r = await svc.tick(d)
     expect(triage).toHaveBeenCalledTimes(1)
     expect(r.triaged).toBe(1)
+  })
+})
+
+describe('email alerts and the recovery probe', () => {
+  const NOON = new Date('2026-10-18T12:00:00Z')
+  const mail = (id: string) => ({
+    mailbox: 'a@x.com', msgId: id, rfcMessageId: `<${id}@x.com>`, receivedAt: NOON.getTime() - 1000,
+    headers: { from: 'Person <p@client.com>' }, subject: `Mail ${id}`,
+  })
+  async function fresh() {
+    const s = await import('../src/email-alerts/store.js')
+    for (const t of ['email_alert_seen', 'email_alerts']) getDb().exec(`DELETE FROM ${t}`)
+    s.saveSettings({
+      enabled: true, pauseUntil: null, pauseIndefinite: false, pauseStartedAt: null,
+      quietStart: '22:00', quietEnd: '07:00', seededMailboxes: ['a@x.com'], pauseSummaryPending: false,
+    })
+    const svc = await import('../src/email-alerts/service.js')
+    const box = { id: 'a@x.com', provider: 'gmail' as const, list: async () => [mail('m1'), mail('m2'), mail('m3')], body: async () => 'b' }
+    return { svc, box }
+  }
+  const seenIds = (): string[] =>
+    (getDb().prepare("SELECT msg_id FROM email_alert_seen WHERE msg_id LIKE 'm%' ORDER BY msg_id").all() as { msg_id: string }[]).map((r) => r.msg_id)
+
+  it('marker present and recovery due: no triage, nothing marked seen', async () => {
+    const { svc, box } = await fresh()
+    const triage = vi.fn(async () => ({ kind: 'verdict' as const, verdict: { critical: false, reason: '' } }))
+    pause({ since: DUE() })
+    const r = await svc.tick({ boxes: async () => ({ boxes: [box], broken: [] }), triage: triage as never, send: vi.fn() as never, now: () => NOON, tz: 'UTC' })
+    expect(triage).not.toHaveBeenCalled()
+    expect(r.triaged).toBe(0)
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM email_alert_seen').get() as { n: number }).n).toBe(0)
+  })
+
+  it('a pause that begins on mail 1 of 3 (paused outcome) leaves mails 2 and 3 unseen', async () => {
+    const { svc, box } = await fresh()
+    const triage = vi.fn(async () => ({ kind: 'paused' as const }))
+    await svc.tick({ boxes: async () => ({ boxes: [box], broken: [] }), triage: triage as never, send: vi.fn() as never, now: () => NOON, tz: 'UTC' })
+    expect(triage).toHaveBeenCalledTimes(1)
+    expect(seenIds()).toEqual(['m1'])
+  })
+
+  it('a pause that begins on mail 1 of 3 (marker written) leaves mails 2 and 3 unseen', async () => {
+    const { svc, box } = await fresh()
+    const triage = vi.fn(async () => {
+      pause()
+      return { kind: 'failed' as const }
+    })
+    await svc.tick({ boxes: async () => ({ boxes: [box], broken: [] }), triage: triage as never, send: vi.fn() as never, now: () => NOON, tz: 'UTC' })
+    expect(triage).toHaveBeenCalledTimes(1)
+    expect(seenIds()).toEqual(['m1'])
   })
 })
 

@@ -5,7 +5,7 @@ import { getAgentRuntime } from '../runtime/index.js'
 import { withActor } from '../assurance/audit-trail.js'
 import { PROJECT_ROOT } from '../config.js'
 import { logger } from '../logger.js'
-import { AiPausedError, aiPausedNow } from '../ai-limit.js'
+import { AiPausedError, aiPausedForBackground } from '../ai-limit.js'
 
 // Auto-detect the Claude Code project directory from PROJECT_ROOT
 const projectKey = PROJECT_ROOT.replace(/\//g, '-').replace(/^-/, '')
@@ -171,7 +171,7 @@ function appendDream(body: string): void {
 }
 
 export async function runDream(options: { dryRun?: boolean } = {}): Promise<void> {
-  if (!options.dryRun && aiPausedNow()) {
+  if (!options.dryRun && aiPausedForBackground()) {
     logger.info('AI allowance used up, skipping dream sweep')
     return
   }

@@ -151,3 +151,17 @@ describe('withTimeout', () => {
     expect(t.TRIAGE_TIMEOUT_MS).toBe(90_000)
   })
 })
+
+describe('triage while the AI allowance is used up', () => {
+  it('maps AiPausedError from the run to a paused outcome', async () => {
+    const { AiPausedError } = await import('../src/ai-limit.js')
+    const out = await t.triage(input, {
+      run: async () => {
+        throw new AiPausedError('spend_limit')
+      },
+      day: '2026-10-23',
+      countCap: false,
+    })
+    expect(out).toEqual({ kind: 'paused' })
+  })
+})

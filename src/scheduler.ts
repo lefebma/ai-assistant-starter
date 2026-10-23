@@ -1,13 +1,13 @@
 import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
-import { getDueTasks, getAllTasks, updateTaskAfterRun, setTaskNextRun, deleteTask } from './db.js'
+import { getDueTasks, getAllTasks, updateTaskAfterRun, setTaskNextRun, deleteTask, type ScheduledTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
 import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
 import { buildAuditPrompt } from './audit/report.js'
 import { logger } from './logger.js'
-import { aiPausedNow, readAiLimit, recoveryDueAt } from './ai-limit.js'
+import { aiPausedForBackground, readAiLimit, recoveryDueAt } from './ai-limit.js'
 import { dashboardDataFile } from './cockpit/paths.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
@@ -71,6 +71,22 @@ function syncDashboardJobs(): void {
   }
 }
 
+/**
+ * While the AI allowance is used up: a recurring task is marked skipped and
+ * moves to its next cron time; a one-shot is kept and retried when recovery
+ * is due (or in 15 minutes), since its next cron occurrence is about a year out.
+ */
+function skipWhilePaused(task: ScheduledTask, nextRun: number): void {
+  if (task.run_once) {
+    const nowMs = Date.now()
+    const marker = readAiLimit()
+    const at = marker ? recoveryDueAt(marker) : nowMs
+    setTaskNextRun(task.id, Math.ceil((at > nowMs ? at : nowMs + 15 * 60_000) / 1000))
+    return
+  }
+  updateTaskAfterRun(task.id, 'SKIPPED: AI allowance used up', nextRun)
+}
+
 export async function runDueTasks(): Promise<void> {
   const tasks = getDueTasks()
   if (tasks.length === 0) return
@@ -100,19 +116,12 @@ export async function runDueTasks(): Promise<void> {
       updateTaskAfterRun(task.id, `ERROR: invalid schedule "${task.schedule}"`, Math.floor(Date.now() / 1000) + 86400)
       continue
     }
-    // AI allowance used up: advance the schedule without running or announcing.
-    if (aiPausedNow()) {
+    // AI allowance used up (a marker exists, even with recovery due: the
+    // recovery timer probes, never a scheduled task). Advance the schedule
+    // without running or announcing.
+    if (aiPausedForBackground()) {
       logger.info({ taskId: task.id }, 'AI allowance used up, skipping scheduled task')
-      if (task.run_once) {
-        // A one-shot has no next cron occurrence worth waiting for (about a
-        // year out). Retry when recovery is due; leave the row untouched.
-        const nowMs = Date.now()
-        const marker = readAiLimit()
-        const at = marker ? recoveryDueAt(marker) : nowMs
-        setTaskNextRun(task.id, Math.ceil((at > nowMs ? at : nowMs + 15 * 60_000) / 1000))
-        continue
-      }
-      updateTaskAfterRun(task.id, 'SKIPPED: AI allowance used up', nextRun)
+      skipWhilePaused(task, nextRun)
       continue
     }
     updateTaskAfterRun(task.id, 'RUNNING...', nextRun)
@@ -131,7 +140,13 @@ export async function runDueTasks(): Promise<void> {
         buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
       )
 
-      const { text } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
+      const { text, aiPaused } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
+      // The allowance ran out during this run: nothing to send, keep a one-shot.
+      if (aiPaused) {
+        logger.info({ taskId: task.id, kind: aiPaused }, 'AI allowance used up during scheduled task')
+        skipWhilePaused(task, nextRun)
+        continue
+      }
       const result = text ?? '(no response)'
 
       // Check if the API was overloaded and defer a retry
@@ -141,7 +156,12 @@ export async function runDueTasks(): Promise<void> {
           deferredRetries.delete(task.id)
           try {
             logger.info({ taskId: task.id }, 'Running deferred retry')
-            const { text: retryText } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
+            const { text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
+            if (retryPaused) {
+              logger.info({ taskId: task.id, kind: retryPaused }, 'AI allowance used up during deferred retry')
+              skipWhilePaused(task, nextRun)
+              return
+            }
             const retryResult = retryText ?? '(no response)'
             updateTaskAfterRun(task.id, retryResult, nextRun)
 

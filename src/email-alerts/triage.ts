@@ -1,5 +1,6 @@
 import { bumpTriageCount, triageCount } from './store.js'
 import { logger } from '../logger.js'
+import { AiPausedError } from '../ai-limit.js'
 
 export interface TriageInput {
   from: string
@@ -16,6 +17,8 @@ export type TriageOutcome =
   | { kind: 'verdict'; verdict: Verdict }
   | { kind: 'capped' }
   | { kind: 'failed' }
+  /** The AI allowance is used up (managed box): stop reading mail. */
+  | { kind: 'paused' }
 
 export const DAILY_TRIAGE_CAP = 300
 const BODY_LIMIT = 1500
@@ -130,7 +133,11 @@ export async function triage(
     }
     logger.info({ outcome: 'verdict' }, 'email-alerts triage')
     return { kind: 'verdict', verdict }
-  } catch {
+  } catch (err) {
+    if (err instanceof AiPausedError) {
+      logger.info({ outcome: 'paused' }, 'email-alerts triage')
+      return { kind: 'paused' }
+    }
     logger.warn({ outcome: 'failed' }, 'email-alerts triage')
     return { kind: 'failed' }
   }

@@ -21,7 +21,7 @@
  * Log lines here carry counts only, never a subject, a sender or a mailbox.
  */
 import { logger } from '../logger.js'
-import { aiPausedNow } from '../ai-limit.js'
+import { aiPausedForBackground } from '../ai-limit.js'
 import {
   alertStatus,
   alertsByStatus,
@@ -359,7 +359,8 @@ async function runTick(ctx: Ctx, result: TickResult): Promise<void> {
   // Everything above sends rows that are already triaged and needs no model.
   // Reading mail marks it seen before triage, so while the AI allowance is used
   // up it must not run, or that mail would never be read once it returns.
-  if (aiPausedNow()) {
+  // A marker with recovery due still counts: the recovery timer probes, not this.
+  if (aiPausedForBackground()) {
     logger.info('AI allowance used up, not reading mail')
     return
   }
@@ -370,8 +371,10 @@ async function runTick(ctx: Ctx, result: TickResult): Promise<void> {
   let boxFailures = 0
   let bodyFailures = 0
 
+  // Set once the allowance runs out mid-tick: stop before marking more mail seen.
+  let pausedMidTick = false
   for (const box of boxes) {
-    if (control.abandoned()) break
+    if (control.abandoned() || pausedMidTick) break
     try {
       // Already-seen ids skip their per-message fetch; markSeen below still
       // catches the same email under another id (RFC Message-ID).
@@ -387,6 +390,10 @@ async function runTick(ctx: Ctx, result: TickResult): Promise<void> {
       const own = (box.address ?? box.id).trim().toLowerCase()
       for (const m of mails) {
         if (control.abandoned()) break
+        if (aiPausedForBackground()) {
+          pausedMidTick = true
+          break
+        }
         if (!markSeen(box.id, m.msgId, m.rfcMessageId)) continue
         // The owner's own mail (a reply in a thread, a note to self) never alerts.
         if (senderAddress(m.headers.from) === own) continue
@@ -404,6 +411,11 @@ async function runTick(ctx: Ctx, result: TickResult): Promise<void> {
           continue
         }
         const outcome = await deps.triage({ from: m.headers.from, subject: m.subject, body })
+        if (outcome.kind === 'paused') {
+          logger.info('AI allowance used up mid-tick, not reading more mail')
+          pausedMidTick = true
+          break
+        }
         if (outcome.kind === 'capped') continue
         result.triaged++
         if (outcome.kind === 'verdict' && outcome.verdict.critical) {

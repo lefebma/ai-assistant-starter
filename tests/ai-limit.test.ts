@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   isManagedAi, readAiLimit, writeAiLimit, clearAiLimit, classifyAiError,
-  recoveryDue, ownerPauseReply, AI_LIMIT_FILE, MANAGED_AI_FILE, type AiLimitMarker,
+  recoveryDue, ownerPauseReply, aiPausedForBackground, AI_LIMIT_FILE, MANAGED_AI_FILE, type AiLimitMarker,
 } from '../src/ai-limit.js'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'ai-limit-'))
@@ -45,6 +45,17 @@ describe('classifyAiError', () => {
   it('ordinary 400 is null', () => {
     expect(classifyAiError('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This model does not support assistant message prefill"}}')).toBeNull()
   })
+  it('a bare 402 token never classifies as billing', () => {
+    expect(classifyAiError('at file:///app/node_modules/cli.js:402:15')).toBeNull()
+    expect(classifyAiError('request took 402 ms')).toBeNull()
+  })
+
+  it('billing needs billing_error, API Error: 402, or "status":402', () => {
+    expect(classifyAiError('API Error: 402 Payment required')?.kind).toBe('billing')
+    expect(classifyAiError('{"status":402,"message":"nope"}')?.kind).toBe('billing')
+    expect(classifyAiError('{"type":"billing_error"}')?.kind).toBe('billing')
+  })
+
   it('402 billing_error', () => {
     expect(classifyAiError('API Error: 402 {"type":"error","error":{"type":"billing_error","message":"Payment required"}}')?.kind).toBe('billing')
   })
@@ -85,5 +96,20 @@ describe('ownerPauseReply', () => {
     const rep = ownerPauseReply(first.next, new Date(now.getTime() + 25 * 60 * MIN))!
     expect(rep.text).toBe(REPEAT)
     expect(rep.next.lastToldAt).toBe(new Date(now.getTime() + 25 * 60 * MIN).toISOString())
+  })
+})
+
+describe('aiPausedForBackground', () => {
+  it('is true only on a managed box with a marker, due or not', () => {
+    const d = dir()
+    expect(aiPausedForBackground(d)).toBe(false)
+    // A marker on a non-managed box does not pause anything.
+    writeAiLimit({ kind: 'spend_limit', since: '2020-01-01T00:00:00.000Z' }, d)
+    expect(aiPausedForBackground(d)).toBe(false)
+    writeFileSync(join(d, MANAGED_AI_FILE), '{}')
+    // Recovery long due: background work still skips; the recovery timer probes.
+    expect(aiPausedForBackground(d)).toBe(true)
+    clearAiLimit(d)
+    expect(aiPausedForBackground(d)).toBe(false)
   })
 })

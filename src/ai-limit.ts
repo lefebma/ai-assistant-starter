@@ -78,6 +78,14 @@ export const LIMIT_PATTERNS: Record<AiLimitKind, { status?: number; errorType?: 
   },
 }
 
+/**
+ * billing: the 402 status counts only in an API error shape (`API Error: 402`
+ * or `"status":402`). A bare 402 is too common (a line number, a duration).
+ */
+function billingStatus(text: string): boolean {
+  return /API Error:\s*402\b/.test(text) || /"status"\s*:\s*402\b/.test(text)
+}
+
 export function classifyAiError(text: string): { kind: AiLimitKind; requestId?: string } | null {
   const requestId = text.match(/req_[A-Za-z0-9]+/)?.[0]
   for (const kind of Object.keys(LIMIT_PATTERNS) as AiLimitKind[]) {
@@ -85,8 +93,7 @@ export function classifyAiError(text: string): { kind: AiLimitKind; requestId?: 
     const statusOk = p.status !== undefined && new RegExp(`\\b${p.status}\\b`).test(text)
     const typeOk = p.errorType ? p.errorType.test(text) : false
     const msgOk = p.message.some((re) => re.test(text))
-    // billing: the 402 status or the billing_error type alone is enough.
-    if (kind === 'billing' ? statusOk || /billing_error/.test(text) || msgOk : (statusOk || typeOk) && msgOk) {
+    if (kind === 'billing' ? billingStatus(text) || /billing_error/.test(text) || msgOk : (statusOk || typeOk) && msgOk) {
       return requestId ? { kind, requestId } : { kind }
     }
   }
@@ -128,12 +135,11 @@ export class AiPausedError extends Error {
 }
 
 /**
- * True while the allowance marker is set and the next recovery probe is not
- * yet due. Background callers (scheduler, email alerts, dreaming, replay,
- * self-test) skip their model work on this; once recovery is due the runtime
- * makes the single probe itself, so they proceed normally.
+ * True on a managed box while the allowance marker is set, whether or not a
+ * recovery probe is due. Background callers (scheduler, email alerts, replay,
+ * dreaming, self-test) skip their model work on this and never act as the
+ * recovery probe: the recovery timer (src/ai-recovery.ts) makes that call.
  */
-export function aiPausedNow(now: Date = new Date(), storeDir: string = STORE_DIR): boolean {
-  const m = readAiLimit(storeDir)
-  return m !== null && !recoveryDue(m, now)
+export function aiPausedForBackground(storeDir: string = STORE_DIR): boolean {
+  return isManagedAi(storeDir) && readAiLimit(storeDir) !== null
 }

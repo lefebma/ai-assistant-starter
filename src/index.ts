@@ -9,6 +9,8 @@ import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
 import { createBot } from './bot.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
+import { AiPausedError } from './ai-limit.js'
+import { startAiRecovery } from './ai-recovery.js'
 import { sendTextWithFiles } from './outbound-delivery.js'
 import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './workspace/service.js'
 import { initUpdateNotice, stopUpdateNotice } from './update/notice-service.js'
@@ -253,10 +255,13 @@ async function main(): Promise<void> {
         boxes: () => discoverMailboxes(),
         triage: (i) =>
           triageEmail(i, {
-            run: withTriageTimeout(
-              async (message, signal) =>
-                (await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })).text
-            ),
+            run: withTriageTimeout(async (message, signal) => {
+              const r = await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })
+              // The allowance ran out on this mail: triage reports paused and
+              // the tick stops before marking the rest seen.
+              if (r.aiPaused) throw new AiPausedError(r.aiPaused)
+              return r.text
+            }),
             day: localDay(new Date(), emailAlertsTz),
           }),
         send: async (text, buttons) => {
@@ -273,6 +278,10 @@ async function main(): Promise<void> {
         format: adapter.name === 'telegram' ? 'plain' : 'markdown',
       })
     : () => {}
+
+  // Managed box only: the single background recovery probe while the AI
+  // allowance is used up. Not started anywhere else.
+  const stopAiRecovery = startAiRecovery()
 
   // Tell the owner once when a release lands. Without a chat to speak into
   // there is nobody to tell, so it does not start at all.
@@ -304,6 +313,7 @@ async function main(): Promise<void> {
     stopWitness()
     stopWitnessChecks()
     stopEmailAlerts()
+    stopAiRecovery()
 
     // The listener closes first, and the order is load-bearing on a hosted box.
     // While it stays open, a webhook arriving mid-shutdown is accepted and then

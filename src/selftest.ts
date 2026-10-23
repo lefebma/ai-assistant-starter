@@ -19,7 +19,7 @@
  */
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { aiPausedNow } from './ai-limit.js'
+import { aiPausedForBackground } from './ai-limit.js'
 import type { CredentialStatus } from './setup/credentials.js'
 
 export interface CheckResult {
@@ -153,7 +153,7 @@ export function defaultChecks(opts: SelfTestOptions = {}): Check[] {
     checks.push({
       name: 'live-model-call',
       run: async () => {
-        if (aiPausedNow()) return 'skipped (AI allowance used up)'
+        if (aiPausedForBackground()) return 'skipped (AI allowance used up)'
         const { getAgentRuntime } = await import('./runtime/index.js')
         const runtime = getAgentRuntime('chat')
         const text = await runtime.runOnce('Reply with exactly one word: ready')
