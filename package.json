@@ -15,6 +15,7 @@
     "teams-register": "tsx scripts/teams-register.ts",
     "split-admin": "tsx scripts/hosted/split-admin.ts",
     "enable-audit": "tsx scripts/hosted/enable-audit.ts",
+    "managed-ai": "tsx scripts/managed-ai.ts",
     "witness-token": "tsx scripts/hosted/witness-token.ts",
     "audit-compare": "tsx scripts/hosted/audit-compare.ts",
     "status": "tsx scripts/status.ts",
