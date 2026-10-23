@@ -50,6 +50,8 @@ export interface WizardOptions {
   hostTimezone?: string
   /** For the city lookup. Defaults to the global fetch; tests inject one to stay offline. */
   fetch?: Fetch
+  /** A provider-run box: no AI question and no voice question; the key is in the vault. */
+  managedAi?: boolean
 }
 
 type ProfileAnswers = Pick<
@@ -267,7 +269,7 @@ export function liveNodeNote(nodeVersion: string): string {
 }
 
 /** The optional-skill questions, asked only when the owner opts in. */
-async function askOptionalSkills(p: Prompter, skills: Answers['skills'], keys: Answers['keys']): Promise<void> {
+async function askOptionalSkills(p: Prompter, skills: Answers['skills'], keys: Answers['keys'], managedAi = false): Promise<void> {
   p.say('Web research (Perplexity): three-tier research with citations. Key: https://www.perplexity.ai/settings/api')
   skills.webResearch = await p.yesNo('Enable web-research skill?')
   if (skills.webResearch) keys.perplexity = await p.ask('Perplexity API key (leave blank to fill in later)', '')
@@ -295,7 +297,7 @@ async function askOptionalSkills(p: Prompter, skills: Answers['skills'], keys: A
     keys.kzBoardId = await p.ask('Default board ID (optional)', '')
   }
 
-  await askVoice(p, keys)
+  if (!managedAi) await askVoice(p, keys)
 
   p.say('WordPress (drafts-only): reads content, drafts posts, never publishes.')
   skills.wordpress = await p.yesNo('Enable WordPress skill?')
@@ -314,7 +316,9 @@ export async function runWizard(
 ): Promise<Answers> {
   const platform = (await p.choice('Which messaging platform?', ['Telegram', 'Slack', 'Teams'])) as Platform
 
-  const engineAnswers = await askEngine(p, hooks)
+  // A managed box has no AI step: its key is already in the vault.
+  const managed = opts.managedAi === true
+  const engineAnswers: EngineAnswers = managed ? { engine: 'managed' } : await askEngine(p, hooks)
 
   const profile = opts.legacyInstall ? await askLegacyProfile(p, opts) : profileFor(opts.saved, opts)
   const { ownerName } = profile
@@ -364,7 +368,7 @@ export async function runWizard(
     ? 'Change optional skills?'
     : 'Set up optional skills now (web research, Apollo, Anti-library, Notion, Kanban Zone, voice, WordPress)?'
   if (await p.yesNo(skillsQuestion)) {
-    await askOptionalSkills(p, skills, keys)
+    await askOptionalSkills(p, skills, keys, managed)
   } else if (saved) {
     // The skills stay on with their non-secret config (site URL, vault path).
     // Their keys are already on disk from the last run and are not asked again.

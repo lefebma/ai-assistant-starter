@@ -16,9 +16,10 @@ export type EmailProvider = 'Gmail' | 'Outlook/Microsoft 365' | 'Both' | 'Skip f
  * engine against an interactive sign-in; 'api-key' drives a provider API
  * directly and never signs in; 'later' leaves .env commented for both, which
  * is honest but produces an assistant that cannot answer until someone
- * returns to it.
+ * returns to it. 'managed' is a provider-run box: its key is in the vault and
+ * .env says nothing about the model.
  */
-export type EngineChoice = 'subscription' | 'api-key' | 'later'
+export type EngineChoice = 'subscription' | 'api-key' | 'later' | 'managed'
 export type AiProvider = 'anthropic' | 'openai' | 'google'
 
 export interface Answers {
@@ -127,8 +128,14 @@ export function buildEnvContent(a: Answers): string {
   // two GOOGLE_API_KEY lines, where the later silently wins.
   const emitted = new Set<string>()
 
-  lines.push('', '# How your assistant reaches a model')
-  if (a.engine === 'api-key') {
+  if (a.engine === 'managed') {
+    lines.push('', '# AI access is managed for this assistant. Nothing to set here.')
+  } else {
+    lines.push('', '# How your assistant reaches a model')
+  }
+  if (a.engine === 'managed') {
+    // Nothing: the default claude runtime picks the key up from the vault.
+  } else if (a.engine === 'api-key') {
     const provider = a.aiProvider ?? 'anthropic'
     const keyName = PROVIDER_KEY[provider]
     lines.push('AGENT_RUNTIME=ai-sdk', `AI_PROVIDER=${provider}`)
@@ -161,7 +168,7 @@ export function buildEnvContent(a: Answers): string {
   // Voice (Whisper voice notes, spoken replies, live conversation) runs on
   // OpenAI whatever the model provider. Written once: an OpenAI model install
   // already emitted the same key above.
-  if (a.keys.openai !== undefined && !emitted.has('OPENAI_API_KEY')) {
+  if (a.engine !== 'managed' && a.keys.openai !== undefined && !emitted.has('OPENAI_API_KEY')) {
     lines.push(
       '',
       '# Voice: voice notes, spoken replies, and live conversation (/voice/live).',

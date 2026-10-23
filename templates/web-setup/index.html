@@ -55,7 +55,7 @@
 <body>
 <main>
   <h1>Set up your assistant</h1>
-  <p class="sub">Two short steps. Nothing here is shared with anyone.</p>
+  <p class="sub" id="sub">Two short steps. Nothing here is shared with anyone.</p>
   <div class="steps" aria-hidden="true"><span id="bar1" class="on"></span><span id="bar2"></span></div>
 
   <section id="already" class="hidden">
@@ -144,6 +144,7 @@
   }
   const MODELS = { anthropic: '', openai: 'gpt-5', google: 'gemini-2.5-pro' }
   let state = null
+  let managedAi = false
   let botUser = ''
 
   async function api(path, body) {
@@ -160,7 +161,7 @@
   function show(step) {
     for (const id of ['step1', 'step2', 'done', 'already']) $(id).classList.toggle('hidden', id !== step)
     const n = { step1: 1, step2: 2, done: 2 }[step] || 0
-    for (let i = 1; i <= 2; i++) $('bar' + i).classList.toggle('on', i <= n)
+    for (let i = 1; i <= (managedAi ? 1 : 2); i++) $('bar' + i).classList.toggle('on', i <= n)
     window.scrollTo(0, 0)
   }
 
@@ -179,7 +180,7 @@
   try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch {}
 
   $('back2').onclick = () => show('step1')
-  $('next1').onclick = () => show('step2')
+  $('next1').onclick = () => { if (managedAi) finishManaged(); else show('step2') }
 
   $('connectBot').onclick = async () => {
     $('err1').textContent = ''
@@ -287,9 +288,32 @@
     }
   }
 
+  // A managed box has no AI step: one step, and finishing it posts the engine kind directly.
+  async function finishManaged() {
+    $('err1').textContent = ''
+    $('next1').disabled = true
+    $('next1').textContent = 'Setting up…'
+    try {
+      const r = await api('finish', { timezone, engine: { kind: 'managed' } })
+      $('openTelegram').href = 'https://t.me/' + encodeURIComponent(r.bot)
+      if (!r.delivered) $('doneMsg').textContent = 'Your assistant is starting. Open your bot in Telegram and say hello in a minute. It will ask a few quick questions.'
+      show('done')
+    } catch (e) {
+      $('err1').textContent = e.message
+      $('next1').disabled = false
+      $('next1').textContent = 'Finish setup'
+    }
+  }
+
   api('state').then((s) => {
     state = s
     if (s.alreadySetUp) return show('already')
+    if (s.managedAi) {
+      managedAi = true
+      $('sub').textContent = 'One short step.'
+      $('bar2').classList.add('hidden')
+      $('next1').textContent = 'Finish setup'
+    }
     if (s.subscription) {
       $('optSub').classList.remove('hidden')
       if (s.subscription.signedIn) $('subState').innerHTML = '<span class="okmsg">Already signed in to Claude on this computer.</span>'

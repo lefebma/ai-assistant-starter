@@ -31,6 +31,8 @@ export interface CredentialInputs {
   signedIn: boolean
   /** How, in plain English, from AuthStatus.detail. Used verbatim when set. */
   signInDetail?: string
+  /** A provider-run box: the key is in the vault and nobody signs in. */
+  managed?: boolean
 }
 
 export interface CredentialStatus {
@@ -74,6 +76,14 @@ export function checkCredentials(io: CredentialInputs): CredentialStatus {
   // held in the OS credential store, or ANTHROPIC_API_KEY, which Claude Code
   // honours as an auth method in its own right (not only as the overflow lane
   // this project uses it for).
+  if (io.managed) {
+    if (has('ANTHROPIC_API_KEY')) return { ok: true, detail: 'managed AI key configured' }
+    return {
+      ok: false,
+      detail: 'managed box has no AI key',
+      remedy: 'Ask your provider to put the AI key on this assistant again.',
+    }
+  }
   if (io.signedIn) return { ok: true, detail: io.signInDetail?.trim() || 'signed in to Claude on this machine' }
   if (has('ANTHROPIC_API_KEY')) return { ok: true, detail: 'ANTHROPIC_API_KEY configured' }
 

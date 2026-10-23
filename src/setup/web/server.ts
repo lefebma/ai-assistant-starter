@@ -19,8 +19,9 @@ import { existsSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { resolve } from 'node:path'
 import { writeConfiguration } from '../finalize.js'
+import { isManagedAi } from '../../ai-limit.js'
 import type { AiProvider } from '../plan.js'
-import { answersFromWeb, InputError, parseEngine, parseTimezone, provisionalProfile } from './answers.js'
+import { answersFromWeb, InputError, parseEngine, type WebEngine, parseTimezone, provisionalProfile } from './answers.js'
 import { checkLink, completeLink, FailureLimiter, type LinkStore } from './link.js'
 import { checkBotToken, Pairing, sendMessage, TelegramError, type BotInfo, type Fetch } from './telegram.js'
 
@@ -122,6 +123,9 @@ export function createSetupServer(deps: SetupDeps): Server {
   let finishing = false
   let finished = false
 
+  /** Read each time: the operator marks a box managed while setup is waiting. */
+  const managed = () => isManagedAi(resolve(deps.projectRoot, 'store'))
+
   const subscriptionAllowed = deps.mode === 'local' && !!deps.claude?.available
 
   /** Returns true when the request may proceed; otherwise it has been answered. */
@@ -198,7 +202,11 @@ export function createSetupServer(deps: SetupDeps): Server {
       json(res, 400, { error: 'Connect Telegram first.' })
       return
     }
-    const engine = parseEngine(body['engine'], subscriptionAllowed)
+    // A managed box has no AI step: whatever the request carries is ignored,
+    // and no provider key from it ever reaches the vault.
+    const engine: WebEngine & { key: string } = managed()
+      ? { kind: 'managed', key: '' }
+      : parseEngine(body['engine'], subscriptionAllowed)
     if (engine.kind === 'subscription' && !deps.claude?.signedIn()) {
       json(res, 400, { error: 'Sign in to Claude first, or choose an API key.' })
       return
@@ -266,6 +274,7 @@ export function createSetupServer(deps: SetupDeps): Server {
         subscription: subscriptionAllowed ? { signedIn: deps.claude!.signedIn() } : null,
         bot: bot ? { username: bot.info.username, name: bot.info.firstName } : null,
         pairing: pairingView(),
+        managedAi: managed(),
         alreadySetUp: existsSync(resolve(deps.projectRoot, '.env')),
       })
       return

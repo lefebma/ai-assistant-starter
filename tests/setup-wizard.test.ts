@@ -50,6 +50,17 @@ describe('buildEmailSignature', () => {
   })
 })
 
+describe('buildEnvContent, managed box', () => {
+  it('writes no model lines, no key lines and no voice keys', () => {
+    const env = buildEnvContent({ ...BASE, engine: 'managed', aiProvider: 'openai', aiModel: 'gpt-5', keys: { openai: 'sk-x', anthropic: 'sk-y' } })
+    for (const banned of ['AGENT_RUNTIME', 'AI_PROVIDER', 'AI_MODEL', 'ANTHROPIC_API_KEY=', 'OPENAI_API_KEY=', 'GOOGLE_API_KEY=']) {
+      expect(env).not.toContain(banned)
+    }
+    expect(env).toContain('TELEGRAM_BOT_TOKEN=')
+    expect(env).toContain('TIMEZONE=America/Toronto')
+  })
+})
+
 describe('buildEnvContent', () => {
   it('emits telegram credential keys', () => {
     const env = buildEnvContent(BASE)
@@ -270,6 +281,25 @@ const offline = (async () => {
 /** Platform + engine are always first; `rest` is everything after. */
 const NO_EXTRAS = [false, false] // email gate, optional-skills gate
 const ALL_SKILLS_OFF = [false, false, false, false, false, false, false] // six skills + voice
+
+describe('runWizard, managed box', () => {
+  it('never asks the engine or voice questions', async () => {
+    const asked: string[] = []
+    // platform, email gate, skills gate, then six skills + no voice question.
+    const inner = scripted(['Telegram', false, true, false, false, false, false, false, false])
+    const p: Prompter = {
+      ...inner,
+      ask: async (q, d) => (asked.push(q), inner.ask(q, d)),
+      choice: async (q, o) => (asked.push(q), inner.choice(q, o)),
+      yesNo: async (q) => (asked.push(q), inner.yesNo(q)),
+    }
+    const a = await runWizard(p, '/repo', undefined, { hostTimezone: 'America/Halifax', managedAi: true })
+    expect(a.engine).toBe('managed')
+    expect(a.aiProvider).toBeUndefined()
+    expect(asked.some((q) => /Which do you have|Whose API key|Enable voice/.test(q))).toBe(false)
+    expect(a.keys.openai).toBeUndefined()
+  })
+})
 
 describe('runWizard', () => {
   it('fresh install asks only core', async () => {

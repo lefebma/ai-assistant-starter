@@ -12,6 +12,7 @@ import { isAbsolute, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline/promises'
 import { PROJECT_ROOT } from '../src/env.js'
+import { isManagedAi } from '../src/ai-limit.js'
 import { isLegacyInstall, provisionalAssistantName, runWizard, type Prompter } from '../src/setup/wizard.js'
 import { checkRequirements, planBuildStep } from '../src/setup/requirements.js'
 import { resolveBundledClaude } from '../src/infra/claude-bin.js'
@@ -150,7 +151,7 @@ async function main(): Promise<void> {
     prompter,
     PROJECT_ROOT,
     { signIn, ensureGog },
-    { saved, legacyInstall, hostTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+    { saved, legacyInstall, hostTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone, managedAi: isManagedAi(resolve(PROJECT_ROOT, 'store')) }
   )
   const provisional = !legacyInstall && !saved
   const profilePending = legacyInstall ? false : saved ? saved.profilePending === true : true

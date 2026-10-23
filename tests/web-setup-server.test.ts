@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -24,8 +24,12 @@ afterEach(() => {
   }
 })
 
-async function boot(mode: SetupMode, opts: { now?: () => number; signedIn?: boolean } = {}) {
+async function boot(mode: SetupMode, opts: { now?: () => number; signedIn?: boolean; managed?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'web-setup-'))
+  if (opts.managed) {
+    mkdirSync(join(root, 'store'), { recursive: true })
+    writeFileSync(join(root, 'store', 'managed-ai.json'), JSON.stringify({ since: new Date().toISOString() }))
+  }
   cpSync(join(REPO, 'templates'), join(root, 'templates'), { recursive: true })
   const tg = fakeTelegram()
   const vault = new Map<string, string>()
@@ -259,5 +263,48 @@ describe('web setup, local', () => {
     const t = await boot('local')
     expect((await t.req('/voice')).status).toBe(404)
     expect((await t.req('/setup.html')).status).toBe(404)
+  })
+})
+
+
+describe('web setup, managed box', () => {
+  it('reports managedAi in the state only when the marker exists', async () => {
+    const plain = await boot('hosted')
+    expect(await (await plain.req('/setup/api/state')).json()).toMatchObject({ managedAi: false })
+    const managed = await boot('hosted', { managed: true })
+    expect(await (await managed.req('/setup/api/state')).json()).toMatchObject({ managedAi: true })
+  })
+
+  it('ignores a posted engine, writes no provider lines and puts nothing from the request in the vault', async () => {
+    const t = await boot('hosted', { managed: true })
+    await pairOwner(t)
+    const res = await t.req('/setup/api/finish', {
+      timezone: TZ,
+      engine: { kind: 'api-key', provider: 'openai', key: OPENAI_KEY, model: 'gpt-5' },
+    })
+    expect(res.status).toBe(200)
+    expect([...t.vault.keys()]).toEqual(['TELEGRAM_BOT_TOKEN'])
+    const env = readFileSync(join(t.root, '.env'), 'utf-8')
+    for (const banned of ['AGENT_RUNTIME', 'AI_PROVIDER', 'AI_MODEL', 'API_KEY=']) expect(env).not.toContain(banned)
+    expect(env).not.toContain(OPENAI_KEY)
+  })
+
+  it('finishes with no engine posted at all', async () => {
+    const t = await boot('hosted', { managed: true })
+    await pairOwner(t)
+    expect((await t.req('/setup/api/finish', { timezone: TZ })).status).toBe(200)
+  })
+
+  it('a plain box still rejects the managed kind from a request', async () => {
+    const t = await boot('hosted')
+    await pairOwner(t)
+    expect((await t.req('/setup/api/finish', { timezone: TZ, engine: { kind: 'managed' } })).status).toBe(400)
+  })
+
+  it('the page has a one-step managed mode that posts engine managed', () => {
+    const html = readFileSync(join(REPO, 'templates', 'web-setup', 'index.html'), 'utf-8')
+    expect(html).toContain('managedAi')
+    expect(html).toContain('One short step.')
+    expect(html).toContain("engine: { kind: 'managed' }")
   })
 })

@@ -66,6 +66,8 @@ export async function credentialStatus(): Promise<CredentialStatus> {
   const { resolveBundledClaude } = await import('./infra/claude-bin.js')
   const { checkClaudeAuth, spawnClaude } = await import('./infra/claude-auth.js')
   const { checkCredentials } = await import('./setup/credentials.js')
+  const { isManagedAi } = await import('./ai-limit.js')
+  const { join } = await import('node:path')
 
   const env = readEnvFile()
   const read = (name: string) => getSecret(name) ?? env[name] ?? process.env[name]
@@ -79,7 +81,7 @@ export async function credentialStatus(): Promise<CredentialStatus> {
       ? checkClaudeAuth(resolveBundledClaude(process.env, PROJECT_ROOT), spawnClaude)
       : { loggedIn: false, detail: '' }
 
-  return checkCredentials({ runtime, provider, env: read, signedIn: auth.loggedIn, signInDetail: auth.detail })
+  return checkCredentials({ runtime, provider, env: read, signedIn: auth.loggedIn, signInDetail: auth.detail, managed: isManagedAi(join(PROJECT_ROOT, 'store')) })
 }
 
 export function defaultChecks(opts: SelfTestOptions = {}): Check[] {

@@ -7,6 +7,18 @@ import { bundledClaudeCandidates, resolveBundledClaude, sdkPlatformPackages } fr
 const noEnv = () => undefined
 
 describe('checkCredentials', () => {
+  it('passes on a managed box with the vault key, even when nobody is signed in', () => {
+    const r = checkCredentials({ runtime: 'claude', managed: true, env: (n) => (n === 'ANTHROPIC_API_KEY' ? 'sk-x' : undefined), signedIn: false })
+    expect(r.ok).toBe(true)
+    expect(r.detail).toMatch(/managed/i)
+  })
+
+  it('fails on a managed box with no key, and tells the owner to contact their provider', () => {
+    const r = checkCredentials({ runtime: 'claude', managed: true, env: noEnv, signedIn: true })
+    expect(r.ok).toBe(false)
+    expect(r.remedy).toMatch(/provider/i)
+  })
+
   it('passes on the claude runtime when the machine is signed in', () => {
     const r = checkCredentials({ runtime: 'claude', env: noEnv, signedIn: true })
     expect(r.ok).toBe(true)
