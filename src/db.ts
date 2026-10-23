@@ -428,6 +428,11 @@ export function updateTaskAfterRun(id: string, result: string, nextRun: number):
   ).run(now(), result, nextRun, id)
 }
 
+/** Move only the next run time, leaving last_run and last_result as they were. */
+export function setTaskNextRun(id: string, nextRun: number): void {
+  getDb().prepare(`UPDATE scheduled_tasks SET next_run = ? WHERE id = ?`).run(nextRun, id)
+}
+
 export function getAllTasks(): ScheduledTask[] {
   const d = getDb()
   return d.prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC').all() as ScheduledTask[]

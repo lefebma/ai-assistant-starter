@@ -288,12 +288,6 @@ async function flush(ctx: Ctx, reason: 'quiet_end' | 'pause_end'): Promise<numbe
 
 export async function tick(deps: TickDeps, control: TickControl = standalone()): Promise<TickResult> {
   const result: TickResult = { sent: 0, held: 0, paused: 0, triaged: 0 }
-  // Mail is marked seen before it is triaged, so a paused tick must leave it
-  // untouched or it would never be read once the allowance returns.
-  if (aiPausedNow()) {
-    logger.info('AI allowance used up, skipping email alerts tick')
-    return result
-  }
   try {
     await runTick({ deps, control }, result)
   } catch (err) {
@@ -362,6 +356,13 @@ async function runTick(ctx: Ctx, result: TickResult): Promise<void> {
   // 3. Read mail. An abandoned tick stops before marking anything else seen,
   // so a later tick reads the rest.
   if (control.abandoned()) return
+  // Everything above sends rows that are already triaged and needs no model.
+  // Reading mail marks it seen before triage, so while the AI allowance is used
+  // up it must not run, or that mail would never be read once it returns.
+  if (aiPausedNow()) {
+    logger.info('AI allowance used up, not reading mail')
+    return
+  }
   const { boxes } = await deps.boxes()
   const vip = listAll('vip')
   const mute = listAll('mute')

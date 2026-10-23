@@ -72,6 +72,45 @@ describe('scheduler while paused', () => {
     expect(row.last_result).toBe('SKIPPED: AI allowance used up')
   })
 
+  it('keeps a paused one-shot for the recovery time, then runs and deletes it', async () => {
+    const nowS = Math.floor(Date.now() / 1000)
+    const due = nowS - 60
+    createTask('paused-once', '123', 'once work', '0 9 1 1 *', due, 'Once', 'silent', 'America/Toronto', true)
+    const since = new Date(Date.now() - 5 * 60_000).toISOString()
+    pause({ since })
+    await runDueTasks()
+    expect(runAgentSpy).not.toHaveBeenCalled()
+    const row = getDb().prepare('SELECT next_run, last_result, last_run FROM scheduled_tasks WHERE id = ?').get('paused-once') as {
+      next_run: number
+      last_result: string | null
+      last_run: number | null
+    }
+    // since + 15 min = about 10 minutes from now, nowhere near next year.
+    const expected = Math.ceil((Date.parse(since) + 15 * 60_000) / 1000)
+    expect(row.next_run).toBe(expected)
+    expect(row.next_run - nowS).toBeLessThan(15 * 60)
+    expect(row.last_result).toBeNull()
+    expect(row.last_run).toBeNull()
+
+    // Pause lifts and the task comes due: it runs once and is deleted.
+    clearAiLimit()
+    getDb().prepare('UPDATE scheduled_tasks SET next_run = ? WHERE id = ?').run(nowS - 1, 'paused-once')
+    await runDueTasks()
+    expect(runAgentSpy).toHaveBeenCalledTimes(1)
+    expect(getDb().prepare('SELECT 1 FROM scheduled_tasks WHERE id = ?').get('paused-once')).toBeUndefined()
+  })
+
+  it('a paused one-shot with a fresh marker retries in about 15 minutes', async () => {
+    const nowS = Math.floor(Date.now() / 1000)
+    createTask('paused-once-2', '123', 'once work 2', '0 9 1 1 *', nowS - 60, 'Once2', 'silent', 'America/Toronto', true)
+    // Marker set just now: recovery is due in about 15 minutes.
+    pause()
+    await runDueTasks()
+    const row = getDb().prepare('SELECT next_run FROM scheduled_tasks WHERE id = ?').get('paused-once-2') as { next_run: number }
+    expect(row.next_run - nowS).toBeGreaterThan(14 * 60)
+    expect(row.next_run - nowS).toBeLessThanOrEqual(15 * 60 + 2)
+  })
+
   it('runs normally with no marker', async () => {
     createTask('paused-2', '123', 'real work', '0 9 * * *', Math.floor(Date.now() / 1000) - 60, 'Normal', 'silent')
     await runDueTasks()
@@ -119,6 +158,35 @@ describe('email alerts tick while paused', () => {
     const r = await svc.tick(d)
     expect(triage).toHaveBeenCalledTimes(1)
     expect(r.triaged).toBe(1)
+  })
+})
+
+describe('email alerts model-free delivery while paused', () => {
+  it('delivers a stored retry row but reads no mailbox and marks nothing seen', async () => {
+    const s = await import('../src/email-alerts/store.js')
+    const svc = await import('../src/email-alerts/service.js')
+    for (const t of ['email_alert_seen', 'email_alerts']) getDb().exec(`DELETE FROM ${t}`)
+    s.saveSettings({
+      enabled: true, pauseUntil: null, pauseIndefinite: false, pauseStartedAt: null,
+      quietStart: '22:00', quietEnd: '07:00', seededMailboxes: ['a@x.com'], pauseSummaryPending: false,
+    })
+    s.insertAlert({
+      mailbox: 'a@x.com', msgId: 'old1', sender: 'Boss <b@x.com>', subject: 'Down', reason: 'Site down',
+      vip: false, status: 'retry', createdAt: 1,
+    })
+    const boxes = vi.fn(async () => ({ boxes: [], broken: [] }))
+    const triage = vi.fn()
+    const send = vi.fn(async () => ({ chatId: 'c', messageId: '9' }))
+    pause()
+    const r = await svc.tick({
+      boxes, triage: triage as never, send, now: () => new Date('2026-10-18T12:00:00Z'), tz: 'UTC',
+    })
+    expect(r.sent).toBe(1)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(s.alertsByStatus('retry')).toHaveLength(0)
+    expect(boxes).not.toHaveBeenCalled()
+    expect(triage).not.toHaveBeenCalled()
+    expect((getDb().prepare('SELECT COUNT(*) AS n FROM email_alert_seen').get() as { n: number }).n).toBe(0)
   })
 })
 

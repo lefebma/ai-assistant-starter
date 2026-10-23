@@ -1,13 +1,13 @@
 import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
-import { getDueTasks, getAllTasks, updateTaskAfterRun, deleteTask } from './db.js'
+import { getDueTasks, getAllTasks, updateTaskAfterRun, setTaskNextRun, deleteTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
 import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
 import { buildAuditPrompt } from './audit/report.js'
 import { logger } from './logger.js'
-import { aiPausedNow } from './ai-limit.js'
+import { aiPausedNow, readAiLimit, recoveryDueAt } from './ai-limit.js'
 import { dashboardDataFile } from './cockpit/paths.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
@@ -103,6 +103,15 @@ export async function runDueTasks(): Promise<void> {
     // AI allowance used up: advance the schedule without running or announcing.
     if (aiPausedNow()) {
       logger.info({ taskId: task.id }, 'AI allowance used up, skipping scheduled task')
+      if (task.run_once) {
+        // A one-shot has no next cron occurrence worth waiting for (about a
+        // year out). Retry when recovery is due; leave the row untouched.
+        const nowMs = Date.now()
+        const marker = readAiLimit()
+        const at = marker ? recoveryDueAt(marker) : nowMs
+        setTaskNextRun(task.id, Math.ceil((at > nowMs ? at : nowMs + 15 * 60_000) / 1000))
+        continue
+      }
       updateTaskAfterRun(task.id, 'SKIPPED: AI allowance used up', nextRun)
       continue
     }

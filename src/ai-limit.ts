@@ -92,6 +92,12 @@ export function recoveryDue(m: AiLimitMarker, now: Date, intervalMs: number = DE
   return now.getTime() - last >= intervalMs
 }
 
+/** Epoch ms of the next recovery probe: the last probe (or the pause start) plus the interval. */
+export function recoveryDueAt(m: AiLimitMarker, intervalMs: number = DEFAULT_RECOVERY_MS): number {
+  const last = Date.parse(m.lastProbeAt ?? m.since)
+  return (Number.isNaN(last) ? 0 : last) + intervalMs
+}
+
 export function ownerPauseReply(m: AiLimitMarker, now: Date): { text: string; next: AiLimitMarker } | null {
   const told = m.lastToldAt ? Date.parse(m.lastToldAt) : NaN
   const stamp = { ...m, lastToldAt: now.toISOString(), toldFull: true }
