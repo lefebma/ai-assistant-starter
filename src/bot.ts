@@ -22,9 +22,8 @@ import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
 import { saveConversationTurn } from './memory.js'
-import { ownerPauseReply, readAiLimit, writeAiLimit } from './ai-limit.js'
+import { isManagedAi, ownerPauseReply, readAiLimit, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { createDefaultEngine } from './memory/engine.js'
-import { isManagedAi, VOICE_OFF_REPLY } from './ai-limit.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
@@ -301,11 +300,21 @@ async function handleMessage(
     // at most once a day; nothing else about the turn happens (no memory save,
     // voice or buttons), and the "(no response)" branch must not fire.
     if (aiPaused) {
+      // Only the runtime writes a fresh marker. None here means the box has
+      // just recovered, so there is nothing to tell the owner.
+      const marker = readAiLimit()
+      if (!marker) {
+        if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
+        return
+      }
       const now = new Date()
-      const marker = readAiLimit() ?? { kind: aiPaused, since: now.toISOString() }
       const reply = ownerPauseReply(marker, now)
       if (reply) {
-        writeAiLimit(reply.next)
+        try {
+          writeAiLimit(reply.next)
+        } catch (err) {
+          logger.warn({ err: String(err) }, 'Could not record the pause reply; sending it anyway')
+        }
         if (previewMessageId != null) {
           await adapter.editMessage(chatId, previewMessageId, reply.text)
         } else {
@@ -1386,7 +1395,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         await adapter.sendMessage(chatId, 'Voice replies disabled.')
       } else {
         if (!voiceCapabilities().tts) {
-          await adapter.sendMessage(chatId, isManagedAi() ? VOICE_OFF_REPLY : 'TTS not configured. Set OPENAI_API_KEY in .env')
+          await adapter.sendMessage(chatId, 'TTS not configured. Set OPENAI_API_KEY in .env')
           return
         }
         voiceModeChats.add(chatId)

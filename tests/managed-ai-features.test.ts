@@ -120,6 +120,25 @@ describe('managed box: voice, video, secrets', () => {
   })
 })
 
+describe('managed box: /secret help text', () => {
+  const AI_KEYS = /OPENAI_API_KEY|ANTHROPIC_API_KEY|GOOGLE_API_KEY/
+  it('usage and the bad-name example name no AI key', async () => {
+    const flow = new SecretFlow({ vault: () => new SecretVault({ dir: require('node:fs').mkdtempSync(join(require('node:os').tmpdir(), 'vault-')) }), isManaged: () => true })
+    const usage = await flow.handleCommand('c', '/secret')
+    expect(usage.reply).toMatch(/Keys the engine reads:/)
+    expect(usage.reply).not.toMatch(AI_KEYS)
+    const bad = await flow.handleCommand('c', '/secret set bad-name!')
+    expect(bad.reply).toMatch(/does not look like a valid secret name/)
+    expect(bad.reply).not.toMatch(AI_KEYS)
+  })
+
+  it('a non-managed box still lists them', async () => {
+    const flow = new SecretFlow({ vault: () => new SecretVault({ dir: require('node:fs').mkdtempSync(join(require('node:os').tmpdir(), 'vault-')) }), isManaged: () => false })
+    expect((await flow.handleCommand('c', '/secret')).reply).toContain('OPENAI_API_KEY')
+    expect((await flow.handleCommand('c', '/secret set bad-name!')).reply).toContain('/secret set OPENAI_API_KEY')
+  })
+})
+
 describe('non-managed box keeps today\'s texts', () => {
   beforeEach(() => {
     initDatabase()

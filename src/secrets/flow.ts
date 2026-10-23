@@ -54,16 +54,20 @@ export interface SecretFlowOpts {
   isManaged?: () => boolean
 }
 
-const USAGE = [
-  'Manage API keys (stored in the encrypted vault, never shown to the AI model):',
-  '',
-  '/secret set <NAME> - store a key; I ask for the value as your next message',
-  '/secret list - show which keys are set and where they come from (values stay masked)',
-  '/secret rm <NAME> - remove a key',
-  '/secret cancel - abort a pending /secret set',
-  '',
-  `Keys the engine reads: ${KNOWN_SECRET_NAMES.join(', ')}`,
-].join('\n')
+/** Help text. A managed box gets its AI keys from its provider, so they are not listed there. */
+function usage(managed: boolean): string {
+  const names = managed ? KNOWN_SECRET_NAMES.filter((n) => !MANAGED_SECRET_NAMES.includes(n)) : KNOWN_SECRET_NAMES
+  return [
+    'Manage API keys (stored in the encrypted vault, never shown to the AI model):',
+    '',
+    '/secret set <NAME> - store a key; I ask for the value as your next message',
+    '/secret list - show which keys are set and where they come from (values stay masked)',
+    '/secret rm <NAME> - remove a key',
+    '/secret cancel - abort a pending /secret set',
+    '',
+    `Keys the engine reads: ${names.join(', ')}`,
+  ].join('\n')
+}
 
 export class SecretFlow {
   private readonly vault: () => SecretVault
@@ -143,7 +147,7 @@ export class SecretFlow {
         return {
           reply:
             'That does not look like a valid secret name. Use uppercase letters, digits and ' +
-            'underscores, e.g. /secret set OPENAI_API_KEY',
+            `underscores, e.g. /secret set ${this.isManaged() ? 'HTTP_BEARER_TOKEN' : 'OPENAI_API_KEY'}`,
         }
       }
       if (this.isManaged() && MANAGED_SECRET_NAMES.includes(name)) return { reply: MANAGED_SECRET_REPLY, deleteUserMessage: parts.length > 3 }
@@ -163,7 +167,7 @@ export class SecretFlow {
       }
     }
 
-    return { reply: USAGE }
+    return { reply: usage(this.isManaged()) }
   }
 
   /**

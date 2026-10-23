@@ -90,14 +90,27 @@ describe('owner reply while the AI allowance is used up', () => {
     expect(sent.some((t) => t === '(no response)')).toBe(false)
   })
 
-  it('treats a missing marker as just-now and still replies once', async () => {
+  it('a missing marker (the box just recovered) sends nothing and writes no marker', async () => {
     rmSync(join(h.store, 'ai-limit.json'))
     h.runAgent.mockResolvedValue({ text: null, aiPaused: 'billing' })
     const { sent, say } = harness()
     await say('hi')
-    await say('hi again')
-    expect(sent).toEqual([FIRST_REPLY])
-    expect(readAiLimit(h.store)?.kind).toBe('billing')
+    expect(sent).toEqual([])
+    expect(readAiLimit(h.store)).toBeNull()
+  })
+
+  it('still sends the reply when stamping the marker fails', async () => {
+    h.runAgent.mockResolvedValue({ text: null, aiPaused: 'spend_limit' })
+    const { sent, say } = harness()
+    // A directory where the temp file would go makes the atomic write throw.
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(join(h.store, `ai-limit.json.${process.pid}.tmp`), { recursive: true })
+    try {
+      await say('hello')
+      expect(sent).toEqual([FIRST_REPLY])
+    } finally {
+      rmSync(join(h.store, `ai-limit.json.${process.pid}.tmp`), { recursive: true, force: true })
+    }
   })
 
   it('leaves the normal reply path alone', async () => {
