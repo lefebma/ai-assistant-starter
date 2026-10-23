@@ -7,6 +7,8 @@ export interface ManagedAiDeps {
   vault: { set(name: string, v: string): void; has(name: string): boolean }
   storeDir: string
   envExists: boolean
+  /** AGENT_RUNTIME from .env, if set. A managed box ignores it and runs claude. */
+  envRuntime?: string
 }
 
 const USAGE = 'Usage: managed-ai <set|status|off>   (set reads the key from stdin)'
@@ -39,10 +41,19 @@ export async function main(argv: string[], deps: ManagedAiDeps): Promise<string>
     }
     case 'status': {
       const limit = readAiLimit(deps.storeDir)
-      return `Managed: ${isManagedAi(deps.storeDir) ? 'yes' : 'no'}. Key: ${deps.vault.has(KEY_NAME) ? 'stored' : 'missing'}. Limit: ${limit ? `${limit.kind} since ${limit.since}` : 'none'}.`
+      const managed = isManagedAi(deps.storeDir)
+      const envRuntime = deps.envRuntime?.trim() || undefined
+      const runtime = managed
+        ? envRuntime && envRuntime !== 'claude'
+          ? `claude (AGENT_RUNTIME=${envRuntime} in .env is ignored while managed)`
+          : 'claude'
+        : envRuntime ?? 'claude'
+      return `Managed: ${managed ? 'yes' : 'no'}. Key: ${deps.vault.has(KEY_NAME) ? 'stored' : 'missing'}. Limit: ${limit ? `${limit.kind} since ${limit.since}` : 'none'}. Runtime: ${runtime}.`
     }
     case 'off':
       rmSync(join(deps.storeDir, MANAGED_AI_FILE), { force: true })
+      // A pause marker means nothing on a non-managed box; do not leave it behind.
+      clearAiLimit(deps.storeDir)
       return 'Managed AI is off. The stored key was left in the vault.'
     default:
       throw new Error(USAGE)

@@ -26,12 +26,14 @@ try {
   const { main } = await import('../src/managed-ai-cli.js')
   const { STORE_DIR, PROJECT_ROOT } = await import('../src/config.js')
   const { SecretVault } = await import('../src/vault/index.js')
+  const { readEnvFile } = await import('../src/env.js')
   const dir = process.env.AGENT_VAULT_DIR
   const out = await main(process.argv.slice(2), {
     stdin: readStdin,
     vault: new SecretVault(dir ? { dir } : {}),
     storeDir: STORE_DIR,
     envExists: existsSync(join(PROJECT_ROOT, '.env')),
+    envRuntime: readEnvFile(['AGENT_RUNTIME']).AGENT_RUNTIME,
   })
   process.stdout.write(`${out}\n`, () => process.exit(0))
 } catch (err) {
