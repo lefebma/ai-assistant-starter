@@ -11,6 +11,9 @@ import {
   type EngineChoice,
   type Platform,
 } from './plan.js'
+import { answersFromSaved, PROVISIONAL, type SavedSetup } from './saved.js'
+import { lookUpCity, validName } from './web/answers.js'
+import type { Fetch } from './web/telegram.js'
 
 export interface Prompter {
   ask(question: string, def?: string): Promise<string>
@@ -36,6 +39,114 @@ export interface WizardHooks {
    * not in a list of homework after the wizard exits.
    */
   ensureGog?: () => Promise<void>
+}
+
+export interface WizardOptions {
+  /** Answers from an earlier run; the profile is reused without a question. */
+  saved?: SavedSetup | null
+  /** An older install that predates the first-chat profile: ask the profile questions. */
+  legacyInstall?: boolean
+  /** Fallback timezone when the city lookup gives none. Defaults to UTC. */
+  hostTimezone?: string
+  /** For the city lookup. Defaults to the global fetch; tests inject one to stay offline. */
+  fetch?: Fetch
+}
+
+type ProfileAnswers = Pick<
+  Answers,
+  'ownerName' | 'assistantName' | 'timezone' | 'city' | 'personalityVibe' | 'ownerBio' | 'latitude' | 'longitude' | 'tempUnit'
+>
+
+const VIBE_LABELS = ['Professional and efficient', 'Friendly and conversational', 'Direct and no-nonsense']
+
+/** Asks until the answer passes validName. `optional` lets a blank answer through. */
+async function askName(p: Prompter, question: string, max: number, def?: string, optional = false): Promise<string> {
+  for (;;) {
+    const v = (await p.ask(question, def)).trim()
+    if (optional && v === '') return v
+    if (validName(v, max)) return v
+    p.say(`Use ${max} characters or fewer, with no quotation marks or backslashes.${optional ? '' : ' This one cannot be blank.'}`)
+  }
+}
+
+async function askBio(p: Prompter): Promise<string> {
+  for (;;) {
+    const v = (await p.ask('About you')).trim()
+    if (v.length <= 600 && !/[\u0000-\u001f\u007f]/.test(v)) return v
+    p.say('Keep it to 600 characters or fewer, on one line.')
+  }
+}
+
+/** The bot's own name when it is a valid assistant name, otherwise the provisional one. */
+export function provisionalAssistantName(botFirstName: string | undefined): string {
+  return botFirstName !== undefined && validName(botFirstName, 40) ? botFirstName.trim() : PROVISIONAL.assistantName
+}
+
+/**
+ * An install that ran setup before the first-chat profile existed: it has a
+ * .env (gitignored, written only by setup) but no saved answers. CLAUDE.md is
+ * no signal, because the repo ships a placeholder one.
+ */
+export function isLegacyInstall(state: { envExists: boolean; saved: SavedSetup | null | undefined }): boolean {
+  return state.envExists && !state.saved
+}
+
+/**
+ * The profile questions an older install still gets. Timezone, coordinates and
+ * temperature unit are never asked: they come from the city, and the host's
+ * timezone and the provisional values stand in when the lookup finds nothing.
+ */
+async function askLegacyProfile(p: Prompter, opts: WizardOptions): Promise<ProfileAnswers> {
+  const ownerName = await askName(p, 'Your name', 80)
+  const assistantName = await askName(p, 'Name for your assistant', 40, 'Atlas')
+  const city = await askName(p, 'Your city (for weather)', 80, 'New York', true)
+
+  const vibeChoice = await p.choice('How should your assistant communicate?', [...VIBE_LABELS, 'Custom (you will write it)'])
+  const presetIndex = VIBE_LABELS.indexOf(vibeChoice)
+  const personalityVibe = presetIndex >= 0 ? PERSONALITY_PRESETS[presetIndex] : await p.ask('Describe the vibe in 1-2 sentences')
+
+  p.say('Tell the assistant about yourself (1-3 sentences): role, business, what help you need.')
+  const ownerBio = await askBio(p)
+
+  const place = await lookUpCity(opts.fetch ?? fetch, city)
+  return {
+    ownerName,
+    assistantName,
+    timezone: place?.timezone ?? opts.hostTimezone ?? 'UTC',
+    city,
+    personalityVibe,
+    ownerBio,
+    latitude: place?.latitude ?? PROVISIONAL.latitude,
+    longitude: place?.longitude ?? PROVISIONAL.longitude,
+    tempUnit: place?.tempUnit ?? PROVISIONAL.tempUnit,
+  }
+}
+
+function profileFor(saved: SavedSetup | null | undefined, opts: WizardOptions): ProfileAnswers {
+  if (saved) {
+    return {
+      ownerName: saved.ownerName,
+      assistantName: saved.assistantName,
+      timezone: saved.timezone,
+      city: saved.city,
+      personalityVibe: saved.personalityVibe,
+      ownerBio: saved.ownerBio,
+      latitude: saved.latitude,
+      longitude: saved.longitude,
+      tempUnit: saved.tempUnit,
+    }
+  }
+  return {
+    ownerName: PROVISIONAL.ownerName,
+    assistantName: PROVISIONAL.assistantName,
+    timezone: opts.hostTimezone ?? 'UTC',
+    city: '',
+    personalityVibe: PERSONALITY_PRESETS[PROVISIONAL.vibeIndex],
+    ownerBio: '',
+    latitude: PROVISIONAL.latitude,
+    longitude: PROVISIONAL.longitude,
+    tempUnit: PROVISIONAL.tempUnit,
+  }
 }
 
 export const PERSONALITY_PRESETS = [
@@ -155,75 +266,8 @@ export function liveNodeNote(nodeVersion: string): string {
   )
 }
 
-export async function runWizard(p: Prompter, projectPath: string, hooks?: WizardHooks): Promise<Answers> {
-  const ownerName = await p.ask('Your name')
-  const assistantName = await p.ask('Name for your assistant', 'Atlas')
-  const timezone = await p.ask('Your timezone', 'America/New_York')
-  const city = await p.ask('Your city (for weather)', 'New York')
-
-  const platform = (await p.choice('Which messaging platform?', ['Telegram', 'Slack', 'Teams'])) as Platform
-
-  const engineAnswers = await askEngine(p, hooks)
-
-  const vibeChoice = await p.choice('How should your assistant communicate?', [
-    'Professional and efficient',
-    'Friendly and conversational',
-    'Direct and no-nonsense',
-    'Custom (you will write it)',
-  ])
-  const presetIndex = ['Professional and efficient', 'Friendly and conversational', 'Direct and no-nonsense'].indexOf(vibeChoice)
-  const personalityVibe = presetIndex >= 0 ? PERSONALITY_PRESETS[presetIndex] : await p.ask('Describe the vibe in 1-2 sentences')
-
-  p.say('Tell the assistant about yourself (1-3 sentences): role, business, what help you need.')
-  const ownerBio = await p.ask('About you')
-
-  const emailProvider = (await p.choice('Email provider?', [
-    'Gmail',
-    'Outlook/Microsoft 365',
-    'Both',
-    'Skip for now',
-  ])) as EmailProvider
-
-  let gmailAddress = ''
-  let gmailAddress2 = ''
-  let outlookAddress = ''
-  let outlookAddress2 = ''
-  if (emailProvider === 'Gmail' || emailProvider === 'Both') {
-    gmailAddress = await p.ask('Gmail address')
-    if (await p.yesNo('Add a second Gmail account?')) gmailAddress2 = await p.ask('Second Gmail address')
-    if (gmailAddress) await hooks?.ensureGog?.()
-  }
-  if (emailProvider === 'Outlook/Microsoft 365' || emailProvider === 'Both') {
-    outlookAddress = await p.ask('Outlook email address')
-    if (await p.yesNo('Add a second Outlook account?')) outlookAddress2 = await p.ask('Second Outlook email address')
-  }
-  const emailAddress = gmailAddress || outlookAddress
-
-  const sigName = await p.ask('Name for email signature', ownerName)
-  const sigTitle = await p.ask('Title/role', '')
-  const sigPhone = await p.ask('Phone', '')
-  const sigEmail = await p.ask('Email', emailAddress)
-  const emailSignature = buildEmailSignature({ name: sigName, title: sigTitle, phone: sigPhone, email: sigEmail })
-
-  p.say('Weather skill setup — look up coordinates at https://www.latlong.net/')
-  const latitude = await p.ask('Latitude', '40.71')
-  const longitude = await p.ask('Longitude', '-74.01')
-  const tempUnit = (await p.choice('Temperature unit?', ['celsius', 'fahrenheit'])) as 'celsius' | 'fahrenheit'
-
-  const keys: Answers['keys'] = {
-    anthropic: engineAnswers.anthropicKey,
-    openai: engineAnswers.openaiKey,
-    google: engineAnswers.googleKey,
-  }
-  const skills: Answers['skills'] = {
-    webResearch: false,
-    apollo: false,
-    antilibrary: false,
-    notion: false,
-    kanbanzone: false,
-    wordpress: false,
-  }
-
+/** The optional-skill questions, asked only when the owner opts in. */
+async function askOptionalSkills(p: Prompter, skills: Answers['skills'], keys: Answers['keys']): Promise<void> {
   p.say('Web research (Perplexity): three-tier research with citations. Key: https://www.perplexity.ai/settings/api')
   skills.webResearch = await p.yesNo('Enable web-research skill?')
   if (skills.webResearch) keys.perplexity = await p.ask('Perplexity API key (leave blank to fill in later)', '')
@@ -260,25 +304,85 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
     keys.wpUsername = await p.ask('WordPress username')
     keys.wpAppPassword = await p.ask('Application Password (leave blank to fill in later)', '')
   }
+}
 
-  // Card #123. Asked here rather than left to a docs page nobody reads: the
-  // owners who most need this report are the ones least likely to go looking
-  // for it. The task itself is created on first startup, once ALLOWED_CHAT_ID
-  // exists (see src/audit/schedule.ts).
-  p.say('Monthly audit: on the 1st of each month, your assistant reviews how you have been using it and suggests what to do differently. You can turn it on or off later with /audit monthly on|off.')
-  const monthlyAudit = await p.yesNo('Schedule the monthly audit?')
+export async function runWizard(
+  p: Prompter,
+  projectPath: string,
+  hooks?: WizardHooks,
+  opts: WizardOptions = {}
+): Promise<Answers> {
+  const platform = (await p.choice('Which messaging platform?', ['Telegram', 'Slack', 'Teams'])) as Platform
+
+  const engineAnswers = await askEngine(p, hooks)
+
+  const profile = opts.legacyInstall ? await askLegacyProfile(p, opts) : profileFor(opts.saved, opts)
+  const { ownerName } = profile
+
+  // A re-run keeps what the last run chose unless the owner asks to change it.
+  const saved = opts.saved
+  let emailProvider: EmailProvider = saved ? saved.emailProvider : 'Skip for now'
+  let gmailAddress = saved?.gmailAddress ?? ''
+  let gmailAddress2 = saved?.gmailAddress2 ?? ''
+  let outlookAddress = saved?.outlookAddress ?? ''
+  let outlookAddress2 = saved?.outlookAddress2 ?? ''
+  if (await p.yesNo(saved ? 'Change email setup?' : 'Connect email now?')) {
+    emailProvider = 'Skip for now'
+    gmailAddress = ''
+    gmailAddress2 = ''
+    outlookAddress = ''
+    outlookAddress2 = ''
+    emailProvider = (await p.choice('Email provider?', ['Gmail', 'Outlook/Microsoft 365', 'Both'])) as EmailProvider
+    if (emailProvider === 'Gmail' || emailProvider === 'Both') {
+      gmailAddress = await p.ask('Gmail address')
+      if (await p.yesNo('Add a second Gmail account?')) gmailAddress2 = await p.ask('Second Gmail address')
+      if (gmailAddress) await hooks?.ensureGog?.()
+    }
+    if (emailProvider === 'Outlook/Microsoft 365' || emailProvider === 'Both') {
+      outlookAddress = await p.ask('Outlook email address')
+      if (await p.yesNo('Add a second Outlook account?')) outlookAddress2 = await p.ask('Second Outlook email address')
+    }
+  }
+  const emailAddress = gmailAddress || outlookAddress
+  const emailSignature = buildEmailSignature({ name: ownerName, title: '', phone: '', email: emailAddress })
+
+  const keys: Answers['keys'] = {
+    anthropic: engineAnswers.anthropicKey,
+    openai: engineAnswers.openaiKey,
+    google: engineAnswers.googleKey,
+  }
+  const skills: Answers['skills'] = {
+    webResearch: false,
+    apollo: false,
+    antilibrary: false,
+    notion: false,
+    kanbanzone: false,
+    wordpress: false,
+  }
+
+  const skillsQuestion = saved
+    ? 'Change optional skills?'
+    : 'Set up optional skills now (web research, Apollo, Anti-library, Notion, Kanban Zone, voice, WordPress)?'
+  if (await p.yesNo(skillsQuestion)) {
+    await askOptionalSkills(p, skills, keys)
+  } else if (saved) {
+    // The skills stay on with their non-secret config (site URL, vault path).
+    // Their keys are already on disk from the last run and are not asked again.
+    Object.assign(skills, saved.skills)
+    Object.assign(keys, answersFromSaved(saved, projectPath).keys)
+  }
 
   return {
     ownerName,
-    assistantName,
-    timezone,
-    city,
+    assistantName: profile.assistantName,
+    timezone: profile.timezone,
+    city: profile.city,
     platform,
     engine: engineAnswers.engine,
     aiProvider: engineAnswers.aiProvider,
     aiModel: engineAnswers.aiModel,
-    personalityVibe,
-    ownerBio,
+    personalityVibe: profile.personalityVibe,
+    ownerBio: profile.ownerBio,
     emailProvider,
     emailAddress,
     gmailAddress,
@@ -286,10 +390,10 @@ export async function runWizard(p: Prompter, projectPath: string, hooks?: Wizard
     outlookAddress,
     outlookAddress2,
     emailSignature,
-    latitude,
-    longitude,
-    tempUnit,
-    monthlyAudit,
+    latitude: profile.latitude,
+    longitude: profile.longitude,
+    tempUnit: profile.tempUnit,
+    monthlyAudit: false,
     skills,
     keys,
     projectPath,

@@ -49,25 +49,16 @@ function baseAnswers(overrides: Partial<Answers> = {}): Answers {
 }
 
 describe('the setup question (card 123, AC1)', () => {
-  it('asks whether to schedule the monthly audit', async () => {
+  it('no longer asks about the monthly audit; the owner turns it on with /audit monthly on', async () => {
     const asked: string[] = []
-    await runWizard(
+    const answers = await runWizard(
       scriptedPrompter((q) => {
         asked.push(q)
         return false
       }),
       '/tmp/x'
     )
-    expect(asked.some((q) => /monthly/i.test(q) && /audit|review|check/i.test(q))).toBe(true)
-  })
-
-  it('records a yes', async () => {
-    const answers = await runWizard(scriptedPrompter((q) => /monthly/i.test(q)), '/tmp/x')
-    expect(answers.monthlyAudit).toBe(true)
-  })
-
-  it('records a no', async () => {
-    const answers = await runWizard(scriptedPrompter(() => false), '/tmp/x')
+    expect(asked.some((q) => /monthly/i.test(q))).toBe(false)
     expect(answers.monthlyAudit).toBe(false)
   })
 })

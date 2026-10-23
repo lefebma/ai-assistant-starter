@@ -8,10 +8,29 @@ This guide walks you through setting up your personal AI assistant powered by Cl
 npm run build && npm run setup:web
 ```
 
-A page opens at `http://localhost:3030/setup` with three short steps: about
-you, your Telegram bot (you tap Start in it to pair), and your AI. Keys go
-into the encrypted vault. When you finish, the assistant starts in the
-background and says hello in Telegram. Connect email afterwards by asking it.
+A page opens at `http://localhost:3030/setup` with two short steps: your
+Telegram bot (you tap Start in it to pair) and your AI. Keys go into the
+encrypted vault. When you finish, the assistant starts in the background and
+says hello in Telegram, then asks a few welcome questions in that first chat:
+what to call you, what to call it, your city, the tone you want and, in a
+sentence, what you do. Reply in your own words. The questions are sent once and ride at most three of your
+replies; after that the assistant stops asking and keeps its best guesses.
+Connect email afterwards by asking it.
+
+You can change your name, the assistant's name, your city, its tone or your
+bio at any time by saying so in chat. A new city moves the time zone and
+restarts the assistant after it replies; a box that cannot restart itself
+says so. A fresh terminal install (`npm run setup`) asks the same way: the
+messaging platform, then AI access, then two optional questions that default
+to no ("Connect email now?" and "Set up optional skills now?"), and only then
+your bot credentials (the Telegram bot token and chat ID, or Teams
+credentials). The profile is asked in the first chat, as with web setup. It never
+asks for a time zone or coordinates, because both come from your city. An
+install set up before this release (it has a `.env` but no saved answers)
+still gets the profile questions when you re-run setup, minus time zone and
+coordinates. A re-run on an install with saved answers reuses them without
+asking, and keeps its email accounts and skills unless you answer yes to
+"Change email setup?" or "Change optional skills?".
 The page only answers on this computer. The rest of this guide covers the
 terminal wizard and everything you can set up by hand.
 

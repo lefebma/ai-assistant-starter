@@ -10,7 +10,7 @@ import {
   hostOsLabel,
   shouldSkipSecret,
 } from '../src/setup/plan.js'
-import { runWizard, type Prompter } from '../src/setup/wizard.js'
+import { isLegacyInstall, runWizard, provisionalAssistantName, PERSONALITY_PRESETS, type Prompter } from '../src/setup/wizard.js'
 import type { Answers } from '../src/setup/plan.js'
 
 const BASE: Answers = {
@@ -259,103 +259,212 @@ function scripted(answers: Array<string | boolean | number>): Prompter {
   }
 }
 
+/** Rejects every request, so the city lookup falls back and no test touches the network. */
+const offline = (async () => {
+  throw new Error('offline')
+}) as unknown as typeof fetch
+
+/** Platform + engine are always first; `rest` is everything after. */
+const NO_EXTRAS = [false, false] // email gate, optional-skills gate
+const ALL_SKILLS_OFF = [false, false, false, false, false, false, false] // six skills + voice
+
 describe('runWizard', () => {
-  it('assembles answers for a minimal skip-everything run', async () => {
-    const p = scripted([
-      'Sam', 'Atlas', 'America/Toronto', 'Toronto', // identity
-      'Telegram', // platform
-      0, // engine: Claude subscription
-      2, // personality preset index 2 (direct, no-nonsense)
-      'Consultant.', // bio
-      'Skip for now', // email
-      'Sam', '', '', '', // signature parts
-      '43.65', '-79.38', 'celsius', // weather
-      false, false, false, false, false, false, // six skill opt-ins
-      false, // voice
-      false, // monthly audit
-    ])
-    const a = await runWizard(p, '/repo')
-    expect(a.ownerName).toBe('Sam')
+  it('fresh install asks only core', async () => {
+    const asked: string[] = []
+    const inner = scripted(['Telegram', 0, ...NO_EXTRAS])
+    const p: Prompter = {
+      ...inner,
+      ask: async (q, d) => (asked.push(q), inner.ask(q, d)),
+      choice: async (q, o) => (asked.push(q), inner.choice(q, o)),
+      yesNo: async (q) => (asked.push(q), inner.yesNo(q)),
+    }
+    const a = await runWizard(p, '/repo', undefined, { hostTimezone: 'America/Halifax' })
+    for (const banned of ['Your name', 'Latitude', 'Longitude', 'Perplexity', 'Monthly audit', 'timezone']) {
+      expect(asked.some((q) => q.includes(banned))).toBe(false)
+    }
+    expect(a.ownerName).toBe('the owner')
+    expect(a.assistantName).toBe('Atlas')
+    expect(a.timezone).toBe('America/Halifax')
+    expect(a.latitude).toBe('40.71')
+    expect(a.tempUnit).toBe('celsius')
+    expect(a.personalityVibe).toBe(PERSONALITY_PRESETS[1])
+    expect(a.monthlyAudit).toBe(false)
     expect(a.platform).toBe('Telegram')
     expect(a.engine).toBe('subscription')
-    expect(a.personalityVibe).toContain('Direct')
     expect(a.emailProvider).toBe('Skip for now')
     expect(Object.values(a.skills).every((v) => v === false)).toBe(true)
   })
 
-  it('collects secondary gmail and apollo key when opted in', async () => {
-    const p = scripted([
-      'Sam', 'Atlas', 'America/Toronto', 'Toronto',
-      'Telegram',
-      0, // engine
-      1, // preset
-      'Bio',
-      'Gmail', 'a@g.com', true, 'b@g.com', // gmail + secondary
-      'Sam', '', '', 'a@g.com',
-      '1', '2', 'celsius',
-      false, // web research
-      true, 'ap-1', // apollo + key
-      false, false, false, false, false, // antilibrary, notion, kanban zone, voice, wordpress
-      false, // monthly audit
-    ])
+  it('uses UTC when no host timezone is given', async () => {
+    const a = await runWizard(scripted(['Telegram', 0, ...NO_EXTRAS]), '/repo')
+    expect(a.timezone).toBe('UTC')
+  })
+
+  it('legacy install asks profile', async () => {
+    const asked: string[] = []
+    const inner = scripted(['Telegram', 0, 'Jane', 'Ada', 'Toronto', 2, 'Consultant.', ...NO_EXTRAS])
+    const p: Prompter = {
+      ...inner,
+      ask: async (q, d) => (asked.push(q), inner.ask(q, d)),
+      choice: async (q, o) => (asked.push(q), inner.choice(q, o)),
+      yesNo: async (q) => (asked.push(q), inner.yesNo(q)),
+    }
+    const a = await runWizard(p, '/repo', undefined, { legacyInstall: true, fetch: offline, hostTimezone: 'America/Toronto' })
+    expect(asked).toContain('Your name')
+    expect(asked.some((q) => q.includes('Latitude') || q.includes('Longitude') || q.includes('timezone'))).toBe(false)
+    expect(a.ownerName).toBe('Jane')
+    expect(a.assistantName).toBe('Ada')
+    expect(a.city).toBe('Toronto')
+    expect(a.personalityVibe).toContain('Direct')
+    expect(a.ownerBio).toBe('Consultant.')
+    expect(a.timezone).toBe('America/Toronto')
+    expect(a.latitude).toBe('40.71')
+  })
+
+  it('legacy install takes timezone, coordinates and unit from the city lookup', async () => {
+    const f = (async () => ({
+      json: async () => ({
+        results: [{ latitude: 43.65, longitude: -79.38, country_code: 'CA', name: 'Toronto', admin1: 'Ontario', country: 'Canada', timezone: 'America/Toronto' }],
+      }),
+    })) as unknown as typeof fetch
+    const a = await runWizard(scripted(['Telegram', 0, 'Jane', 'Atlas', 'Toronto', 0, 'Bio', ...NO_EXTRAS]), '/repo', undefined, {
+      legacyInstall: true,
+      fetch: f,
+      hostTimezone: 'UTC',
+    })
+    expect(a.timezone).toBe('America/Toronto')
+    expect(a.latitude).toBe('43.65')
+    expect(a.longitude).toBe('-79.38')
+  })
+
+  it('legacy install re-asks a blank or unsafe name', async () => {
+    for (const bad of ['', 'Ja"ne']) {
+      const a = await runWizard(scripted(['Telegram', 0, bad, 'Jane', 'Atlas', 'Toronto', 0, 'Bio', ...NO_EXTRAS]), '/repo', undefined, {
+        legacyInstall: true,
+        fetch: offline,
+      })
+      expect(a.ownerName).toBe('Jane')
+    }
+  })
+
+  it('legacy install re-asks an unsafe assistant name and city, and a bad bio', async () => {
+    const a = await runWizard(
+      scripted(['Telegram', 0, 'Jane', 'A\\b', 'Ada', 'To"ronto', 'Toronto', 0, 'x'.repeat(601), 'Bio', ...NO_EXTRAS]),
+      '/repo',
+      undefined,
+      { legacyInstall: true, fetch: offline }
+    )
+    expect(a.assistantName).toBe('Ada')
+    expect(a.city).toBe('Toronto')
+    expect(a.ownerBio).toBe('Bio')
+  })
+
+  it('provisionalAssistantName keeps a valid bot name and falls back to Atlas', () => {
+    expect(provisionalAssistantName('Umi')).toBe('Umi')
+    for (const bad of ['Um"i', 'Um\\i', 'x'.repeat(41), '', undefined]) expect(provisionalAssistantName(bad)).toBe('Atlas')
+  })
+
+  it('saved answers reused', async () => {
+    const saved = { ...BASE, ownerName: 'Jane', profilePending: false, version: 1 as const }
+    const asked: string[] = []
+    const inner = scripted(['Telegram', 0, ...NO_EXTRAS])
+    const p: Prompter = { ...inner, ask: async (q, d) => (asked.push(q), inner.ask(q, d)) }
+    const a = await runWizard(p, '/repo', undefined, { saved })
+    expect(asked).not.toContain('Your name')
+    expect(a.ownerName).toBe('Jane')
+    expect(a.city).toBe('Toronto')
+    expect(a.timezone).toBe('America/Toronto')
+  })
+
+  it('a re-run keeps saved email and skills when both gates are no', async () => {
+    const saved = {
+      ...BASE,
+      emailProvider: 'Gmail' as const,
+      gmailAddress: 'a@b.c',
+      emailAddress: 'a@b.c',
+      skills: { ...BASE.skills, notion: true, wordpress: true },
+      skillConfig: { wpSiteUrl: 'https://example.com', wpUsername: 'jane' },
+      profilePending: false,
+      version: 1 as const,
+    }
+    const asked: string[] = []
+    const inner = scripted(['Telegram', 0, ...NO_EXTRAS])
+    const p: Prompter = {
+      ...inner,
+      ask: async (q, d) => (asked.push(q), inner.ask(q, d)),
+      yesNo: async (q) => (asked.push(q), inner.yesNo(q)),
+    }
+    const a = await runWizard(p, '/repo', undefined, { saved })
+    expect(asked).toEqual(['Change email setup?', 'Change optional skills?'])
+    expect(a.gmailAddress).toBe('a@b.c')
+    expect(a.emailProvider).toBe('Gmail')
+    expect(a.emailSignature).toContain('a@b.c')
+    expect(a.skills.notion).toBe(true)
+    expect(a.skills.wordpress).toBe(true)
+    expect(a.keys).toEqual({ wpSiteUrl: 'https://example.com', wpUsername: 'jane' })
+  })
+
+  it('a re-run that changes email starts the email questions fresh', async () => {
+    const saved = { ...BASE, emailProvider: 'Gmail' as const, gmailAddress: 'a@b.c', profilePending: false, version: 1 as const }
+    const a = await runWizard(scripted(['Telegram', 0, true, 'Outlook/Microsoft 365', 'o@x.com', false, false]), '/repo', undefined, { saved })
+    expect(a.gmailAddress).toBe('')
+    expect(a.outlookAddress).toBe('o@x.com')
+  })
+
+  it('email behind gate', async () => {
+    const a = await runWizard(scripted(['Telegram', 0, true, 'Gmail', 'a@g.com', false, false]), '/repo')
+    expect(a.gmailAddress).toBe('a@g.com')
+    expect(a.emailSignature).toContain('a@g.com')
+  })
+
+  it('optional behind gate', async () => {
+    const asked: string[] = []
+    const inner = scripted(['Telegram', 0, false, true, true, 'pplx-1', ...ALL_SKILLS_OFF.slice(1)])
+    const p: Prompter = { ...inner, ask: async (q, d) => (asked.push(q), inner.ask(q, d)) }
     const a = await runWizard(p, '/repo')
+    expect(asked.some((q) => q.includes('Perplexity'))).toBe(true)
+    expect(a.keys.perplexity).toBe('pplx-1')
+  })
+
+  it('collects secondary gmail and apollo key when opted in', async () => {
+    const a = await runWizard(
+      scripted([
+        'Telegram', 0,
+        true, 'Gmail', 'a@g.com', true, 'b@g.com', // email gate, gmail + secondary
+        true, // optional skills gate
+        false, // web research
+        true, 'ap-1', // apollo + key
+        false, false, false, false, false, // antilibrary, notion, kanban zone, voice, wordpress
+      ]),
+      '/repo'
+    )
     expect(a.gmailAddress2).toBe('b@g.com')
     expect(a.skills.apollo).toBe(true)
     expect(a.keys.apollo).toBe('ap-1')
   })
 
-  const tail = (extra: Array<string | boolean | number> = []) => [
-    0, // preset
-    'Bio',
-    'Skip for now',
-    'Sam', '', '', '',
-    '1', '2', 'celsius',
-    ...extra,
-    false, // monthly audit — the wizard's last question
-  ]
-
   it('asks for a model id when the provider has no default, and not when it does', async () => {
-    const anthropic = await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        1, 0, 'sk-a', // engine: API key -> Anthropic -> key (no model question)
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      '/repo'
-    )
+    const anthropic = await runWizard(scripted(['Telegram', 1, 0, 'sk-a', ...NO_EXTRAS]), '/repo')
     expect(anthropic.engine).toBe('api-key')
     expect(anthropic.aiProvider).toBe('anthropic')
     expect(anthropic.keys.anthropic).toBe('sk-a')
 
-    const openai = await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        1, 1, 'sk-o', 'gpt-5', // engine -> OpenAI -> key -> model
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      '/repo'
-    )
+    const openai = await runWizard(scripted(['Telegram', 1, 1, 'sk-o', 'gpt-5', ...NO_EXTRAS]), '/repo')
     expect(openai.aiProvider).toBe('openai')
     expect(openai.keys.openai).toBe('sk-o')
     expect(openai.aiModel).toBe('gpt-5')
   })
 
   it('no longer asks a Wordsmith question (skill is always-on)', async () => {
-    // The wizard should not prompt for Wordsmith at all. The scripted
-    // prompter throws if extra questions appear, so this verifies the
-    // question was removed.
+    // The scripted prompter throws if extra questions appear.
     const a = await runWizard(
       scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        1, 2, 'g-1', 'gemini-2.5-pro', // engine -> Google -> key -> model
-        ...tail([
-          false, // web research
-          false, // apollo
-          // no wordsmith question
-          false, false, false, // antilibrary, notion, kanban zone
-          false, // voice
-          false, // wordpress
-        ]),
+        'Telegram', 1, 2, 'g-1', 'gemini-2.5-pro', // engine -> Google -> key -> model
+        false, true, // email gate, optional gate
+        false, false, // web research, apollo
+        false, false, false, // antilibrary, notion, kanban zone
+        false, // voice
+        false, // wordpress
       ]),
       '/repo'
     )
@@ -365,13 +474,11 @@ describe('runWizard', () => {
   it('offers voice on a Claude install and stores the OpenAI key', async () => {
     const a = await runWizard(
       scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        0, // engine: Claude subscription
-        ...tail([
-          false, false, false, false, false, // web research, apollo, antilibrary, notion, kanban zone
-          true, 'sk-voice', // voice -> key
-          false, // wordpress
-        ]),
+        'Telegram', 0,
+        false, true,
+        false, false, false, false, false, // web research, apollo, antilibrary, notion, kanban zone
+        true, 'sk-voice', // voice -> key
+        false, // wordpress
       ]),
       '/repo'
     )
@@ -379,24 +486,13 @@ describe('runWizard', () => {
   })
 
   it('leaves the OpenAI key unset when voice is declined', async () => {
-    const a = await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        0,
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      '/repo'
-    )
+    const a = await runWizard(scripted(['Telegram', 0, false, true, ...ALL_SKILLS_OFF]), '/repo')
     expect(a.keys.openai).toBeUndefined()
   })
 
   it('does not ask for voice again when OpenAI is already the model provider', async () => {
     const asked: string[] = []
-    const inner = scripted([
-      'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-      1, 1, 'sk-o', 'gpt-5', // engine -> OpenAI -> key -> model
-      ...tail([false, false, false, false, false, false]), // six skill questions, no voice
-    ])
+    const inner = scripted(['Telegram', 1, 1, 'sk-o', 'gpt-5', false, true, false, false, false, false, false, false])
     const a = await runWizard({ ...inner, yesNo: async (q) => (asked.push(q), inner.yesNo(q)) }, '/repo')
     expect(asked).not.toContain('Enable voice?')
     expect(a.keys.openai).toBe('sk-o')
@@ -419,21 +515,14 @@ describe('runWizard', () => {
     }
   }
 
-  it('signs in right after the engine question, not fifteen questions later', async () => {
+  it('signs in right after the engine question, before email', async () => {
     const order: string[] = []
-    const p = recording(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        0, // engine: subscription
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      order
-    )
+    const p = recording(scripted(['Telegram', 0, ...NO_EXTRAS]), order)
     await runWizard(p, '/repo', { signIn: async () => void order.push('SIGN-IN') })
 
     const engine = order.findIndex((s) => s.startsWith('choice:Which do you have?'))
     const signIn = order.indexOf('SIGN-IN')
-    const nextQuestion = order.findIndex((s) => s.includes('communicate'))
+    const nextQuestion = order.findIndex((s) => s.includes('Connect email'))
     expect(engine).toBeGreaterThanOrEqual(0)
     expect(signIn).toBe(engine + 1)
     expect(signIn).toBeLessThan(nextQuestion)
@@ -443,89 +532,47 @@ describe('runWizard', () => {
     const signIn = async () => {
       throw new Error('sign-in must not run: neither path uses a Claude account')
     }
-    await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        1, 0, 'sk-a',
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      '/repo',
-      { signIn }
-    )
-    await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        2,
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      '/repo',
-      { signIn }
-    )
+    await runWizard(scripted(['Telegram', 1, 0, 'sk-a', ...NO_EXTRAS]), '/repo', { signIn })
+    await runWizard(scripted(['Telegram', 2, ...NO_EXTRAS]), '/repo', { signIn })
   })
 
   it('checks for the gog CLI right after a Gmail address is given', async () => {
     const order: string[] = []
-    const p = recording(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        0, // engine: subscription
-        0, 'Bio',
-        'Gmail', 'a@g.com', false, // gmail, no second account
-        'Sam', '', '', 'a@g.com',
-        '1', '2', 'celsius',
-        false, false, false, false, false, false, false,
-        false, // monthly audit
-      ]),
-      order
-    )
+    const p = recording(scripted(['Telegram', 0, true, 'Gmail', 'a@g.com', false, false]), order)
     await runWizard(p, '/repo', { ensureGog: async () => void order.push('GOG-CHECK') })
 
     const gmail = order.findIndex((s) => s === 'ask:Gmail address')
     const check = order.indexOf('GOG-CHECK')
-    const signature = order.findIndex((s) => s.includes('signature'))
+    const optional = order.findIndex((s) => s.includes('optional skills'))
     expect(gmail).toBeGreaterThanOrEqual(0)
     expect(check).toBeGreaterThan(gmail)
-    expect(check).toBeLessThan(signature)
+    expect(check).toBeLessThan(optional)
   })
 
   it('does not run the gog check when Gmail is skipped or Outlook-only', async () => {
     const ensureGog = async () => {
       throw new Error('gog check must not run without a Gmail account')
     }
-    await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        0,
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      '/repo',
-      { ensureGog }
-    )
-    await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        0, 0, 'Bio',
-        'Outlook/Microsoft 365', 'a@o.com', false,
-        'Sam', '', '', 'a@o.com',
-        '1', '2', 'celsius',
-        false, false, false, false, false, false, false,
-        false, // monthly audit
-      ]),
-      '/repo',
-      { ensureGog }
-    )
+    await runWizard(scripted(['Telegram', 0, ...NO_EXTRAS]), '/repo', { ensureGog })
+    await runWizard(scripted(['Telegram', 0, true, 'Outlook/Microsoft 365', 'a@o.com', false, false]), '/repo', { ensureGog })
   })
 
   it('records a deferred choice rather than pretending it was answered', async () => {
-    const a = await runWizard(
-      scripted([
-        'Sam', 'Atlas', 'America/Toronto', 'Toronto', 'Telegram',
-        2, // engine: neither yet
-        ...tail([false, false, false, false, false, false, false]),
-      ]),
-      '/repo'
-    )
+    const a = await runWizard(scripted(['Telegram', 2, ...NO_EXTRAS]), '/repo')
     expect(a.engine).toBe('later')
     expect(a.aiProvider).toBeUndefined()
+  })
+})
+
+describe('isLegacyInstall', () => {
+  const saved = { ...BASE, profilePending: false, version: 1 as const }
+  it('a fresh clone is not legacy, even with the shipped CLAUDE.md', () => {
+    expect(isLegacyInstall({ envExists: false, saved: null })).toBe(false)
+  })
+  it('a .env without saved answers is legacy', () => {
+    expect(isLegacyInstall({ envExists: true, saved: null })).toBe(true)
+  })
+  it('a .env with saved answers is not legacy', () => {
+    expect(isLegacyInstall({ envExists: true, saved })).toBe(false)
   })
 })

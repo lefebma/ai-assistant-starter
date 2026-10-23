@@ -90,6 +90,14 @@ Manage:
 - /schedule resume <id>
 - /schedule delete <id>
 
+## {{OWNER_NAME}}'s profile
+
+When {{OWNER_NAME}} asks you to call them something else, to change your name, their city, or how you talk, or tells you about their work, save it:
+
+    node dist/scripts/profile.js set [--owner-name "..."] [--assistant-name "..."] [--city "..."] [--vibe professional|friendly|direct|"<their words>"] [--bio "..."]
+
+Pass only what changed. Relay its output in your own words. On a bundle install with no system `node`, use `./runtime/bin/node` (macOS, Linux) or `runtime\node.exe` (Windows).
+
 ## Message Format
 
 - Keep responses tight and readable

@@ -18,7 +18,7 @@
  * the tests inject both rather than touching a real database or a real file.
  */
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,6 +31,7 @@ import {
   profileIsUnwritten,
   shouldOfferInterview,
 } from '../src/onboarding/interview-offer.js'
+import { SETUP_ANSWERS_PATH } from '../src/setup/saved.js'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -76,6 +77,17 @@ describe('shouldOfferInterview', () => {
 
   it('stays quiet once a profile exists, even with no flag', () => {
     expect(shouldOfferInterview(installWithProfile(REAL_PROFILE), { getState: never })).toBe(false)
+  })
+
+  it('shouldOfferInterview false while profile pending', () => {
+    // The welcome questions own the first chat on a minimal setup; the
+    // interview waits until they are answered or skipped.
+    const root = installWithProfile(STUB)
+    mkdirSync(join(root, 'store'), { recursive: true })
+    writeFileSync(join(root, SETUP_ANSWERS_PATH), JSON.stringify({ profilePending: true, version: 1 }))
+    expect(shouldOfferInterview(root, { getState: never })).toBe(false)
+    writeFileSync(join(root, SETUP_ANSWERS_PATH), JSON.stringify({ profilePending: false, version: 1 }))
+    expect(shouldOfferInterview(root, { getState: never })).toBe(true)
   })
 })
 

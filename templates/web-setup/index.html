@@ -29,8 +29,7 @@
   section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
   label { display: block; font-weight: 600; margin: 14px 0 4px; }
   .hint { font-weight: 400; color: var(--muted); font-size: .9rem; }
-  input, select, textarea { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
-  textarea { min-height: 5rem; resize: vertical; }
+  input, select { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
   .choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-weight: 400; cursor: pointer; }
   .choice input { width: auto; margin-top: 4px; }
   .choice.sel { border-color: var(--accent); background: var(--soft); }
@@ -56,8 +55,8 @@
 <body>
 <main>
   <h1>Set up your assistant</h1>
-  <p class="sub">Three short steps. Nothing here is shared with anyone.</p>
-  <div class="steps" aria-hidden="true"><span id="bar1" class="on"></span><span id="bar2"></span><span id="bar3"></span></div>
+  <p class="sub">Two short steps. Nothing here is shared with anyone.</p>
+  <div class="steps" aria-hidden="true"><span id="bar1" class="on"></span><span id="bar2"></span></div>
 
   <section id="already" class="hidden">
     <h2>Already set up</h2>
@@ -65,27 +64,7 @@
   </section>
 
   <section id="step1">
-    <h2>1. About you</h2>
-    <label for="ownerName">Your name</label>
-    <input id="ownerName" autocomplete="name" maxlength="80">
-    <label for="assistantName">Your assistant's name <span class="hint">(you can change it later)</span></label>
-    <input id="assistantName" maxlength="40" value="Atlas">
-    <label for="city">Your city <span class="hint">(for the weather)</span></label>
-    <input id="city" autocomplete="address-level2" maxlength="80">
-    <label for="timezone">Time zone</label>
-    <input id="timezone" maxlength="64">
-    <label>How should it talk to you?</label>
-    <label class="choice"><input type="radio" name="vibe" value="0"> <span><b>Professional</b><br><span class="hint">Clear and efficient, no filler.</span></span></label>
-    <label class="choice sel"><input type="radio" name="vibe" value="1" checked> <span><b>Friendly</b><br><span class="hint">Warm and conversational, still to the point.</span></span></label>
-    <label class="choice"><input type="radio" name="vibe" value="2"> <span><b>Direct</b><br><span class="hint">Blunt, opinionated, pushes back.</span></span></label>
-    <label for="ownerBio">What do you do? <span class="hint">(optional, a sentence or two)</span></label>
-    <textarea id="ownerBio" maxlength="600" placeholder="I run a small law firm and need help keeping on top of email and my calendar."></textarea>
-    <div class="err" id="err1" role="alert"></div>
-    <div class="row"><button class="primary" id="next1">Next</button></div>
-  </section>
-
-  <section id="step2" class="hidden">
-    <h2>2. Connect Telegram</h2>
+    <h2>1. Connect Telegram</h2>
     <div id="tgToken">
       <p>Your assistant talks to you in Telegram, through a bot that belongs to you. Make one now:</p>
       <ol>
@@ -109,12 +88,12 @@
       <div id="pairRetry" class="hidden"><div class="row"><button class="secondary" id="retryPair">Try again</button></div></div>
       <p id="pairDone" class="okmsg hidden">Got it, you're paired.</p>
     </div>
-    <div class="err" id="err2" role="alert"></div>
-    <div class="row"><button class="secondary" id="back2">Back</button><button class="primary" id="next2" disabled>Next</button></div>
+    <div class="err" id="err1" role="alert"></div>
+    <div class="row"><button class="primary" id="next1" disabled>Next</button></div>
   </section>
 
-  <section id="step3" class="hidden">
-    <h2>3. Choose its AI</h2>
+  <section id="step2" class="hidden">
+    <h2>2. Choose its AI</h2>
     <p>Your assistant needs an account with an AI company to do its thinking.</p>
     <label class="choice hidden" id="optSub"><input type="radio" name="engine" value="subscription"> <span><b>My Claude subscription</b><br><span class="hint">Claude Pro or Max. A flat monthly fee; sign in once.</span></span></label>
     <label class="choice"><input type="radio" name="engine" value="api-key"> <span><b>An API key</b><br><span class="hint">No monthly fee; billed for what you use.</span></span></label>
@@ -139,15 +118,15 @@
         <input id="model" spellcheck="false">
       </div>
     </div>
-    <div class="err" id="err3" role="alert"></div>
-    <div class="row"><button class="secondary" id="back3">Back</button><button class="primary" id="finish">Finish setup</button></div>
+    <div class="err" id="err2" role="alert"></div>
+    <div class="row"><button class="secondary" id="back2">Back</button><button class="primary" id="finish">Finish setup</button></div>
   </section>
 
   <section id="done" class="hidden">
     <h2>You're all set</h2>
-    <p id="doneMsg">Your assistant is starting. It has sent you a message in Telegram.</p>
+    <p id="doneMsg">Your assistant is starting. In a minute or two, say hello to it in Telegram. It will ask a few quick questions so it can be useful.</p>
     <div class="row"><a class="btn primary" id="openTelegram" target="_blank" rel="noopener noreferrer">Open Telegram</a></div>
-    <p class="hint gap">You can close this page. Next, ask your assistant to connect your email.</p>
+    <p class="hint gap">You can close this page.</p>
   </section>
 </main>
 <script nonce="{{NONCE}}">
@@ -179,9 +158,9 @@
   }
 
   function show(step) {
-    for (const id of ['step1', 'step2', 'step3', 'done', 'already']) $(id).classList.toggle('hidden', id !== step)
-    const n = { step1: 1, step2: 2, step3: 3, done: 3 }[step] || 0
-    for (let i = 1; i <= 3; i++) $('bar' + i).classList.toggle('on', i <= n)
+    for (const id of ['step1', 'step2', 'done', 'already']) $(id).classList.toggle('hidden', id !== step)
+    const n = { step1: 1, step2: 2, done: 2 }[step] || 0
+    for (let i = 1; i <= 2; i++) $('bar' + i).classList.toggle('on', i <= n)
     window.scrollTo(0, 0)
   }
 
@@ -193,42 +172,24 @@
       })
     }
   }
-  radios('vibe'); radios('engine')
+  radios('engine')
 
-  try { $('timezone').value = Intl.DateTimeFormat().resolvedOptions().timeZone || '' } catch {}
+  // Sent so the assistant's clock is right from the first message; never asked for.
+  let timezone = 'UTC'
+  try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch {}
 
-  function profile() {
-    return {
-      ownerName: $('ownerName').value,
-      assistantName: $('assistantName').value,
-      city: $('city').value,
-      timezone: $('timezone').value,
-      vibe: Number((document.querySelector('input[name="vibe"]:checked') || {}).value || 1),
-      ownerBio: $('ownerBio').value,
-    }
-  }
-
-  $('next1').onclick = () => {
-    const p = profile()
-    $('err1').textContent = ''
-    if (!p.ownerName.trim()) return ($('err1').textContent = 'Please fill in your name.')
-    if (!p.assistantName.trim()) return ($('err1').textContent = "Please give your assistant a name.")
-    if (!p.timezone.trim()) return ($('err1').textContent = 'Please fill in your time zone.')
-    show('step2')
-  }
   $('back2').onclick = () => show('step1')
-  $('back3').onclick = () => show('step2')
-  $('next2').onclick = () => show('step3')
+  $('next1').onclick = () => show('step2')
 
   $('connectBot').onclick = async () => {
-    $('err2').textContent = ''
+    $('err1').textContent = ''
     $('connectBot').disabled = true
     try {
       const r = await api('telegram/token', { token: $('botToken').value })
       $('botToken').value = ''
       onBot(r.username)
       pollPairing()
-    } catch (e) { $('err2').textContent = e.message } finally { $('connectBot').disabled = false }
+    } catch (e) { $('err1').textContent = e.message } finally { $('connectBot').disabled = false }
   }
 
   function onBot(username) {
@@ -250,7 +211,7 @@
         if (p.state !== 'waiting') break
         await new Promise((r) => setTimeout(r, 2000))
       }
-    } catch (e) { $('err2').textContent = e.message } finally { polling = false }
+    } catch (e) { $('err1').textContent = e.message } finally { polling = false }
   }
 
   function renderPairing(p) {
@@ -258,22 +219,22 @@
     $('pairFound').classList.toggle('hidden', p.state !== 'found')
     $('pairDone').classList.toggle('hidden', p.state !== 'paired')
     $('pairRetry').classList.toggle('hidden', !(p.state === 'expired' || p.state === 'error'))
-    $('next2').disabled = p.state !== 'paired'
+    $('next1').disabled = p.state !== 'paired'
     if (p.state === 'found') {
       $('whoName').textContent = p.name
       $('whoUser').textContent = p.username ? '@' + p.username : ''
     }
-    if (p.state === 'expired') $('err2').textContent = 'That took too long. Tap Try again, then tap Start in your bot.'
-    if (p.state === 'error') $('err2').textContent = p.error
+    if (p.state === 'expired') $('err1').textContent = 'That took too long. Tap Try again, then tap Start in your bot.'
+    if (p.state === 'error') $('err1').textContent = p.error
   }
 
-  $('yesMe').onclick = async () => { try { renderPairing(await api('telegram/confirm', { yes: true })) } catch (e) { $('err2').textContent = e.message } }
+  $('yesMe').onclick = async () => { try { renderPairing(await api('telegram/confirm', { yes: true })) } catch (e) { $('err1').textContent = e.message } }
   $('notMe').onclick = async () => {
-    try { renderPairing(await api('telegram/confirm', { yes: false })); pollPairing() } catch (e) { $('err2').textContent = e.message }
+    try { renderPairing(await api('telegram/confirm', { yes: false })); pollPairing() } catch (e) { $('err1').textContent = e.message }
   }
   $('retryPair').onclick = async () => {
-    $('err2').textContent = ''
-    try { renderPairing(await api('telegram/restart', {})); pollPairing() } catch (e) { $('err2').textContent = e.message }
+    $('err1').textContent = ''
+    try { renderPairing(await api('telegram/restart', {})); pollPairing() } catch (e) { $('err1').textContent = e.message }
   }
 
   function engineKind() { return (document.querySelector('input[name="engine"]:checked') || {}).value || '' }
@@ -292,7 +253,7 @@
   providerChanged()
 
   $('signIn').onclick = async () => {
-    $('err3').textContent = ''
+    $('err2').textContent = ''
     try {
       await api('claude/sign-in', {})
       $('subState').textContent = 'A browser window opened. Sign in there, then come back here.'
@@ -302,25 +263,25 @@
         if (s.subscription && s.subscription.signedIn) { $('subState').innerHTML = '<span class="okmsg">Signed in to Claude.</span>'; return }
       }
       $('subState').textContent = 'Still not signed in. Try again.'
-    } catch (e) { $('err3').textContent = e.message }
+    } catch (e) { $('err2').textContent = e.message }
   }
 
   $('finish').onclick = async () => {
-    $('err3').textContent = ''
+    $('err2').textContent = ''
     const kind = engineKind()
-    if (!kind) return ($('err3').textContent = 'Choose how your assistant reaches an AI model.')
+    if (!kind) return ($('err2').textContent = 'Choose how your assistant reaches an AI model.')
     const engine = { kind }
     if (kind === 'api-key') { engine.provider = $('provider').value; engine.key = $('apiKey').value; engine.model = $('model').value }
     $('finish').disabled = true
     $('finish').textContent = 'Setting up…'
     try {
-      const r = await api('finish', { profile: profile(), engine })
+      const r = await api('finish', { timezone, engine })
       $('apiKey').value = ''
       $('openTelegram').href = 'https://t.me/' + encodeURIComponent(r.bot)
-      if (!r.delivered) $('doneMsg').textContent = 'Your assistant is starting. Open your bot in Telegram and say hello in a minute.'
+      if (!r.delivered) $('doneMsg').textContent = 'Your assistant is starting. Open your bot in Telegram and say hello in a minute. It will ask a few quick questions.'
       show('done')
     } catch (e) {
-      $('err3').textContent = e.message
+      $('err2').textContent = e.message
       $('finish').disabled = false
       $('finish').textContent = 'Finish setup'
     }
