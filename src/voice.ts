@@ -7,6 +7,7 @@ import FormData from 'form-data'
 import { OPENAI_API_KEY, TTS_VOICE } from './config.js'
 import { getAppState, setAppState } from './db.js'
 import { logger } from './logger.js'
+import { isManagedAi } from './ai-limit.js'
 
 /** Check if macOS `say` command is available */
 function hasMacSay(): boolean {
@@ -21,6 +22,7 @@ function hasMacSay(): boolean {
 const macSayAvailable = hasMacSay()
 
 export function voiceCapabilities(): { stt: boolean; tts: boolean } {
+  if (isManagedAi()) return { stt: false, tts: false }
   return {
     stt: !!OPENAI_API_KEY,
     tts: !!OPENAI_API_KEY || macSayAvailable,

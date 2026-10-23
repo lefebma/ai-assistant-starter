@@ -24,6 +24,7 @@ import { withActor } from './assurance/audit-trail.js'
 import { saveConversationTurn } from './memory.js'
 import { ownerPauseReply, readAiLimit, writeAiLimit } from './ai-limit.js'
 import { createDefaultEngine } from './memory/engine.js'
+import { isManagedAi, VOICE_OFF_REPLY } from './ai-limit.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
@@ -1259,7 +1260,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     }
     if (type === 'voice' && msg.filePath) {
       if (!voiceCapabilities().stt) {
-        await adapter.sendMessage(chatId, 'Voice transcription is not enabled. Add OPENAI_API_KEY to .env.')
+        await adapter.sendMessage(chatId, isManagedAi() ? VOICE_OFF_REPLY : 'Voice transcription is not enabled. Add OPENAI_API_KEY to .env.')
         return
       }
       try {
@@ -1367,6 +1368,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
     if (cmd === '/voice') {
+      if (isManagedAi()) {
+        await adapter.sendMessage(chatId, VOICE_OFF_REPLY)
+        return
+      }
       const sub = trimmed.split(/\s+/).slice(1).map((w) => w.toLowerCase())
       if (sub[0] === 'ui') {
         await handleVoiceUiCommand(adapter, chatId, sub[1])
@@ -1381,7 +1386,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         await adapter.sendMessage(chatId, 'Voice replies disabled.')
       } else {
         if (!voiceCapabilities().tts) {
-          await adapter.sendMessage(chatId, 'TTS not configured. Set OPENAI_API_KEY in .env')
+          await adapter.sendMessage(chatId, isManagedAi() ? VOICE_OFF_REPLY : 'TTS not configured. Set OPENAI_API_KEY in .env')
           return
         }
         voiceModeChats.add(chatId)

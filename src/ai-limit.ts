@@ -23,6 +23,13 @@ export const FIRST_REPLY =
   "I've reached this month's AI allowance, so I'm paused for now. Your provider has been told and will be in touch."
 export const REPEAT_REPLY = "Still paused: this month's AI allowance is used up. Your provider has been told."
 
+/** Owner-facing and model-facing copy for features a managed box does not have. */
+export const VOICE_OFF_REPLY = "Voice messages aren't available on this assistant."
+export const VIDEO_OFF_HINT = "Video analysis isn't available on this assistant. Tell the owner that plainly."
+export const MANAGED_SECRET_REPLY = "This assistant's AI connection is managed for you, so that key can't be changed here."
+/** Keys a managed box gets from its provider, never from the client. */
+export const MANAGED_SECRET_NAMES: readonly string[] = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY']
+
 export function isManagedAi(storeDir: string = STORE_DIR): boolean {
   return existsSync(join(storeDir, MANAGED_AI_FILE))
 }

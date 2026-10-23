@@ -2,6 +2,7 @@ import { resolve, basename, extname } from 'node:path'
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import https from 'node:https'
 import { PROJECT_ROOT } from './env.js'
+import { isManagedAi, VIDEO_OFF_HINT } from './ai-limit.js'
 
 // Was resolve(__dirname, '..'), which compiled to dist/ — so every photo and
 // voice note landed in dist/workspace/uploads, a directory the next update
@@ -90,7 +91,9 @@ export function buildDocumentMessage(
 export function buildVideoMessage(localPath: string, caption?: string): string {
   const parts = [
     `[Video attached: ${localPath}]`,
-    'Use the GOOGLE_API_KEY from this project\'s .env file and the Gemini API to analyze this video.',
+    isManagedAi()
+      ? VIDEO_OFF_HINT
+      : 'Use the GOOGLE_API_KEY from this project\'s .env file and the Gemini API to analyze this video.',
   ]
   if (caption) parts.push(`User note: ${caption}`)
   return parts.join('\n')
@@ -110,7 +113,7 @@ export function buildAttachmentMessage(kind: AttachmentKind, localPath: string, 
   const label = kind.replace('_', ' ')
   const parts = [filename ? `[${label} attached: ${filename} at ${localPath}]` : `[${label} attached: ${localPath}]`]
   if (caption) parts.push(`User note: ${caption}`)
-  parts.push(ATTACHMENT_HINTS[kind])
+  parts.push(kind === 'video_note' && isManagedAi() ? VIDEO_OFF_HINT : ATTACHMENT_HINTS[kind])
   return parts.join('\n')
 }
 

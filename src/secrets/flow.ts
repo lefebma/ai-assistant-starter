@@ -15,6 +15,7 @@
 import { SecretVault } from '../vault/store.js'
 import { defaultVault } from '../vault/index.js'
 import { readEnvFile } from '../env.js'
+import { isManagedAi, MANAGED_SECRET_NAMES, MANAGED_SECRET_REPLY } from '../ai-limit.js'
 import { createValidator, type ValidateFn, type ValidationResult } from './validate.js'
 import { buildSecretInventory, formatSecretInventory, isEngineSecret, KNOWN_SECRET_NAMES, maskSecret } from './inventory.js'
 
@@ -49,6 +50,8 @@ export interface SecretFlowOpts {
   /** The other two sources getSecret() reads. Injected so tests never touch the real .env. */
   readEnvFile?: () => Record<string, string>
   processEnv?: () => Record<string, string | undefined>
+  /** Managed box check. Injected so tests need no marker file. */
+  isManaged?: () => boolean
 }
 
 const USAGE = [
@@ -69,6 +72,7 @@ export class SecretFlow {
   private readonly ttlMs: number
   private readonly readEnv: () => Record<string, string>
   private readonly processEnv: () => Record<string, string | undefined>
+  private readonly isManaged: () => boolean
   private readonly pending = new Map<string, Pending>()
 
   constructor(opts: SecretFlowOpts = {}) {
@@ -78,6 +82,7 @@ export class SecretFlow {
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS
     this.readEnv = opts.readEnvFile ?? (() => readEnvFile())
     this.processEnv = opts.processEnv ?? (() => process.env)
+    this.isManaged = opts.isManaged ?? (() => isManagedAi())
   }
 
   hasPending(chatId: string): boolean {
@@ -141,6 +146,7 @@ export class SecretFlow {
             'underscores, e.g. /secret set OPENAI_API_KEY',
         }
       }
+      if (this.isManaged() && MANAGED_SECRET_NAMES.includes(name)) return { reply: MANAGED_SECRET_REPLY, deleteUserMessage: parts.length > 3 }
       const inlineValue = parts.slice(3).join(' ').trim()
       if (inlineValue) {
         const outcome = await this.store(chatId, name, inlineValue, { keepPendingOnInvalid: false })
@@ -194,6 +200,10 @@ export class SecretFlow {
     value: string,
     opts: { keepPendingOnInvalid: boolean }
   ): Promise<{ reply: string; saved: boolean }> {
+    if (this.isManaged() && MANAGED_SECRET_NAMES.includes(name)) {
+      this.pending.delete(chatId)
+      return { saved: false, reply: MANAGED_SECRET_REPLY }
+    }
     const result = await this.validate(name, value)
 
     if (result.status === 'invalid') {
