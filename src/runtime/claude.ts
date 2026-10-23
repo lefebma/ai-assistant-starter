@@ -306,6 +306,9 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     if (pre.paused) throw new AiPausedError(pre.paused)
 
     let fullText = ''
+    // A non-limit API error in the result event: never an answer, never ends a pause.
+    let errorText: string | null = null
+    let usageLimitSignal = false
     try {
       const conversation = query({
         prompt,
@@ -325,6 +328,11 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             recordAiLimit(hit)
             throw new AiPausedError(hit.kind)
           }
+          errorText = resultEventText(event)
+          continue
+        }
+        if (event.type === 'rate_limit_event' && (event as any).rate_limit_info?.status === 'rejected') {
+          usageLimitSignal = true
         }
         if (event.type === 'result' && event.subtype === 'success') {
           fullText = event.result ?? ''
@@ -333,13 +341,18 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     } catch (err) {
       if (err instanceof AiPausedError) throw err
       const message = String((err as any)?.message ?? err)
-      const hit = classifyAiError(message)
+      const hit = classifyAiError(message) ?? (isUsageLimitError(message) ? { kind: 'spend_limit' as const } : null)
       if (hit) {
         recordAiLimit(hit)
         throw new AiPausedError(hit.kind)
       }
       if (message.includes(key)) throw new Error(scrubSecret(message, key))
       throw err
+    }
+    if (errorText !== null) throw new Error(scrubSecret(errorText, key))
+    if (usageLimitSignal && !fullText) {
+      recordAiLimit({ kind: 'spend_limit' })
+      throw new AiPausedError('spend_limit')
     }
     if (pre.hadMarker) clearAiLimit()
     return fullText.trim()
@@ -432,6 +445,13 @@ export class ClaudeAgentRuntime implements AgentRuntime {
 
     const outcome = await this.runOnLane(options, options.sessionId, cwd, key, true)
     if (outcome.aiPaused) return { text: null, newSessionId: outcome.newSessionId, aiPaused: outcome.aiPaused }
+    // No subscription on a managed box, so any usage-limit signal (a rejected
+    // rate_limit_event, or a thrown "usage limit" error) is the API allowance.
+    if (outcome.usageLimitHit) {
+      logger.warn({ rateLimitType: outcome.rateLimitType }, 'Usage limit signal on the managed lane; treating it as the AI allowance')
+      recordAiLimit({ kind: 'spend_limit' })
+      return { text: null, newSessionId: outcome.newSessionId, aiPaused: 'spend_limit' }
+    }
     if (pre.hadMarker && outcome.answered) {
       clearAiLimit()
       logger.info('AI allowance recovery probe succeeded; managed box resumed')

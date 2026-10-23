@@ -57,7 +57,7 @@ export const LIMIT_PATTERNS: Record<AiLimitKind, { status?: number; errorType?: 
   spend_limit: {
     status: 400,
     errorType: /invalid_request_error/,
-    message: [/reached its (?:monthly )?spend limit/i, /workspace[^"]*spend limit/i],
+    message: [/reached its (?:monthly )?spend limit/i, /workspace[^"]*spend limit/i, /reached your specified workspace API usage limits?/i],
   },
   billing: {
     status: 402,

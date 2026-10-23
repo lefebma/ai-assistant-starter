@@ -184,6 +184,27 @@ describe('ClaudeAgentRuntime on a managed box', () => {
     expect(readAiLimit()?.kind).toBe('spend_limit')
   })
 
+  it('a thrown usage-limit message on the managed lane pauses as spend_limit after one call', async () => {
+    withKey()
+    mockQuery.mockReturnValue(throwingConversation('You have reached your usage limit for this workspace'))
+    const result = await new ClaudeAgentRuntime().run({ message: 'hello' })
+    expect(result).toMatchObject({ text: null, aiPaused: 'spend_limit' })
+    expect(mockQuery).toHaveBeenCalledTimes(1)
+    expect(readAiLimit()?.kind).toBe('spend_limit')
+  })
+
+  it('a rejected rate_limit_event on the managed lane pauses as spend_limit after one call', async () => {
+    withKey()
+    mockQuery.mockReturnValue((async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 'sess-rl' }
+      yield { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: 999 } }
+    })())
+    const result = await new ClaudeAgentRuntime().run({ message: 'hello' })
+    expect(result).toMatchObject({ text: null, aiPaused: 'spend_limit' })
+    expect(mockQuery).toHaveBeenCalledTimes(1)
+    expect(readAiLimit()?.kind).toBe('spend_limit')
+  })
+
   it('a failed recovery probe keeps the paused state and what the owner was told', async () => {
     withKey()
     const old = new Date(Date.now() - 60 * 60_000).toISOString()
@@ -239,6 +260,29 @@ describe('ClaudeAgentRuntime on a managed box', () => {
       withKey()
       mockQuery.mockReturnValue(throwingConversation(SPEND_400))
       await expect(new ClaudeAgentRuntime().runOnce('ping')).rejects.toBeInstanceOf(AiPausedError)
+      expect(readAiLimit()?.kind).toBe('spend_limit')
+    })
+
+    it('a recovery probe that returns a non-limit API error throws and does not clear the marker', async () => {
+      withKey()
+      const old = new Date(Date.now() - 60 * 60_000).toISOString()
+      writeAiLimit({ kind: 'spend_limit', since: old, toldFull: true, lastToldAt: old })
+      mockQuery.mockReturnValue((async function* () {
+        yield { type: 'result', subtype: 'success', is_error: true, result: `API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error ${KEY}"}}` }
+      })())
+      const p = new ClaudeAgentRuntime().runOnce('ping')
+      await expect(p).rejects.toThrow(/API Error: 500/)
+      await expect(p).rejects.not.toBeInstanceOf(AiPausedError)
+      await p.catch((e: Error) => expect(e.message).not.toContain(KEY))
+      const m = readAiLimit()!
+      expect(m.kind).toBe('spend_limit')
+      expect(m.toldFull).toBe(true)
+    })
+
+    it('a thrown usage-limit message pauses as spend_limit', async () => {
+      withKey()
+      mockQuery.mockReturnValue(throwingConversation('You have reached your usage limit'))
+      await expect(new ClaudeAgentRuntime().runOnce('ping')).rejects.toMatchObject({ kind: 'spend_limit' })
       expect(readAiLimit()?.kind).toBe('spend_limit')
     })
 

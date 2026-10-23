@@ -38,6 +38,10 @@ describe('classifyAiError', () => {
     expect(classifyAiError('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This workspace has reached its spend limit"},"request_id":"req_011ABC"}'))
       .toEqual({ kind: 'spend_limit', requestId: 'req_011ABC' })
   })
+  it('workspace API usage limits wording is spend_limit', () => {
+    expect(classifyAiError('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."},"request_id":"req_033GHI"}'))
+      .toEqual({ kind: 'spend_limit', requestId: 'req_033GHI' })
+  })
   it('ordinary 400 is null', () => {
     expect(classifyAiError('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This model does not support assistant message prefill"}}')).toBeNull()
   })
