@@ -213,6 +213,20 @@ function scrubSecret(text: string, secret: string | undefined): string {
 }
 
 /**
+ * Per-call env for the managed lane: the process env minus any other Claude
+ * auth, plus the key. With those removed the key is the only lane by
+ * construction, whatever the box's environment carries.
+ */
+function managedEnv(key: string): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env }
+  delete env.CLAUDE_CODE_OAUTH_TOKEN
+  delete env.ANTHROPIC_AUTH_TOKEN
+  delete env.ANTHROPIC_BASE_URL
+  env.ANTHROPIC_API_KEY = key
+  return env
+}
+
+/**
  * Managed pre-check. Paused and not yet due a recovery probe: the kind to
  * report, and no model call may happen. Due: stamp lastProbeAt first, so a
  * failing probe waits a full interval before the next one, then allow the call.
@@ -318,7 +332,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           permissionMode: 'bypassPermissions',
           settingSources: ['project', 'user'],
           hooks: { PreToolUse: [{ hooks: [guardHook] }] },
-          env: { ...process.env, ANTHROPIC_API_KEY: key },
+          env: managedEnv(key),
         },
       })
       for await (const event of conversation) {
@@ -515,11 +529,16 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         this.loopReset()
         logger.info({ attempt, cwd, lane: apiKeyOverride ? 'api' : 'subscription' }, 'Starting agent query')
         const model = options.model ?? resolveModel()
+        const laneEnv = apiKeyOverride
+          ? managed
+            ? managedEnv(apiKeyOverride)
+            : { ...process.env, ANTHROPIC_API_KEY: apiKeyOverride }
+          : undefined
         const conversation = query({
           prompt: options.message,
           options: options.isolated ? {
             ...isolatedOptions(model, cwd, abortController, Boolean(onPartial)),
-            ...(apiKeyOverride ? { env: { ...process.env, ANTHROPIC_API_KEY: apiKeyOverride } } : {}),
+            ...(laneEnv ? { env: laneEnv } : {}),
           } : {
             model,
             cwd,
@@ -533,7 +552,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             // Overflow lane: scope the API key to THIS subprocess only. Spread
             // process.env so HOME/PATH/etc still reach the CLI; the explicit key
             // makes it bill against the API instead of the subscription window.
-            ...(apiKeyOverride ? { env: { ...process.env, ANTHROPIC_API_KEY: apiKeyOverride } } : {}),
+            // The managed lane also drops any other Claude auth (managedEnv).
+            ...(laneEnv ? { env: laneEnv } : {}),
           },
         })
         logger.info('Query object created, iterating events')
@@ -702,6 +722,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           if (hit) {
             recordAiLimit(hit)
             if (newSessionId) this.activeWorkspaces.delete(newSessionId)
+            if (!options.isolated) this.pendingSteer = null
             return { text: null, newSessionId, aiPaused: hit.kind }
           }
         }

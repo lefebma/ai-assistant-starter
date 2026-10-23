@@ -32,7 +32,8 @@ vi.mock('../src/vault/index.js', () => ({ getSecret: mockGetSecret }))
 vi.mock('../src/logger.js', () => ({ logger: mockLogger }))
 
 import { ClaudeAgentRuntime } from '../src/runtime/claude.js'
-import { AI_LIMIT_FILE, AiPausedError, MANAGED_AI_FILE, readAiLimit, writeAiLimit } from '../src/ai-limit.js'
+import { getAgentRuntime, setAgentRuntime } from '../src/runtime/index.js'
+import { AI_LIMIT_FILE, AiPausedError, MANAGED_AI_FILE, clearAiLimit, readAiLimit, writeAiLimit } from '../src/ai-limit.js'
 
 const STORE = h.store as string
 // Obviously fake, so secret scanners never flag the fixture.
@@ -237,6 +238,61 @@ describe('ClaudeAgentRuntime on a managed box', () => {
     const logged = JSON.stringify(Object.values(mockLogger).flatMap((f) => f.mock.calls), (_k, v) => (v instanceof Error ? { message: v.message, stack: v.stack } : v))
     expect(logged).not.toContain(KEY)
     expect(JSON.stringify(readAiLimit())).not.toContain(KEY)
+  })
+
+  it('drops other auth from the per-call env, so the key is the only lane by construction', async () => {
+    withKey()
+    const saved = { ...process.env }
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-should-not-pass'
+    process.env.ANTHROPIC_AUTH_TOKEN = 'auth-should-not-pass'
+    process.env.ANTHROPIC_BASE_URL = 'https://proxy.invalid'
+    try {
+      mockQuery.mockReturnValueOnce(okConversation('hi')).mockReturnValueOnce(okConversation('ready'))
+      const rt = new ClaudeAgentRuntime()
+      await rt.run({ message: 'hello' })
+      await rt.runOnce('ping')
+      for (const call of mockQuery.mock.calls) {
+        const env = call[0].options.env
+        expect(env.ANTHROPIC_API_KEY).toBe(KEY)
+        expect(env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN')
+        expect(env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
+        expect(env).not.toHaveProperty('ANTHROPIC_BASE_URL')
+        expect(env.PATH).toBe(process.env.PATH)
+      }
+      // The parent process env is untouched.
+      expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-should-not-pass')
+    } finally {
+      process.env = saved
+    }
+  })
+
+  it('a thrown limit clears a queued steer, so it never runs after the pause', async () => {
+    withKey()
+    const rt = new ClaudeAgentRuntime()
+    rt.steer('follow up')
+    mockQuery.mockReturnValueOnce(throwingConversation(SPEND_400))
+    expect((await rt.run({ message: 'hello' })).aiPaused).toBe('spend_limit')
+    clearAiLimit()
+    mockQuery.mockReturnValueOnce(okConversation('hi'))
+    const next = await rt.run({ message: 'again' })
+    expect(next.text).toBe('hi')
+    // Two calls: the paused one and this one. A leaked steer would add a third.
+    expect(mockQuery).toHaveBeenCalledTimes(2)
+  })
+
+  it('resolves both lanes to claude even when .env sets AGENT_RUNTIME=ai-sdk', () => {
+    mockReadEnvFile.mockReturnValue({ AGENT_RUNTIME: 'ai-sdk', AGENT_RUNTIME_CRON: 'ai-sdk' })
+    setAgentRuntime(null)
+    try {
+      expect(getAgentRuntime('chat').id).toBe('claude')
+      expect(getAgentRuntime('cron').id).toBe('claude')
+      // Non-managed: the .env choice still applies, as today.
+      setManaged(false)
+      expect(getAgentRuntime('chat').id).toBe('ai-sdk')
+      expect(getAgentRuntime('cron').id).toBe('ai-sdk')
+    } finally {
+      setAgentRuntime(null)
+    }
   })
 
   describe('runOnce', () => {
