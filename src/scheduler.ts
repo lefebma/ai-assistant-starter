@@ -7,6 +7,7 @@ import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
 import { buildAuditPrompt } from './audit/report.js'
 import { logger } from './logger.js'
+import { aiPausedNow } from './ai-limit.js'
 import { dashboardDataFile } from './cockpit/paths.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
@@ -97,6 +98,12 @@ export async function runDueTasks(): Promise<void> {
       logger.error({ err, taskId: task.id, schedule: task.schedule }, 'Invalid cron, skipping task (parking 24h)')
       // Park for 24h so the broken task doesn't block the queue or re-fire every poll
       updateTaskAfterRun(task.id, `ERROR: invalid schedule "${task.schedule}"`, Math.floor(Date.now() / 1000) + 86400)
+      continue
+    }
+    // AI allowance used up: advance the schedule without running or announcing.
+    if (aiPausedNow()) {
+      logger.info({ taskId: task.id }, 'AI allowance used up, skipping scheduled task')
+      updateTaskAfterRun(task.id, 'SKIPPED: AI allowance used up', nextRun)
       continue
     }
     updateTaskAfterRun(task.id, 'RUNNING...', nextRun)

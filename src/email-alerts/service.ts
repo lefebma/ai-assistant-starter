@@ -21,6 +21,7 @@
  * Log lines here carry counts only, never a subject, a sender or a mailbox.
  */
 import { logger } from '../logger.js'
+import { aiPausedNow } from '../ai-limit.js'
 import {
   alertStatus,
   alertsByStatus,
@@ -287,6 +288,12 @@ async function flush(ctx: Ctx, reason: 'quiet_end' | 'pause_end'): Promise<numbe
 
 export async function tick(deps: TickDeps, control: TickControl = standalone()): Promise<TickResult> {
   const result: TickResult = { sent: 0, held: 0, paused: 0, triaged: 0 }
+  // Mail is marked seen before it is triaged, so a paused tick must leave it
+  // untouched or it would never be read once the allowance returns.
+  if (aiPausedNow()) {
+    logger.info('AI allowance used up, skipping email alerts tick')
+    return result
+  }
   try {
     await runTick({ deps, control }, result)
   } catch (err) {

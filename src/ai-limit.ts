@@ -113,3 +113,14 @@ export class AiPausedError extends Error {
     this.kind = kind
   }
 }
+
+/**
+ * True while the allowance marker is set and the next recovery probe is not
+ * yet due. Background callers (scheduler, email alerts, dreaming, replay,
+ * self-test) skip their model work on this; once recovery is due the runtime
+ * makes the single probe itself, so they proceed normally.
+ */
+export function aiPausedNow(now: Date = new Date(), storeDir: string = STORE_DIR): boolean {
+  const m = readAiLimit(storeDir)
+  return m !== null && !recoveryDue(m, now)
+}
