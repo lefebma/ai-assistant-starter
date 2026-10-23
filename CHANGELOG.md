@@ -1,10 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **Fixed: the service log on hosted boxes grew forever.** New boxes rotate the logs in `logs/` weekly, or past 20 MB, keeping four compressed copies. The log is now created as the havn user so rotation can empty it in place. Existing boxes need a one-time step as `havn-admin`, in `docs/HOSTED-VPS.md` > Service log rotation. Found on havn-marina, at 11 MB after two months.
-- **Fixed: web setup left its log owned by root.** `enable-setup` now creates `logs/setup.log` and `logs/service.log` as havn before starting web setup, so rotation can empty them. Found on havn-joel when rotation was first applied.
-
 ## 1.40.0 - 2026-10-20
 
 Setup is two steps, and the assistant asks the rest in your first chat.
@@ -14,6 +9,8 @@ Setup is two steps, and the assistant asks the rest in your first chat.
 - **New: change your profile any time by saying so.** Tell the assistant to change your name, its name, your city, its tone or your bio and it updates them. A new city moves the time zone, and the assistant restarts after its reply. A box that cannot restart itself says so.
 - **Changed: the terminal wizard asks only the core.** A fresh `npm run setup` asks for your messaging app, AI access and bot credentials. Email and optional skills are two separate questions that default to no, so nothing optional is asked unless you opt in. Your name, the assistant's name, tone and city are asked in the first chat, as with web setup. The monthly-audit and email-signature questions are gone too: the audit is off by default (send `/audit monthly on` to schedule it) and the signature is built from your name. An install set up before this release (it has a `.env` but no saved answers) still gets the profile questions when you re-run setup, but no longer time zone or coordinates. A re-run on an install with saved answers reuses them without asking, and keeps its email accounts and skills unless you say yes to "Change email setup?" or "Change optional skills?".
 - **Unchanged: existing installs.** A box that was already set up is not asked anything new, and this release does not rewrite its `CLAUDE.md`, `PERSONALITY.md`, `PROFILE.md` or skills on update.
+- **Fixed: the service log on hosted boxes grew forever.** New boxes rotate the logs in `logs/` weekly, or past 20 MB, keeping four compressed copies. The log is now created as the havn user so rotation can empty it in place. Existing boxes need a one-time step as `havn-admin`, in `docs/HOSTED-VPS.md` > Service log rotation. Found on havn-marina, at 11 MB after two months.
+- **Fixed: web setup left its log owned by root.** `enable-setup` now creates `logs/setup.log` and `logs/service.log` as havn before starting web setup, so rotation can empty them. Found on havn-joel when rotation was first applied.
 
 ## 1.39.0 - 2026-10-18
 
