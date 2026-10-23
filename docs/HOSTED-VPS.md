@@ -294,9 +294,10 @@ The link works once and expires in 48 hours. To send a new one (as `havn`):
 node /home/havn/havn/dist/scripts/setup-web.js --issue-link <hostname>
 ```
 
-A Claude subscription sign-in is not offered on a hosted box. Use an API key
-for now (Managed AI, card #159, will remove this step). Email is connected
-afterwards, in chat. Teams boxes still use the SSH steps below.
+A Claude subscription sign-in is not offered on a hosted box. A client with no
+AI account of their own can run on a key you supply (see
+`docs/MANAGED-AI-KEY.md`); otherwise the client enters their own API key at this
+step. Email is connected afterwards, in chat. Teams boxes still use the SSH steps below.
 
 If the client opens the link while `havn-setup` is down, Caddy's error log
 (the journal, root-only) may record the request URL with the token. Reissue
