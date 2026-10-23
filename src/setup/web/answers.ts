@@ -152,10 +152,10 @@ export function answersFromWeb(profile: WebProfile, engine: WebEngine, place: Pl
     outlookAddress: '',
     outlookAddress2: '',
     emailSignature: buildEmailSignature({ name: profile.ownerName, title: '', phone: '', email: '' }),
-    // The wizard's own defaults when the city lookup fails.
-    latitude: place?.latitude ?? '40.71',
-    longitude: place?.longitude ?? '-74.01',
-    tempUnit: place?.tempUnit ?? 'celsius',
+    // The wizard's own defaults when the city lookup fails: no coordinates.
+    latitude: place?.latitude ?? PROVISIONAL.latitude,
+    longitude: place?.longitude ?? PROVISIONAL.longitude,
+    tempUnit: place?.tempUnit ?? PROVISIONAL.tempUnit,
     monthlyAudit: false,
     skills: { webResearch: false, apollo: false, antilibrary: false, notion: false, kanbanzone: false, wordpress: false },
     keys: {},

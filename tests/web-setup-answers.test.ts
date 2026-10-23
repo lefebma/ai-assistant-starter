@@ -75,9 +75,9 @@ describe('answersFromWeb', () => {
     expect(env).toMatch(/^TELEGRAM_BOT_TOKEN=$/m)
     expect(env).toMatch(/^ALLOWED_CHAT_ID=42$/m)
   })
-  it("uses the wizard's default coordinates when the city lookup fails", () => {
+  it('leaves the coordinates empty when the city lookup fails, never a made-up city', () => {
     const a = answersFromWeb(PROFILE, { kind: 'later' }, null, '/p')
-    expect([a.latitude, a.longitude]).toEqual(['40.71', '-74.01'])
+    expect([a.latitude, a.longitude]).toEqual(['', ''])
   })
 })
 

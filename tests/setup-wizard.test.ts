@@ -9,6 +9,7 @@ import {
   buildSkillPlan,
   hostOsLabel,
   shouldSkipSecret,
+  weatherHome,
 } from '../src/setup/plan.js'
 import { isLegacyInstall, runWizard, provisionalAssistantName, PERSONALITY_PRESETS, type Prompter } from '../src/setup/wizard.js'
 import type { Answers } from '../src/setup/plan.js'
@@ -215,11 +216,13 @@ describe('buildSkillPlan', () => {
     expect(secret.value).toBe('ap-1')
   })
 
-  it('substitutes weather coordinates into the manifest', () => {
+  it('substitutes the home city and its coordinates into the weather manifest', () => {
     const plan = buildSkillPlan(BASE, '/home/sam')
     const edit = plan.find((a) => a.type === 'edit' && a.file === 'skills/weather/manifest.json')!
-    expect(edit.vars).toMatchObject({ LATITUDE: '43.65', LONGITUDE: '-79.38', TEMP_UNIT: 'celsius' })
+    expect(edit.vars).toMatchObject({ TEMP_UNIT: 'celsius' })
+    expect(edit.vars!.WEATHER_HOME).toBe('Home is Toronto (latitude 43.65, longitude -79.38). Use these when no other place is named.')
   })
+
 })
 
 describe('shouldSkipSecret', () => {
@@ -285,7 +288,7 @@ describe('runWizard', () => {
     expect(a.ownerName).toBe('the owner')
     expect(a.assistantName).toBe('Atlas')
     expect(a.timezone).toBe('America/Halifax')
-    expect(a.latitude).toBe('40.71')
+    expect(a.latitude).toBe('')
     expect(a.tempUnit).toBe('celsius')
     expect(a.personalityVibe).toBe(PERSONALITY_PRESETS[1])
     expect(a.monthlyAudit).toBe(false)
@@ -318,7 +321,8 @@ describe('runWizard', () => {
     expect(a.personalityVibe).toContain('Direct')
     expect(a.ownerBio).toBe('Consultant.')
     expect(a.timezone).toBe('America/Toronto')
-    expect(a.latitude).toBe('40.71')
+    // Offline lookup: no made-up coordinates, the skill looks Toronto up itself.
+    expect(a.latitude).toBe('')
   })
 
   it('legacy install takes timezone, coordinates and unit from the city lookup', async () => {
@@ -574,5 +578,24 @@ describe('isLegacyInstall', () => {
   })
   it('a .env with saved answers is not legacy', () => {
     expect(isLegacyInstall({ envExists: true, saved })).toBe(false)
+  })
+})
+
+describe('weatherHome', () => {
+  it('asks for the city, and saves it, when none is known', () => {
+    const line = weatherHome({ city: ' ', latitude: '', longitude: '' })
+    expect(line).toContain("The owner's city is not known yet")
+    expect(line).toContain('profile.js set --city')
+  })
+
+  it('looks a known city up when its coordinates are missing', () => {
+    expect(weatherHome({ city: 'Halifax', latitude: '', longitude: '' })).toBe('Home is Halifax. Its coordinates are not saved: look it up as for any other place.')
+  })
+
+  it('keeps the manifest valid JSON whatever the city is called', () => {
+    for (const city of ['Coeur d\'Alene', 'Say "hi" \\ town', '']) {
+      const line = weatherHome({ city, latitude: '47.68', longitude: '-116.78' })
+      expect(() => JSON.parse(`{"context": "${line}"}`)).not.toThrow()
+    }
   })
 })

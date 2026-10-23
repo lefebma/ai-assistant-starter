@@ -351,7 +351,7 @@ Always installed, no key and no prompt: `weather`, `decision-log`, `daily-briefi
 
 | Skill | What it does | What you need |
 |-------|-------------|---------------|
-| `weather` | Current weather + short forecast | Coordinates (Open-Meteo, no key) |
+| `weather` | Current weather + short forecast, for home or any city you name | Nothing (Open-Meteo, no key; your city comes from the first chat) |
 | `decision-log` | Append-only record of decisions with Why / Alternatives / What-would-change-my-mind | Nothing (always on) |
 | `daily-briefing` | Start-of-day summary: weather, triaged email, calendar, loose ends | Nothing (always on) |
 | `exec-interview` | 15-20 minute discovery interview that writes your PROFILE.md | Nothing (always on) |

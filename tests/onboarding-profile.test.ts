@@ -82,7 +82,8 @@ describe('applyProfile', () => {
     expect(decision).not.toContain('the owner')
     const weather = read(root, 'skills/weather/manifest.json')
     expect(weather).toContain('51.51')
-    expect(weather).toContain('Europe/London')
+    expect(weather).toContain('Home is London')
+    expect(() => JSON.parse(weather)).not.toThrow()
     expect(res.place).toContain('London')
     expect(res.placeNotFound).toBe(false)
     expect(res.kept).toEqual([])
@@ -151,7 +152,9 @@ describe('applyProfile', () => {
     expect(read(root, 'CLAUDE.md')).toContain("You are Jane's personal AI assistant")
     expect(setState).not.toHaveBeenCalled()
     expect(loadSetupAnswers(root)?.city).toBe('London')
-    expect(loadSetupAnswers(root)?.latitude).toBe('40.71')
+    // The old city's coordinates are dropped, so weather never answers for it.
+    expect(loadSetupAnswers(root)?.latitude).toBe('')
+    expect(read(root, 'skills/weather/manifest.json')).toContain('Home is London. Its coordinates are not saved')
   })
 
   it('fetch throws', async () => {

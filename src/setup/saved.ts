@@ -22,8 +22,11 @@ export const PROVISIONAL = {
   ownerName: 'the owner',
   assistantName: 'Atlas',
   vibeIndex: 1,
-  latitude: '40.71',
-  longitude: '-74.01',
+  // No coordinates until a city is looked up. A made-up default answered
+  // "what's the weather?" with New York's, wherever the owner was (card #126);
+  // empty, the weather skill looks the place up or asks for it instead.
+  latitude: '',
+  longitude: '',
   tempUnit: 'celsius',
 } as const
 
