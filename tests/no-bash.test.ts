@@ -4,7 +4,9 @@ import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const SKIP = new Set(['node_modules', '.git', 'dist', 'store', 'logs'])
+// scripts/lab holds provisioning for a disposable research VM (spike #225/#226),
+// not product automation; the product itself still ships zero .sh files.
+const SKIP = new Set(['node_modules', '.git', 'dist', 'store', 'logs', 'lab'])
 function findShellScripts(dir: string, hits: string[]): void {
   for (const name of readdirSync(dir)) {
     if (SKIP.has(name)) continue
