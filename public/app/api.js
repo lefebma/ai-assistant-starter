@@ -80,7 +80,7 @@ export async function exchange(token) {
 /**
  * Send a chat message and read the reply as server-sent events. EventSource
  * cannot POST, so this parses the stream from fetch. handlers: onQueued,
- * onDelta, onTool, onDone, onPaused, onError. Resolves when the stream ends;
+ * onDelta, onReset, onTool, onDone, onPaused, onError. Resolves when the stream ends;
  * resolves to true when a terminal event arrived, false when it was cut off.
  */
 export async function streamChat(conversationId, text, handlers) {
@@ -123,6 +123,10 @@ export async function streamChat(conversationId, text, handlers) {
         break
       case 'delta':
         handlers.onDelta?.(payload.text || '')
+        break
+      case 'reset':
+        // The reply restarted (a retry): replace what was shown so far.
+        handlers.onReset?.(payload.text || '')
         break
       case 'tool':
         handlers.onTool?.(payload.tool || '', payload.status || '')

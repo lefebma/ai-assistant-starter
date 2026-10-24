@@ -26,6 +26,8 @@ export interface MessageRow {
   content: string
   files: StoredFile[]
   buttons: string[]
+  /** A button on this message was clicked; the card takes no second answer. */
+  buttonsUsed: boolean
   createdAt: number
 }
 
@@ -137,6 +139,7 @@ interface RawMsg {
   content: string
   files: string
   buttons: string
+  buttons_used: number | null
   created_at: number
 }
 
@@ -147,6 +150,7 @@ const toMsg = (r: RawMsg): MessageRow => ({
   content: r.content,
   files: parseArr<StoredFile>(r.files),
   buttons: parseArr<string>(r.buttons),
+  buttonsUsed: r.buttons_used === 1,
   createdAt: r.created_at,
 })
 
@@ -162,4 +166,29 @@ export function getMessageForChat(chatId: string, messageId: number): MessageRow
     )
     .get(messageId, chatId) as RawMsg | undefined
   return r ? toMsg(r) : null
+}
+
+/** The text a button click sends, the same contract as Telegram's. */
+export const BUTTON_CLICK_PREFIX = '[button_click]: '
+
+/** The label of a `[button_click]: <label>` turn, or null for ordinary text. */
+export function buttonClickLabel(text: string): string | null {
+  if (!text.startsWith(BUTTON_CLICK_PREFIX)) return null
+  const label = text.slice(BUTTON_CLICK_PREFIX.length).trim()
+  return label || null
+}
+
+/**
+ * Claim the buttons of the conversation's latest assistant message for one
+ * click. True only when that message offers `label` and no button on it has
+ * been clicked yet; the UPDATE is the claim, so two tabs cannot both win.
+ */
+export function claimButtonClick(convId: string, label: string): boolean {
+  const d = getDb()
+  const latest = d
+    .prepare("SELECT id, buttons, buttons_used FROM web_messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
+    .get(convId) as { id: number; buttons: string; buttons_used: number | null } | undefined
+  if (!latest || latest.buttons_used === 1) return false
+  if (!parseArr<string>(latest.buttons).includes(label)) return false
+  return d.prepare('UPDATE web_messages SET buttons_used = 1 WHERE id = ? AND COALESCE(buttons_used, 0) = 0').run(latest.id).changes === 1
 }

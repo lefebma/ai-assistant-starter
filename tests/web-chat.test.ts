@@ -50,7 +50,8 @@ beforeAll(async () => {
   runtimeMod = await import('../src/runtime/index.js')
   bot = await import('../src/bot.js')
   server = await import('../src/http-server.js')
-  port = 5700 + Math.floor(Math.random() * 90) * 3
+  // Band 5520-5544.
+  port = 5520 + Math.floor(Math.random() * 25)
   server.startHttpServer(port)
   const deadline = Date.now() + 5000
   for (;;) {
@@ -221,9 +222,55 @@ describe('web chat', () => {
     await vi.waitFor(() => expect(rt.calls).toHaveLength(1))
     ac.abort()
     await p
-    await vi.waitFor(() => expect(rt.calls.length).toBeGreaterThan(0))
+    // Give the server time to see the socket close before the turn finishes.
+    await new Promise((r) => setTimeout(r, 150))
     release()
     await vi.waitFor(() => expect(conv.listMessages(id).some((m) => m.role === 'assistant')).toBe(true))
+    expect(conv.getConversation('4242', id)!.sessionId).toBe('sess-9')
+  })
+
+  it('sends reset, not a duplicating delta, when a retry restarts the text', async () => {
+    useRuntime().partials = ['first try', 'Sec', 'Second']
+    const id = await newConv()
+    const evs = await chat(id, 'hi')
+    const stream = evs.filter((e) => e.name === 'delta' || e.name === 'reset')
+    expect(stream).toEqual([
+      { name: 'delta', data: { text: 'first try' } },
+      { name: 'reset', data: { text: 'Sec' } },
+      { name: 'delta', data: { text: 'ond' } },
+    ])
+  })
+
+  it('a button click goes to the model as [button_click]: <label>, once', async () => {
+    useRuntime().result = { text: 'Draft ready\n[[buttons: Send | Discard]]', newSessionId: 's' }
+    const id = await newConv()
+    const first = (await chat(id, 'draft it')).at(-1)!.data.message
+    expect(first.buttons).toEqual(['Send', 'Discard'])
+    expect(first.buttonsUsed).toBe(false)
+
+    rt.result = { text: 'Sent.', newSessionId: 's' }
+    const evs = await chat(id, '[button_click]: Send')
+    expect(evs.at(-1)!.name).toBe('done')
+    expect(rt.calls.at(-1)!.message).toContain('[button_click]: Send')
+    const msgs = conv.listMessages(id)
+    expect(msgs.find((m) => m.role === 'user' && m.content === '[button_click]: Send')).toBeTruthy()
+    const listed = (await (await fetch(`${base()}/api/web/conversations/${id}/messages`, { headers: H() })).json()) as any
+    expect(listed.messages.find((m: any) => m.id === first.id).buttonsUsed).toBe(true)
+
+    // A second tab still showing the old buttons cannot answer the card again.
+    const again = await post(`/api/web/conversations/${id}/chat`, { text: '[button_click]: Discard' })
+    expect(again.status).toBe(409)
+    expect(await again.json()).toEqual({ error: 'buttons_used' })
+    expect(rt.calls).toHaveLength(2)
+  })
+
+  it('refuses a click for a label the latest reply does not offer', async () => {
+    useRuntime().result = { text: 'Pick\n[[buttons: Yes | No]]', newSessionId: 's' }
+    const id = await newConv()
+    await chat(id, 'ask me')
+    const r = await post(`/api/web/conversations/${id}/chat`, { text: '[button_click]: Maybe' })
+    expect(r.status).toBe(409)
+    expect(conv.listMessages(id).filter((m) => m.role === 'user')).toHaveLength(1)
   })
 
   it('sends an error event and stores nothing when the turn fails', async () => {

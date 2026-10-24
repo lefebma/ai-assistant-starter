@@ -18,6 +18,8 @@ import {
   addMessage,
   listMessages,
   getMessageForChat,
+  buttonClickLabel,
+  claimButtonClick,
   type ConversationRow,
   type MessageRow,
   type StoredFile,
@@ -48,6 +50,7 @@ const msgJson = (m: MessageRow) => ({
   content: m.content,
   files: m.files.map((f, index) => ({ index, name: f.name, kind: f.kind })),
   buttons: m.buttons,
+  buttonsUsed: m.buttonsUsed,
   createdAt: m.createdAt,
 })
 
@@ -176,6 +179,10 @@ registerWebRoutes([
       const text = typeof b.text === 'string' ? b.text.trim() : ''
       if (!text || text.length > MAX_TEXT) return sendError(ctx.res, 400, 'bad_text')
       if (running.has(id)) return sendError(ctx.res, 409, 'busy')
+      // A click answers the latest reply's card once. A stale tab, a second
+      // click, or a label that card does not offer is refused.
+      const clicked = buttonClickLabel(text)
+      if (clicked !== null && !claimButtonClick(id, clicked)) return sendError(ctx.res, 409, 'buttons_used')
 
       running.add(id)
       try {
@@ -196,7 +203,14 @@ registerWebRoutes([
             effort: (conv.effort || undefined) as 'low' | 'medium' | 'high' | undefined,
             onQueued: (ahead) => sse.writeEvent('queued', { ahead }),
             onPartial: (acc) => {
-              const delta = acc.startsWith(sent) ? acc.slice(sent.length) : acc
+              // A runtime retry restarts the text from scratch. Appending it
+              // would show both attempts, so the page is told to replace.
+              if (!acc.startsWith(sent)) {
+                sent = acc
+                sse.writeEvent('reset', { text: acc })
+                return
+              }
+              const delta = acc.slice(sent.length)
               sent = acc
               if (delta) sse.writeEvent('delta', { text: delta })
             },

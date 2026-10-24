@@ -216,6 +216,11 @@ export function initDatabase(): void {
   if (!webMsgCols.some((c) => c.name === 'buttons')) {
     d.exec("ALTER TABLE web_messages ADD COLUMN buttons TEXT NOT NULL DEFAULT '[]'")
   }
+  // Additive: set once a button on this assistant message has been clicked,
+  // so a card takes exactly one answer even across tabs and reloads.
+  if (!webMsgCols.some((c) => c.name === 'buttons_used')) {
+    d.exec('ALTER TABLE web_messages ADD COLUMN buttons_used INTEGER DEFAULT 0')
+  }
 
   // Apple Shortcuts credentials (see src/shortcut-tokens.ts). One row per chat,
   // keyed by chat so minting a new one replaces the old. Only the hash is kept:

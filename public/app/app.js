@@ -368,11 +368,20 @@ function fileUrl(messageId, index) {
   return '/api/web/messages/' + encodeURIComponent(messageId) + '/files/' + encodeURIComponent(index)
 }
 
+// A button click is sent as this text, the same contract as Telegram's.
+const CLICK_PREFIX = '[button_click]: '
+
 function messageEl(m) {
   const el = h('div', { class: 'msg ' + (m.role === 'user' ? 'user' : 'assistant') })
-  const body = h('div', { class: 'msg-body' })
-  body.innerHTML = renderMarkdown(m.content || '')
-  el.append(body)
+  const content = m.content || ''
+  if (m.role === 'user' && content.startsWith(CLICK_PREFIX)) {
+    // Show a click as the label it chose, styled like the button.
+    el.append(h('div', { class: 'msg-body click', text: content.slice(CLICK_PREFIX.length) }))
+  } else {
+    const body = h('div', { class: 'msg-body' })
+    body.innerHTML = renderMarkdown(content)
+    el.append(body)
+  }
   if (m.files && m.files.length) {
     const files = h('div', { class: 'msg-files' })
     for (const f of m.files) {
@@ -385,9 +394,24 @@ function messageEl(m) {
     el.append(files)
   }
   if (m.buttons && m.buttons.length) {
-    const row = h('div', { class: 'msg-buttons' })
+    // A card takes one answer: once clicked (here, in another tab, or before
+    // a reload) its buttons stay off. The server enforces the same rule.
+    const row = h('div', { class: 'msg-buttons' + (m.buttonsUsed ? ' used' : '') })
     for (const label of m.buttons) {
-      row.append(h('button', { type: 'button', class: 'reply-btn', text: label, click: () => send(label) }))
+      row.append(
+        h('button', {
+          type: 'button',
+          class: 'reply-btn',
+          text: label,
+          click: () => {
+            if (row.classList.contains('used') || state.running) return
+            m.buttonsUsed = true
+            row.classList.add('used')
+            updateReplyButtons()
+            send(CLICK_PREFIX + label)
+          },
+        })
+      )
     }
     el.append(row)
   }
@@ -415,7 +439,9 @@ function updateReplyButtons() {
   // Like Telegram's keyboard: only the latest reply's buttons stay live.
   const busy = Boolean(state.running)
   const last = $('messages').lastElementChild
-  for (const b of $('messages').querySelectorAll('.reply-btn')) b.disabled = busy || !last || !last.contains(b)
+  for (const b of $('messages').querySelectorAll('.reply-btn')) {
+    b.disabled = busy || !last || !last.contains(b) || b.closest('.msg-buttons').classList.contains('used')
+  }
 }
 
 function updateRunning() {
@@ -458,7 +484,8 @@ async function send(text) {
   const box = $('messages')
   const empty = box.querySelector('.empty')
   if (empty) empty.remove()
-  box.append(messageEl(userMsg))
+  const userEl = messageEl(userMsg)
+  box.append(userEl)
 
   const reply = h('div', { class: 'msg assistant' })
   const body = h('div', { class: 'msg-body' })
@@ -505,6 +532,11 @@ async function send(text) {
         setStatus('')
         if (!frame) frame = requestAnimationFrame(paint)
       },
+      onReset: (t) => {
+        acc = t
+        setStatus('')
+        if (!frame) frame = requestAnimationFrame(paint)
+      },
       onTool: (tool) => setStatus(tool ? 'Working: ' + tool : 'Working'),
       onDone: (d) => {
         if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
@@ -519,6 +551,17 @@ async function send(text) {
       pollForReply(convId)
     }
   } catch (err) {
+    if (err.status === 409 && err.code === 'buttons_used') {
+      // That card was already answered (another tab, or a stale page).
+      reply.remove()
+      userEl.remove()
+      const i = state.messages.indexOf(userMsg)
+      if (i >= 0) state.messages.splice(i, 1)
+      note($('composer-note'), 'That choice was already made.')
+      if (state.running === convId) state.running = null
+      updateRunning()
+      return
+    }
     if (err.status === 409) {
       reply.remove()
       note($('composer-note'), 'Still working on an earlier message in this chat. Wait for it, or press Stop.')

@@ -328,6 +328,14 @@ code { font-family: var(--mono); font-size: 0.9em; }
   overflow-wrap: anywhere;
 }
 .msg.assistant .msg-body { overflow-wrap: anywhere; }
+/* A button click, shown as the label it chose. */
+.msg.user .msg-body.click {
+  padding: 5px 14px;
+  background: transparent;
+  border: 1px solid var(--accent); border-radius: 999px;
+  color: var(--accent);
+  font-size: 14px; font-weight: 550;
+}
 .msg-body > :first-child { margin-top: 0; }
 .msg-body > :last-child { margin-bottom: 0; }
 .msg-body p { margin: 0 0 0.75em; }
