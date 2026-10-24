@@ -180,6 +180,20 @@ describe('page serving', () => {
       expect(r.body, p).not.toContain('"name"')
     }
   })
+  it('serves the page scripts, styles and icon with the right MIME types', async () => {
+    for (const [p, type] of [
+      ['/app/app.js', 'text/javascript'],
+      ['/app/api.js', 'text/javascript'],
+      ['/app/markdown.js', 'text/javascript'],
+      ['/app/app.css', 'text/css'],
+      ['/app/icon.svg', 'image/svg+xml'],
+    ]) {
+      const r = await fetch(`${base()}${p}`)
+      expect(r.status, p).toBe(200)
+      expect(r.headers.get('content-type'), p).toContain(type)
+      expect(r.headers.get('x-content-type-options'), p).toBe('nosniff')
+    }
+  })
   it('404s a disallowed extension and a missing file', async () => {
     expect((await raw('/app/index.ts')).status).toBe(404)
     expect((await raw('/app/missing.js')).status).toBe(404)

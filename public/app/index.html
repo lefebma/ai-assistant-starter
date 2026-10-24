@@ -2,10 +2,188 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
 <title>Assistant</title>
+<link rel="icon" href="/app/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app/app.css">
+<script type="module" src="/app/app.js"></script>
 </head>
 <body>
-<p>Loading...</p>
+
+<div id="boot" class="boot" role="status" aria-live="polite">
+  <img src="/app/icon.svg" alt="" class="boot-mark" width="40" height="40">
+</div>
+
+<section id="signin" class="signin" hidden aria-labelledby="signin-title">
+  <div class="signin-card">
+    <img src="/app/icon.svg" alt="" class="signin-mark" width="56" height="56">
+    <h1 id="signin-title" class="signin-title">Sign in</h1>
+    <p class="signin-lead">Send <code>/app</code> to your assistant to get a sign-in link.</p>
+    <p id="signin-note" class="signin-note" hidden></p>
+    <p class="signin-small">Links work once and expire after 15 minutes.</p>
+  </div>
+</section>
+
+<div id="app" class="shell" hidden>
+
+  <aside id="left" class="panel panel-left" aria-label="Projects and goals">
+    <div class="brand">
+      <img src="/app/icon.svg" alt="" class="brand-mark" width="28" height="28">
+      <span id="brand-name" class="brand-name">Assistant</span>
+      <button type="button" class="icon-btn drawer-close" data-close-drawer aria-label="Close menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="panel-scroll">
+      <section class="side-section" aria-labelledby="projects-title">
+        <h2 id="projects-title" class="side-title">Projects</h2>
+        <ul id="projects" class="project-list"></ul>
+      </section>
+
+      <section class="side-section" aria-labelledby="goals-title">
+        <h2 id="goals-title" class="side-title">Goals</h2>
+        <form id="goal-add" class="goal-add" autocomplete="off">
+          <input id="goal-input" type="text" maxlength="300" placeholder="Add a goal" aria-label="New goal">
+          <button type="submit" class="small-btn">Add</button>
+        </form>
+        <p id="goal-note" class="side-note" hidden></p>
+        <ul id="goals" class="goal-list"></ul>
+      </section>
+    </div>
+
+    <div class="panel-foot">
+      <button type="button" id="open-settings" class="foot-btn">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+        Settings
+      </button>
+    </div>
+  </aside>
+
+  <main class="centre">
+    <div id="update-banner" class="banner" role="status" hidden>
+      <span id="update-text"></span>
+      <button type="button" id="update-dismiss" class="banner-btn">Dismiss</button>
+    </div>
+
+    <header class="chat-head">
+      <button type="button" id="open-left" class="icon-btn only-narrow" aria-label="Open projects and goals">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="title-wrap">
+        <span id="chat-project" class="chat-project"></span>
+        <input id="chat-title" class="chat-title" type="text" maxlength="60" placeholder="New chat" aria-label="Chat title" disabled>
+      </div>
+      <div class="pickers">
+        <label class="picker">
+          <span class="picker-label">Model</span>
+          <select id="chat-model" disabled>
+            <option value="">Default</option>
+            <option value="haiku">Haiku</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="opus">Opus</option>
+          </select>
+        </label>
+        <label class="picker">
+          <span class="picker-label">Effort</span>
+          <select id="chat-effort" disabled>
+            <option value="">Default</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+      </div>
+      <button type="button" id="stop" class="stop-btn" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
+        Stop
+      </button>
+      <button type="button" id="open-right" class="icon-btn" aria-label="Show files" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      </button>
+    </header>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+    <template id="empty-template">
+      <div class="empty">
+        <p class="empty-title">What can I help with?</p>
+        <p class="empty-lead">Type below to start a chat, or pick one on the left. A chat inside a project starts with that project's notes.</p>
+      </div>
+    </template>
+
+    <form id="composer" class="composer" autocomplete="off">
+      <p id="composer-note" class="composer-note" hidden></p>
+      <div class="composer-box">
+        <button type="button" id="attach" class="icon-btn attach-btn" aria-label="Attach a file">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.3 8.3a5 5 0 0 1-7.1-7.1l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.8 8.8a1.7 1.7 0 0 1-2.4-2.4l8-8"/></svg>
+        </button>
+        <input id="attach-input" type="file" multiple hidden>
+        <textarea id="input" rows="1" maxlength="100000" placeholder="Message your assistant" aria-label="Message"></textarea>
+        <button type="submit" id="send" class="send-btn" aria-label="Send">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+      <p class="composer-hint">Enter to send, Shift+Enter for a new line.</p>
+    </form>
+  </main>
+
+  <aside id="right" class="panel panel-right" aria-label="Files">
+    <div class="panel-head">
+      <h2 class="side-title">Files</h2>
+      <button type="button" id="tree-refresh" class="small-btn ghost">Refresh</button>
+      <button type="button" class="icon-btn" data-close-drawer aria-label="Close files">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="files-body">
+      <ul id="tree" class="tree" role="tree" aria-label="Project files"></ul>
+      <div id="preview" class="preview" hidden>
+        <div class="preview-head">
+          <span id="preview-name" class="preview-name"></span>
+          <a id="preview-download" class="small-btn ghost" download>Download</a>
+          <button type="button" id="preview-close" class="icon-btn" aria-label="Close preview">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div id="preview-body" class="preview-body"></div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="scrim" class="scrim" hidden></div>
+</div>
+
+<dialog id="settings" class="settings" aria-labelledby="settings-title">
+  <div class="settings-head">
+    <h2 id="settings-title">Settings</h2>
+    <button type="button" id="settings-close" class="icon-btn" aria-label="Close settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="settings-body">
+    <section aria-labelledby="conn-title">
+      <div class="settings-row-head">
+        <h3 id="conn-title">Connections</h3>
+        <button type="button" id="conn-check" class="small-btn">Check now</button>
+      </div>
+      <ul id="connections" class="conn-list"></ul>
+    </section>
+    <section aria-labelledby="dev-title">
+      <div class="settings-row-head">
+        <h3 id="dev-title">Signed-in devices</h3>
+      </div>
+      <ul id="devices" class="dev-list"></ul>
+      <div class="dev-actions">
+        <button type="button" id="dev-others" class="small-btn">Sign out other devices</button>
+        <button type="button" id="dev-signout" class="small-btn danger">Sign out</button>
+      </div>
+      <p id="dev-note" class="side-note" hidden></p>
+    </section>
+    <p id="settings-version" class="settings-version"></p>
+  </div>
+</dialog>
+
 </body>
 </html>
