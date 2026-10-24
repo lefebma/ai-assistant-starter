@@ -70,7 +70,7 @@ describe('public/app static rules', () => {
 
   it('contains no em dash', () => {
     for (const { f, body } of text) {
-      expect(body.includes('—'), f).toBe(false)
+      expect(body.includes('\u2014'), f).toBe(false)
     }
   })
 })
