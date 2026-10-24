@@ -34,13 +34,18 @@ describe('managed flag and marker', () => {
 })
 
 describe('classifyAiError', () => {
-  it('spend limit 400 with request id', () => {
-    expect(classifyAiError('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This workspace has reached its spend limit"},"request_id":"req_011ABC"}'))
-      .toEqual({ kind: 'spend_limit', requestId: 'req_011ABC' })
+  // Real text captured on 2026-10-24 (task A9), in the three shapes it arrives in.
+  it('the raw API body for a workspace spend limit, with its request id', () => {
+    expect(classifyAiError('{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."},"request_id":"req_011CgMGEbecbvCqrYAnAs5MR"}'))
+      .toEqual({ kind: 'spend_limit', requestId: 'req_011CgMGEbecbvCqrYAnAs5MR' })
   })
-  it('workspace API usage limits wording is spend_limit', () => {
-    expect(classifyAiError('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."},"request_id":"req_033GHI"}'))
-      .toEqual({ kind: 'spend_limit', requestId: 'req_033GHI' })
+  it('the CLI result text for a workspace spend limit (no request id)', () => {
+    expect(classifyAiError('API Error: 400 You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.'))
+      .toEqual({ kind: 'spend_limit' })
+  })
+  it('the SDK error thrown for a workspace spend limit', () => {
+    expect(classifyAiError('Claude Code returned an error result: API Error: 400 You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.'))
+      .toEqual({ kind: 'spend_limit' })
   })
   it('ordinary 400 is null', () => {
     expect(classifyAiError('API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This model does not support assistant message prefill"}}')).toBeNull()

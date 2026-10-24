@@ -39,7 +39,9 @@ const STORE = h.store as string
 // Obviously fake, so secret scanners never flag the fixture.
 const KEY = 'test-managed-key-not-a-real-secret-0001'
 
-const SPEND_400 = 'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This workspace has reached its spend limit"},"request_id":"req_011ABC"}'
+// Real text captured on 2026-10-24 (task A9). The CLI drops the request id.
+const SPEND_RESULT = 'API Error: 400 You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.'
+const SPEND_400 = `Claude Code returned an error result: ${SPEND_RESULT}`
 const TIER_CAP_429 = 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Your organization has hit its spend cap"},"request_id":"req_022DEF"}'
 
 function okConversation(result: string, sessionId = 'sess-managed') {
@@ -113,7 +115,7 @@ describe('ClaudeAgentRuntime on a managed box', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1)
     const m = readAiLimit()
     expect(m?.kind).toBe('spend_limit')
-    expect(m?.lastRequestId).toBe('req_011ABC')
+    expect(m?.lastRequestId).toBeUndefined()
     expect(Number.isNaN(Date.parse(m!.since))).toBe(false)
   })
 
@@ -130,13 +132,13 @@ describe('ClaudeAgentRuntime on a managed box', () => {
     withKey()
     mockQuery.mockReturnValue((async function* () {
       yield { type: 'system', subtype: 'init', session_id: 'sess-iserr' }
-      yield { type: 'result', subtype: 'success', is_error: true, result: SPEND_400 }
+      yield { type: 'result', subtype: 'success', is_error: true, api_error_status: 400, result: SPEND_RESULT }
     })())
     const result = await new ClaudeAgentRuntime().run({ message: 'hello' })
     expect(result.text).toBeNull()
     expect(result.aiPaused).toBe('spend_limit')
     expect(mockQuery).toHaveBeenCalledTimes(1)
-    expect(readAiLimit()?.lastRequestId).toBe('req_011ABC')
+    expect(readAiLimit()?.kind).toBe('spend_limit')
   })
 
   it('an error result subtype carrying the limit in errors[] is classified too', async () => {
@@ -363,10 +365,13 @@ describe('ClaudeAgentRuntime on a non-managed box', () => {
   })
 
   it('does not classify a limit-looking 400 and writes no marker', async () => {
+    // The real wording ("usage limits") also reads as a used-up subscription
+    // window here, which is the non-managed box's existing path. What matters
+    // is that it never pauses the box.
     mockQuery.mockReturnValue(throwingConversation(SPEND_400))
     const result = await new ClaudeAgentRuntime().run({ message: 'hello' })
     expect(result.aiPaused).toBeUndefined()
-    expect(result.text).toMatch(/^Ran into an error and couldn't finish that: /)
+    expect(result.text).not.toMatch(/allowance/)
     expect(existsSync(join(STORE, AI_LIMIT_FILE))).toBe(false)
   })
 

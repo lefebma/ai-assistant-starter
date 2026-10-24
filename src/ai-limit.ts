@@ -57,14 +57,16 @@ export function clearAiLimit(storeDir: string = STORE_DIR): void {
 }
 
 /**
- * Provisional: status and error type first, then message wording. Task A9
- * replaces these with text captured from the real CLI. Keep matching narrow.
+ * Status and error type first, then message wording. Keep matching narrow.
+ * spend_limit is the real text, captured from the API and the CLI on
+ * 2026-10-24 (task A9). billing and org_cap are still provisional: neither
+ * can be tripped on purpose without breaking every workspace in the org.
  */
 export const LIMIT_PATTERNS: Record<AiLimitKind, { status?: number; errorType?: RegExp; message: RegExp[] }> = {
   spend_limit: {
     status: 400,
     errorType: /invalid_request_error/,
-    message: [/reached its (?:monthly )?spend limit/i, /workspace[^"]*spend limit/i, /reached your specified workspace API usage limits?/i],
+    message: [/reached your specified workspace API usage limits?/i],
   },
   billing: {
     status: 402,
