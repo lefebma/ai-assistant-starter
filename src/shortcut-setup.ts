@@ -20,8 +20,18 @@ export function shortcutUrl(
   httpPort: number,
   lanAddress: string | null = firstLanAddress()
 ): { url: string; reach: 'public' | 'lan' } | null {
-  if (publicHostname) return { url: `https://${publicHostname}${SHORTCUT_PATH}`, reach: 'public' }
-  if (lanAddress) return { url: `http://${lanAddress}:${httpPort}${SHORTCUT_PATH}`, reach: 'lan' }
+  const base = reachableBase(publicHostname, httpPort, lanAddress)
+  return base ? { url: `${base.base}${SHORTCUT_PATH}`, reach: base.reach } : null
+}
+
+/** The origin a phone can reach this box on: the public name, else the LAN address, else nothing. */
+export function reachableBase(
+  publicHostname: string,
+  httpPort: number,
+  lanAddress: string | null = firstLanAddress()
+): { base: string; reach: 'public' | 'lan' } | null {
+  if (publicHostname) return { base: `https://${publicHostname}`, reach: 'public' }
+  if (lanAddress) return { base: `http://${lanAddress}:${httpPort}`, reach: 'lan' }
   return null
 }
 

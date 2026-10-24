@@ -27,6 +27,7 @@ import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
+import { mintWebLink, revokeAllWebSessions, webAppUrl } from './web/sessions.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
 import { applyReplyContext } from './prompt-safety.js'
@@ -1014,6 +1015,46 @@ async function handleVoiceUiCommand(
   await adapter.sendMessage(chatId, parts.join('\n'))
 }
 
+/**
+ * `/app` mints a one-time sign-in link to the web app; `/app signout` signs
+ * every browser out. Access is already gated above (accessFor), so only an
+ * allowed chat gets here. See src/web/sessions.ts.
+ */
+async function handleAppCommand(adapter: PlatformAdapter, chatId: string, action: string | undefined): Promise<void> {
+  if (action === 'signout') {
+    const n = revokeAllWebSessions(chatId)
+    await adapter.sendMessage(
+      chatId,
+      n > 0
+        ? `Signed out ${n} browser${n === 1 ? '' : 's'} of the web app.`
+        : 'No browsers are signed in to the web app.'
+    )
+    return
+  }
+  if (action) {
+    await adapter.sendMessage(chatId, 'Usage: /app (sign-in link), or /app signout')
+    return
+  }
+  const link = mintWebLink(chatId)
+  const url = webAppUrl(link.token)
+  if (!url) {
+    await adapter.sendMessage(
+      chatId,
+      [
+        'This box has no public address and I could not find one on your network, so there is no web app to link to.',
+        '',
+        'Operator: as havn-admin, run',
+        '  sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname>',
+        'then restart the service.',
+      ].join('\n')
+    )
+    return
+  }
+  const lines = [`Here is your sign-in link for the web app. It works once and expires in 15 minutes:\n${url}`]
+  if (!PUBLIC_HOSTNAME) lines.push('', 'This box has no public address, so the link only works on the same Wi-Fi as the box.')
+  await adapter.sendMessage(chatId, lines.join('\n'))
+}
+
 /** An owner file from the install root, or null. Never throws: a missing file just means no name. */
 function readIfExists(file: string): string | null {
   try {
@@ -1616,6 +1657,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       }
       return
     }
+    if (cmd === '/app') {
+      await handleAppCommand(adapter, chatId, trimmed.split(/\s+/)[1]?.toLowerCase())
+      return
+    }
     if (cmd === '/shortcut') {
       await handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)
       return
@@ -1755,6 +1800,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/memory - Show stored memories',
         '/voice - Toggle voice replies',
         '/voice ui - Get your private link to the voice chat page',
+        '/app - Get a sign-in link to the web app (signout)',
         '/shortcut - Talk to me from Siri and Apple Shortcuts (status/revoke)',
         '/schedule - Manage scheduled tasks',
         '/guard report [days] - What the tool guard caught (or would have)',
@@ -1788,6 +1834,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'newchat', description: 'Clear session, start fresh' },
           { command: 'memory', description: 'Show recent stored memories' },
           { command: 'voice', description: 'Toggle voice replies' },
+          { command: 'app', description: 'Sign-in link to the web app' },
           { command: 'shortcut', description: 'Use me from Siri and Apple Shortcuts' },
           { command: 'schedule', description: 'Manage scheduled tasks' },
           { command: 'dashboard', description: 'Dashboard (start/stop)' },
