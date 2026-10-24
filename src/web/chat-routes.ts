@@ -6,6 +6,7 @@ import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
 import { runWebTurn, cancelWebTurn, extractButtons } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
+import { projectFraming } from './projects.js'
 import { registerWebRoutes, type WebContext } from './http.js'
 import { sendJson, sendError, readJsonCapped, openSse, BodyError } from './respond.js'
 import {
@@ -30,10 +31,7 @@ const MAX_TITLE = 120
 /** Conversations with a turn in flight. Added on start, removed when the turn settles. */
 const running = new Set<string>()
 
-// TODO(Task 5): swap for projectFraming(projectId) from the projects module.
-function framingFor(_projectId: string): string {
-  return ''
-}
+const framingFor = (projectId: string): string => projectFraming(projectId)
 
 const convJson = (c: ConversationRow) => ({
   id: c.id,
