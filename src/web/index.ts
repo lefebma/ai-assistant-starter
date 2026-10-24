@@ -6,5 +6,6 @@
 import './http.js'
 import './chat-routes.js'
 import './project-goal-routes.js'
+import './file-routes.js'
 
 export { handleWebRequest } from './http.js'
