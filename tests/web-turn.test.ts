@@ -23,6 +23,7 @@ import type { AgentRunOptions, AgentRunResult, AgentRuntime } from '../src/runti
 class FakeRuntime implements AgentRuntime {
   readonly id = 'fake'
   calls: AgentRunOptions[] = []
+  result: AgentRunResult = { text: 'web reply', newSessionId: 'web-sess-2' }
   gate: Promise<void> | null = null
   async run(options: AgentRunOptions): Promise<AgentRunResult> {
     this.calls.push(options)
@@ -32,7 +33,7 @@ class FakeRuntime implements AgentRuntime {
         new Promise<void>((r) => options.signal?.addEventListener('abort', () => r(), { once: true })),
       ])
     }
-    return { text: 'web reply', newSessionId: 'web-sess-2' }
+    return this.result
   }
   async runOnce(): Promise<string> { return 'once' }
   steer(): void {}
@@ -108,5 +109,14 @@ describe('runWebTurn', () => {
     setSession('owner', 'telegram-sess')
     await runWebTurn({ chatId: 'owner', conversationId: 'c3', text: 'hi', sessionId: 'web-sess-1' })
     expect(getSession('owner')).toBe('telegram-sess')
+  })
+
+  it('always says why a paused turn has no reply, with or without a fresh marker', async () => {
+    rt.result = { text: null, aiPaused: 'spend_limit' }
+    const res = await runWebTurn({ chatId: 'owner', conversationId: 'p1', text: 'are you there' })
+    expect(res.cancelled).toBe(false)
+    expect(res.text).toBeNull()
+    expect(res.paused).toMatch(/paused/i)
+    expect(h.saveTurn).not.toHaveBeenCalled()
   })
 })

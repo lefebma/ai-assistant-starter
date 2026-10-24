@@ -23,7 +23,7 @@ import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.j
 import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
-import { isManagedAi, ownerPauseReply, readAiLimit, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
+import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
@@ -668,8 +668,10 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
     )
     if (signal.aborted) return { text: null, cancelled: true }
     if (aiPaused) {
-      const notice = takePauseNotice()
-      return { text: null, newSessionId, cancelled: false, ...(notice ? { paused: notice } : {}) }
+      // The web is a pull surface: the owner is looking at the page, so a
+      // paused turn always says why, even inside Telegram's once-a-day window.
+      const paused = takePauseNotice() ?? repeatReply(readAiLimit()?.resumesAt)
+      return { text: null, newSessionId, cancelled: false, paused }
     }
     if (reply) await saveConversationTurn(chatId, text, reply)
     return { text: reply, newSessionId, cancelled: false }
