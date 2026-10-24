@@ -11,6 +11,7 @@ import { gateToolCall, exposureForScope, resolveRole } from '../assurance/scope-
 import { runEnvOption } from '../assurance/effect-journal.js'
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
+import { recordManagedSpend } from '../ai-usage.js'
 import { logger } from '../logger.js'
 import {
   AiPausedError,
@@ -245,11 +246,14 @@ function managedPauseCheck(now: Date = new Date()): { paused?: AiLimitKind; hadM
  * keeps the existing since, probe stamp and what the owner has been told, and
  * only refreshes the kind and request id.
  */
-function recordAiLimit(hit: { kind: AiLimitKind; requestId?: string }): void {
+function recordAiLimit(hit: { kind: AiLimitKind; requestId?: string; resumesAt?: string }): void {
   const existing = readAiLimit()
   const base = existing ?? { since: new Date().toISOString() }
   const next: AiLimitMarker = { ...base, kind: hit.kind }
   if (hit.requestId) next.lastRequestId = hit.requestId
+  // The renewal day belongs to this hit only: a billing problem is not fixed by the month turning over.
+  if (hit.resumesAt) next.resumesAt = hit.resumesAt
+  else delete next.resumesAt
   writeAiLimit(next)
   logger.warn({ kind: hit.kind, requestId: hit.requestId }, 'AI allowance reached; managed box paused')
 }
@@ -337,6 +341,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         },
       })
       for await (const event of conversation) {
+        if (event.type === 'result') recordManagedSpend((event as any).total_cost_usd)
         if (event.type === 'result' && event.is_error) {
           const hit = classifyAiError(resultEventText(event))
           if (hit) {
@@ -618,6 +623,9 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           // Managed lane: an API error can arrive as a result event with
           // is_error set (even subtype 'success') instead of a throw. A limit
           // must pause the box, never be delivered as the answer.
+          // Managed lane: count each call's reported cost toward the month (card #159).
+          if (managed && event.type === 'result') recordManagedSpend((event as any).total_cost_usd)
+
           if (managed && event.type === 'result' && event.is_error) {
             aiLimitHit = classifyAiError(resultEventText(event))
             resultWasError = true

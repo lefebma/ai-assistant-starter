@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.45.0 - 2026-10-24
+
+An assistant on a supplied AI key now warns before its monthly allowance runs out, and says when it comes back.
+
+- **New: a heads-up at 80% of the month's allowance.** The assistant keeps a running total of its AI spend for the month. At 80% of the cap it tells the owner once, after their next reply, and keeps working. Recording a new cap mid-month re-arms the heads-up. The operator records the cap with `managed-ai cap <dollars>`, the same amount as the Console limit; `managed-ai status` shows the cap and this month's spend.
+- **Changed: the pause message names the day the allowance renews.** "I'm paused until November 1, or sooner if your provider raises it." The date comes from Anthropic's error; when the error gives none, the message leaves it out.
+
 ## 1.44.0 - 2026-10-24
 
 Pausing, deleting or changing a scheduled job now takes effect right away, including on a retry it already had waiting.

@@ -8,6 +8,8 @@ export interface AiLimitMarker {
   kind: AiLimitKind
   since: string
   lastRequestId?: string
+  /** When Anthropic says access returns (from a spend-limit error), ISO. */
+  resumesAt?: string
   lastProbeAt?: string
   lastToldAt?: string
   toldFull?: boolean
@@ -22,6 +24,28 @@ const REPEAT_AFTER_MS = 24 * 60 * 60_000
 export const FIRST_REPLY =
   "I've reached this month's AI allowance, so I'm paused for now. Your provider has been told and will be in touch."
 export const REPEAT_REPLY = "Still paused: this month's AI allowance is used up. Your provider has been told."
+
+/** `November 1`, from the UTC date, so it names the day Anthropic resets. */
+export function formatRenewDate(d: Date): string {
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })
+}
+
+function renewDay(iso: string | undefined): string | null {
+  const t = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(t) ? formatRenewDate(new Date(t)) : null
+}
+
+export function firstReply(resumesAt?: string): string {
+  const day = renewDay(resumesAt)
+  return day
+    ? `I've reached this month's AI allowance, so I'm paused until ${day}, or sooner if your provider raises it. Your provider has been told and will be in touch.`
+    : FIRST_REPLY
+}
+
+export function repeatReply(resumesAt?: string): string {
+  const day = renewDay(resumesAt)
+  return day ? `Still paused: this month's AI allowance is used up until ${day}. Your provider has been told.` : REPEAT_REPLY
+}
 
 /** Owner-facing and model-facing copy for features a managed box does not have. */
 export const VOICE_OFF_REPLY = "Voice messages aren't available on this assistant."
@@ -88,7 +112,15 @@ function billingStatus(text: string): boolean {
   return /API Error:\s*402\b/.test(text) || /"status"\s*:\s*402\b/.test(text)
 }
 
-export function classifyAiError(text: string): { kind: AiLimitKind; requestId?: string } | null {
+/** `You will regain access on 2026-11-01 at 00:00 UTC` (captured 2026-10-24) as ISO, or undefined. */
+function resumesAtFrom(text: string): string | undefined {
+  const m = text.match(/regain access on (\d{4}-\d{2}-\d{2}) at (\d{2}):(\d{2}) UTC/)
+  if (!m) return undefined
+  const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:00Z`)
+  return Number.isFinite(t) ? new Date(t).toISOString() : undefined
+}
+
+export function classifyAiError(text: string): { kind: AiLimitKind; requestId?: string; resumesAt?: string } | null {
   const requestId = text.match(/req_[A-Za-z0-9]+/)?.[0]
   for (const kind of Object.keys(LIMIT_PATTERNS) as AiLimitKind[]) {
     const p = LIMIT_PATTERNS[kind]
@@ -96,7 +128,8 @@ export function classifyAiError(text: string): { kind: AiLimitKind; requestId?: 
     const typeOk = p.errorType ? p.errorType.test(text) : false
     const msgOk = p.message.some((re) => re.test(text))
     if (kind === 'billing' ? billingStatus(text) || /billing_error/.test(text) || msgOk : (statusOk || typeOk) && msgOk) {
-      return requestId ? { kind, requestId } : { kind }
+      const resumesAt = kind === 'spend_limit' ? resumesAtFrom(text) : undefined
+      return { kind, ...(requestId ? { requestId } : {}), ...(resumesAt ? { resumesAt } : {}) }
     }
   }
   return null
@@ -117,8 +150,8 @@ export function recoveryDueAt(m: AiLimitMarker, intervalMs: number = DEFAULT_REC
 export function ownerPauseReply(m: AiLimitMarker, now: Date): { text: string; next: AiLimitMarker } | null {
   const told = m.lastToldAt ? Date.parse(m.lastToldAt) : NaN
   const stamp = { ...m, lastToldAt: now.toISOString(), toldFull: true }
-  if (!m.toldFull || Number.isNaN(told)) return { text: FIRST_REPLY, next: stamp }
-  if (now.getTime() - told >= REPEAT_AFTER_MS) return { text: REPEAT_REPLY, next: stamp }
+  if (!m.toldFull || Number.isNaN(told)) return { text: firstReply(m.resumesAt), next: stamp }
+  if (now.getTime() - told >= REPEAT_AFTER_MS) return { text: repeatReply(m.resumesAt), next: stamp }
   return null
 }
 

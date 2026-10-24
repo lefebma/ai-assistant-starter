@@ -24,6 +24,7 @@ import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
+import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
@@ -409,6 +410,20 @@ async function handleMessage(
     // thing arrives. A file that cannot be sent says so on its own line
     // rather than silently not turning up.
     if (fileRequests.length > 0) await deliverFiles(adapter, chatId, fileRequests)
+
+    // Managed box at 80% of its monthly cap (card #159): one heads-up a month,
+    // to the owner only, after the reply. Marked only once it is delivered,
+    // against the month it was decided in.
+    const warnAt = new Date()
+    const usageWarning = isPrimaryChat(chatId) ? usageWarningDue(undefined, warnAt) : null
+    if (usageWarning) {
+      try {
+        await deliverText(adapter, chatId, usageWarning)
+        markUsageWarned(undefined, warnAt)
+      } catch (err) {
+        logger.warn({ err: String(err) }, 'Could not send the usage heads-up')
+      }
+    }
 
 
     // The reply carrying the offer reached the client, so it is spent. Marked

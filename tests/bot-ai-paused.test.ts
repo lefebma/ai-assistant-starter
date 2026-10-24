@@ -3,7 +3,7 @@
  * Review focus 4: 20 owner messages, one full reply, no turn saved.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { rmSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const h = vi.hoisted(() => {
@@ -27,8 +27,9 @@ vi.mock('../src/memory.js', async (orig) => ({
 }))
 
 import { createBot } from '../src/bot.js'
-import { initDatabase } from '../src/db.js'
-import { FIRST_REPLY, REPEAT_REPLY, readAiLimit, writeAiLimit } from '../src/ai-limit.js'
+import { addAuthorizedChat, initDatabase } from '../src/db.js'
+import { FIRST_REPLY, MANAGED_AI_FILE, REPEAT_REPLY, readAiLimit, writeAiLimit } from '../src/ai-limit.js'
+import { AI_USAGE_FILE, recordManagedSpend, usageWarningText } from '../src/ai-usage.js'
 
 function harness() {
   const sent: string[] = []
@@ -53,7 +54,11 @@ function harness() {
     sendFile: async () => {},
   }
   createBot(adapter as never)
-  return { sent, say: (text: string) => handler({ chatId: 'owner', text, type: 'text' }) }
+  return {
+    sent,
+    say: (text: string) => handler({ chatId: 'owner', text, type: 'text' }),
+    sayFrom: (chatId: string, text: string) => handler({ chatId, text, type: 'text' }),
+  }
 }
 
 describe('owner reply while the AI allowance is used up', () => {
@@ -119,5 +124,52 @@ describe('owner reply while the AI allowance is used up', () => {
     await say('hello')
     expect(sent).toEqual(['all good'])
     expect(h.saveTurn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('80% heads-up on a managed box (card #159)', () => {
+  beforeEach(() => {
+    initDatabase()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-20T15:00:00Z'))
+    h.runAgent.mockReset()
+    h.saveTurn.mockReset()
+    rmSync(join(h.store, 'ai-limit.json'), { force: true })
+    rmSync(join(h.store, AI_USAGE_FILE), { force: true })
+    writeFileSync(join(h.store, MANAGED_AI_FILE), JSON.stringify({ since: '2026-10-01T00:00:00.000Z', capUsd: 50 }))
+  })
+  afterEach(() => {
+    rmSync(join(h.store, MANAGED_AI_FILE), { force: true })
+    rmSync(join(h.store, AI_USAGE_FILE), { force: true })
+    vi.useRealTimers()
+  })
+
+  it('follows the reply that finds the box at 80%, once a month', async () => {
+    recordManagedSpend(41, { storeDir: h.store })
+    h.runAgent.mockResolvedValue({ text: 'all good', newSessionId: 's1' })
+    const { sent, say } = harness()
+    await say('hello')
+    expect(sent).toEqual(['all good', usageWarningText(new Date())])
+    await say('again')
+    expect(sent).toEqual(['all good', usageWarningText(new Date()), 'all good'])
+  })
+
+  it('never sends it to another chat, and keeps it for the owner', async () => {
+    recordManagedSpend(41, { storeDir: h.store })
+    h.runAgent.mockResolvedValue({ text: 'all good', newSessionId: 's1' })
+    addAuthorizedChat('family-group', 'Family', 'owner')
+    const { sent, sayFrom } = harness()
+    await sayFrom('family-group', 'hello')
+    expect(sent).toEqual(['all good'])
+    await sayFrom('owner', 'hello')
+    expect(sent).toEqual(['all good', 'all good', usageWarningText(new Date())])
+  })
+
+  it('says nothing below 80%', async () => {
+    recordManagedSpend(39, { storeDir: h.store })
+    h.runAgent.mockResolvedValue({ text: 'all good', newSessionId: 's1' })
+    const { sent, say } = harness()
+    await say('hello')
+    expect(sent).toEqual(['all good'])
   })
 })
