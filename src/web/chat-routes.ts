@@ -1,11 +1,13 @@
 /** Web chat routes: conversations, the streaming chat turn, cancel, and message files. */
 import { createReadStream, statSync } from 'node:fs'
-import { extname } from 'node:path'
+import { extname, relative } from 'node:path'
+import { realpathSync } from 'node:fs'
 import { PROJECT_ROOT } from '../config.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
 import { runWebTurn, cancelWebTurn, extractButtons } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
+import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
 import { registerWebRoutes, type WebContext } from './http.js'
 import { sendJson, sendError, readJsonCapped, openSse, BodyError } from './respond.js'
@@ -85,6 +87,25 @@ const OTHER_MIME: Record<string, string> = {
 
 function safeFilename(name: string): string {
   return name.replace(/[^\w.\- ]+/g, '_').slice(0, 120) || 'file'
+}
+
+
+/**
+ * A file the chat may hand over must also be one the file panel shows: the
+ * panel's hidden list (store, logs, keys, code...) is the boundary, so the
+ * assistant cannot send what the owner could not open there.
+ */
+function panelVisible(abs: string): boolean {
+  let root: string
+  try {
+    root = realpathSync(PROJECT_ROOT)
+  } catch {
+    return false
+  }
+  const rel = relative(root, abs)
+  if (!rel || rel.startsWith('..')) return false
+  const v = resolveVisible(rel.split('\\').join('/'))
+  return !!v && !v.isDir
 }
 
 registerWebRoutes([
@@ -231,7 +252,8 @@ registerWebRoutes([
             const notes: string[] = []
             for (const req of requests) {
               const r = resolveOutboundFile(req.requested, { projectRoot: PROJECT_ROOT, uploadsDir: UPLOADS_DIR })
-              if (r.ok) files.push({ path: r.path, name: r.name, kind: r.kind })
+              if (r.ok && !panelVisible(r.path)) notes.push('(file not sent: it is in a part of the box the web app keeps hidden)')
+              else if (r.ok) files.push({ path: r.path, name: r.name, kind: r.kind })
               else notes.push(`(file not sent: ${r.reason})`)
             }
             const content = [cleanText, ...notes].filter(Boolean).join('\n\n')
@@ -258,7 +280,7 @@ registerWebRoutes([
       const file = msg?.files[Number(ctx.params[1])]
       if (!msg || !file) return sendError(ctx.res, 404, 'not_found')
       const r = resolveOutboundFile(file.path, { projectRoot: PROJECT_ROOT, uploadsDir: UPLOADS_DIR })
-      if (!r.ok) return sendError(ctx.res, 404, 'not_found')
+      if (!r.ok || !panelVisible(r.path)) return sendError(ctx.res, 404, 'not_found')
       let size: number
       try {
         size = statSync(r.path).size

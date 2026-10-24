@@ -183,6 +183,16 @@ describe('web chat', () => {
     expect((await post(`/api/web/conversations/${id}/chat`, { text: 'third' })).status).toBe(200)
   })
 
+  it('does not hand over a file the file panel hides', async () => {
+    const rt = useRuntime()
+    rt.result = { text: 'here [[file: src/bot.ts]]', newSessionId: 's' }
+    const id = await newConv()
+    await (await post(`/api/web/conversations/${id}/chat`, { text: 'send it' })).text()
+    const m = conv.listMessages(id).at(-1)!
+    expect(m.files).toEqual([])
+    expect(m.content).toContain('keeps hidden')
+  })
+
   it('stores files and buttons, serves the file, and refuses .env with a note', async () => {
     useRuntime().result = { text: 'See [[file: README.md]] ok\n[[buttons: Yes | No]]', newSessionId: 's' }
     const id = await newConv()
