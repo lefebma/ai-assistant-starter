@@ -254,7 +254,7 @@ describe('IMAP send under a run', () => {
 describe('the ai-sdk bash tool carries the run key', () => {
   it('a command sees AGENT_RUN_KEY inside a run', async () => {
     const tools = createTools(STORE)
-    const out = await j.withRun('turn:sdk1', () => (tools.bash as { execute: (a: unknown, o: unknown) => Promise<string> }).execute({ command: 'echo "$AGENT_RUN_KEY"' }, {}))
+    const out = await j.withRun('turn:sdk1', () => (tools.bash as { execute: (a: unknown, o: unknown) => Promise<string> }).execute({ command: 'node -e "console.log(process.env.AGENT_RUN_KEY)"' }, {}))
     expect(out.trim()).toBe('turn:sdk1')
   })
 })
