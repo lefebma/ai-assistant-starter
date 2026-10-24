@@ -77,6 +77,14 @@ describe('teams edge (Caddy) config', () => {
     expect(c).toContain('path /voice /voice/')
   })
 
+  it('adds the four web app paths only when web is enabled', () => {
+    const on = buildCaddyfile('5-161-197-79.sslip.io', { web: true })
+    expect(on).toContain('path /app /app/ /app/* /api/web/*')
+    const off = buildCaddyfile('5-161-197-79.sslip.io')
+    expect(off).not.toContain('/app')
+    expect(off).not.toContain('/api/web')
+  })
+
   it('generates teams-only config when no options are passed (backward compat)', () => {
     const c = buildCaddyfile('5-161-197-79.sslip.io')
     expect(c).toContain('handle /api/teams/* {')
@@ -94,6 +102,13 @@ describe('enable-teams script', () => {
     expect(t).not.toMatch(/allow.*3030/)
     expect(t).not.toMatch(/\bexecSync\(|\bexec\(|shell:\s*true/)
     expect(t).toContain('/api/teams/messages')
+  })
+
+  it('supports --web and records the hostname for it', () => {
+    const t = readFileSync(ENABLE, 'utf-8')
+    expect(t).toContain("'--web'")
+    expect(t).toMatch(/enableVoice \|\| enableWeb\) writePublicHostname/)
+    expect(t).toContain('web: enableWeb')
   })
 
   it('supports --voice and records the hostname instead of copying a secret', () => {

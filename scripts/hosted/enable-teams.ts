@@ -5,6 +5,7 @@
  * once, after cloud-init has finished and the app is built:
  *   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname>
  *   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --voice
+ *   sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --web
  *
  * --voice exposes the voice UI and records PUBLIC_HOSTNAME in .env so the
  * assistant can build links for it. The page is not gated by a shared secret in
@@ -28,7 +29,7 @@ import { writeFileSync, readFileSync, mkdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { ACCESS_LOG_PATH, buildCaddyfile, ensureBearerToken, isValidHostname } from '../../src/deploy/teams-edge.js'
 
-const USAGE = 'Usage: sudo node dist/scripts/hosted/enable-teams.js <hostname> [--voice]   (e.g. 5-161-197-79.sslip.io)'
+const USAGE = 'Usage: sudo node dist/scripts/hosted/enable-teams.js <hostname> [--voice] [--web]   (e.g. 5-161-197-79.sslip.io)'
 const ENV = { ...process.env, DEBIAN_FRONTEND: 'noninteractive', NEEDRESTART_MODE: 'a' }
 
 function run(cmd: string, args: string[]): void {
@@ -139,6 +140,7 @@ function main(): void {
   const args = process.argv.slice(2)
   const hostname = args.find(a => !a.startsWith('--'))
   const enableVoice = args.includes('--voice')
+  const enableWeb = args.includes('--web')
 
   if (!hostname) {
     console.error(USAGE)
@@ -161,7 +163,7 @@ function main(): void {
   // Before the edge exists, not after: there must be no window where the API is
   // reachable without a credential.
   ensureBoxToken()
-  if (enableVoice) writePublicHostname(hostname)
+  if (enableVoice || enableWeb) writePublicHostname(hostname)
 
   // The apt package creates this, but a box where Caddy was installed another
   // way would otherwise fail to start on a log path it cannot write.
@@ -174,7 +176,7 @@ function main(): void {
 
   writeFileSync(
     '/etc/caddy/Caddyfile',
-    buildCaddyfile(hostname, { teams: true, voice: enableVoice, caddyVersion: caddyVersion() })
+    buildCaddyfile(hostname, { teams: true, voice: enableVoice, web: enableWeb, caddyVersion: caddyVersion() })
   )
   run('caddy', ['validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
 
@@ -195,6 +197,12 @@ function main(): void {
   if (enableVoice) {
     console.log(`  Voice UI:       https://${hostname}/voice`)
     console.log('                  Users get their own link by sending /voice ui in chat.')
+    console.log('                  Restart the service so it picks up PUBLIC_HOSTNAME:')
+    console.log('                    sudo systemctl restart havn')
+  }
+  if (enableWeb) {
+    console.log(`  Web app:        https://${hostname}/app`)
+    console.log('                  Users get a sign-in link by sending /app in chat.')
     console.log('                  Restart the service so it picks up PUBLIC_HOSTNAME:')
     console.log('                    sudo systemctl restart havn')
   }

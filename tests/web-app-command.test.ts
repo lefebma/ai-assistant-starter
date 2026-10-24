@@ -62,6 +62,11 @@ describe('/app', () => {
     expect(listWebSessions('owner')).toHaveLength(0)
   })
 
+  it('tells the operator the exact enable command when the box has no address', () => {
+    const src = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../src/bot.ts'), 'utf-8') as string
+    expect(src).toContain('enable-teams.js <hostname> --web')
+  })
+
   it('does not mint a link for a chat that is not allowed', async () => {
     const { sent, sayFrom } = harness()
     await sayFrom('stranger', '/app')

@@ -65,9 +65,9 @@ describe('getConnections', () => {
 
   it('copy has no em dash', async () => {
     const l = await getConnections(deps({ outlookAccounts: () => ['x@y.com'] }))
-    expect(JSON.stringify(l)).not.toContain('—')
+    expect(JSON.stringify(l)).not.toContain('\u2014')
     const off = await getConnections(deps({ gmailAccounts: async () => [], telegramConfigured: () => false, model: async () => ({ ok: false, detail: 'no key' }) }))
-    expect(JSON.stringify(off)).not.toContain('—')
+    expect(JSON.stringify(off)).not.toContain('\u2014')
   })
 })
 

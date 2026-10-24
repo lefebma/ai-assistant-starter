@@ -1044,8 +1044,8 @@ async function handleAppCommand(adapter: PlatformAdapter, chatId: string, action
         'This box has no public address and I could not find one on your network, so there is no web app to link to.',
         '',
         'Operator: as havn-admin, run',
-        '  sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname>',
-        'then restart the service.',
+        '  sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --web',
+        'then restart the service. (Re-running it without --voice or --web removes those pages, so pass every flag the box needs.)',
       ].join('\n')
     )
     return

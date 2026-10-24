@@ -103,6 +103,6 @@ describe('web status', () => {
     expect(r.status).toBe(200)
     const l = (await r.json()) as any[]
     expect(l.map((c) => c.id)).toContain('telegram')
-    expect(JSON.stringify(l)).not.toContain('—')
+    expect(JSON.stringify(l)).not.toContain('\u2014')
   })
 })
