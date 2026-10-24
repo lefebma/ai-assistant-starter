@@ -414,8 +414,14 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
 
   logger.info({ convoKey, existingSession, stream }, 'voice chat completion')
 
+  // A caller that hangs up before the answer stops the run (card #232). After
+  // a handoff to chat the response is already ended, so the run carries on.
+  const hangUp = new AbortController()
+  res.on('close', () => { if (!res.writableEnded) hangUp.abort() })
+
   if (!stream) {
-    const { text, newSessionId } = await withActor(`voice:${convoKey}`, () => runAgent(lastUser.content, existingSession))
+    const { text, newSessionId } = await withActor(`voice:${convoKey}`, () => runAgent(lastUser.content, existingSession, undefined, undefined, undefined, 'chat', hangUp.signal))
+    if (hangUp.signal.aborted) return
     if (newSessionId) conversationSessions.set(convoKey, newSessionId)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(openaiComplete(completionId, model, text ?? '')))
@@ -459,7 +465,8 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   }
 
   try {
-    const { text, newSessionId } = await withActor(`voice:${convoKey}`, () => runAgent(lastUser.content, existingSession, undefined, onPartial))
+    const { text, newSessionId } = await withActor(`voice:${convoKey}`, () => runAgent(lastUser.content, existingSession, undefined, onPartial, undefined, 'chat', hangUp.signal))
+    if (hangUp.signal.aborted) return
     if (newSessionId) conversationSessions.set(convoKey, newSessionId)
 
     if (handedOffToChat) {

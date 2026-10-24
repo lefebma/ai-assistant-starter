@@ -162,7 +162,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
    * further subagent nesting (depth 1). The claude runtime gets this from
    * Claude Code's Agent tool; here it is just another runtime instance turn.
    */
-  private buildSubagentTool(cwd: string, onToolProgress?: (toolName: string, status: string) => void, scope?: RunScope) {
+  private buildSubagentTool(cwd: string, onToolProgress?: (toolName: string, status: string) => void, scope?: RunScope, guardSession?: string) {
     return tool({
       description:
         'Dispatch a subagent to handle a self-contained task (research, multi-file analysis, a side quest '
@@ -172,15 +172,18 @@ export class AiSdkAgentRuntime implements AgentRuntime {
         prompt: z.string().describe('Complete, self-contained task description for the subagent'),
         working_directory: z.string().optional().describe('Working directory for the subagent (defaults to the current one)'),
       }),
-      execute: async ({ prompt, working_directory }) => {
+      execute: async ({ prompt, working_directory }, { abortSignal }) => {
         const subCwd = working_directory ?? cwd
         logger.info({ cwd: subCwd, prompt: prompt.slice(0, 100) }, 'Dispatching subagent')
         try {
           // A subagent inherits the job's role: it can never do more than its parent.
-          const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false, scope })
-          const result = await sub.generate({ prompt })
+          // It is gated under the parent's session, so evasion strikes carry
+          // across delegation, and it stops when the parent is cancelled (#232).
+          const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false, scope, guardSession })
+          const result = await sub.generate({ prompt, abortSignal })
           return result.text.trim() || '(subagent returned no text)'
         } catch (err) {
+          if (abortSignal?.aborted) return 'Subagent stopped: the run was cancelled.'
           return `Subagent failed: ${String((err as Error)?.message ?? err).slice(0, 300)}`
         }
       },
@@ -212,7 +215,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const tools: ToolSet = this.withGuard({
       ...createTools(cwd, onToolProgress),
       ...mcpTools,
-      ...(opts.subagents ? { dispatch_subagent: this.buildSubagentTool(cwd, onToolProgress, opts.scope) } : {}),
+      ...(opts.subagents ? { dispatch_subagent: this.buildSubagentTool(cwd, onToolProgress, opts.scope, opts.guardSession) } : {}),
     }, opts.guardSession ?? `ai-sdk:${cwd}`, cwd, opts.scope)
     logger.info({ provider, modelId, cwd, toolCount: Object.keys(tools).length }, 'AI SDK agent configured')
     return new ToolLoopAgent({

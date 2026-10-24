@@ -43,7 +43,8 @@ import {
   spokenShortcutName,
 } from './shortcut-setup.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
-import { cancelDeferredRetry, computeNextRun } from './scheduler.js'
+import { abortAllScheduledRuns, cancelScheduledForChat, cancelScheduledTask, computeNextRun } from './scheduler.js'
+import { createTurnQueue, describeCancel } from './turn-queue.js'
 import { logger } from './logger.js'
 import { commandWord } from './infra/command-text.js'
 import { CronExpressionParser } from 'cron-parser'
@@ -171,15 +172,54 @@ async function sendSecretReply(
 
 // --- Core message handling ---
 
+// Agent turns run on a queue so the message loop stays free for /cancel,
+// /steer and the busy-chat check (card #232, src/turn-queue.ts).
+const turnQueue = createTurnQueue((chatId, err) => {
+  logger.error({ err, chatId }, 'Agent turn failed')
+  boundAdapter?.sendMessage(chatId, 'Something went wrong with that message. Details are in the log.').catch(() => {})
+})
+
+/** Shutdown: stop every chat turn and scheduled run in flight, drop what is queued. */
+export function abortAllRuns(): void {
+  const turns = turnQueue.cancelAll()
+  const scheduled = abortAllScheduledRuns()
+  if (turns.stoppedActive || turns.droppedQueued || scheduled) logger.info({ ...turns, scheduled }, 'Shutdown: runs aborted')
+}
+
+/** Tests: wait for every queued turn to finish. */
+export function turnsIdle(): Promise<void> {
+  return turnQueue.idle()
+}
+
+type TurnOpts = {
+  // skipMemory: the audit feeds the assistant a report about the memory record.
+  // Saving that prompt back into the record would put last month's audit into
+  // next month's sample, and the month after that would audit the audit.
+  skipMemory?: boolean
+}
+
+/**
+ * Queue an agent turn and return. Callers used to await the whole turn, which
+ * held every other message (including /cancel) until it finished.
+ */
 async function handleMessage(
   adapter: PlatformAdapter,
   chatId: string,
   rawText: string,
   forceVoiceReply = false,
-  // skipMemory: the audit feeds the assistant a report about the memory record.
-  // Saving that prompt back into the record would put last month's audit into
-  // next month's sample, and the month after that would audit the audit.
-  opts: { skipMemory?: boolean } = {}
+  opts: TurnOpts = {}
+): Promise<void> {
+  const ahead = turnQueue.enqueue(chatId, (signal) => runTurn(adapter, chatId, rawText, forceVoiceReply, opts, signal))
+  if (ahead > 0) logger.info({ chatId, ahead }, 'Agent turn queued behind a running turn')
+}
+
+async function runTurn(
+  adapter: PlatformAdapter,
+  chatId: string,
+  rawText: string,
+  forceVoiceReply: boolean,
+  opts: TurnOpts,
+  signal: AbortSignal
 ): Promise<void> {
   // Always-on skill catalog so the assistant knows its full toolbox and can route
   // to a skill even when the message lacks a literal trigger word. Kept as its
@@ -210,7 +250,7 @@ async function handleMessage(
   const rotation = rotationConfig()
   if (needsRotation(getSessionMeta(chatId), rotation)) {
     const { rotated, summary } = await rotateSession(chatId, rotation, async (prompt, oldSessionId) => {
-      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId))
+      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal))
       return text
     })
     if (rotated) {
@@ -219,6 +259,10 @@ async function handleMessage(
         .sendMessage(chatId, summary ? 'Session rotated. Handoff summary saved to memory.' : 'Session rotated.')
         .catch(() => {})
     }
+  }
+  if (signal.aborted) {
+    await adapter.sendMessage(chatId, 'Cancelled.').catch(() => {})
+    return
   }
 
   // Get existing session
@@ -286,17 +330,34 @@ async function handleMessage(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg))
+    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal))
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
       pendingEditTimer = null
     }
 
-    if (newSessionId) {
+    // /cancel: the runtime stopped the turn. Keep the chat on its previous
+    // session rather than the stopped run's (resuming a session that was
+    // killed mid-tool-call can wedge it), and save nothing to memory.
+    if (signal.aborted) {
+      logger.info({ chatId }, 'Agent turn cancelled')
+      const partial = pendingPreviewText.trim()
+      if (previewMessageId != null) {
+        await adapter.editMessage(chatId, previewMessageId, partial ? `${partial.slice(0, 3800)}\n\n(cancelled)` : 'Cancelled.').catch(() => {})
+      } else {
+        await adapter.sendMessage(chatId, 'Cancelled.').catch(() => {})
+      }
+      return
+    }
+
+    // /newchat can arrive mid-turn now that turns run off the message loop.
+    // If the session was cleared while this turn ran, don't write the old one back.
+    const clearedMidTurn = sessionId !== undefined && getSession(chatId) == null
+    if (newSessionId && !clearedMidTurn) {
       setSession(chatId, newSessionId)
     }
-    bumpSessionMessageCount(chatId)
+    if (!clearedMidTurn) bumpSessionMessageCount(chatId)
 
     // A managed box whose AI allowance is used up. The owner hears it once, then
     // at most once a day; nothing else about the turn happens (no memory save,
@@ -491,7 +552,24 @@ export function isChatAllowed(chatId: string): boolean {
  * depends on whether the Shortcut is still waiting, which only the caller
  * knows.
  */
-export async function runShortcutTurn(chatId: string, rawText: string): Promise<string | null> {
+export function runShortcutTurn(chatId: string, rawText: string): Promise<string | null> {
+  return new Promise((resolveTurn, rejectTurn) => {
+    const ahead = turnQueue.enqueue(
+      chatId,
+      async (signal) => {
+        try {
+          resolveTurn(await shortcutTurn(chatId, rawText, signal))
+        } catch (err) {
+          rejectTurn(err)
+        }
+      },
+      () => resolveTurn('Cancelled.'),
+    )
+    if (ahead > 0) logger.info({ chatId, ahead }, 'Shortcut turn queued behind a running turn')
+  })
+}
+
+async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal): Promise<string | null> {
   markLane(chatId, 'chat')
   try {
     const skillIndex = buildSkillIndex()
@@ -499,9 +577,13 @@ export async function runShortcutTurn(chatId: string, rawText: string): Promise<
     const fullMessage = [skillIndex, memoryContext, SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
     const sessionId = getSession(chatId) ?? undefined
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
-    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId))
-    if (newSessionId) setSession(chatId, newSessionId)
-    bumpSessionMessageCount(chatId)
+    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal))
+    // Same rules as a chat turn: a cancelled run keeps the previous session,
+    // and a session cleared mid-turn by /newchat is not written back.
+    if (signal.aborted) return 'Cancelled.'
+    const clearedMidTurn = sessionId !== undefined && getSession(chatId) == null
+    if (newSessionId && !clearedMidTurn) setSession(chatId, newSessionId)
+    if (!clearedMidTurn) bumpSessionMessageCount(chatId)
     if (text) await saveConversationTurn(chatId, rawText, text)
     return text
   } finally {
@@ -604,16 +686,35 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
   if (subcmd === 'delete') {
     const id = parts[2]
     if (!id) { await adapter.sendMessage(chatId, 'Usage: /schedule delete <id>'); return }
-    cancelDeferredRetry(id)
-    await adapter.sendMessage(chatId, deleteTask(id) ? `Task ${id} deleted.` : `Task ${id} not found.`)
+    // Deleting a task also stops a run of it in flight or waiting to retry (card #232).
+    const { stopped, retriesCleared } = cancelScheduledTask(id)
+    const alsoStopped = stopped.length || retriesCleared.length ? ' Its run in progress was stopped too.' : ''
+    await adapter.sendMessage(chatId, deleteTask(id) ? `Task ${id} deleted.${alsoStopped}` : `Task ${id} not found.`)
+    return
+  }
+
+  if (subcmd === 'cancel') {
+    const id = parts[2]
+    if (!id) { await adapter.sendMessage(chatId, 'Usage: /schedule cancel <id>\nStops a run in progress (or a pending retry). The schedule itself stays active.'); return }
+    const { stopped, retriesCleared, pausedOneShots } = cancelScheduledTask(id)
+    const pausedNote = pausedOneShots.length ? ` It's a one-shot, so it's paused: /schedule resume ${id} or /schedule delete ${id}.` : ''
+    if (stopped.length) {
+      await adapter.sendMessage(chatId, `Stopping: ${stopped[0]}.${pausedNote}`)
+    } else if (retriesCleared.length) {
+      await adapter.sendMessage(chatId, `Cleared the pending retry for ${retriesCleared[0]}.${pausedNote}`)
+    } else {
+      await adapter.sendMessage(chatId, `Task ${id} isn't running.`)
+    }
     return
   }
 
   if (subcmd === 'pause') {
     const id = parts[2]
     if (!id) { await adapter.sendMessage(chatId, 'Usage: /schedule pause <id>'); return }
-    cancelDeferredRetry(id)
-    await adapter.sendMessage(chatId, pauseTask(id) ? `Task ${id} paused.` : `Task ${id} not found.`)
+    // A paused job's tool calls are already refused (#230); stop the run too.
+    const { stopped } = cancelScheduledTask(id)
+    const alsoStopped = stopped.length ? ' Its run in progress was stopped.' : ''
+    await adapter.sendMessage(chatId, pauseTask(id) ? `Task ${id} paused.${alsoStopped}` : `Task ${id} not found.`)
     return
   }
 
@@ -632,7 +733,7 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
     return
   }
 
-  await adapter.sendMessage(chatId, 'Unknown schedule command. Use: list, create, delete, pause, resume, role, roles')
+  await adapter.sendMessage(chatId, 'Unknown schedule command. Use: list, create, cancel, delete, pause, resume, role, roles')
 }
 
 async function handleBrowserCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
@@ -1487,6 +1588,15 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       await handleBrowserCommand(adapter, chatId, trimmed)
       return
     }
+    // /cancel: stop this chat's running turn, drop its queued messages, and stop
+    // the scheduled runs and pending retries that deliver here (card #232).
+    if (cmd === '/cancel') {
+      const turns = turnQueue.cancel(chatId)
+      const scheduled = cancelScheduledForChat(chatId)
+      await adapter.sendMessage(chatId, describeCancel(turns, scheduled))
+      return
+    }
+
     if (cmd === '/steer') {
       const steerText = trimmed.replace(/^\/steer\s*/i, '').trim()
       if (!steerText) {
@@ -1561,6 +1671,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/guard report [days] - What the tool guard caught (or would have)',
         '/dashboard - Dashboard (start/stop)',
         '/browser - Chrome CDP (start/stop/status)',
+        '/cancel - Stop what is running: the reply, queued messages, scheduled runs',
         '/steer - Inject mid-run steering message',
         '/skill - Manage skills (list/enable/disable/reload)',
         '/secret - Manage API keys in the encrypted vault (set/list/rm)',
@@ -1592,6 +1703,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'schedule', description: 'Manage scheduled tasks' },
           { command: 'dashboard', description: 'Dashboard (start/stop)' },
           { command: 'browser', description: 'Chrome CDP (start/stop/status)' },
+          { command: 'cancel', description: 'Stop what is running in this chat' },
           { command: 'steer', description: 'Inject mid-run steering message' },
           { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
           { command: 'secret', description: 'Manage API keys in the encrypted vault' },

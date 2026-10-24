@@ -20,6 +20,8 @@ type RunState = {
   startedAt: number
   res: ServerResponse
   cancelled: boolean
+  /** Fired by handleCancel; reaches runAgent, which stops the run (card #232). */
+  controller: AbortController
 }
 
 let activeRun: RunState | null = null
@@ -83,7 +85,7 @@ export async function handleRun(req: IncomingMessage, res: ServerResponse): Prom
     'X-Accel-Buffering': 'no',
   })
 
-  const state: RunState = { runId, skillId: skill.id, startedAt: Date.now(), res, cancelled: false }
+  const state: RunState = { runId, skillId: skill.id, startedAt: Date.now(), res, cancelled: false, controller: new AbortController() }
   activeRun = state
 
   sse(res, { type: 'start', runId, skillId: skill.id, label: skill.label, startedAt: state.startedAt })
@@ -108,9 +110,10 @@ export async function handleRun(req: IncomingMessage, res: ServerResponse): Prom
       sse(res, { type: 'delta', text: accumulated })
     }
 
-    const { text, newSessionId } = await withActor(`cockpit:${chatKey}`, () => runAgent(tagged, sessionId, undefined, onPartial))
+    const { text, newSessionId } = await withActor(`cockpit:${chatKey}`, () => runAgent(tagged, sessionId, undefined, onPartial, undefined, 'chat', state.controller.signal))
 
-    if (newSessionId) setSession(chatKey, newSessionId)
+    // A stopped run keeps the previous session, like a cancelled chat turn.
+    if (newSessionId && !state.cancelled) setSession(chatKey, newSessionId)
 
     if (state.cancelled) {
       logger.info({ runId, skillId: skill.id }, 'cockpit: run cancelled by user')
@@ -160,12 +163,13 @@ export function handleCancel(req: IncomingMessage, res: ServerResponse): void {
     return
   }
   activeRun.cancelled = true
+  activeRun.controller.abort()
   const runId = activeRun.runId
   appendActivity({
     kind: 'cockpit',
     skillId: activeRun.skillId,
     runId,
-    summary: `cancelled by user (agent may continue in background)`,
+    summary: 'cancelled by user',
   })
   try { sse(activeRun.res, { type: 'cancelled', runId }) } catch { /* */ }
   try { activeRun.res.end() } catch { /* */ }
