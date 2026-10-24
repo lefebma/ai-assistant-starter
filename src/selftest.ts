@@ -59,8 +59,7 @@ export interface SelfTestOptions {
  * Resolve whether this install has usable credentials. Exported for the setup
  * wizard, which asks the same question at the end of an install call so the
  * person running it finds out while they are still there to fix it.
- */
-/**
+ *
  * Pass `runAsync` on a request path: the sign-in check then runs without
  * blocking the event loop. The self-test and setup keep the synchronous spawn.
  */

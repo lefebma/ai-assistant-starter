@@ -6,7 +6,8 @@
  */
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { PROJECT_ROOT } from '../config.js'
 import { PROFILE_STUB_MARKER } from '../onboarding/interview-offer.js'
 
@@ -133,6 +134,32 @@ function target(p: ReturnType<typeof parse>, index: unknown): number {
   return p.section!.bullets[index]!
 }
 
+/** The shipped stub, found by walking up from this module (works from src/ and dist/). */
+function stubTemplate(): string | null {
+  let dir = dirname(fileURLToPath(import.meta.url))
+  for (let i = 0; i < 5; i++) {
+    const p = join(dir, 'templates', 'PROFILE.md.template')
+    if (existsSync(p)) return readFileSync(p, 'utf8')
+    dir = dirname(dir)
+  }
+  return null
+}
+
+/**
+ * The file is still the untouched stub as setup wrote it, placeholders such as
+ * the owner's name filled in. Anything the owner typed makes it a real profile.
+ */
+function isPristineStub(raw: string): boolean {
+  const tpl = stubTemplate()
+  if (tpl === null) return false
+  const norm = (t: string) => t.replace(/\r\n/g, '\n').trim()
+  const pattern = norm(tpl)
+    .split(/\{\{[A-Z_]+\}\}/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[^\\n]*')
+  return new RegExp(`^${pattern}$`).test(norm(raw))
+}
+
 export function addGoal(text: string, version: string, root: string = PROJECT_ROOT): GoalsResult {
   const t = cleanText(text)
   return mutate(version, root, (p, raw) => {
@@ -143,7 +170,14 @@ export function addGoal(text: string, version: string, root: string = PROJECT_RO
     // (the audit reads Priorities only from a written profile), so the first
     // goal replaces the stub with a minimal profile instead. The owner can
     // still start the discovery interview by asking for it.
-    if (raw.includes(PROFILE_STUB_MARKER)) return `# Profile\n\n## Priorities\n\n- [ ] ${t}\n`
+    // Only the untouched stub is replaced. A stub the owner has written into
+    // by hand (the stub invites that) keeps every word: the marker line goes,
+    // so the profile counts as written, and the goal is added as usual.
+    if (raw.includes(PROFILE_STUB_MARKER)) {
+      if (isPristineStub(raw)) return `# Profile\n\n## Priorities\n\n- [ ] ${t}\n`
+      raw = raw.split('\n').filter((l) => !l.includes(PROFILE_STUB_MARKER)).join('\n')
+      p = parse(raw)
+    }
     if (!p.section) {
       return `${raw.replace(/\s*$/, '')}\n\n## Priorities\n\n- [ ] ${t}\n`
     }

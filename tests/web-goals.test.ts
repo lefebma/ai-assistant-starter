@@ -67,15 +67,15 @@ describe('writes', () => {
     expect(r.goals).toEqual([{ index: 0, text: 'First goal', done: false }])
   })
 
-  it('add with the stub marker replaces the stub with a minimal profile', () => {
-    put('<!-- havn:profile-stub -->\n\nNo profile yet.\n')
+  it('a stub the owner wrote into keeps their words; only the marker goes', () => {
+    put('<!-- havn:profile-stub -->\n# About me\n\nI run a bakery.\n')
     goals.addGoal('Grow', goals.readGoals(root).version, root)
-    expect(get()).toBe('# Profile\n\n## Priorities\n\n- [ ] Grow\n')
+    expect(get()).toBe('# About me\n\nI run a bakery.\n\n## Priorities\n\n- [ ] Grow\n')
   })
 
   it('the shipped stub template becomes a written profile the audit counts', async () => {
     const tpl = readFileSync(join(__dirname, '..', 'templates', 'PROFILE.md.template'), 'utf-8')
-    put(tpl)
+    put(tpl.replace(/\{\{OWNER_NAME\}\}/g, 'Sam'))
     goals.addGoal('Land a first customer', goals.readGoals(root).version, root)
     const out = get()
     expect(out).not.toContain('havn:profile-stub')
