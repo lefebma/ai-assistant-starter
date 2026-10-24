@@ -44,12 +44,25 @@ Each conversation has two pickers at the top.
 
 ## What the file panel hides, and why
 
-The file panel never shows your assistant's working parts or anything secret:
-the program files, the stores and logs, saved settings and keys (anything
-starting with a dot, such as `.env`), and any file that looks like a credential.
-A hidden file looks the same as a file that does not exist, and the assistant
-will not send those files either. Uploads land in `workspace/uploads/`; a file
-with the same name is kept and the new one gets a number added.
+The file panel never shows your assistant's working parts, data that covers
+every chat on the box, or anything secret. It hides:
+
+- **Program files and build output:** `src`, `scripts`, `tests`, `templates`,
+  `deploy`, `public`, `dist`, `dist-installer`, `node_modules` and `coverage`.
+- **Stores and operational data:** `store` (the database and saved keys),
+  `logs`, `support-requests`, `certification`, and `workspaces` (shared
+  workspace copies, which hold their own access keys).
+- **Saved settings and keys:** anything whose name starts with a dot, such as
+  `.env`, `.git` or `.claude`, plus `roles.json` and `key_pair.txt`.
+- **Anything that looks like a credential:** names with `token`, `secret` or
+  `credential` in them, key and certificate files (`.key`, `.pem` and the like),
+  `id_rsa`-style keys, and database files.
+
+These names are hidden wherever they appear, not only at the top. A hidden file
+looks the same in the panel as a file that does not exist. The panel is the only
+thing that hides them: your assistant itself still works with your whole
+folder. Uploads land in `workspace/uploads/`; a file with the same name is kept
+and the new one gets a number added.
 
 ## Hosted boxes
 

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PROJECT_ROOT } from '../config.js'
+import { PROFILE_STUB_MARKER } from '../onboarding/interview-offer.js'
 
 export interface Goal {
   index: number
@@ -136,6 +137,13 @@ export function addGoal(text: string, version: string, root: string = PROJECT_RO
   const t = cleanText(text)
   return mutate(version, root, (p, raw) => {
     if (raw === null) return `## Priorities\n\n- [ ] ${t}\n`
+    // The scaffolded stub says "No profile yet" and carries the marker that
+    // makes the audit, the briefing and the interview offer treat the profile
+    // as unwritten. Goals appended below it would be invisible to all three
+    // (the audit reads Priorities only from a written profile), so the first
+    // goal replaces the stub with a minimal profile instead. The owner can
+    // still start the discovery interview by asking for it.
+    if (raw.includes(PROFILE_STUB_MARKER)) return `# Profile\n\n## Priorities\n\n- [ ] ${t}\n`
     if (!p.section) {
       return `${raw.replace(/\s*$/, '')}\n\n## Priorities\n\n- [ ] ${t}\n`
     }

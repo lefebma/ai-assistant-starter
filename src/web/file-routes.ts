@@ -10,7 +10,7 @@ import { getFileRoots, listDir, resolveVisible, sanitizeUploadName } from './fil
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
 
-const TEXT_EXT = new Set(['.md', '.txt', '.json', '.csv', '.log', '.html', '.htm'])
+const TEXT_EXT = new Set(['.md', '.txt', '.json', '.csv', '.html', '.htm'])
 const IMAGE_MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -145,25 +145,40 @@ function tooLarge(req: IncomingMessage, res: import('node:http').ServerResponse)
   res.once('finish', () => setTimeout(() => req.destroy(), 500).unref?.())
 }
 
-function streamToFile(req: IncomingMessage, path: string): Promise<'ok' | 'too_large' | 'error'> {
+/**
+ * Stream the body to `path`. On any failure the temp file is deleted once the
+ * write stream has closed: the stream opens asynchronously, so an abort right
+ * after the headers would otherwise unlink before the file exists and leave
+ * an empty `.part` behind once the open completes.
+ */
+export function streamToFile(req: IncomingMessage, path: string): Promise<'ok' | 'too_large' | 'error'> {
   return new Promise((resolveP) => {
     const out = createWriteStream(path, { flags: 'wx', mode: 0o600 })
     let size = 0
     let settled = false
-    const finish = (r: 'ok' | 'too_large' | 'error'): void => {
+    const succeed = (): void => {
       if (settled) return
       settled = true
-      resolveP(r)
+      resolveP('ok')
+    }
+    const fail = (r: 'too_large' | 'error'): void => {
+      if (settled) return
+      settled = true
+      req.pause()
+      const cleanup = (): void => {
+        safeUnlink(path)
+        resolveP(r)
+      }
+      if (out.closed) cleanup()
+      else {
+        out.once('close', cleanup)
+        out.destroy()
+      }
     }
     req.on('data', (chunk: Buffer) => {
       if (settled) return
       size += chunk.length
-      if (size > MAX_UPLOAD_BYTES) {
-        req.pause()
-        out.destroy()
-        finish('too_large')
-        return
-      }
+      if (size > MAX_UPLOAD_BYTES) return fail('too_large')
       if (!out.write(chunk)) {
         req.pause()
         out.once('drain', () => req.resume())
@@ -171,16 +186,14 @@ function streamToFile(req: IncomingMessage, path: string): Promise<'ok' | 'too_l
     })
     req.on('end', () => {
       if (settled) return
-      out.end(() => finish('ok'))
+      out.end(() => succeed())
     })
-    req.on('aborted', () => {
-      out.destroy()
-      finish('error')
+    req.on('aborted', () => fail('error'))
+    req.on('error', () => fail('error'))
+    // A socket that closes before the body ends never says 'end'.
+    req.on('close', () => {
+      if (!req.complete) fail('error')
     })
-    req.on('error', () => {
-      out.destroy()
-      finish('error')
-    })
-    out.on('error', () => finish('error'))
+    out.on('error', () => fail('error'))
   })
 }

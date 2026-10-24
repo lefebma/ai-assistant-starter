@@ -67,12 +67,24 @@ describe('writes', () => {
     expect(r.goals).toEqual([{ index: 0, text: 'First goal', done: false }])
   })
 
-  it('add with the stub marker appends a Priorities section and keeps the marker', () => {
+  it('add with the stub marker replaces the stub with a minimal profile', () => {
     put('<!-- havn:profile-stub -->\n\nNo profile yet.\n')
     goals.addGoal('Grow', goals.readGoals(root).version, root)
+    expect(get()).toBe('# Profile\n\n## Priorities\n\n- [ ] Grow\n')
+  })
+
+  it('the shipped stub template becomes a written profile the audit counts', async () => {
+    const tpl = readFileSync(join(__dirname, '..', 'templates', 'PROFILE.md.template'), 'utf-8')
+    put(tpl)
+    goals.addGoal('Land a first customer', goals.readGoals(root).version, root)
     const out = get()
-    expect(out.startsWith('<!-- havn:profile-stub -->')).toBe(true)
-    expect(out.endsWith('\n\n## Priorities\n\n- [ ] Grow\n')).toBe(true)
+    expect(out).not.toContain('havn:profile-stub')
+    expect(out).not.toContain('No profile yet')
+    const { profileIsUnwritten } = await import('../src/onboarding/interview-offer.js')
+    expect(profileIsUnwritten(root)).toBe(false)
+    const { profileHasPriorities } = await import('../src/audit/io.js')
+    expect(profileHasPriorities(out)).toBe(true)
+    expect(goals.readGoals(root).goals).toEqual([{ index: 0, text: 'Land a first customer', done: false }])
   })
 
   it('add inserts after the last bullet of an existing section', () => {
@@ -149,7 +161,8 @@ describe('routes', () => {
     db.initDatabase()
     const sessions = await import('../src/web/sessions.js')
     server = await import('../src/http-server.js')
-    port = 5600 + Math.floor(Math.random() * 90) * 3 + 1
+    // Band 5545-5559.
+    port = 5545 + Math.floor(Math.random() * 15)
     server.startHttpServer(port)
     const deadline = Date.now() + 5000
     for (;;) {

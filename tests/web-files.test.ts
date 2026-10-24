@@ -36,6 +36,17 @@ beforeAll(async () => {
   writeFileSync(join(root, 'notes', 'blob.bin'), 'zz')
   writeFileSync(join(root, 'notes', 'api_token.txt'), 'tok')
   writeFileSync(join(root, 'readme.txt'), 'top')
+  // Operational data that spans every chat on the box, or holds keys.
+  for (const d of ['logs', 'support-requests', 'certification', 'workspaces/els', 'dist-installer']) {
+    mkdirSync(join(root, d), { recursive: true })
+  }
+  writeFileSync(join(root, 'logs', 'service.log'), 'chat 9999 said hello')
+  writeFileSync(join(root, 'support-requests', 'support-request-1.md'), 'diagnostics')
+  writeFileSync(join(root, 'certification', 'baseline.json'), '{}')
+  writeFileSync(join(root, 'workspaces', 'els', 'notes.md'), 'shared')
+  writeFileSync(join(root, 'dist-installer', 'havn.pkg'), 'pkg')
+  writeFileSync(join(root, 'key_pair.txt'), 'PRIVATE')
+  writeFileSync(join(root, 'key_pair.txt.pub'), 'PUBLIC')
   writeFileSync(join(outside, 'secret.txt'), 'OUTSIDE')
   symlinkSync(outside, join(root, 'link-out'))
   symlinkSync(join(outside, 'secret.txt'), join(root, 'link-out-file'))
@@ -49,7 +60,8 @@ beforeAll(async () => {
   files = await import('../src/web/files.js')
   files.setFileRootsForTest({ root, uploadsDir: uploads })
   server = await import('../src/http-server.js')
-  port = 5900 + Math.floor(Math.random() * 90) * 3
+  // Band 5490-5519.
+  port = 5490 + Math.floor(Math.random() * 30)
   server.startHttpServer(port)
   const deadline = Date.now() + 5000
   for (;;) {
@@ -104,6 +116,13 @@ describe('containment: every attempt is a 404 without bytes', () => {
     ['nul', encodeURIComponent('notes/a.md\0')],
     ['dot segment', encodeURIComponent('./readme.txt')],
     ['double slash', encodeURIComponent('notes//a.md')],
+    ['service log', encodeURIComponent('logs/service.log')],
+    ['support bundle', encodeURIComponent('support-requests/support-request-1.md')],
+    ['certification', encodeURIComponent('certification/baseline.json')],
+    ['shared workspace', encodeURIComponent('workspaces/els/notes.md')],
+    ['installer build', encodeURIComponent('dist-installer/havn.pkg')],
+    ['key pair', encodeURIComponent('key_pair.txt')],
+    ['key pair public half', encodeURIComponent('key_pair.txt.pub')],
   ]
   for (const [label, p0] of attempts) {
     it(label, async () => {
@@ -231,6 +250,34 @@ describe('upload', () => {
     expect(status).toBe(413)
     await new Promise((r) => setTimeout(r, 100))
     expect(readdirSync(uploads).some((n) => n.startsWith('big') || n.endsWith('.part'))).toBe(false)
+  })
+
+  it('deletes the temp file when the request aborts before the file has opened', async () => {
+    const { EventEmitter } = await import('node:events')
+    const { streamToFile } = await import('../src/web/file-routes.js')
+    const req = Object.assign(new EventEmitter(), { complete: false, pause() {}, resume() {} })
+    const tmp = join(uploads, '.upload-abort-test.part')
+    const p = streamToFile(req as never, tmp)
+    // Synchronously, before createWriteStream's open has completed.
+    req.emit('aborted')
+    expect(await p).toBe('error')
+    await new Promise((r) => setTimeout(r, 200))
+    expect(existsSync(tmp)).toBe(false)
+  })
+
+  it('deletes the temp file when the socket drops mid-body', async () => {
+    const { connect } = await import('node:net')
+    const sock = connect(port, '127.0.0.1')
+    await new Promise<void>((r) => sock.once('connect', () => r()))
+    sock.write(
+      `POST /api/web/files/upload?name=cut.bin HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nCookie: ${cookie}\r\n` +
+        'Content-Type: application/octet-stream\r\nX-Havn-Web: 1\r\nContent-Length: 100000\r\n\r\n' +
+        'x'.repeat(5000),
+    )
+    await new Promise((r) => setTimeout(r, 100))
+    sock.destroy()
+    await new Promise((r) => setTimeout(r, 300))
+    expect(readdirSync(uploads).filter((n) => n.endsWith('.part') || n.startsWith('cut'))).toEqual([])
   })
 
   it('403 without X-Havn-Web', async () => {

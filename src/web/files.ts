@@ -29,7 +29,17 @@ export const HIDDEN_DIRS = new Set([
   'coverage',
   'public',
   '.claude',
+  // Operational data. Logs and support bundles cover every chat on the box,
+  // and a shared workspace clone holds its git deploy key.
+  'logs',
+  'support-requests',
+  'certification',
+  'workspaces',
+  'dist-installer',
 ])
+
+/** Single files hidden by name: gitignored at the root, and not caught by NEVER_SEND. */
+const HIDDEN_NAMES = /^(roles\.json|key_pair\.txt(\..*)?)$/i
 
 export const MAX_LIST_ENTRIES = 500
 
@@ -50,7 +60,7 @@ export function getFileRoots(): FileRoots {
 export function isHiddenSegment(seg: string): boolean {
   if (seg.startsWith('.')) return true
   if (HIDDEN_DIRS.has(seg.toLowerCase())) return true
-  if (seg.toLowerCase() === 'roles.json') return true
+  if (HIDDEN_NAMES.test(seg)) return true
   return NEVER_SEND.some((re) => re.test(seg))
 }
 
