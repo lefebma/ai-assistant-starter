@@ -40,9 +40,16 @@ API keys cannot be created by any API, and workspace spend limits are set only i
    ```
 
    On a box that has not been set up yet, no restart is needed. When the client opens the setup link, they are asked only for the messaging step. The AI and voice questions are skipped.
-6. Record in your private notes: the box, the workspace id, the key name and the limit. Never the key. Keep amounts out of this repo.
+6. Tell the box the same monthly limit you set in the Console, in dollars, so it can warn the client at 80%:
 
-Check the state at any time with `node dist/scripts/managed-ai.js status`. It says whether the box is managed, whether a key is stored, whether a limit is in force, and which runtime the assistant uses. It never prints the key. A managed box always runs on the claude runtime: an `AGENT_RUNTIME` line in `.env` is ignored while the box is managed, and `status` says so.
+   ```bash
+   sudo -u havn bash -lc 'cd ~/havn && node dist/scripts/managed-ai.js cap 50'
+   ```
+
+   No restart is needed. `cap 0` turns the heads-up off. Without a cap the box still pauses at the limit; it just gives no early warning.
+7. Record in your private notes: the box, the workspace id, the key name and the limit. Never the key. Keep amounts out of this repo.
+
+Check the state at any time with `node dist/scripts/managed-ai.js status`. It says whether the box is managed, whether a key is stored, whether a limit is in force, the cap and this month's spend, and which runtime the assistant uses. It never prints the key. A managed box always runs on the claude runtime: an `AGENT_RUNTIME` line in `.env` is ignored while the box is managed, and `status` says so.
 
 ## What a managed box does differently
 
@@ -54,19 +61,25 @@ Check the state at any time with `node dist/scripts/managed-ai.js status`. It sa
 
 The assistant's own tools can read its key, the same way they can read any file on the box. So a client, or text the assistant reads (an email, a web page), could get it to reveal the key. The workspace spend limit bounds what a leaked key can cost. One key per client keeps a leak to that client, and rotating the key (below) ends it.
 
+## At 80% of the cap
+
+The box adds up the cost the assistant engine reports for every call, chat and background alike, by calendar month in UTC (the same month Anthropic's limit uses). The total is in `store/ai-usage.json`. It is an estimate: the hard stop is still the Console limit.
+
+When the total reaches 80% of the cap, the client gets one message after their next reply: "Heads-up: I've used about 80% of this month's AI allowance. I'll keep working as normal. If it runs out before it renews on November 1, I'll pause until then. Your provider can raise it if you need more." Once a month at most. You get a Telegram alert from Umi at the same point (Marc only, no partner draft).
+
 ## When the limit is reached
 
 The box stops. It does not retry and it does not switch to anything else.
 
-- The box writes `store/ai-limit.json` (kind, start time and request id only, never the key).
-- The client is told once: "I've reached this month's AI allowance, so I'm paused for now. Your provider has been told and will be in touch." After that, at most a short reminder once a day: "Still paused: this month's AI allowance is used up. Your provider has been told."
+- The box writes `store/ai-limit.json` (kind, start time, request id and the renewal date Anthropic gives, never the key).
+- The client is told once: "I've reached this month's AI allowance, so I'm paused until November 1, or sooner if your provider raises it. Your provider has been told and will be in touch." After that, at most a short reminder once a day: "Still paused: this month's AI allowance is used up until November 1. Your provider has been told." The date comes from Anthropic's error; without one (a billing problem, for example) the messages leave the date out.
 - Scheduled jobs, email-alert mail reading and the nightly memory job pause. A repeating job skips its runs during the pause and picks up at its next normal time. A one-time task is kept and runs once the pause lifts. Alerts that were already triaged still go out.
 - Email alerts look back 48 hours when mail reading resumes. After a longer pause, mail older than that is not checked for alerts.
 - You get a Telegram alert from Umi within about 10 minutes, naming the box and what to do. For a client who comes through Marina, the alert has a Send to Marina button with a plain-language draft. Nothing goes to her until you press it. When the box recovers, you get a second alert with a matching "it's back" draft.
 
 ### Raising the limit
 
-In the Console, raise the spend limit on that client's workspace (or wait for the month to reset). Nothing to do on the box. While paused, the box checks about every 15 minutes with one small request (a message from the client at that point can serve as the check instead). The first one that succeeds clears the pause and the assistant resumes by itself, with no restart.
+In the Console, raise the spend limit on that client's workspace (or wait for the month to reset). Then record the new amount on the box with `managed-ai cap`, so the next heads-up is right. Nothing else to do on the box. While paused, the box checks about every 15 minutes with one small request (a message from the client at that point can serve as the check instead). The first one that succeeds clears the pause and the assistant resumes by itself, with no restart.
 
 ## Rotating a key
 

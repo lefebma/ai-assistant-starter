@@ -34,6 +34,7 @@ vi.mock('../src/logger.js', () => ({ logger: mockLogger }))
 import { ClaudeAgentRuntime } from '../src/runtime/claude.js'
 import { getAgentRuntime, setAgentRuntime } from '../src/runtime/index.js'
 import { AI_LIMIT_FILE, AiPausedError, MANAGED_AI_FILE, clearAiLimit, readAiLimit, writeAiLimit } from '../src/ai-limit.js'
+import { readAiUsage } from '../src/ai-usage.js'
 
 const STORE = h.store as string
 // Obviously fake, so secret scanners never flag the fixture.
@@ -48,6 +49,13 @@ function okConversation(result: string, sessionId = 'sess-managed') {
   return (async function* () {
     yield { type: 'system', subtype: 'init', session_id: sessionId }
     yield { type: 'result', subtype: 'success', is_error: false, result }
+  })()
+}
+
+function costedConversation(result: string, cost: number) {
+  return (async function* () {
+    yield { type: 'system', subtype: 'init', session_id: 'sess-cost' }
+    yield { type: 'result', subtype: 'success', is_error: false, result, total_cost_usd: cost }
   })()
 }
 
@@ -88,6 +96,33 @@ describe('ClaudeAgentRuntime on a managed box', () => {
 
   afterAll(() => {
     rmSync(STORE, { recursive: true, force: true })
+  })
+
+  it('adds each call\'s reported cost to the month, chat turns and one-shots alike (card #159)', async () => {
+    withKey()
+    mockQuery.mockReturnValueOnce(costedConversation('hi', 0.12)).mockReturnValueOnce(costedConversation('ready', 0.03))
+    const rt = new ClaudeAgentRuntime()
+    await rt.run({ message: 'hello' })
+    await rt.runOnce('ping')
+    expect(readAiUsage()?.usd).toBeCloseTo(0.15, 6)
+  })
+
+  it('records the renewal day from a spend-limit result', async () => {
+    withKey()
+    mockQuery.mockReturnValue((async function* () {
+      yield { type: 'result', subtype: 'success', is_error: true, api_error_status: 400, result: SPEND_RESULT, total_cost_usd: 0 }
+    })())
+    await new ClaudeAgentRuntime().run({ message: 'hello' })
+    expect(readAiLimit()?.resumesAt).toBe('2026-11-01T00:00:00.000Z')
+  })
+
+  it('drops the renewal day when a later hit is a billing problem', async () => {
+    withKey()
+    writeAiLimit({ kind: 'spend_limit', since: '2026-10-01T00:00:00.000Z', lastProbeAt: '2026-10-01T00:00:00.000Z', resumesAt: '2026-11-01T00:00:00.000Z' })
+    mockQuery.mockReturnValue(throwingConversation('API Error: 402 {"type":"error","error":{"type":"billing_error","message":"Payment required"}}'))
+    await new ClaudeAgentRuntime().run({ message: 'hello' })
+    expect(readAiLimit()?.kind).toBe('billing')
+    expect(readAiLimit()?.resumesAt).toBeUndefined()
   })
 
   it('runs on the key as the only lane: one query call with the key in the per-call env', async () => {
@@ -381,6 +416,12 @@ describe('ClaudeAgentRuntime on a non-managed box', () => {
     const result = await new ClaudeAgentRuntime().run({ message: 'hello' })
     expect(result).toEqual({ text: 'hi', newSessionId: 'sess-managed' })
     expect(firstQueryOptions().env).toBeUndefined()
+  })
+
+  it('records no spend off the managed lane', async () => {
+    mockQuery.mockReturnValue(costedConversation('hi', 0.5))
+    await new ClaudeAgentRuntime().run({ message: 'hello' })
+    expect(readAiUsage()).toBeNull()
   })
 
   it('runOnce passes no env and ignores a stray marker', async () => {

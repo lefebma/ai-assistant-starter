@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { main } from '../src/managed-ai-cli.js'
 import { isManagedAi, writeAiLimit, readAiLimit } from '../src/ai-limit.js'
+import { readAiUsage, readManagedCap, recordManagedSpend } from '../src/ai-usage.js'
 
 const KEY = 'sk-ant-api03-SECRETVALUE1234567890'
 
@@ -79,24 +80,24 @@ describe('managed-ai CLI', () => {
   })
 
   it('status reports each state and never prints the key', async () => {
-    expect(await main(['status'], t.deps)).toBe('Managed: no. Key: missing. Limit: none. Runtime: claude.')
+    expect(await main(['status'], t.deps)).toBe('Managed: no. Key: missing. Limit: none. Cap: not recorded. Runtime: claude.')
     await main(['set'], t.deps)
-    expect(await main(['status'], t.deps)).toBe('Managed: yes. Key: stored. Limit: none. Runtime: claude.')
+    expect(await main(['status'], t.deps)).toBe('Managed: yes. Key: stored. Limit: none. Cap: not recorded. Runtime: claude.')
     writeAiLimit({ kind: 'billing', since: '2026-10-23T10:00:00.000Z' }, t.storeDir)
     const out = await main(['status'], t.deps)
-    expect(out).toBe('Managed: yes. Key: stored. Limit: billing since 2026-10-23T10:00:00.000Z. Runtime: claude.')
+    expect(out).toBe('Managed: yes. Key: stored. Limit: billing since 2026-10-23T10:00:00.000Z. Cap: not recorded. Runtime: claude.')
     expect(out).not.toContain('sk-ant')
   })
 
   it('status says an AGENT_RUNTIME in .env is ignored while managed', async () => {
     const s = setup()
     const deps = { ...s.deps, envRuntime: 'ai-sdk' }
-    expect(await main(['status'], deps)).toBe('Managed: no. Key: missing. Limit: none. Runtime: ai-sdk.')
+    expect(await main(['status'], deps)).toBe('Managed: no. Key: missing. Limit: none. Cap: not recorded. Runtime: ai-sdk.')
     await main(['set'], deps)
     expect(await main(['status'], deps)).toBe(
-      'Managed: yes. Key: stored. Limit: none. Runtime: claude (AGENT_RUNTIME=ai-sdk in .env is ignored while managed).'
+      'Managed: yes. Key: stored. Limit: none. Cap: not recorded. Runtime: claude (AGENT_RUNTIME=ai-sdk in .env is ignored while managed).'
     )
-    expect(await main(['status'], { ...s.deps, envRuntime: 'claude' })).toBe('Managed: yes. Key: stored. Limit: none. Runtime: claude.')
+    expect(await main(['status'], { ...s.deps, envRuntime: 'claude' })).toBe('Managed: yes. Key: stored. Limit: none. Cap: not recorded. Runtime: claude.')
   })
 
   it('off clears a pause marker too', async () => {
@@ -115,8 +116,48 @@ describe('managed-ai CLI', () => {
     expect(t.vaultData.has('ANTHROPIC_API_KEY')).toBe(true)
   })
 
+  it('cap needs a managed box and a non-negative number', async () => {
+    await expect(main(['cap', '50'], t.deps)).rejects.toThrow('not on a managed key')
+    await main(['set'], t.deps)
+    for (const bad of [[], ['abc'], ['-5'], ['10', '20']]) {
+      await expect(main(['cap', ...bad], t.deps)).rejects.toThrow('Usage: managed-ai cap <dollars>')
+    }
+  })
+
+  it('cap records the monthly cap, set keeps it, 0 clears it', async () => {
+    await main(['set'], t.deps)
+    expect(await main(['cap', '50'], t.deps)).toBe('Cap recorded: $50.00 a month. The owner gets a heads-up at 80%.')
+    expect(readManagedCap(t.storeDir)).toBe(50)
+    await main(['set'], t.deps)
+    expect(readManagedCap(t.storeDir)).toBe(50)
+    expect(await main(['cap', '0'], t.deps)).toBe('Cap cleared. The 80% heads-up is off.')
+    expect(readManagedCap(t.storeDir)).toBeUndefined()
+    expect(isManagedAi(t.storeDir)).toBe(true)
+  })
+
+  it('status shows the cap and this month\'s spend', async () => {
+    await main(['set'], t.deps)
+    await main(['cap', '50'], t.deps)
+    recordManagedSpend(12.5, { storeDir: t.storeDir })
+    expect(await main(['status'], t.deps)).toBe(
+      'Managed: yes. Key: stored. Limit: none. Cap: $50.00 a month, $12.50 used (25%). Runtime: claude.'
+    )
+  })
+
+  it('cap updates this month\'s usage file at once; off removes it', async () => {
+    await main(['set'], t.deps)
+    await main(['cap', '50'], t.deps)
+    recordManagedSpend(5, { storeDir: t.storeDir })
+    await main(['cap', '80'], t.deps)
+    expect(readAiUsage(t.storeDir)?.capUsd).toBe(80)
+    await main(['cap', '0'], t.deps)
+    expect(readAiUsage(t.storeDir)?.capUsd).toBeUndefined()
+    await main(['off'], t.deps)
+    expect(readAiUsage(t.storeDir)).toBeNull()
+  })
+
   it('anything else is a usage error', async () => {
-    await expect(main([], t.deps)).rejects.toThrow('Usage: managed-ai <set|status|off>')
-    await expect(main(['bogus'], t.deps)).rejects.toThrow('Usage: managed-ai <set|status|off>')
+    await expect(main([], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off>')
+    await expect(main(['bogus'], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off>')
   })
 })

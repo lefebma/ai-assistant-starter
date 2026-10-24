@@ -1,6 +1,7 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MANAGED_AI_FILE, clearAiLimit, isManagedAi, readAiLimit } from './ai-limit.js'
+import { AI_USAGE_FILE, readAiUsage, readManagedCap, syncUsageCap, utcMonth } from './ai-usage.js'
 
 export interface ManagedAiDeps {
   stdin: () => Promise<string>
@@ -11,15 +12,34 @@ export interface ManagedAiDeps {
   envRuntime?: string
 }
 
-const USAGE = 'Usage: managed-ai <set|status|off>   (set reads the key from stdin)'
+const USAGE = 'Usage: managed-ai <set|cap <dollars>|status|off>   (set reads the key from stdin)'
 const KEY_NAME = 'ANTHROPIC_API_KEY'
 
-function writeMarker(storeDir: string): void {
+function readFlag(storeDir: string): Record<string, unknown> {
+  try {
+    const raw = JSON.parse(readFileSync(join(storeDir, MANAGED_AI_FILE), 'utf8'))
+    return raw && typeof raw === 'object' ? raw : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeFlag(storeDir: string, flag: Record<string, unknown>): void {
   mkdirSync(storeDir, { recursive: true })
   const target = join(storeDir, MANAGED_AI_FILE)
   const tmp = `${target}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify({ since: new Date().toISOString() }, null, 2) + '\n')
+  writeFileSync(tmp, JSON.stringify(flag, null, 2) + '\n')
   renameSync(tmp, target)
+}
+
+/** A fresh flag keeps a cap already recorded, so re-running set never drops it. */
+function writeMarker(storeDir: string): void {
+  const cap = readManagedCap(storeDir)
+  writeFlag(storeDir, { since: new Date().toISOString(), ...(cap ? { capUsd: cap } : {}) })
+}
+
+function money(usd: number): string {
+  return `$${usd.toFixed(2)}`
 }
 
 /** Errors carry operator-safe text only; the key is never included. */
@@ -39,6 +59,21 @@ export async function main(argv: string[], deps: ManagedAiDeps): Promise<string>
       if (deps.envExists) lines.push('Restart the service to use it: sudo systemctl restart havn')
       return lines.join('\n')
     }
+    case 'cap': {
+      if (!isManagedAi(deps.storeDir)) throw new Error('This box is not on a managed key. Run set first.')
+      const value = Number(rest[0])
+      if (rest.length !== 1 || !Number.isFinite(value) || value < 0) {
+        throw new Error('Usage: managed-ai cap <dollars>   (the monthly limit set in the Console; 0 turns the heads-up off)')
+      }
+      const flag = readFlag(deps.storeDir)
+      if (value === 0) delete flag.capUsd
+      else flag.capUsd = value
+      writeFlag(deps.storeDir, flag)
+      syncUsageCap(deps.storeDir)
+      return value === 0
+        ? 'Cap cleared. The 80% heads-up is off.'
+        : `Cap recorded: ${money(value)} a month. The owner gets a heads-up at 80%.`
+    }
     case 'status': {
       const limit = readAiLimit(deps.storeDir)
       const managed = isManagedAi(deps.storeDir)
@@ -48,12 +83,18 @@ export async function main(argv: string[], deps: ManagedAiDeps): Promise<string>
           ? `claude (AGENT_RUNTIME=${envRuntime} in .env is ignored while managed)`
           : 'claude'
         : envRuntime ?? 'claude'
-      return `Managed: ${managed ? 'yes' : 'no'}. Key: ${deps.vault.has(KEY_NAME) ? 'stored' : 'missing'}. Limit: ${limit ? `${limit.kind} since ${limit.since}` : 'none'}. Runtime: ${runtime}.`
+      const cap = readManagedCap(deps.storeDir)
+      const usage = readAiUsage(deps.storeDir)
+      const spent = usage && usage.month === utcMonth(new Date()) ? usage.usd : 0
+      const capText = cap ? `${money(cap)} a month, ${money(spent)} used (${Math.round((spent / cap) * 100)}%)` : 'not recorded'
+      return `Managed: ${managed ? 'yes' : 'no'}. Key: ${deps.vault.has(KEY_NAME) ? 'stored' : 'missing'}. Limit: ${limit ? `${limit.kind} since ${limit.since}` : 'none'}. Cap: ${capText}. Runtime: ${runtime}.`
     }
     case 'off':
       rmSync(join(deps.storeDir, MANAGED_AI_FILE), { force: true })
-      // A pause marker means nothing on a non-managed box; do not leave it behind.
+      // A pause marker and a spend total mean nothing on a non-managed box; do
+      // not leave them behind for the operator's monitor to read.
       clearAiLimit(deps.storeDir)
+      rmSync(join(deps.storeDir, AI_USAGE_FILE), { force: true })
       return 'Managed AI is off. The stored key was left in the vault.'
     default:
       throw new Error(USAGE)
