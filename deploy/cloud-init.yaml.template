@@ -246,6 +246,14 @@ write_files:
       [ -e /var/lib/havn-audit/audit.jsonl ] || install -m 0640 -o havn -g havn /dev/null /var/lib/havn-audit/audit.jsonl
       chattr +a /var/lib/havn-audit/audit.jsonl
 
+      # --- Egress allowlist (card #231) ------------------------------------
+      # Everything the assistant's tools start runs in a cgroup that nftables
+      # lets reach only the per-run egress proxy on 127.0.0.1, which applies
+      # the allowlist. Settings live in root-owned /etc/havn/egress.env, so the
+      # assistant cannot widen them; add hosts there (EGRESS_ALLOW, EGRESS_READ)
+      # or with npm run enable-egress. Same steps as scripts/hosted/enable-egress.ts.
+      node --input-type=module -e "import('{{INSTALL_DIR}}/dist/scripts/hosted/enable-egress.js').then((m) => process.stdout.write(m.setupScript('', '')))" | bash
+
       # --- Service: registered but NOT started ----------------------------
       systemctl daemon-reload
       # Deliberately no enable/start: .env and credentials do not exist yet.

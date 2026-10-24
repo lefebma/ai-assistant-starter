@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { readEnvFile, PROJECT_ROOT } from './env.js'
 import { getSecret } from './vault/index.js'
 
@@ -66,6 +67,43 @@ export const TOOL_GUARD = env['TOOL_GUARD']?.trim() || 'log'
  * it is refused before anything goes out.
  */
 export const SEND_RECIPIENT_LIMIT = Math.max(1, parseInt(env['SEND_RECIPIENT_LIMIT'] ?? '10', 10) || 10)
+
+/**
+ * Egress allowlist for tool and shell traffic (card #231). off (default)
+ * leaves tools free to connect anywhere; enforce routes every run's tools
+ * through a per-run proxy that applies src/egress/policy.ts. A hosted box
+ * also gets a kernel rule so tools cannot go around it (enable-egress).
+ *
+ * The assistant can edit .env, so on a hosted box these settings come from
+ * root-owned /etc/havn/egress.env and the service's own environment, and .env
+ * is ignored for them. Elsewhere .env is read as usual.
+ */
+export const EGRESS_SYSTEM_FILE = '/etc/havn/egress.env'
+const egressEnv: Record<string, string | undefined> = readEgressSettings()
+function readEgressSettings(): Record<string, string | undefined> {
+  let system: Record<string, string> | null = null
+  try {
+    if (existsSync(EGRESS_SYSTEM_FILE)) {
+      system = Object.fromEntries(readFileSync(EGRESS_SYSTEM_FILE, 'utf-8').split('\n')
+        .map((l) => /^\s*(EGRESS_[A-Z_]+|EGRESS)\s*=\s*(.*?)\s*$/.exec(l))
+        .filter((m): m is RegExpExecArray => m !== null)
+        .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]))
+    }
+  } catch {
+    system = {}
+  }
+  const pick = (k: string) => process.env[k] ?? (system ? system[k] : env[k])
+  return Object.fromEntries(['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP'].map((k) => [k, pick(k)]))
+}
+export const EGRESS = (egressEnv.EGRESS ?? 'off').trim().toLowerCase() === 'enforce' ? 'enforce' : 'off'
+/** Hosts every run may write to (any method), comma separated. */
+export const EGRESS_ALLOW = egressEnv.EGRESS_ALLOW ?? ''
+/** Hosts chat and reading roles may read from. GET only over plain HTTP; any HTTPS. */
+export const EGRESS_READ = egressEnv.EGRESS_READ ?? ''
+/** Loopback ports the per-run proxies bind in; the hosted kernel rule allows exactly these. */
+export const EGRESS_PORTS = egressEnv.EGRESS_PORTS ?? '47000-47999'
+/** The cgroup a hosted box runs tools in (written by enable-egress). Empty: no kernel rule. */
+export const EGRESS_CGROUP = (egressEnv.EGRESS_CGROUP ?? '').trim()
 /**
  * Audit log of every tool call (card #196). A hosted box always uses
  * /var/lib/havn-audit when root has created it, whatever this says; elsewhere

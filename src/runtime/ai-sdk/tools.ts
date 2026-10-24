@@ -12,7 +12,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { runEnv } from '../../assurance/effect-journal.js'
+import { toolEnv } from '../../egress/tool-env.js'
+import { currentProxy } from '../../egress/index.js'
+import { inToolsCgroup } from '../../egress/hosted.js'
 
 const BASH_TIMEOUT_DEFAULT_MS = 120_000
 const BASH_TIMEOUT_MAX_MS = 600_000
@@ -56,14 +58,16 @@ function resolveShell(): { cmd: string; buildArgs: (command: string) => string[]
 
 function runBash(command: string, cwd: string, timeoutMs: number): Promise<string> {
   const shell = resolveShell()
+  // Hosted box with egress enforced: the shell runs in the tools cgroup (card #231).
+  const run = currentProxy() ? inToolsCgroup(shell.cmd, shell.buildArgs(command)) : { command: shell.cmd, args: shell.buildArgs(command) }
   return new Promise(resolvePromise => {
     execFile(
-      shell.cmd,
-      shell.buildArgs(command),
+      run.command,
+      run.args,
       {
         cwd,
-        // Carries the run key to send CLIs for the effect journal (card #229).
-        env: runEnv(),
+        // The run key (card #229) and the egress proxy (card #231).
+        env: toolEnv(),
         timeout: timeoutMs,
         maxBuffer: 10 * 1024 * 1024,
         // cmd.exe mangles quoted args without this; no-op elsewhere.

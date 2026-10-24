@@ -11,6 +11,7 @@
 import { getAgentRuntime, type RuntimeLane } from './runtime/index.js'
 import type { AgentRunResult, RunScope } from './runtime/types.js'
 import { withRunOrNew } from './assurance/effect-journal.js'
+import { withEgress } from './egress/index.js'
 
 /**
  * Lane-based concurrency tracking (OpenClaw v2026.5.19 -- cron wake-lane isolation).
@@ -60,7 +61,8 @@ export async function runAgent(
 ): Promise<AgentRunResult> {
   // One turn is one run for the effect journal (card #229), unless the caller
   // already named the run: a scheduled job or an approval card.
-  return withRunOrNew('turn', () => getAgentRuntime(lane).run({
+  // With EGRESS=enforce the turn's tools get their own egress proxy (card #231).
+  return withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane).run({
     message,
     sessionId,
     onTyping,
@@ -68,5 +70,5 @@ export async function runAgent(
     onToolProgress,
     signal,
     scope,
-  }))
+  })))
 }

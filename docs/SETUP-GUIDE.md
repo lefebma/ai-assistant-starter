@@ -565,6 +565,13 @@ A role can also carry `expiresAt`, a date like `"2026-12-31"` or a date and
 time. From then on the role refuses every call, and a job using it does not
 start. A value that is not a date counts as already expired.
 
+A role can also say where its tools may connect, used when the egress
+allowlist is on (hosted boxes, see `docs/HOSTED-VPS.md` > Egress allowlist):
+`"egress": { "write": [...], "read": [...] }`, with hosts, `host:port`,
+`*.domain` or groups (`@google`, `@microsoft`, `@imap`, `@slack`, `@approved`
+for `EGRESS_ALLOW`, `@read` for `EGRESS_READ`). A role without it reaches only
+the AI.
+
 Changes apply mid-run. Every tool call in a scheduled job rereads the task:
 pause or delete it and the next call is refused; change its role and the next
 call is checked against the new one. A retry waiting after an AI overload

@@ -37,9 +37,12 @@ async function main(): Promise<void> {
     passthrough,
   })
 
+  // Egress enforced (card #231): the browser goes through the run's proxy too.
+  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy
+  const proxyArgs = proxy && !passthrough.some((a) => a.startsWith('--proxy-server')) ? ['--proxy-server', proxy] : []
   const [cmd, args, useShell] = existsSync(local)
-    ? [process.execPath, [local, ...browserArgs, ...passthrough], false]
-    : ['npx', ['@playwright/mcp@latest', ...browserArgs, ...passthrough], process.platform === 'win32']
+    ? [process.execPath, [local, ...browserArgs, ...proxyArgs, ...passthrough], false]
+    : ['npx', ['@playwright/mcp@latest', ...browserArgs, ...proxyArgs, ...passthrough], process.platform === 'win32']
 
   const child = spawn(cmd, args, { stdio: 'inherit', shell: useShell })
   child.on('error', (err) => {
