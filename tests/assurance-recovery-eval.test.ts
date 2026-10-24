@@ -37,10 +37,11 @@ import { trimHistory } from '../src/runtime/ai-sdk/history.js'
 import { applyReplyContext } from '../src/prompt-safety.js'
 import { createRun, type AuthorityFacet } from '../src/assurance/obligations.js'
 import { checkRole, loadRoles } from '../src/assurance/roles.js'
+import { cardRunKey, journalForRun } from '../src/assurance/effect-journal.js'
 import {
   ALL_PURPOSES, CLIENT, CrashSignal, DECISION_LEDGER, FACTS, MockDestination, OBLIGATIONS, STEPS, THRESHOLDS,
   fact, percentile, planFromContext, purposeOf, recipientGate, referenceMemory, runWorkflow, scoreContext,
-  stableKey, summarize, verifyDestination, workerContext,
+  productionJournal, stableKey, summarize, verifyDestination, workerContext,
   type Arm, type MemoryRow, type ScenarioResult, type Step, type TraceEvent,
 } from '../src/assurance/recovery-eval.js'
 
@@ -57,6 +58,11 @@ const flush = () => vi.advanceTimersByTimeAsync(0)
 /** The owner's decisions as the agent would see them if memory worked: isolates the fault under test. */
 const KNOWN = FACTS.filter(f => f.label === 'current').map(f => f.text).join('\n')
 const crmLookup = (dest: MockDestination) => workerContext('', dest).trim()
+/**
+ * As-is arm: main's effect journal (card #229) under the run Havn would be in.
+ * A chat turn passes its own key; scheduled runs take the scheduler's.
+ */
+const mainJournal = (arm: Arm, runKey?: string) => (arm === 'as-is' ? { journal: productionJournal(runKey) } : {})
 
 function startClock() {
   const t0 = performance.now(), s0 = Date.now()
@@ -175,7 +181,7 @@ describe('S0 baseline: no fault', () => {
     const stop = startClock()
     const dest = new MockDestination(), trace: TraceEvent[] = []
     const { authority } = createRun(`s0-${arm}`, OBLIGATIONS)
-    runWorkflow({ dest, runId: `s0-${arm}`, actor: 'chat:owner', context: arm === 'reference' ? DECISION_LEDGER : KNOWN, authority, trace, idempotencyKey: arm === 'reference' ? stableKey('s0') : undefined, gate: arm === 'reference' ? recipientGate : undefined })
+    runWorkflow({ dest, runId: `s0-${arm}`, actor: 'chat:owner', context: arm === 'reference' ? DECISION_LEDGER : KNOWN, authority, trace, ...mainJournal(arm, `turn:s0-${arm}`), idempotencyKey: arm === 'reference' ? stableKey('s0') : undefined, gate: arm === 'reference' ? recipientGate : undefined })
     const check = verifyDestination(dest)
     expect(check.verified).toBe(true)
     record({ scenario: 'S0 baseline', arm, fault: false, check, interventions: 0, checkerComplete: authority.requestCompletion().status === 'complete', ...stop() }, trace)
@@ -210,7 +216,7 @@ describe('S1 compaction: decisions made early, history trimmed before the step t
     const memory = await engine().buildContext(chat, ask)
     const provided = arm === 'reference' ? [DECISION_LEDGER, memory, history].join('\n') : [memory, history].join('\n')
     const dest = new MockDestination(), trace: TraceEvent[] = []
-    const out = runWorkflow({ dest, runId: chat, actor: 'chat:owner', context: `${provided}\n${crmLookup(dest)}`, trace, idempotencyKey: arm === 'reference' ? stableKey(chat) : undefined, gate: arm === 'reference' ? recipientGate : undefined })
+    const out = runWorkflow({ dest, runId: chat, actor: 'chat:owner', context: `${provided}\n${crmLookup(dest)}`, trace, ...mainJournal(arm, `turn:${chat}`), idempotencyKey: arm === 'reference' ? stableKey(chat) : undefined, gate: arm === 'reference' ? recipientGate : undefined })
     const ctx = scoreContext(provided)
     const check = verifyDestination(dest)
     if (arm === 'as-is') {
@@ -243,7 +249,7 @@ describe('S2 restart: process dies after the email is sent, before the run finis
     h.impl = async () => {
       n += 1
       try {
-        runWorkflow({ dest, runId: `${id}#${n}`, actor: `job:${id}`, context: KNOWN, authority: boot, trace, idempotencyKey: key, crashAfter: n === 1 ? 'reminder' : undefined })
+        runWorkflow({ dest, runId: `${id}#${n}`, actor: `job:${id}`, context: KNOWN, authority: boot, trace, ...mainJournal(arm), idempotencyKey: key, crashAfter: n === 1 ? 'reminder' : undefined })
       } catch (e) {
         if (e instanceof CrashSignal) return new Promise(() => {}) // the process is gone; this turn never returns
         throw e
@@ -272,8 +278,14 @@ describe('S2 restart: process dies after the email is sent, before the run finis
     await runDueTasks()
     const check = verifyDestination(dest)
     if (arm === 'as-is') {
-      expect(check.duplicates).toBe(2) // crm status and the email, again
-      expect(boot.requestCompletion().status).toBe('complete') // the checker cannot see the first boot
+      // The one-shot's run key survives the restart, so the journal refuses
+      // the CRM status and the email the first boot already made (#229).
+      expect(check.duplicates).toBe(0)
+      expect(check.verified).toBe(true)
+      expect(journalForRun(`job:${id}`).filter(r => r.repeats > 0).map(r => r.kind).sort()).toEqual(['crm.update', 'email.send'])
+      // Still pinned: obligation state is in memory, so the second boot cannot
+      // see the first one's evidence and reads incomplete (defect 5, #234).
+      expect(boot.requestCompletion().status).toBe('incomplete')
     } else {
       expect(check.verified).toBe(true)
     }
@@ -322,7 +334,7 @@ describe('S3 stale, malicious and cross-chat memory', () => {
     const stop = startClock()
     const provided = arm === 'reference' ? referenceMemory(memoryRows(), chat) : await engine().buildContext(chat, ask)
     const dest = new MockDestination(), trace: TraceEvent[] = []
-    const out = runWorkflow({ dest, runId: chat, actor: 'chat:owner', context: `${provided}\n${crmLookup(dest)}`, trace, idempotencyKey: arm === 'reference' ? stableKey(chat) : undefined, gate: arm === 'reference' ? recipientGate : undefined })
+    const out = runWorkflow({ dest, runId: chat, actor: 'chat:owner', context: `${provided}\n${crmLookup(dest)}`, trace, ...mainJournal(arm, `turn:${chat}`), idempotencyKey: arm === 'reference' ? stableKey(chat) : undefined, gate: arm === 'reference' ? recipientGate : undefined })
     const ctx = scoreContext(provided)
     const check = verifyDestination(dest)
     if (arm === 'reference') expect(check.verified).toBe(true)
@@ -390,13 +402,17 @@ describe('S4 parallel subagents with overlapping briefs', () => {
       context: workerContext(arm === 'reference' ? `${DECISION_LEDGER}\n${briefs[name].text}` : briefs[name].text, dest),
       idempotencyKey: arm === 'reference' ? stableKey('s4') : undefined,
       gate: arm === 'reference' ? recipientGate : undefined,
+      // Both workers run inside the one parent turn, so they share its run.
+      ...mainJournal(arm, `turn:s4-${arm}`),
     }))
     await Promise.all([work('A'), work('B')])
     const check = verifyDestination(dest)
     const checkerComplete = authority.requestCompletion().status === 'complete'
     if (arm === 'as-is') {
-      expect(check).toMatchObject({ duplicates: 1, unauthorized: 2, decisionViolations: 2 })
-      expect(checkerComplete).toBe(true) // two distinct send events both satisfy a minCount-1 obligation
+      // The second worker's send is refused at the journal (#229). Still pinned:
+      // each worker's brief carries no decisions, so the stale contact is used (#13).
+      expect(check).toMatchObject({ duplicates: 0, unauthorized: 1, decisionViolations: 1 })
+      expect(checkerComplete).toBe(true)
     } else {
       expect(check.verified).toBe(true)
     }
@@ -411,9 +427,10 @@ describe('S5 partial tool failure', () => {
     const stop = startClock()
     const dest = new MockDestination(), trace: TraceEvent[] = []
     dest.inject('email.send', 'ack-lost')
-    runWorkflow({ dest, runId: `s5a-${arm}`, actor: 'chat:owner', context: KNOWN, trace, idempotencyKey: arm === 'reference' ? stableKey('s5a') : undefined })
+    runWorkflow({ dest, runId: `s5a-${arm}`, actor: 'chat:owner', context: KNOWN, trace, ...mainJournal(arm, `turn:s5a-${arm}`), idempotencyKey: arm === 'reference' ? stableKey('s5a') : undefined })
     const check = verifyDestination(dest)
-    expect(check.duplicates).toBe(arm === 'as-is' ? 1 : 0)
+    expect(check.duplicates).toBe(0) // as-is: the timed-out send stays pending, so the retry is refused
+    expect(check.verified).toBe(true)
     record({ scenario: 'S5a ack lost', arm, fault: true, check, interventions: 0, ...stop() }, trace)
   })
 
@@ -421,7 +438,7 @@ describe('S5 partial tool failure', () => {
     const stop = startClock()
     const dest = new MockDestination(), trace: TraceEvent[] = []
     dest.inject('crm.note', 'before-commit')
-    runWorkflow({ dest, runId: `s5b-${arm}`, actor: 'chat:owner', context: KNOWN, trace, idempotencyKey: arm === 'reference' ? stableKey('s5b') : undefined })
+    runWorkflow({ dest, runId: `s5b-${arm}`, actor: 'chat:owner', context: KNOWN, trace, ...mainJournal(arm, `turn:s5b-${arm}`), idempotencyKey: arm === 'reference' ? stableKey('s5b') : undefined })
     const check = verifyDestination(dest)
     expect(check.verified).toBe(true)
     record({ scenario: 'S5b fail before commit', arm, fault: true, check, interventions: 0, ...stop() }, trace)
@@ -437,7 +454,7 @@ describe('S5 partial tool failure', () => {
     let n = 0
     h.impl = async () => {
       n += 1
-      runWorkflow({ dest, runId: `${id}#${n}`, actor: `job:${id}`, context: KNOWN, trace, idempotencyKey: arm === 'reference' ? stableKey(id) : undefined })
+      runWorkflow({ dest, runId: `${id}#${n}`, actor: `job:${id}`, context: KNOWN, trace, ...mainJournal(arm), idempotencyKey: arm === 'reference' ? stableKey(id) : undefined })
       return { text: n === 1 ? OVERLOADED : 'Done.' }
     }
     await runDueTasks()
@@ -445,7 +462,7 @@ describe('S5 partial tool failure', () => {
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
     expect(h.calls).toHaveLength(2)
     const check = verifyDestination(dest)
-    expect(check.duplicates).toBe(arm === 'as-is' ? 3 : 0)
+    expect(check.duplicates).toBe(0) // as-is: the deferred retry reuses the job's run key
     db.deleteTask(id)
     record({ scenario: 'S5c overload rerun', arm, fault: true, check, interventions: 0, ...stop() }, trace)
   })
@@ -459,6 +476,7 @@ describe('S6 duplicate callbacks', () => {
     if (!claim.claimed) return 'refused'
     return runWorkflow({
       dest, runId: `s6-${card}-${arm}`, actor: 'chat:owner', context: KNOWN, trace,
+      ...mainJournal(arm, cardRunKey('chat-s6', card)),
       idempotencyKey: arm === 'reference' ? stableKey(`card:${card}`) : undefined,
       // Reference: an approval is valid for 24 hours from when the card was sent.
       revalidate: arm === 'reference' ? () => (Date.now() - cardSentAt > 86_400_000 ? 'approval expired' : null) : undefined,
@@ -486,12 +504,13 @@ describe('S6 duplicate callbacks', () => {
     expect(onClick(arm, dest, trace, card, sent)).toBe('done')
     vi.setSystemTime(new Date('2026-10-09T13:05:00Z'))
     const stop = startClock() // timed from the replay
-    // Any other click prunes claims older than 7 days, including this card's.
+    // Another click used to prune claims older than 7 days, this card's included.
+    // Claims are now kept for as long as the card can be tapped (#229).
     db.claimButtonClick('chat-s6', `unrelated-${arm}`, 'Discard')
     const replay = onClick(arm, dest, trace, card, sent)
-    expect(replay).toBe(arm === 'as-is' ? 'done' : 'blocked')
+    expect(replay).toBe('refused')
     const check = verifyDestination(dest)
-    expect(check.duplicates).toBe(arm === 'as-is' ? 3 : 0)
+    expect(check.duplicates).toBe(0)
     record({ scenario: 'S6b stale card replay', arm, fault: true, check, interventions: 0, ...stop(), notes: `replay ${replay}` }, trace)
   })
 
@@ -502,7 +521,7 @@ describe('S6 duplicate callbacks', () => {
     for (let i = 0; i < 2; i++) {
       if (db.hasProcessedUpdate(update)) continue
       db.markUpdateProcessed(update)
-      runWorkflow({ dest, runId: `s6c-${arm}-${i}`, actor: 'chat:owner', context: KNOWN, trace })
+      runWorkflow({ dest, runId: `s6c-${arm}-${i}`, actor: 'chat:owner', context: KNOWN, trace, ...mainJournal(arm, `turn:s6c-${arm}-${i}`) })
     }
     const check = verifyDestination(dest)
     expect(check.verified).toBe(true)
@@ -541,6 +560,7 @@ describe('S7 revoked grants during a deferred retry', () => {
       n += 1
       // First attempt: the CRM update lands, then the API gives out mid-turn.
       runWorkflow({ dest, runId: `${id}#${n}`, actor: `job:${id}`, context: KNOWN, trace, steps: n === 1 ? ['crm-status'] : undefined,
+        ...mainJournal(arm),
         idempotencyKey: arm === 'reference' ? key : undefined, revalidate: arm === 'reference' ? revalidate : undefined })
       return { text: n === 1 ? OVERLOADED : 'Done.' }
     }
@@ -557,7 +577,9 @@ describe('S7 revoked grants during a deferred retry', () => {
     const id = `s7a-${arm}`
     const { check, trace, stop } = await deferredRun(arm, id, null, () => db.pauseTask(id))
     expect(h.calls).toHaveLength(2) // the retry closure never rereads the task
-    if (arm === 'as-is') expect(check.unauthorized).toBe(3)
+    // As-is: the retry's CRM status repeat is refused by the journal (#229);
+    // the reminder and note still go out after the revocation (defect 3, #230).
+    if (arm === 'as-is') expect(check).toMatchObject({ unauthorized: 2, duplicates: 0 })
     else expect(check.verified).toBe(true)
     db.deleteTask(id)
     record({ scenario: 'S7a paused during retry', arm, fault: true, check, interventions: 0, ...stop() }, trace)
@@ -569,7 +591,9 @@ describe('S7 revoked grants during a deferred retry', () => {
     const scope = h.calls[1][7] as { role: string }
     expect(scope.role).toBe('full') // captured at the first attempt
     expect(taskRow(id)!.role).toBe('briefing')
-    if (arm === 'as-is') expect(check.unauthorized).toBe(3)
+    // As-is: the retry's CRM status repeat is refused by the journal (#229);
+    // the reminder and note still go out after the revocation (defect 3, #230).
+    if (arm === 'as-is') expect(check).toMatchObject({ unauthorized: 2, duplicates: 0 })
     else expect(check.verified).toBe(true)
     db.deleteTask(id)
     record({ scenario: 'S7b role narrowed during retry', arm, fault: true, check, interventions: 0, ...stop() }, trace)
@@ -578,7 +602,10 @@ describe('S7 revoked grants during a deferred retry', () => {
   it('S7c a deleted task still runs its pending retry', async () => {
     const { trace } = await deferredRun('as-is', 's7c', null, () => db.deleteTask('s7c'))
     expect(h.calls).toHaveLength(2)
-    expect(trace.filter(e => e.event === 'ok').length).toBe(4)
+    // The first attempt's CRM update, then the retry's reminder and note; its
+    // repeat of the CRM update is refused by the journal (#229).
+    expect(trace.filter(e => e.event === 'ok').length).toBe(3)
+    expect(trace.filter(e => e.event === 'deduped').map(e => e.step)).toEqual(['crm-status'])
   })
 
   it('S7d a role removed from the catalog fails closed on the next tool call', () => {
@@ -596,9 +623,10 @@ describe('scorecard against the thresholds', () => {
     for (const [k, v] of Object.entries(s.pass)) if (v !== null) expect(v, k).toBe(true)
   })
 
-  it('as-is arm fails the hard thresholds (pins the current defects)', () => {
+  it('as-is arm: zero duplicate effects since #229, still fails the other hard thresholds', () => {
     const s = summarize(results, 'as-is')
-    expect(s.pass.duplicateBusinessEffects).toBe(false)
+    expect(s.duplicateBusinessEffects).toBe(0)
+    expect(s.pass.duplicateBusinessEffects).toBe(true)
     expect(s.pass.unauthorizedActions).toBe(false)
     expect(s.pass.recoverySuccess).toBe(false)
     expect(s.checkerDisagreements).toBeGreaterThan(0)

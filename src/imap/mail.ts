@@ -16,6 +16,7 @@
 import MailComposer from 'nodemailer/lib/mail-composer/index.js'
 import { simpleParser, type AddressObject, type ParsedMail } from 'mailparser'
 import { cleanBody, type MailBody, type MailSummary } from '../ms/mail.js'
+import { currentRun, emailTarget, guardedEffect } from '../assurance/effect-journal.js'
 
 export interface Envelope {
   uid: number
@@ -250,7 +251,12 @@ export async function sendDraft(
   }
   const recipients = [...addressList(parsed.to), ...addressList(parsed.cc), ...addressList(parsed.bcc)]
   if (recipients.length === 0) throw new Error(`send refused: ${id} has no recipients.`)
-  await sender.send(raw, { from: owner, to: recipients })
+  // Inside an agent run the send is held against the effect journal (card
+  // #229): the same recipients and subject twice in one run is refused.
+  const send = () => sender.send(raw, { from: owner, to: recipients })
+  const run = currentRun()
+  if (run) await guardedEffect({ kind: 'email.send', target: emailTarget(recipients, parsed.subject ?? ''), recipients }, send, run)
+  else await send()
   // The message has left. What follows is bookkeeping, and a failure in it
   // must not read as a failed send, or the owner sends it twice.
   try {

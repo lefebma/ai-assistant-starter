@@ -61,6 +61,12 @@ export const PUBLIC_HOSTNAME = env['PUBLIC_HOSTNAME']?.trim() ?? ''
  */
 export const TOOL_GUARD = env['TOOL_GUARD']?.trim() || 'log'
 /**
+ * Most distinct people one run may email or message (card #229), counted
+ * outside the model in src/assurance/effect-journal.ts. A run that would pass
+ * it is refused before anything goes out.
+ */
+export const SEND_RECIPIENT_LIMIT = Math.max(1, parseInt(env['SEND_RECIPIENT_LIMIT'] ?? '10', 10) || 10)
+/**
  * Audit log of every tool call (card #196). A hosted box always uses
  * /var/lib/havn-audit when root has created it, whatever this says; elsewhere
  * set AUDIT_DIR (outside the install) to turn it on. See src/assurance/audit-trail.ts.

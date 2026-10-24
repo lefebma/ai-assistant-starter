@@ -9,6 +9,7 @@
  */
 import { needsRefresh, refreshTokens, type FetchLike, type MsConfig, type MsTokens } from './auth.js'
 import { loadTokens as defaultLoad, saveTokens as defaultSave } from './store.js'
+import { markNotSent } from '../assurance/not-sent.js'
 
 const GRAPH = 'https://graph.microsoft.com/v1.0'
 /** A Graph call that has not answered by now is abandoned, so no caller hangs on it. */
@@ -87,7 +88,10 @@ export class GraphClient {
     // A 401 on a token we believed was live means it died early: revoked, a
     // password change, a policy. Worth one forced refresh, never two.
     if (res.status === 401 && !retried) return this.call(method, path, body, extraHeaders, true)
-    throw new Error(graphErrorMessage(parsed, res.status))
+    // Graph answered: a 4xx means it did not act, so a send may be retried.
+    // A 5xx or a timeout leaves it unknown whether a send went out.
+    const err = new Error(graphErrorMessage(parsed, res.status))
+    throw res.status < 500 ? markNotSent(err) : err
   }
 
   /** `headers` carries Prefer and the like; it cannot override Authorization. */

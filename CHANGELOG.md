@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.43.0 - 2026-10-24
+
+The assistant can no longer send the same email twice by accident.
+
+- **Fixed: a retry, a restart or a second helper could send an email again.** Each send is now recorded before it goes out, under the request it belongs to: one chat message, one scheduled run or one approval card. Sending the same email to the same people again within that request is refused, and the refusal is logged. When a send times out and it is unclear whether it went out, the assistant does not try again on its own; it says so and asks you to check Sent. Asking it yourself in a new message always works. This covers Outlook, IMAP mail (Yahoo, iCloud and others), Gmail sends and Slack posts.
+- **Fixed: tapping an old approval card could send its email again.** A card's Send button used to be forgotten after 7 days, so tapping it later sent the email a second time. A card now stays answered for as long as you can tap it.
+- **New: a limit on how many people one request can reach.** A single chat message, scheduled run or card can email or message at most 10 different people (`SEND_RECIPIENT_LIMIT` in `.env`). Past that the send is refused before anything goes out, and the assistant asks you to confirm.
+- **Changed: a job that sent something twice no longer reads as complete.** The completion check now treats one send more than expected as a possible duplicate, and reports the run as unknown instead of done.
+
 ## 1.42.0 - 2026-10-23
 
 An assistant can now run on an AI allowance supplied by its provider, and pauses cleanly when the month's allowance is used up.

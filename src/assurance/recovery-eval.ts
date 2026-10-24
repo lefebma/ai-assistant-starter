@@ -23,7 +23,10 @@
  * "not measured" in the results.
  *
  * Two arms run the same scenarios:
- *   - as-is: Havn's modules exactly as on main.
+ *   - as-is: Havn's modules exactly as on main. Since card #229 that
+ *     includes the effect journal: each effect is claimed in
+ *     effect-journal.ts under the run in force before it reaches the
+ *     destination, keyed by kind and target exactly as the send CLIs key it.
  *   - reference: the same modules plus four harness-only controls (stable
  *     idempotency keys, grant revalidation before each effect, a pinned
  *     decision ledger, provenance-filtered memory). They show the thresholds
@@ -33,6 +36,7 @@
  * All data is synthetic (.example domains, invented client).
  */
 import type { Obligation, AuthorityFacet } from './obligations.js'
+import { beginEffect, commitEffect, currentRun, emailTarget, releaseEffect, type BeginResult, type EffectSpec } from './effect-journal.js'
 import { validateParams, type ToolDef } from './capabilities.js'
 
 // ---- thresholds (fixed before any scenario ran) ------------------------------
@@ -219,6 +223,8 @@ export type WorkflowCtx = {
   revalidate?: (step: Step) => string | null
   /** Reference arm: out-of-model parameter gate on the effect. */
   gate?: (req: EffectRequest) => string | null
+  /** The effect boundary every effect is claimed at first (card #229). */
+  journal?: EffectBoundary
   /** How many times the agent retries a failed tool call. Agents usually retry once. */
   toolRetries?: number
   /** Simulate the process dying right after this step commits. */
@@ -243,10 +249,15 @@ export function runWorkflow(ctx: WorkflowCtx): WorkflowOutcome {
     if (why) { ev(step.id, 'blocked', why); return 'blocked' }
     let tries = 0
     for (;;) {
+      // Refused at the boundary: the effect already went out (or may have) in
+      // this run. The agent is told so and moves on, as it would on a tool error.
+      const claim = ctx.journal?.begin(effectSpecOf(req))
+      if (claim && !claim.ok) { ev(step.id, 'deduped', `journal: ${claim.reason}`); break }
       ev(step.id, 'call', req.idempotencyKey)
       try {
         const before = ctx.dest.attempts().length
         const effect = ctx.dest.apply(req)
+        if (claim) ctx.journal!.commit(claim.key)
         const deduped = ctx.dest.attempts()[before]?.outcome === 'deduped'
         ev(step.id, deduped ? 'deduped' : 'ok', effect.id)
         const r = ctx.authority?.record({ eventId: effect.id, runId: ctx.authority.snapshot().runId, origin: 'tool', evidenceType: step.evidenceType, obligationId: step.obligation })
@@ -254,6 +265,8 @@ export function runWorkflow(ctx: WorkflowCtx): WorkflowOutcome {
         break
       } catch (err) {
         if (!(err instanceof DestinationError)) throw err
+        // Only a refusal the destination confirmed frees the key for a retry.
+        if (claim && !err.committed) ctx.journal!.release(claim.key)
         ev(step.id, 'error', err.message)
         if (tries++ >= (ctx.toolRetries ?? 1)) return 'failed'
         ev(step.id, 'retry')
@@ -262,6 +275,29 @@ export function runWorkflow(ctx: WorkflowCtx): WorkflowOutcome {
     if (ctx.crashAfter === step.id) { ev(step.id, 'crash'); throw new CrashSignal(step.id) }
   }
   return 'done'
+}
+
+export type EffectBoundary = {
+  begin(spec: EffectSpec): BeginResult
+  commit(key: string | null): void
+  release(key: string | null): void
+}
+
+/**
+ * Main's effect journal. `runKey` names the run Havn would be in (a chat
+ * turn, an approval card); without it, whatever run is in force (a scheduled
+ * job's, set by the scheduler).
+ */
+export function productionJournal(runKey?: string): EffectBoundary {
+  return { begin: (spec) => beginEffect(spec, runKey ?? currentRun()), commit: commitEffect, release: releaseEffect }
+}
+
+/** How the real senders key each kind: recipients and subject for mail, the record for CRM writes. */
+export function effectSpecOf(req: EffectRequest): EffectSpec {
+  if (req.kind !== 'email.send') return { kind: req.kind, target: `${req.target}:${req.purpose}` }
+  const p = req.payload as { to: string; bcc?: string[]; ref: string }
+  const recipients = [p.to, ...(p.bcc ?? [])]
+  return { kind: req.kind, target: emailTarget(recipients, `${p.ref} payment reminder`), recipients }
 }
 
 function requestFor(step: Step, plan: Plan, ctx: WorkflowCtx): EffectRequest | null {
