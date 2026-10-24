@@ -74,10 +74,11 @@ describe('the scheduled audit gets fresh facts', () => {
 
   it('runs the expanded prompt, not the stored one', () => {
     const body = functionBody(SCHEDULER, 'export async function runDueTasks')
-    const runs = [...body.matchAll(/runAgent\(([A-Za-z.]+)/g)].map((m) => m[1])
+    // The deferred retry wraps it in a continuation (card #230); still the expanded prompt.
+    const runs = [...body.matchAll(/runAgent\(((?:continuationPrompt\()?[A-Za-z.]+)/g)].map((m) => m[1])
     expect(runs.length).toBeGreaterThanOrEqual(2)
     expect(runs).not.toContain('task.prompt')
-    for (const arg of runs) expect(arg).toBe('prompt')
+    for (const arg of runs) expect(['prompt', 'continuationPrompt(prompt']).toContain(arg)
   })
 
   it('the token the scheduler expands is the one the stored prompt carries', () => {

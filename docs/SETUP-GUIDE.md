@@ -561,6 +561,15 @@ commands as program and verb, e.g. `"gog gmail search"`, `"ms-mail.js draft"`)
 and `writes` (folders it may change). A role with the same id as a built-in
 replaces it. A job whose role is not defined does not run.
 
+A role can also carry `expiresAt`, a date like `"2026-12-31"` or a date and
+time. From then on the role refuses every call, and a job using it does not
+start. A value that is not a date counts as already expired.
+
+Changes apply mid-run. Every tool call in a scheduled job rereads the task:
+pause or delete it and the next call is refused; change its role and the next
+call is checked against the new one. A retry waiting after an AI overload
+does the same when it fires, and picks up where the first attempt stopped.
+
 ## Voice
 
 Everything voice runs on an OpenAI API key (`OPENAI_API_KEY`), whichever AI

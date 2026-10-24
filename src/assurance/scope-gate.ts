@@ -11,6 +11,10 @@
  * outside (gog gmail send, a Slack post) is then held against the effect
  * journal (card #229): the same send twice in one run is refused.
  *
+ * A scheduled run's live grant (card #230, grant.ts) is read first, on every
+ * call: a task the owner paused or deleted refuses the call, and the role
+ * checked is the one the task has now, not the one the run started with.
+ *
  * Every call is then written to the audit log (card #196) with its outcome,
  * and a call that would change the audit store is refused before anything
  * else. See audit-trail.ts.
@@ -21,8 +25,9 @@ import { AUDIT_DIR, PROJECT_ROOT, ROLES_FILE, STORE_DIR, TOOL_GUARD } from '../c
 import { logger } from '../logger.js'
 import { getToolGuard, parseGuardMode } from './tool-guard.js'
 import { getAuditTrail, type ToolOutcome } from './audit-trail.js'
-import { allowedServers, canonicalTool, checkRole, exposureFor, loadRoles, mcpServerConfigs, refusalMessage, type RoleSpec } from './roles.js'
+import { allowedServers, canonicalTool, checkRole, roleExpired, exposureFor, loadRoles, mcpServerConfigs, refusalMessage, type RoleSpec } from './roles.js'
 import type { RunScope } from '../runtime/types.js'
+import { currentGrant } from './grant.js'
 import { beginEffect, commitEffect, releaseEffect } from './effect-journal.js'
 import { effectsOfCommand } from './effect-commands.js'
 
@@ -72,6 +77,8 @@ export function resolveRole(scope: RunScope | undefined): RoleSpec | null {
   if (!scope?.role) return null
   const role = loadRoles(ROLES_FILE).get(scope.role)
   if (!role) throw new Error(`role "${scope.role}" is not defined`)
+  const expired = roleExpired(role)
+  if (expired) throw new Error(expired)
   return role
 }
 
@@ -87,8 +94,16 @@ export function gateToolCall(call: ToolCall): GateResult {
     logger.warn({ tool: call.tool }, 'refused a tool call that reaches into the audit log')
     return { allow: false, reason: 'Refused: the audit log cannot be changed by the assistant. Reading it with the Read tool is fine.' }
   }
-  const decided = decide(call)
-  const { result, outcome, note } = decided.result.allow ? holdEffects(call) ?? decided : decided
+  const live = currentGrant()
+  if (live && !live.ok) {
+    trail?.record(call, 'denied', `grant revoked: ${live.reason}`)
+    logger.warn({ tool: call.tool, reason: live.reason }, 'refused a tool call: grant revoked')
+    return { allow: false, reason: `Refused: ${live.reason}, so this run may not do anything more. Stop here and say so in your result.` }
+  }
+  // The role the task has now. A role cleared mid-run means every tool, as in chat.
+  const current = live ? { ...call, scope: live.role ? { role: live.role, taskId: live.taskId ?? call.scope?.taskId } : undefined } : call
+  const decided = decide(current)
+  const { result, outcome, note } = decided.result.allow ? holdEffects(current) ?? decided : decided
   trail?.record(call, outcome, note)
   return result
 }

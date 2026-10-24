@@ -495,6 +495,9 @@ export class ClaudeAgentRuntime implements AgentRuntime {
   ): Promise<LaneOutcome> {
     const { onTyping, onPartial, onToolProgress } = options
     let lastError: unknown
+    // The last attempt's session, handed back with an overload so the
+    // scheduler's retry can resume it instead of starting over (card #230).
+    let lastSessionId: string | undefined
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) {
@@ -565,6 +568,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           logger.info({ type: event.type, subtype: (event as any).subtype }, 'Agent event')
           if (event.type === 'system' && event.subtype === 'init') {
             newSessionId = event.session_id
+            lastSessionId = newSessionId
             // Track workspace for subagent conflict detection
             if (newSessionId) this.activeWorkspaces.set(newSessionId, cwd)
           }
@@ -677,6 +681,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             onToolProgress,
             // A cancel must reach the steered follow-up too, not just the original run.
             signal: options.signal,
+            // A steer during a scoped job stays inside the job's role (#218 defect 6).
+            scope: options.scope,
           })
           return {
             text: steered.text,
@@ -765,7 +771,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         // Genuinely a transient upstream overload/rate-limit that outlived our retries:
         // keep the exact wording the scheduler keys off (OVERLOAD_PATTERN) to defer.
         if (isRetryableError(err)) {
-          return { text: 'API is temporarily overloaded. Will try again on the next run.' }
+          return { text: 'API is temporarily overloaded. Will try again on the next run.', newSessionId: lastSessionId }
         }
 
         // Anything else is a real, non-transient failure (subprocess crash, bad config,
@@ -782,6 +788,6 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     // Should not reach here (retryable errors return above; the loop never exhausts
     // without a return), but stay honest if it somehow does.
     logger.error({ lastError: managed ? scrubSecret(String(lastError), apiKeyOverride) : lastError }, 'Exhausted all retries')
-    return { text: 'API is temporarily overloaded. Will try again on the next run.' }
+    return { text: 'API is temporarily overloaded. Will try again on the next run.', newSessionId: lastSessionId }
   }
 }

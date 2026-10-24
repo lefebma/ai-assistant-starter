@@ -42,7 +42,7 @@ import {
   spokenShortcutName,
 } from './shortcut-setup.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
-import { computeNextRun } from './scheduler.js'
+import { cancelDeferredRetry, computeNextRun } from './scheduler.js'
 import { logger } from './logger.js'
 import { commandWord } from './infra/command-text.js'
 import { CronExpressionParser } from 'cron-parser'
@@ -589,6 +589,7 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
   if (subcmd === 'delete') {
     const id = parts[2]
     if (!id) { await adapter.sendMessage(chatId, 'Usage: /schedule delete <id>'); return }
+    cancelDeferredRetry(id)
     await adapter.sendMessage(chatId, deleteTask(id) ? `Task ${id} deleted.` : `Task ${id} not found.`)
     return
   }
@@ -596,6 +597,7 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
   if (subcmd === 'pause') {
     const id = parts[2]
     if (!id) { await adapter.sendMessage(chatId, 'Usage: /schedule pause <id>'); return }
+    cancelDeferredRetry(id)
     await adapter.sendMessage(chatId, pauseTask(id) ? `Task ${id} paused.` : `Task ${id} not found.`)
     return
   }

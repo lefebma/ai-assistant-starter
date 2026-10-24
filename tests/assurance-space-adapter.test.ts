@@ -138,12 +138,17 @@ describe('SpaceRoute behind the real gate', () => {
     expect(api.runs[0].argv.slice(0, 2)).toEqual(['sh', '-c'])
   })
 
-  it('an expired grant gets deny-all at the gateway, whatever roles.json says (C21)', async () => {
+  it('an expired grant never reaches SPACE: the gate refuses it first (C21, card #230)', async () => {
     const api = new FakeSpace()
     const route = new SpaceRoute({ api, grantFor: grants, now: () => new Date('2026-10-22T00:00:00Z') })
-    await runCase(byId('C21'), harness(route))
-    expect(api.creates).toHaveLength(1)
-    expect(api.creates[0].policy).toEqual(DENY_ALL)
+    const r = await runCase(byId('C21'), harness(route))
+    expect(api.creates).toHaveLength(0)
+    expect(r.attempts[0]).toMatchObject({ allowed: false, layer: 'role' })
+  })
+
+  it('the route still answers an expired grant with deny-all if one gets past the gate', () => {
+    const route = new SpaceRoute({ api: new FakeSpace(), grantFor: grants, now: () => new Date('2026-10-22T00:00:00Z') })
+    expect(route.policyFor('temp-grant')).toEqual(DENY_ALL)
   })
 
   it('a second AuditLog on the same file breaks the chain, so the route must share the gate\'s', async () => {

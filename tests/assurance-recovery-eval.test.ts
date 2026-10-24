@@ -38,6 +38,7 @@ import { applyReplyContext } from '../src/prompt-safety.js'
 import { createRun, type AuthorityFacet } from '../src/assurance/obligations.js'
 import { checkRole, loadRoles } from '../src/assurance/roles.js'
 import { cardRunKey, journalForRun } from '../src/assurance/effect-journal.js'
+import { gateToolCall } from '../src/assurance/scope-gate.js'
 import {
   ALL_PURPOSES, CLIENT, CrashSignal, DECISION_LEDGER, FACTS, MockDestination, OBLIGATIONS, STEPS, THRESHOLDS,
   fact, percentile, planFromContext, purposeOf, recipientGate, referenceMemory, runWorkflow, scoreContext,
@@ -63,6 +64,16 @@ const crmLookup = (dest: MockDestination) => workerContext('', dest).trim()
  * A chat turn passes its own key; scheduled runs take the scheduler's.
  */
 const mainJournal = (arm: Arm, runKey?: string) => (arm === 'as-is' ? { journal: productionJournal(runKey) } : {})
+/**
+ * As-is arm: each step goes through main's tool gate as the command the agent
+ * would run, under whatever live grant the scheduler set (card #230). The
+ * scope passed is the one the run started with; the gate replaces it with the
+ * task's current role.
+ */
+const mainGate = (scope: unknown) => (s: Step) => {
+  const v = gateToolCall({ session: 'recovery-eval', tool: 'Bash', input: { command: COMMAND[s.kind] }, cwd: '/tmp', scope: scope as { role: string } | undefined })
+  return v.allow ? null : v.reason
+}
 
 function startClock() {
   const t0 = performance.now(), s0 = Date.now()
@@ -556,12 +567,12 @@ describe('S7 revoked grants during a deferred retry', () => {
       return null
     }
     let n = 0
-    h.impl = async () => {
+    h.impl = async (...args: unknown[]) => {
       n += 1
       // First attempt: the CRM update lands, then the API gives out mid-turn.
       runWorkflow({ dest, runId: `${id}#${n}`, actor: `job:${id}`, context: KNOWN, trace, steps: n === 1 ? ['crm-status'] : undefined,
         ...mainJournal(arm),
-        idempotencyKey: arm === 'reference' ? key : undefined, revalidate: arm === 'reference' ? revalidate : undefined })
+        idempotencyKey: arm === 'reference' ? key : undefined, revalidate: arm === 'reference' ? revalidate : mainGate(args[7]) })
       return { text: n === 1 ? OVERLOADED : 'Done.' }
     }
     await runDueTasks()
@@ -576,11 +587,10 @@ describe('S7 revoked grants during a deferred retry', () => {
   for (const arm of ARMS) it(`S7a owner pauses the task while its retry is pending: ${arm}`, async () => {
     const id = `s7a-${arm}`
     const { check, trace, stop } = await deferredRun(arm, id, null, () => db.pauseTask(id))
-    expect(h.calls).toHaveLength(2) // the retry closure never rereads the task
-    // As-is: the retry's CRM status repeat is refused by the journal (#229);
-    // the reminder and note still go out after the revocation (defect 3, #230).
-    if (arm === 'as-is') expect(check).toMatchObject({ unauthorized: 2, duplicates: 0 })
-    else expect(check.verified).toBe(true)
+    // The retry rereads the task when it fires and drops itself (#230).
+    expect(h.calls).toHaveLength(1)
+    expect(taskRow(id)!.last_result).toMatch(/^SKIPPED: retry dropped/)
+    expect(check.verified).toBe(true)
     db.deleteTask(id)
     record({ scenario: 'S7a paused during retry', arm, fault: true, check, interventions: 0, ...stop() }, trace)
   })
@@ -588,24 +598,40 @@ describe('S7 revoked grants during a deferred retry', () => {
   for (const arm of ARMS) it(`S7b owner narrows the role while its retry is pending: ${arm}`, async () => {
     const id = `s7b-${arm}`
     const { check, trace, stop } = await deferredRun(arm, id, 'full', () => db.setTaskRole(id, 'briefing'))
+    // The retry runs with the task's current role, and resumes the first
+    // attempt's session with a continuation prompt instead of the bare prompt (#230).
     const scope = h.calls[1][7] as { role: string }
-    expect(scope.role).toBe('full') // captured at the first attempt
-    expect(taskRow(id)!.role).toBe('briefing')
-    // As-is: the retry's CRM status repeat is refused by the journal (#229);
-    // the reminder and note still go out after the revocation (defect 3, #230).
-    if (arm === 'as-is') expect(check).toMatchObject({ unauthorized: 2, duplicates: 0 })
-    else expect(check.verified).toBe(true)
+    expect(scope.role).toBe('briefing')
+    expect(String(h.calls[1][0])).toMatch(/^\[retry\]/)
+    if (arm === 'as-is') expect(trace.filter(e => e.event === 'blocked').map(e => e.detail)).toEqual([expect.stringMatching(/briefing role/)])
+    expect(check.verified).toBe(true)
     db.deleteTask(id)
     record({ scenario: 'S7b role narrowed during retry', arm, fault: true, check, interventions: 0, ...stop() }, trace)
   })
 
-  it('S7c a deleted task still runs its pending retry', async () => {
+  it('S7c a deleted task drops its pending retry', async () => {
     const { trace } = await deferredRun('as-is', 's7c', null, () => db.deleteTask('s7c'))
-    expect(h.calls).toHaveLength(2)
-    // The first attempt's CRM update, then the retry's reminder and note; its
-    // repeat of the CRM update is refused by the journal (#229).
-    expect(trace.filter(e => e.event === 'ok').length).toBe(3)
-    expect(trace.filter(e => e.event === 'deduped').map(e => e.step)).toEqual(['crm-status'])
+    expect(h.calls).toHaveLength(1)
+    expect(trace.filter(e => e.event === 'ok').map(e => e.step)).toEqual(['crm-status'])
+  })
+
+  it('S7e owner pauses the task mid-run: the next effect is refused', async () => {
+    vi.useFakeTimers(FAKE)
+    vi.setSystemTime(new Date('2026-10-22T13:00:00Z'))
+    const id = 's7e'
+    db.createTask(id, 'chat-s7', 'Run the Northpine follow-up', '0 9 * * *', nowS() - 60, 'Northpine follow-up', 'silent', 'America/Toronto', false, null)
+    const dest = new MockDestination(), trace: TraceEvent[] = []
+    h.impl = async (...args: unknown[]) => {
+      const gate = mainGate(args[7])
+      // The owner pauses the job right after the CRM update lands.
+      runWorkflow({ dest, runId: id, actor: `job:${id}`, context: KNOWN, trace, ...mainJournal('as-is'),
+        revalidate: (s) => { if (s.id === 'reminder') db.pauseTask(id); return gate(s) } })
+      return { text: 'Done.' }
+    }
+    await runDueTasks()
+    expect(dest.effects().map(e => e.kind)).toEqual(['crm.update'])
+    expect(trace.find(e => e.event === 'blocked')?.detail).toMatch(/paused this scheduled task/)
+    db.deleteTask(id)
   })
 
   it('S7d a role removed from the catalog fails closed on the next tool call', () => {
