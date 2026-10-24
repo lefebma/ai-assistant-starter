@@ -230,3 +230,21 @@ its own secret in the URL its tools get, and refuses a request without it
 (credentials in launchOptions, answering the 407) all send it; each without
 it is refused. Chromium's first try never carries credentials, so only a
 wrong credential is audited.
+
+## Follow-up: card #232 (2026-10-24)
+
+The rest of defect 6 is fixed. Chat turns run on a queue (ported from Umi's
+turn queue), so the message loop is free while a turn runs and `/cancel`,
+`/steer` and `/newchat` take effect mid-turn. Every `runAgent` caller passes
+an AbortSignal: chat and Shortcut turns (the queue's), the scheduler (one
+controller per run, deferred retries included), the cockpit's Cancel, and the
+voice endpoint (a hang-up before a handoff to chat). `/cancel`,
+`/schedule cancel`, delete and pause stop runs in flight; shutdown aborts
+everything first. In the ai-sdk runtime `dispatch_subagent` passes the tool
+call's abort signal to the subagent and gates the subagent under the parent's
+session, so evasion strikes carry across delegation. The bash tool runs its
+shell as a process-group leader and kills the group on cancel or timeout.
+Writing that test found `execFile` ignores `detached`, so the first version of
+the group kill silently did nothing; it uses `spawn` now. Covered by
+tests/turn-queue, scheduler-cancel (a cancel during a run, a pending retry and
+the retry's own run), ai-sdk-cancel-delegation and bot-cancel.

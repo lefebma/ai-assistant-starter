@@ -26,7 +26,7 @@ vi.mock('../src/memory.js', async (orig) => ({
   saveConversationTurn: h.saveTurn,
 }))
 
-import { createBot } from '../src/bot.js'
+import { createBot, turnsIdle } from '../src/bot.js'
 import { addAuthorizedChat, initDatabase } from '../src/db.js'
 import { FIRST_REPLY, MANAGED_AI_FILE, REPEAT_REPLY, readAiLimit, writeAiLimit } from '../src/ai-limit.js'
 import { AI_USAGE_FILE, recordManagedSpend, usageWarningText } from '../src/ai-usage.js'
@@ -56,8 +56,9 @@ function harness() {
   createBot(adapter as never)
   return {
     sent,
-    say: (text: string) => handler({ chatId: 'owner', text, type: 'text' }),
-    sayFrom: (chatId: string, text: string) => handler({ chatId, text, type: 'text' }),
+    // Turns run on a queue (card #232): wait for the reply, not just the hand-off.
+    say: async (text: string) => { await handler({ chatId: 'owner', text, type: 'text' }); await turnsIdle() },
+    sayFrom: async (chatId: string, text: string) => { await handler({ chatId, text, type: 'text' }); await turnsIdle() },
   }
 }
 

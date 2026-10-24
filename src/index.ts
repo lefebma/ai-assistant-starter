@@ -7,7 +7,7 @@ import { WitnessChecker, startWitnessChecks } from './assurance/witness-check.js
 import { initDatabase } from './db.js'
 import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
-import { createBot } from './bot.js'
+import { abortAllRuns, createBot } from './bot.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
 import { AiPausedError } from './ai-limit.js'
 import { startAiRecovery } from './ai-recovery.js'
@@ -309,6 +309,9 @@ async function main(): Promise<void> {
     }, 8000)
     hardExit.unref()
 
+    // Stop chat turns and scheduled runs first (card #232): their tools and
+    // subagents are killed, not left running against a process on its way out.
+    abortAllRuns()
     clearInterval(decayTimer)
     stopWitness()
     stopWitnessChecks()

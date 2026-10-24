@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
-import { getDueTasks, getAllTasks, getTask, updateTaskAfterRun, setTaskNextRun, deleteTask, type ScheduledTask } from './db.js'
+import { getDueTasks, getAllTasks, getTask, updateTaskAfterRun, setTaskNextRun, deleteTask, pauseTask, type ScheduledTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
 import { jobRunKey, withRun } from './assurance/effect-journal.js'
@@ -13,6 +13,7 @@ import { aiPausedForBackground, readAiLimit, recoveryDueAt } from './ai-limit.js
 import { dashboardDataFile } from './cockpit/paths.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
+type AgentResult = Awaited<ReturnType<typeof runAgent>>
 
 let sender: Sender | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -48,6 +49,96 @@ export function continuationPrompt(prompt: string): string {
     'The job:',
     prompt,
   ].join('\n')
+}
+
+// Runs in flight, keyed per run (not per task: a deferred retry and the next
+// cron occurrence of the same task can overlap). /cancel, /schedule cancel,
+// /schedule delete and shutdown abort the controller; the signal reaches
+// runAgent, which stops the run and anything it delegated (card #232).
+type RunningRun = { taskId: string; chatId: string; label: string; controller: AbortController }
+const runningRuns = new Map<number, RunningRun>()
+let nextRunId = 1
+
+function registerRun(task: Pick<ScheduledTask, 'id' | 'chat_id'>, label: string): { runId: number; controller: AbortController } {
+  const runId = nextRunId++
+  const controller = new AbortController()
+  runningRuns.set(runId, { taskId: task.id, chatId: task.chat_id, label, controller })
+  return { runId, controller }
+}
+
+export interface ScheduledCancelResult {
+  /** Labels of runs that were in flight and have been told to stop. */
+  stopped: string[]
+  /** Labels of pending overload retries that will no longer fire. */
+  retriesCleared: string[]
+  /** One-shot task ids paused by this cancel, so they don't re-fire. */
+  pausedOneShots: string[]
+}
+
+const labelFor = (task: Pick<ScheduledTask, 'name' | 'prompt'>) => task.name ?? task.prompt.slice(0, 100)
+
+function cancelWhere(match: (taskId: string, chatId: string) => boolean): ScheduledCancelResult {
+  const stopped: string[] = []
+  const retriesCleared: string[] = []
+  const touched = new Set<string>()
+  for (const run of runningRuns.values()) {
+    if (match(run.taskId, run.chatId) && !run.controller.signal.aborted) {
+      run.controller.abort()
+      stopped.push(run.label)
+      touched.add(run.taskId)
+    }
+  }
+  let tasks: Map<string, ScheduledTask> | undefined
+  const taskById = (id: string) => (tasks ??= new Map(getAllTasks().map((t) => [t.id, t]))).get(id)
+  for (const taskId of [...deferredRetries.keys()]) {
+    const task = taskById(taskId)
+    if (!match(taskId, task?.chat_id ?? '')) continue
+    cancelDeferredRetry(taskId)
+    retriesCleared.push(task ? labelFor(task) : taskId)
+    touched.add(taskId)
+  }
+  // Persist now, not when the stopped run unwinds: a restart in between would
+  // otherwise find a stale RUNNING... row and could re-arm a cancelled one-shot.
+  const pausedOneShots: string[] = []
+  for (const taskId of touched) {
+    const task = taskById(taskId)
+    if (!task) continue
+    updateTaskAfterRun(taskId, 'CANCELLED', task.next_run)
+    if (task.run_once && task.status === 'active') {
+      pauseTask(taskId)
+      pausedOneShots.push(taskId)
+    }
+  }
+  if (touched.size) logger.info({ stopped, retriesCleared, pausedOneShots }, 'Scheduled task runs cancelled')
+  return { stopped, retriesCleared, pausedOneShots }
+}
+
+/** Stop every running scheduled task and pending retry that delivers to this chat. */
+export function cancelScheduledForChat(chatId: string): ScheduledCancelResult {
+  return cancelWhere((_taskId, taskChat) => taskChat === chatId)
+}
+
+/** Stop one task's run in flight and its pending retry. */
+export function cancelScheduledTask(taskId: string): ScheduledCancelResult {
+  return cancelWhere((id) => id === taskId)
+}
+
+/**
+ * Shutdown: stop runs in flight, leave their rows alone. A one-shot stopped
+ * this way runs again after the restart under the same run key, so anything
+ * it already sent is refused rather than repeated (#229).
+ */
+export function abortAllScheduledRuns(): number {
+  let n = 0
+  for (const run of runningRuns.values()) {
+    if (!run.controller.signal.aborted) { run.controller.abort(); n++ }
+  }
+  return n
+}
+
+export function isScheduledTaskRunning(taskId: string): boolean {
+  for (const run of runningRuns.values()) if (run.taskId === taskId) return true
+  return false
 }
 
 const scopeOf = (task: Pick<ScheduledTask, 'id' | 'role'>) => (task.role ? { role: task.role, taskId: task.id } : undefined)
@@ -155,6 +246,7 @@ export async function runDueTasks(): Promise<void> {
     }
     updateTaskAfterRun(task.id, 'RUNNING...', nextRun)
     markLane(task.chat_id, 'cron')
+    const { runId, controller } = registerRun(task, label)
 
     try {
       // Only announce for non-silent jobs
@@ -175,7 +267,13 @@ export async function runDueTasks(): Promise<void> {
       // Every tool call rereads the task (card #230): pausing, deleting or
       // re-roling the job takes effect at the next call, not the next run.
       const grant = taskGrant(task.id, getTask)
-      const { text, aiPaused, newSessionId } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, scopeOf(task)))))
+      const { text, aiPaused, newSessionId } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', controller.signal, scopeOf(task)))))
+      // Cancelled: cancelWhere already recorded it and the command already
+      // replied. Nothing to deliver, defer or delete.
+      if (controller.signal.aborted) {
+        logger.info({ taskId: task.id, name: task.name }, 'Cancelled scheduled run stopped')
+        continue
+      }
       // The allowance ran out during this run: nothing to send, keep a one-shot.
       if (aiPaused) {
         logger.info({ taskId: task.id, kind: aiPaused }, 'AI allowance used up during scheduled task')
@@ -198,7 +296,18 @@ export async function runDueTasks(): Promise<void> {
               return
             }
             logger.info({ taskId: task.id, resume: Boolean(newSessionId), role: now.role }, 'Running deferred retry')
-            const { text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', undefined, scopeOf(now)))))
+            const retry = registerRun(now, label)
+            let retryText: AgentResult['text']
+            let retryPaused: AgentResult['aiPaused']
+            try {
+              ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now))))))
+            } finally {
+              runningRuns.delete(retry.runId)
+            }
+            if (retry.controller.signal.aborted) {
+              logger.info({ taskId: task.id }, 'Cancelled deferred retry stopped')
+              return
+            }
             if (retryPaused) {
               logger.info({ taskId: task.id, kind: retryPaused }, 'AI allowance used up during deferred retry')
               skipWhilePaused(task, nextRun)
@@ -268,6 +377,7 @@ export async function runDueTasks(): Promise<void> {
         updateTaskAfterRun(task.id, `ERROR: ${String(err)}`, nextRun)
       } catch { /* best effort */ }
     } finally {
+      runningRuns.delete(runId)
       clearLane(task.chat_id)
     }
   }

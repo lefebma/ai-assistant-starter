@@ -52,7 +52,9 @@ describe('the audit stays out of the record it audits', () => {
   })
 
   it('handleMessage actually honours the flag', () => {
-    const body = functionBody(BOT, 'async function handleMessage')
+    // handleMessage queues the turn with its opts; runTurn does the work (card #232).
+    expect(functionBody(BOT, 'async function handleMessage')).toContain('runTurn(adapter, chatId, rawText, forceVoiceReply, opts, signal)')
+    const body = functionBody(BOT, 'async function runTurn')
     expect(body).toContain('if (!opts.skipMemory) await saveConversationTurn')
   })
 

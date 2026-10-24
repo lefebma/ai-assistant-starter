@@ -339,6 +339,7 @@ def build_section_4(story, S):
     commands = [
         ["/help", "Show available commands and features"],
         ["/newchat", "Start a fresh conversation (clears context)"],
+        ["/cancel", "Stop what is running: the reply, queued messages, scheduled runs"],
         ["/chatid", "Display your Telegram chat ID"],
         ["/memory", "View what the assistant remembers about you"],
         ["/voice on|off", "Toggle voice responses on/off"],
@@ -348,9 +349,10 @@ def build_section_4(story, S):
         ["/skill disable <id>", "Disable a skill"],
         ["/schedule create", "Create a scheduled task (see Section 6)"],
         ["/schedule list", "List all scheduled tasks"],
-        ["/schedule pause <id>", "Pause a scheduled task"],
+        ["/schedule cancel <id>", "Stop a task's run in progress; the schedule stays"],
+        ["/schedule pause <id>", "Pause a scheduled task (stops a run in progress)"],
         ["/schedule resume <id>", "Resume a paused task"],
-        ["/schedule delete <id>", "Delete a scheduled task"],
+        ["/schedule delete <id>", "Delete a scheduled task (stops a run in progress)"],
     ]
 
     cmd_table = Table(commands, colWidths=[2.2 * inch, 4.3 * inch])

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.47.0 - 2026-10-24
+
+Stopping the assistant now actually stops it.
+
+- **New: `/cancel`.** Stops the reply in progress, drops messages waiting behind it, and stops the scheduled runs and pending retries that report to this chat. It works mid-reply: messages are no longer held until the current reply finishes, so `/steer` and `/newchat` take effect mid-reply too.
+- **New: `/schedule cancel <id>`** stops one task's run in progress (or its pending retry) and keeps the schedule. A cancelled one-shot is paused so it doesn't fire again.
+- **Changed: `/schedule delete` and `/schedule pause` stop a run in progress**, not just future runs.
+- **Delegated work stops too.** A subagent stops with the run that started it, and a command the assistant ran is killed along with anything it started in the background. A command that times out is cleaned up the same way.
+- **The dashboard's Cancel and a voice caller hanging up** now stop the run instead of leaving it working in the background.
+- **Shutting down or restarting** stops what is running first.
+- A cancelled reply leaves the chat on its previous session and saves nothing to memory.
+
 ## 1.46.0 - 2026-10-24
 
 On a hosted assistant, tools can only reach the places you approved.
