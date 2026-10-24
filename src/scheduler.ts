@@ -1,9 +1,10 @@
 import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
-import { getDueTasks, getAllTasks, updateTaskAfterRun, setTaskNextRun, deleteTask, type ScheduledTask } from './db.js'
+import { getDueTasks, getAllTasks, getTask, updateTaskAfterRun, setTaskNextRun, deleteTask, type ScheduledTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
 import { jobRunKey, withRun } from './assurance/effect-journal.js'
+import { taskGrant, withGrant } from './assurance/grant.js'
 import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
 import { buildAuditPrompt } from './audit/report.js'
@@ -23,6 +24,33 @@ const DASHBOARD_JOBS_FILE = process.env.DASHBOARD_JOBS_FILE || dashboardDataFile
 
 // Track deferred retries: taskId -> timeout handle
 const deferredRetries = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** Drop a task's pending overload retry, if it has one (pause and delete call this). */
+export function cancelDeferredRetry(taskId: string): boolean {
+  const handle = deferredRetries.get(taskId)
+  if (!handle) return false
+  clearTimeout(handle)
+  deferredRetries.delete(taskId)
+  logger.info({ taskId }, 'Deferred retry cancelled')
+  return true
+}
+
+/**
+ * What the deferred retry sends instead of the bare prompt (card #230). It
+ * resumes the first attempt's session where there is one, so the model sees
+ * what it already did; the effect journal (#229) refuses any repeat anyway.
+ */
+export function continuationPrompt(prompt: string): string {
+  return [
+    '[retry] An earlier attempt at this scheduled job stopped partway because the AI service was overloaded.',
+    'Check what was already done before acting, and finish only what is left. Anything that already went out is recorded, and a repeat will be refused.',
+    '',
+    'The job:',
+    prompt,
+  ].join('\n')
+}
+
+const scopeOf = (task: Pick<ScheduledTask, 'id' | 'role'>) => (task.role ? { role: task.role, taskId: task.id } : undefined)
 
 export function initScheduler(send: Sender): void {
   sender = send
@@ -144,7 +172,10 @@ export async function runDueTasks(): Promise<void> {
       // The deferred retry and a rerun after a crash reuse this run key, so an
       // email the first attempt already sent is refused, not sent again (#229).
       const runKey = jobRunKey(task.id, task.next_run, task.run_once === 1)
-      const { text, aiPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)))
+      // Every tool call rereads the task (card #230): pausing, deleting or
+      // re-roling the job takes effect at the next call, not the next run.
+      const grant = taskGrant(task.id, getTask)
+      const { text, aiPaused, newSessionId } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, scopeOf(task)))))
       // The allowance ran out during this run: nothing to send, keep a one-shot.
       if (aiPaused) {
         logger.info({ taskId: task.id, kind: aiPaused }, 'AI allowance used up during scheduled task')
@@ -159,8 +190,15 @@ export async function runDueTasks(): Promise<void> {
         const retryHandle = setTimeout(async () => {
           deferredRetries.delete(task.id)
           try {
-            logger.info({ taskId: task.id }, 'Running deferred retry')
-            const { text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)))
+            // The task as it is now, not as the first attempt saw it (card #230).
+            const now = getTask(task.id)
+            if (!now || now.status !== 'active') {
+              logger.info({ taskId: task.id, reason: now ? 'paused' : 'deleted' }, 'Deferred retry dropped: the task changed since the first attempt')
+              if (now) updateTaskAfterRun(task.id, 'SKIPPED: retry dropped, the task was paused', nextRun)
+              return
+            }
+            logger.info({ taskId: task.id, resume: Boolean(newSessionId), role: now.role }, 'Running deferred retry')
+            const { text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', undefined, scopeOf(now)))))
             if (retryPaused) {
               logger.info({ taskId: task.id, kind: retryPaused }, 'AI allowance used up during deferred retry')
               skipWhilePaused(task, nextRun)

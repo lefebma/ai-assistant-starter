@@ -177,3 +177,13 @@ Also needed before enforce-mode claims: move the guard and role logs out of the
 install (or into the audit store), and add grant expiry. Role-scoped jobs
 without network tools (inbox-triage) are in good shape and can be described as
 contained today, with the exceptions above.
+
+## Follow-up: card #230 (2026-10-24)
+
+Defect 4 is fixed: a role can carry `expiresAt`, and an expired role (or one
+whose expiry is not a date) refuses every call and fails a run at start. C21
+now passes without the shim, so the matrix is 10 of 27 today. From defect 6,
+the deferred retry now rereads its task, runs with the current role and is
+cleared by pause and delete, a scoped job's role is reread on every call, and
+a queued `/steer` keeps the job's scope. Abort signals and subagent
+cancellation are left for #232.

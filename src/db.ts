@@ -435,6 +435,11 @@ export function setTaskNextRun(id: string, nextRun: number): void {
   getDb().prepare(`UPDATE scheduled_tasks SET next_run = ? WHERE id = ?`).run(nextRun, id)
 }
 
+/** One task as it is now, or undefined once it is deleted. */
+export function getTask(id: string): ScheduledTask | undefined {
+  return getDb().prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(id) as ScheduledTask | undefined
+}
+
 export function getAllTasks(): ScheduledTask[] {
   const d = getDb()
   return d.prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC').all() as ScheduledTask[]

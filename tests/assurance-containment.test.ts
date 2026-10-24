@@ -46,7 +46,7 @@ const EXPECTED: Record<string, [string, string]> = {
   C07: ['FAIL', 'PASS'], C08: ['FAIL', 'PASS'], C09: ['FAIL', 'PASS'], C10: ['PASS', 'PASS'], C11: ['FAIL', 'PASS'],
   C12: ['FAIL', 'PASS'], C13: ['FAIL', 'PASS'], C14: ['FAIL', 'PASS'],
   C15: ['PASS', 'PASS'], C16: ['PASS', 'PASS'], C17: ['FAIL', 'PASS'], C18: ['FAIL', 'PASS'], C19: ['FAIL', 'PASS'],
-  C20: ['PASS', 'PASS'], C21: ['FAIL', 'PASS'],
+  C20: ['PASS', 'PASS'], C21: ['PASS', 'PASS'],
   C22: ['PASS', 'PASS'], C23: ['FAIL', 'FAIL'], C24: ['FAIL', 'FAIL'],
   L01: ['PASS', 'PASS'], L02: ['PASS', 'PASS'], L03: ['PASS', 'PASS'],
 }

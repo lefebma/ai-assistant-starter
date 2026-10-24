@@ -38,6 +38,12 @@ export interface RoleSpec {
   writes?: string[]
   /** Argument limits for specific MCP tools. */
   params?: Record<string, ToolDef>
+  /**
+   * When the grant ends (card #230), an ISO date or date-time. From then on
+   * every call under the role is refused. One that does not parse counts as
+   * already expired: roles fail closed.
+   */
+  expiresAt?: string
 }
 
 /** Read-only basics every role with a shell gets. */
@@ -219,6 +225,8 @@ function suggestRole(roles: Map<string, RoleSpec>, current: string, check: (r: R
 export function checkRole(roles: Map<string, RoleSpec>, roleId: string, call: { tool: string; input: unknown; cwd: string }): RoleVerdict {
   const role = roles.get(roleId)
   if (!role) return { ok: false, kind: 'unauthorized', reason: `role "${roleId}" is not defined` }
+  const expired = roleExpired(role)
+  if (expired) return { ok: false, kind: 'unauthorized', reason: expired }
   if (role.tools.includes('*')) return { ok: true }
   const tool = canonicalTool(call.tool)
   const o = (call.input && typeof call.input === 'object' ? call.input : {}) as Record<string, unknown>
@@ -249,6 +257,14 @@ export function checkRole(roles: Map<string, RoleSpec>, roleId: string, call: { 
     if (bad) return { ok: false, kind: 'param-limit', reason: bad }
   }
   return { ok: true }
+}
+
+/** Why a role's grant no longer holds, or null while it does. */
+export function roleExpired(role: RoleSpec, now: number = Date.now()): string | null {
+  if (role.expiresAt === undefined) return null
+  const at = Date.parse(role.expiresAt)
+  if (Number.isNaN(at)) return `the ${role.id} role's expiry "${role.expiresAt}" is not a date, so it is treated as expired`
+  return now >= at ? `the ${role.id} role's grant expired on ${role.expiresAt}` : null
 }
 
 /** What the model reads when a call is refused, so its result tells the owner. */

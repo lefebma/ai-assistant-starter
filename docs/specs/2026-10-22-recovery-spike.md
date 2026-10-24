@@ -240,3 +240,26 @@ S2, S4, S5a, S5c and S6b flipped to zero duplicates. Still pinned, for the
 later cards: revocation does not reach a pending retry (S7, #230), the
 orphaned `RUNNING...` row and in-memory obligations after a restart (S2,
 #234), and the memory and decision defects (S1, S3, S4).
+
+## Follow-up: card #230 (2026-10-24)
+
+Fixes 2 and 3 are in. Each scheduled run carries a live grant
+(`src/assurance/grant.ts`), read by the gate on every tool call: the task is
+reread, a paused or deleted task refuses the call, and the role checked is
+the task's current one. The deferred retry rereads the task when it fires,
+drops itself if paused or deleted, runs with the current role, and resumes
+the first attempt's session with a continuation prompt instead of the bare
+prompt (the Claude runtime now returns the session id with an overload).
+Pause and delete also clear a pending retry. The as-is arm's S7 steps now go
+through the real gate.
+
+| Metric | As-is after #229 | As-is after #230 | Reference |
+|---|---|---|---|
+| Unauthorized actions | 8 | **4** | 0 |
+| Verified completion | 8/14 | 10/14 | 14/14 |
+| Recovery success | 6/13 | 8/13 | 13/13 |
+
+S7a and S7c flipped (the retry drops itself), S7b flipped (the retry runs
+under the narrowed role and is refused), and a new S7e shows a pause between
+two steps refusing the second. The remaining unauthorized actions are memory
+and delegation defects (S1, S3, S4).

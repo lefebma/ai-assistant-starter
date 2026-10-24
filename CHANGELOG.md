@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.44.0 - 2026-10-24
+
+Pausing, deleting or changing a scheduled job now takes effect right away, including on a retry it already had waiting.
+
+- **Fixed: a paused or deleted job could still run its retry.** When the AI service was overloaded, a job waited 10 minutes and tried again, even if you had paused or deleted it in between. The retry now checks the job when it fires and stops if it is paused or gone. Pausing or deleting a job also cancels a waiting retry straight away.
+- **Fixed: changing a job's role did not reach a run already under way.** A job kept the role it started with until it finished. Now every step it takes checks the job as it is at that moment: pause or delete it and its next step is refused, narrow its role and its next step is held to the new role.
+- **Changed: a retry picks up where the first attempt stopped.** It used to start the whole job again from scratch. It now continues the first attempt's conversation and is told to finish only what is left. Anything that already went out is still refused if repeated (1.43.0).
+- **New: roles can expire.** A role in `roles.json` can carry `expiresAt` (a date, or a date and time). From then on it refuses every step, and a job using it does not start. See `docs/SETUP-GUIDE.md`.
+- **Fixed: a follow-up sent with /steer during a scheduled job ran without the job's restrictions.** It now runs under the same role.
+
 ## 1.43.0 - 2026-10-24
 
 The assistant can no longer send the same email twice by accident.
