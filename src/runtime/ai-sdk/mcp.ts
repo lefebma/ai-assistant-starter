@@ -23,6 +23,9 @@ import type { ToolSet } from 'ai'
 import { readEnvFile } from '../../env.js'
 import { logger } from '../../logger.js'
 import { selectMcpServerMap } from '../../mcp-shape.js'
+import { EGRESS } from '../../config.js'
+import { proxyEnv, sharedChatProxy } from '../../egress/index.js'
+import { inToolsCgroup } from '../../egress/hosted.js'
 
 const CONNECT_TIMEOUT_MS = 10_000
 
@@ -64,6 +67,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ])
 }
 
+/** The few variables a server needs to start, never the assistant's own secrets. */
+function baseEnv(): Record<string, string> {
+  const keep = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'TERM', 'TMPDIR', 'TZ']
+  return Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k] as string]))
+}
+
 export async function loadMcpTools(projectRoot: string): Promise<ToolSet> {
   if (!mcpEnabled()) {
     logger.info('MCP disabled (AI_MCP=off)')
@@ -85,15 +94,22 @@ export async function loadMcpTools(projectRoot: string): Promise<ToolSet> {
     return {}
   }
 
+  // Egress enforced (card #231): these servers outlive any one run, so they
+  // share one proxy with the chat policy, and start in the tools cgroup on a
+  // hosted box. Without egress nothing changes.
+  const proxy = EGRESS === 'enforce' ? await sharedChatProxy().catch((err) => { logger.error({ err: String(err) }, 'egress proxy for MCP could not start; MCP servers not started'); return null }) : undefined
+  if (proxy === null) return {}
+
   const tools: ToolSet = {}
   for (const [name, cfg] of Object.entries(servers)) {
     try {
+      const launch = proxy ? inToolsCgroup(cfg.command, cfg.args ?? []) : { command: cfg.command, args: cfg.args }
       const client = await withTimeout(
         createMCPClient({
           transport: new Experimental_StdioMCPTransport({
-            command: cfg.command,
-            args: cfg.args,
-            env: cfg.env,
+            command: launch.command,
+            args: launch.args,
+            env: proxy ? { ...baseEnv(), ...cfg.env, ...proxyEnv(proxy.url) } : cfg.env,
           }),
         }),
         CONNECT_TIMEOUT_MS,

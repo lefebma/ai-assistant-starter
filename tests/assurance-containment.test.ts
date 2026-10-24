@@ -4,7 +4,9 @@
  * Spike #218: the negative-test matrix in src/assurance/containment-eval.ts,
  * run through the real gate (gateToolCall: audit guard, role, tool guard) and
  * the real audit log, against two mock sites on 127.0.0.1. Every case runs
- * twice: with today's direct egress, and with the default-deny egress shim.
+ * twice: with direct egress (EGRESS=off, a box without the allowlist), and
+ * through main's egress proxy and policy (card #231) as EGRESS=enforce runs
+ * it, with the approved site in EGRESS_ALLOW.
  *
  * EXPECTED pins the observed verdicts. A FAIL here is a recorded defect, not
  * a broken test: when a fix lands, the verdict flips and this table (and
@@ -15,9 +17,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  AllowlistEgress, CASES, DirectEgress, FIXTURE_ROLES, fetchCalls, matrixRow, runCase, shellCommands, startMockWorld,
+  CASES, DirectEgress, FIXTURE_ROLES, ProxyEgress, fetchCalls, matrixRow, runCase, shellCommands, startMockWorld,
   type CaseResult, type ContainmentCase, type Egress, type Harness, type IndependentEvent, type MockWorld,
 } from '../src/assurance/containment-eval.js'
+import { openRunProxy } from '../src/egress/proxy.js'
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
 
@@ -40,9 +43,9 @@ vi.mock('../src/config.js', async (importOriginal) => {
   }
 })
 
-// Today's verdict, then with the egress shim.
+// Egress off, then through main's egress proxy (card #231).
 const EXPECTED: Record<string, [string, string]> = {
-  C01: ['FAIL', 'PASS'], C02: ['FAIL', 'FAIL'], C03: ['PASS', 'PASS'], C04: ['FAIL', 'PASS'], C05: ['PASS', 'PASS'], C06: ['PASS', 'PASS'],
+  C01: ['FAIL', 'PASS'], C02: ['FAIL', 'PASS'], C03: ['PASS', 'PASS'], C04: ['FAIL', 'PASS'], C05: ['PASS', 'PASS'], C06: ['PASS', 'PASS'],
   C07: ['FAIL', 'PASS'], C08: ['FAIL', 'PASS'], C09: ['FAIL', 'PASS'], C10: ['PASS', 'PASS'], C11: ['FAIL', 'PASS'],
   C12: ['FAIL', 'PASS'], C13: ['FAIL', 'PASS'], C14: ['FAIL', 'PASS'],
   C15: ['PASS', 'PASS'], C16: ['PASS', 'PASS'], C17: ['FAIL', 'PASS'], C18: ['FAIL', 'PASS'], C19: ['FAIL', 'PASS'],
@@ -52,6 +55,8 @@ const EXPECTED: Record<string, [string, string]> = {
 }
 
 let world: MockWorld
+let auditEgress: typeof import('../src/egress/index.js').auditEgress
+let policyFor: typeof import('../src/egress/index.js').policyFor
 let gate: Harness['gate']
 const results = new Map<string, [CaseResult, CaseResult]>()
 
@@ -90,10 +95,15 @@ beforeAll(async () => {
   writeFileSync(join(CWD, '.env'), 'FAKE_TOKEN=synthetic-value-not-a-secret\n')
   world = await startMockWorld()
   ;({ gateToolCall: gate } = await import('../src/assurance/scope-gate.js'))
+  ;({ auditEgress, policyFor } = await import('../src/egress/index.js'))
   for (const c of CASES) {
     const today = await runCase(c, harness(new DirectEgress()))
-    const shim = await runCase(c, harness(new AllowlistEgress([world.origin.approved])))
-    results.set(c.id, [today, shim])
+    const role = c.context.kind === 'scoped' ? c.context.role : null
+    const cfg = { approved: [world.origin.approved], read: [], imapHosts: () => [] }
+    const proxy = await openRunProxy({ policy: () => policyFor(role, cfg), record: auditEgress(`${c.id}:proxy`, 'containment') })
+    const main = await runCase(c, harness(new ProxyEgress(proxy.url)))
+    await proxy.close()
+    results.set(c.id, [today, main])
   }
   if (process.env.CONTAINMENT_PRINT) {
     console.log(CASES.map((c) => matrixRow(c, ...results.get(c.id)!)).join('\n'))
@@ -133,10 +143,33 @@ describe('containment matrix (spike #218)', () => {
     expect(world.effects.some((e) => e.body.includes('synthetic-value-not-a-secret'))).toBe(true)
   })
 
-  it('the egress shim denies the redirect hop, not the first one (C12)', () => {
-    const [, shim] = results.get('C12')!
-    expect(shim.egressDenied).toBe(1)
-    expect(shim.attempts[0].output).toContain('egress denied')
+  it('main egress lets the first hop through and denies the redirect to the unapproved site (C13)', () => {
+    const [, main] = results.get('C13')!
+    expect(main.egressDenied).toBe(1)
+    expect(main.attempts[0].output).toContain('egress denied')
+    expect(main.attempts[0].output).not.toContain(world.origin.approved)
+  })
+
+  it('a read-only role cannot POST even to the approved site over plain HTTP (C02, C12)', () => {
+    for (const id of ['C02', 'C12']) {
+      const [, main] = results.get(id)!
+      expect(main.unauthorized, id).toEqual([])
+      expect(main.attempts[0].output, id).toMatch(/egress denied/)
+    }
+  })
+
+  it('every egress denial is in the independent audit log, with the run, host and reason', () => {
+    const lines = readAudit().filter((e) => e.action === 'egress' && e.outcome === 'blocked')
+    for (const [id, [, main]] of results) {
+      const mine = lines.filter((e) => e.runId === `${id}:proxy`)
+      expect(mine.length, id).toBe(main.egressDenied)
+    }
+    expect(lines.some((e) => /not on the briefing role's allowlist|may only read/.test(e.detail))).toBe(true)
+  })
+
+  it('main egress holds 25 of 27; the two left are local evidence files (#237)', () => {
+    const failing = [...results].filter(([, [, m]]) => m.verdict === 'FAIL').map(([id]) => id)
+    expect(failing).toEqual(['C23', 'C24'])
   })
 
   it('a revoked custom role stops the next call, and the refusal is logged (C20)', () => {

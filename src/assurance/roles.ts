@@ -44,6 +44,12 @@ export interface RoleSpec {
    * already expired: roles fail closed.
    */
   expiresAt?: string
+  /**
+   * Where the role's tools may connect when egress is enforced (card #231).
+   * Hosts, host:port, *.domain or groups: @google, @microsoft, @imap, @slack,
+   * @approved (EGRESS_ALLOW), @read (EGRESS_READ). No egress: only the AI.
+   */
+  egress?: { write?: string[]; read?: string[] }
 }
 
 /** Read-only basics every role with a shell gets. */
@@ -61,6 +67,7 @@ export const BUILTIN_ROLES: RoleSpec[] = [
       'ms-mail.js inbox', 'ms-mail.js search', 'ms-mail.js read', 'ms-mail.js draft', 'ms-mail.js reply',
       'imap-mail.js inbox', 'imap-mail.js search', 'imap-mail.js read', 'imap-mail.js draft', 'imap-mail.js reply',
     ],
+    egress: { write: ['@google', '@microsoft', '@imap'] },
   },
   {
     id: 'briefing',
@@ -73,6 +80,7 @@ export const BUILTIN_ROLES: RoleSpec[] = [
       'imap-mail.js inbox', 'imap-mail.js search', 'imap-mail.js read',
       'ms-calendar.js today', 'ms-calendar.js range',
     ],
+    egress: { read: ['@google', '@microsoft', '@imap', '@approved', '@read'] },
   },
   {
     id: 'research',
@@ -80,6 +88,7 @@ export const BUILTIN_ROLES: RoleSpec[] = [
     tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebSearch', 'WebFetch', 'Write', 'mcp__playwright__*'],
     commands: [...READ_BASICS, 'curl', 'mkdir'],
     writes: ['output/'],
+    egress: { read: ['@approved', '@read'] },
     params: {
       // The browser may open web pages, not local files or other schemes.
       mcp__playwright__browser_navigate: { params: { url: { type: 'string', maxLength: 2000, pattern: /^https?:\/\//i } }, required: ['url'] },

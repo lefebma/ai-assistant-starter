@@ -6,9 +6,11 @@
  * @anthropic-ai/claude-agent-sdk.
  */
 import { query, type HookInput, type HookJSONOutput, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
-import { PROJECT_ROOT } from '../config.js'
+import { EGRESS_CGROUP, PROJECT_ROOT } from '../config.js'
 import { gateToolCall, exposureForScope, resolveRole } from '../assurance/scope-gate.js'
-import { runEnvOption } from '../assurance/effect-journal.js'
+import { toolEnvOption } from '../egress/tool-env.js'
+import { currentProxy, withEgress } from '../egress/index.js'
+import { spawnInToolsCgroup } from '../egress/hosted.js'
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
 import { recordManagedSpend } from '../ai-usage.js'
@@ -67,6 +69,15 @@ export function makeGuardHook(scope: RunScope | undefined, cwd: string) {
     if (!v.allow) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } }
     return {}
   }
+}
+
+/**
+ * On a hosted box with the egress kernel rule, the CLI (and everything it
+ * starts) runs in the tools cgroup, which can reach only the proxy ports.
+ * Only while a proxy is in force: without one the cgroup has no way out.
+ */
+function cgroupSpawn(): { spawnClaudeCodeProcess?: typeof spawnInToolsCgroup } {
+  return EGRESS_CGROUP && currentProxy() ? { spawnClaudeCodeProcess: spawnInToolsCgroup } : {}
 }
 
 /** The unscoped hook (chat and one-shot runs). */
@@ -292,8 +303,14 @@ export class ClaudeAgentRuntime implements AgentRuntime {
 
   /** One-shot turn, moved verbatim from src/dreaming/index.ts runDreamingAgent(). */
   async runOnce(prompt: string, options: { workingDirectory?: string; model?: string } = {}): Promise<string> {
+    // A one-shot can use tools too: it gets the chat egress policy (card #231).
+    return withEgress({}, () => this.runOnceUnwrapped(prompt, options))
+  }
+
+  private async runOnceUnwrapped(prompt: string, options: { workingDirectory?: string; model?: string }): Promise<string> {
     if (isManagedAi()) return this.runOnceManaged(prompt, options)
     let fullText = ''
+    const env = toolEnvOption(undefined)
     const conversation = query({
       prompt,
       options: {
@@ -302,6 +319,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         permissionMode: 'bypassPermissions',
         settingSources: ['project', 'user'],
         hooks: { PreToolUse: [{ hooks: [guardHook] }] },
+        ...(env ? { env } : {}),
+        ...cgroupSpawn(),
       },
     })
     for await (const event of conversation) {
@@ -337,7 +356,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           permissionMode: 'bypassPermissions',
           settingSources: ['project', 'user'],
           hooks: { PreToolUse: [{ hooks: [guardHook] }] },
-          env: managedEnv(key),
+          env: toolEnvOption(managedEnv(key)),
+          ...cgroupSpawn(),
         },
       })
       for await (const event of conversation) {
@@ -538,9 +558,9 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         this.loopReset()
         logger.info({ attempt, cwd, lane: apiKeyOverride ? 'api' : 'subscription' }, 'Starting agent query')
         const model = options.model ?? resolveModel()
-        // The run key rides along so the send CLIs the agent calls can check
-        // the effect journal (card #229).
-        const laneEnv = runEnvOption(apiKeyOverride
+        // The run key (card #229) and the run's egress proxy (card #231) ride
+        // along to every tool the CLI starts.
+        const laneEnv = toolEnvOption(apiKeyOverride
           ? managed
             ? managedEnv(apiKeyOverride)
             : { ...process.env, ANTHROPIC_API_KEY: apiKeyOverride }
@@ -560,6 +580,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             ...(sessionId ? { resume: sessionId } : {}),
             hooks: { PreToolUse: [{ hooks: [makeGuardHook(options.scope, cwd)] }] },
             ...scopeOptions(options.scope, cwd),
+            ...cgroupSpawn(),
             // Overflow lane: scope the API key to THIS subprocess only. Spread
             // process.env so HOME/PATH/etc still reach the CLI; the explicit key
             // makes it bill against the API instead of the subscription window.

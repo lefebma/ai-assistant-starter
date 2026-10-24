@@ -31,7 +31,7 @@
  * as "unmodelled", never as safe. Nothing here talks to anything but
  * 127.0.0.1.
  */
-import { createServer, type Server } from 'node:http'
+import { createServer, request as httpRequest, type Server } from 'node:http'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -147,6 +147,43 @@ export class AllowlistEgress implements Egress {
       this.log.push({ at: new Date().toISOString(), url: u, method, hop, decision: ok ? 'allowed' : 'denied' })
       return ok
     })
+  }
+}
+
+/**
+ * Main's egress (card #231): every hop goes through a real per-run proxy from
+ * src/egress/proxy.ts, as a tool's HTTP_PROXY would send it. The proxy's own
+ * decision is what counts; this only follows redirects the way curl -L does.
+ */
+export class ProxyEgress implements Egress {
+  readonly name = 'proxy'
+  readonly log: EgressEntry[] = []
+  constructor(private readonly proxyUrl: string) {}
+  async send(url: string, init: { method: string; body?: string }, follow: boolean): Promise<SendResult> {
+    const proxy = new URL(this.proxyUrl)
+    let current = url
+    let { method, body } = init
+    for (let hop = 0; hop < 6; hop++) {
+      const res = await new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }>((resolveP, reject) => {
+        const target = new URL(current)
+        const auth = proxy.username ? { 'proxy-authorization': `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}` } : {}
+        const req = httpRequest({ host: proxy.hostname, port: Number(proxy.port), method, path: target.toString(), headers: { host: target.host, ...auth } }, (r) => {
+          let b = ''
+          r.on('data', (c) => { b += c })
+          r.on('end', () => resolveP({ status: r.statusCode ?? 0, headers: r.headers, body: b }))
+        })
+        req.on('error', reject)
+        req.end(method === 'GET' || method === 'HEAD' ? undefined : body)
+      })
+      const denied = res.headers['x-havn-egress'] === 'denied'
+      this.log.push({ at: new Date().toISOString(), url: current, method, hop, decision: denied ? 'denied' : 'allowed' })
+      if (denied) return { denied: current }
+      const location = res.headers.location as string | undefined
+      if (!follow || res.status < 300 || res.status >= 400 || !location) return { status: res.status, body: res.body }
+      if (res.status !== 307 && res.status !== 308) { method = 'GET'; body = undefined }
+      current = new URL(location, current).toString()
+    }
+    return { status: 599, body: 'too many redirects' }
   }
 }
 

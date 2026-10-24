@@ -233,6 +233,64 @@ New boxes get the store from cloud-init. For a box built earlier, update it to
 a release with the audit log, then run `npm run enable-audit -- <ip>` from your
 machine. The assistant starts recording at its next restart.
 
+### Egress allowlist
+
+The assistant's tools (shell commands, web fetches, the browser, its mail and
+calendar commands) can reach only approved hosts. Everything they start runs
+in a cgroup that the kernel (nftables) lets reach nothing but a small proxy on
+127.0.0.1. The proxy gives each run its own port and applies that run's
+allowlist on every connection, redirects included, and writes every decision
+to the audit log. A command that ignores the proxy settings gets nowhere: no
+direct connections, no DNS. The assistant's own connections (Telegram, email
+alerts) are not affected.
+
+Each run's proxy also has its own secret, carried in the proxy address its
+tools are given. A tool cannot borrow another run's proxy (and with it a wider
+allowlist): without that run's secret the proxy answers 407, and a wrong
+secret is written to the audit log.
+
+What a run may reach:
+
+| Who | Reaches |
+|---|---|
+| Chat | The AI, Gmail and Google Calendar, Microsoft 365, the box's IMAP accounts, Slack, `EGRESS_ALLOW` (anything), `EGRESS_READ` (reading) |
+| A scheduled job with a role | The AI plus the role's own list (`egress` in `roles.json`). inbox-triage: mail only. briefing: mail, calendar and both lists, reading only. research: both lists, reading only |
+| A job with no role | The same as chat |
+
+"Reading only" is enforced for plain `http://`. Over HTTPS the proxy does not
+decrypt, so it cannot see the method: a host on a read list is reachable for
+anything over HTTPS. Keep the read list to sites you would let the assistant
+post to.
+
+Settings live in `/etc/havn/egress.env`, owned by root, so the assistant
+cannot widen its own allowlist (`.env` is ignored for these on a hosted box):
+
+```
+EGRESS_ALLOW=api.partner.example,crm.example.com
+EGRESS_READ=en.wikipedia.org,*.gov
+```
+
+Hosts are comma separated: `host`, `host:port` or `*.domain`. Edit the file as
+havn-admin and restart the assistant.
+
+New boxes get this from cloud-init, with both lists empty: until you add
+hosts, chat cannot open arbitrary websites. For a box built earlier, update it
+to a release with egress, then from your machine:
+
+```
+npm run enable-egress -- <ip> --allow host,host --read host,host
+```
+
+Restart the assistant when the client is not mid-conversation, then prove it:
+
+```
+npm run enable-egress -- <ip> --prove
+```
+
+The proof joins the tools cgroup as havn and checks that a connection by name,
+by address and a DNS lookup all fail, while the same command outside the
+cgroup still works.
+
 When it finishes you'll see the MOTD on login:
 
 ```

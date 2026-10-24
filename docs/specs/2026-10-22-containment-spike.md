@@ -187,3 +187,46 @@ the deferred retry now rereads its task, runs with the current role and is
 cleared by pause and delete, a scoped job's role is reread on every call, and
 a queued `/steer` keeps the job's scope. Abort signals and subagent
 cancellation are left for #232.
+
+## Follow-up: card #231 (2026-10-24)
+
+Defect 1 is fixed on hosted boxes. A per-run egress proxy
+(`src/egress/proxy.ts`) applies a default-deny policy (`src/egress/policy.ts`)
+on every plain-HTTP request and every HTTPS CONNECT, each redirect hop
+included, and writes each decision to the audit log. Chat gets the services,
+`EGRESS_ALLOW` and `EGRESS_READ`; a role gets the AI plus its own `egress`
+lists, and read-only roles may only GET over plain HTTP. On a hosted box the
+Claude CLI and everything it starts run in a cgroup that nftables lets reach
+only the proxy ports (`src/egress/hosted.ts`, `npm run enable-egress`).
+
+The matrix's second column now runs through the real proxy and policy instead
+of the shim: **25 of 27 pass** (the shim managed 24). C02 also passes, because
+briefing is read-only. The two left are C23 and C24, deleting the local guard
+and role logs, which egress does not touch (#237).
+
+Honest limits: without decrypting, a host on a read list is reachable with
+any method over HTTPS. The ai-sdk runtime's MCP servers start once for every
+run, so they share one proxy with the chat policy. Off a hosted box there is
+no kernel rule, so the proxy is best effort.
+
+Proven on Linux on 2026-10-24 (a throwaway Ubuntu 24.04 e2-small in havn-lab,
+kernel 7.0, nftables 1.0.9, Node 22.23, deleted afterwards), with the real
+systemd drop-in from `enable-egress` and the built proxy running as
+`havn.service`. From inside the tools cgroup: HTTPS to an allowed host 200,
+an unlisted host 403 at CONNECT, plain-HTTP GET on a read host 200 and POST
+403, Node fetch through the proxy 200 and refused for an unlisted host;
+`curl --noproxy` by name, a direct connection by address and a DNS lookup all
+blocked; children stay in the cgroup; a failed join refuses to run the
+command. `enable-egress --prove` passed. The lab also caught a crash: a client
+that reset a tunnel before its socket had an error handler took the process
+down. Fixed, with a regression test.
+
+A review before merge found that the kernel rule admits every proxy port, so
+a tool in a narrow job could route through a chat run's proxy (or the ai-sdk
+runtime's long-lived MCP proxy) and get chat's allowlist. Each proxy now has
+its own secret in the URL its tools get, and refuses a request without it
+(407). Checked on macOS against a live proxy: curl, Python urllib, Node fetch
+(NODE_USE_ENV_PROXY), the Claude CLI 2.1.310 and Chromium through Playwright
+(credentials in launchOptions, answering the 407) all send it; each without
+it is refused. Chromium's first try never carries credentials, so only a
+wrong credential is audited.
