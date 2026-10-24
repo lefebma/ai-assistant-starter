@@ -7,6 +7,7 @@
  * leaving "did the owner actually agree to this" to the caller's memory.
  */
 import { utcToLocal } from './time.js'
+import { currentRun, emailTarget, guardedEffect } from '../assurance/effect-journal.js'
 
 export interface GraphLike {
   get(path: string, headers?: Record<string, string>): Promise<unknown>
@@ -159,7 +160,27 @@ export async function sendDraft(client: GraphLike, id: string, approved: boolean
     throw new Error('send refused: sending needs explicit approval from the owner. The draft is still there.')
   }
   if (!id.trim()) throw new Error('send refused: no draft id.')
-  await client.post(`/me/messages/${encodeURIComponent(id)}/send`, {})
+  const path = `/me/messages/${encodeURIComponent(id)}`
+  const run = currentRun()
+  if (!run) {
+    await client.post(`${path}/send`, {})
+    return
+  }
+  // Inside an agent run the send is held against the effect journal (card
+  // #229), keyed by who it goes to and its subject, so a redraft of the same
+  // email after a retry or restart is refused rather than sent twice.
+  const d = (await client.get(`${path}?$select=subject,toRecipients,ccRecipients,bccRecipients`)) as GraphDraftEnvelope
+  const recipients = [...(d.toRecipients ?? []), ...(d.ccRecipients ?? []), ...(d.bccRecipients ?? [])]
+    .map((r) => r.emailAddress?.address ?? '')
+    .filter(Boolean)
+  await guardedEffect({ kind: 'email.send', target: emailTarget(recipients, d.subject ?? ''), recipients }, () => client.post(`${path}/send`, {}), run)
+}
+
+type GraphDraftEnvelope = {
+  subject?: string
+  toRecipients?: { emailAddress?: { address?: string } }[]
+  ccRecipients?: { emailAddress?: { address?: string } }[]
+  bccRecipients?: { emailAddress?: { address?: string } }[]
 }
 
 /** A readable rendering for a chat window, times in the owner's zone. */

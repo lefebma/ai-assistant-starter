@@ -7,6 +7,10 @@
  * restrict it and nobody is watching. Unscoped runs get TOOL_GUARD's mode (log
  * by default). The guard itself fails open.
  *
+ * An allowed shell command that sends something the gate can read from the
+ * outside (gog gmail send, a Slack post) is then held against the effect
+ * journal (card #229): the same send twice in one run is refused.
+ *
  * Every call is then written to the audit log (card #196) with its outcome,
  * and a call that would change the audit store is refused before anything
  * else. See audit-trail.ts.
@@ -19,6 +23,8 @@ import { getToolGuard, parseGuardMode } from './tool-guard.js'
 import { getAuditTrail, type ToolOutcome } from './audit-trail.js'
 import { allowedServers, canonicalTool, checkRole, exposureFor, loadRoles, mcpServerConfigs, refusalMessage, type RoleSpec } from './roles.js'
 import type { RunScope } from '../runtime/types.js'
+import { beginEffect, commitEffect, releaseEffect } from './effect-journal.js'
+import { effectsOfCommand } from './effect-commands.js'
 
 export interface RoleLogEntry {
   at: string
@@ -81,9 +87,37 @@ export function gateToolCall(call: ToolCall): GateResult {
     logger.warn({ tool: call.tool }, 'refused a tool call that reaches into the audit log')
     return { allow: false, reason: 'Refused: the audit log cannot be changed by the assistant. Reading it with the Read tool is fine.' }
   }
-  const { result, outcome, note } = decide(call)
+  const decided = decide(call)
+  const { result, outcome, note } = decided.result.allow ? holdEffects(call) ?? decided : decided
   trail?.record(call, outcome, note)
   return result
+}
+
+/**
+ * Claims each send in an allowed shell command, or refuses the call when one
+ * already went out in this run. The gate never sees the result, so the
+ * attempt itself counts: a send that failed is retried by the owner asking
+ * again, never by the agent on its own. Fails open, like the guard.
+ */
+function holdEffects(call: ToolCall): { result: GateResult; outcome: ToolOutcome; note?: string } | null {
+  const command = (call.input as { command?: unknown } | null)?.command
+  if (canonicalTool(call.tool) !== 'Bash' || typeof command !== 'string') return null
+  try {
+    const claimed: (string | null)[] = []
+    for (const effect of effectsOfCommand(command)) {
+      const claim = beginEffect(effect)
+      if (!claim.ok) {
+        // The call does not run, so nothing claimed for it went out either.
+        claimed.forEach(releaseEffect)
+        return { result: { allow: false, reason: claim.message }, outcome: 'denied', note: `effect journal: ${claim.reason} ${effect.kind}` }
+      }
+      claimed.push(claim.key)
+    }
+    claimed.forEach(commitEffect)
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'effect journal check failed open')
+  }
+  return null
 }
 
 function decide(call: ToolCall): { result: GateResult; outcome: ToolOutcome; note?: string } {

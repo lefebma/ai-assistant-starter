@@ -210,3 +210,33 @@ with the role and capability work in #195.
 
 This spike does not reopen #168 to #172. It reuses their modules and finds
 that they hold where they apply; the gaps are in what they do not cover yet.
+
+## Follow-up: card #229 (2026-10-24)
+
+Fix 1 is in: `src/assurance/effect-journal.ts`. Each effect is claimed in a
+SQLite journal before it goes out, keyed by run, kind and target (recipients
+plus subject for mail). The run is the scheduled job's (one-shots `job:<id>`,
+recurring `job:<id>@<due time>`, shared by the deferred retry and a rerun
+after a crash), the approval card's, or else one per turn. A repeat is
+refused and logged; a send whose outcome is unknown stays pending and is
+refused too; only a refusal the destination confirmed frees the key. The
+Outlook and IMAP send CLIs check it with the draft's real recipients (the
+run key reaches them as `AGENT_RUN_KEY`), and the gate checks `gog gmail
+send` and Slack posts. Button claims are no longer pruned, a per-run
+recipient limit is enforced (`SEND_RECIPIENT_LIMIT`, default 10), and an
+obligation now has a `maxCount` (default `minCount`): one more event reads as
+`unknown`, never `complete`.
+
+The as-is arm now runs through the journal. Re-run of this suite:
+
+| Metric | As-is before | As-is after #229 | Reference |
+|---|---|---|---|
+| Duplicate business effects | 12 | **0** | 0 |
+| Unauthorized actions | 11 | 8 | 0 |
+| Verified completion | 4/14 | 8/14 | 14/14 |
+| Recovery success | 3/13 | 6/13 | 13/13 |
+
+S2, S4, S5a, S5c and S6b flipped to zero duplicates. Still pinned, for the
+later cards: revocation does not reach a pending retry (S7, #230), the
+orphaned `RUNNING...` row and in-memory obligations after a restart (S2,
+#234), and the memory and decision defects (S1, S3, S4).

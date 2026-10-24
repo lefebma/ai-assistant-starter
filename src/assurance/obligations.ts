@@ -24,6 +24,12 @@ export type Obligation = {
   evidenceType: string
   /** Distinct qualified events required. Default 1. */
   minCount?: number
+  /**
+   * Distinct qualified events allowed (card #229, at-most-once). Default
+   * minCount. One more than this means an effect happened twice, and the run
+   * can no longer read as complete.
+   */
+  maxCount?: number
 }
 
 export type EvidenceOrigin = 'app' | 'tool' | 'model'
@@ -42,7 +48,7 @@ export type RunStatus = 'complete' | 'incomplete' | 'failed' | 'cancelled' | 'un
 export type Unmet = { id: string; have: number; need: number }
 export type Verdict = { status: RunStatus; version: number; unmet: Unmet[]; reason?: string }
 
-export type RecordResult = { accepted: boolean; reason?: 'duplicate' | 'unqualified-origin' | 'wrong-run' | 'unknown-obligation' | 'evidence-type-mismatch' | 'run-closed' }
+export type RecordResult = { accepted: boolean; reason?: 'duplicate' | 'unqualified-origin' | 'wrong-run' | 'unknown-obligation' | 'evidence-type-mismatch' | 'run-closed' | 'over-limit' }
 
 export type RunSnapshot = { runId: string; version: number; obligations: readonly Readonly<Obligation>[] }
 
@@ -65,8 +71,10 @@ function freezeObligations(list: Obligation[]): readonly Readonly<Obligation>[] 
   return Object.freeze(list.map(o => Object.freeze({ ...o })))
 }
 
+const maxOf = (o: Obligation) => o.maxCount ?? o.minCount ?? 1
+
 function sameSpec(a: Obligation, b: Obligation): boolean {
-  return a.evidenceType === b.evidenceType && (a.minCount ?? 1) === (b.minCount ?? 1)
+  return a.evidenceType === b.evidenceType && (a.minCount ?? 1) === (b.minCount ?? 1) && maxOf(a) === maxOf(b)
 }
 
 export function createRun(runId: string, initial: Obligation[]): { authority: AuthorityFacet; model: ModelFacet } {
@@ -80,6 +88,11 @@ export function createRun(runId: string, initial: Obligation[]): { authority: Au
   function verdict(): Verdict {
     if (terminal) return { status: terminal.status, version, unmet: [], reason: terminal.reason }
     if (obligations.length === 0) return { status: 'unknown', version, unmet: [], reason: 'no obligations were declared' }
+    const over = obligations.find(o => (satisfied.get(o.id)?.size ?? 0) > maxOf(o))
+    if (over) {
+      const have = satisfied.get(over.id)!.size
+      return { status: 'unknown', version, unmet: [], reason: `${over.id} has ${have} events, at most ${maxOf(over)} expected: an effect may have happened twice` }
+    }
     const unmet: Unmet[] = []
     for (const o of obligations) {
       const need = o.minCount ?? 1
@@ -110,6 +123,8 @@ export function createRun(runId: string, initial: Obligation[]): { authority: Au
       const set = satisfied.get(o.id) ?? new Set<string>()
       set.add(e.eventId)
       satisfied.set(o.id, set)
+      // Kept, so the verdict can see it, but never counted toward completion.
+      if (set.size > maxOf(o)) return { accepted: false, reason: 'over-limit' }
       return { accepted: true }
     },
     amend(next: Obligation[], _reason: string): void {

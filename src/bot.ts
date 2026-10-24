@@ -21,6 +21,7 @@ import { claimButtonClick } from './db.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
+import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { createDefaultEngine } from './memory/engine.js'
@@ -1254,8 +1255,13 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       }
       // A pending support draft owns its Send/Edit/Discard buttons; resolve it
       // here rather than routing the click through the agent.
-      if (await resolveSupportAction(adapter, chatId, label)) return
-      await handleMessage(adapter, chatId, `[button_click]: ${label}`)
+      // The card is the run (card #229): whatever this click sends is keyed to
+      // it, so the same card can never send the same email twice.
+      const answer = async () => {
+        if (await resolveSupportAction(adapter, chatId, label)) return
+        await handleMessage(adapter, chatId, `[button_click]: ${label}`)
+      }
+      await (msg.messageId ? withRun(cardRunKey(chatId, msg.messageId), answer) : answer())
       return
     }
 

@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs'
 import { STORE_DIR } from './config.js'
 import { installTimezone } from './env.js'
 import { initEmailAlertTables } from './email-alerts/store.js'
+import { initEffectJournalTables } from './assurance/effect-journal.js'
 
 let db: Database.Database
 
@@ -209,6 +210,7 @@ export function initDatabase(): void {
   }
 
   initEmailAlertTables(d)
+  initEffectJournalTables(d)
 }
 
 // --- App state (one-shot install flags) ---
@@ -551,10 +553,10 @@ export function claimButtonClick(
       'INSERT OR IGNORE INTO consumed_buttons (chat_id, message_id, label, consumed_at) VALUES (?, ?, ?, ?)'
     )
     .run(chatId, messageId, label, now())
-  if (info.changes === 1) {
-    d.prepare('DELETE FROM consumed_buttons WHERE consumed_at < ?').run(now() - 7 * 86400)
-    return { claimed: true }
-  }
+  // Claims are never pruned: a card stays tappable for as long as the chat
+  // keeps it, so a claim that expired would let an old Send go out again
+  // (spike #217, S6b). One small row per answered card.
+  if (info.changes === 1) return { claimed: true }
   const row = d
     .prepare('SELECT label FROM consumed_buttons WHERE chat_id = ? AND message_id = ?')
     .get(chatId, messageId) as { label: string } | undefined

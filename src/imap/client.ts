@@ -10,6 +10,7 @@ import { ImapFlow } from 'imapflow'
 import nodemailer from 'nodemailer'
 import type { Envelope, MailboxLike, SenderLike } from './mail.js'
 import type { ImapAccount } from './store.js'
+import { markNotSent } from '../assurance/not-sent.js'
 
 /** A server that does not answer in this long is down, not slow. */
 const TIMEOUT_MS = 20_000
@@ -147,7 +148,10 @@ export async function connect(account: ImapAccount, password: string): Promise<C
       try {
         await transport.sendMail({ envelope, raw })
       } catch (err) {
-        throw new Error(`${account.provider} did not accept the message for sending: ${describeError(err, account)}`)
+        const e = new Error(`${account.provider} did not accept the message for sending: ${describeError(err, account)}`)
+        // An SMTP reply code means the server answered and refused, so nothing
+        // went out. A dropped connection or timeout has none (card #229).
+        throw typeof (err as { responseCode?: unknown })?.responseCode === 'number' ? markNotSent(e) : e
       }
     },
   }

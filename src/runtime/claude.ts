@@ -8,6 +8,7 @@
 import { query, type HookInput, type HookJSONOutput, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { PROJECT_ROOT } from '../config.js'
 import { gateToolCall, exposureForScope, resolveRole } from '../assurance/scope-gate.js'
+import { runEnvOption } from '../assurance/effect-journal.js'
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
 import { logger } from '../logger.js'
@@ -529,11 +530,13 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         this.loopReset()
         logger.info({ attempt, cwd, lane: apiKeyOverride ? 'api' : 'subscription' }, 'Starting agent query')
         const model = options.model ?? resolveModel()
-        const laneEnv = apiKeyOverride
+        // The run key rides along so the send CLIs the agent calls can check
+        // the effect journal (card #229).
+        const laneEnv = runEnvOption(apiKeyOverride
           ? managed
             ? managedEnv(apiKeyOverride)
             : { ...process.env, ANTHROPIC_API_KEY: apiKeyOverride }
-          : undefined
+          : undefined)
         const conversation = query({
           prompt: options.message,
           options: options.isolated ? {

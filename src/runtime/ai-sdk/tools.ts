@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
+import { runEnv } from '../../assurance/effect-journal.js'
 
 const BASH_TIMEOUT_DEFAULT_MS = 120_000
 const BASH_TIMEOUT_MAX_MS = 600_000
@@ -61,6 +62,8 @@ function runBash(command: string, cwd: string, timeoutMs: number): Promise<strin
       shell.buildArgs(command),
       {
         cwd,
+        // Carries the run key to send CLIs for the effect journal (card #229).
+        env: runEnv(),
         timeout: timeoutMs,
         maxBuffer: 10 * 1024 * 1024,
         // cmd.exe mangles quoted args without this; no-op elsewhere.

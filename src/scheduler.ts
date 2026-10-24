@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser'
 import { getDueTasks, getAllTasks, updateTaskAfterRun, setTaskNextRun, deleteTask, type ScheduledTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
+import { jobRunKey, withRun } from './assurance/effect-journal.js'
 import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
 import { buildAuditPrompt } from './audit/report.js'
@@ -140,7 +141,10 @@ export async function runDueTasks(): Promise<void> {
         buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
       )
 
-      const { text, aiPaused } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
+      // The deferred retry and a rerun after a crash reuse this run key, so an
+      // email the first attempt already sent is refused, not sent again (#229).
+      const runKey = jobRunKey(task.id, task.next_run, task.run_once === 1)
+      const { text, aiPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)))
       // The allowance ran out during this run: nothing to send, keep a one-shot.
       if (aiPaused) {
         logger.info({ taskId: task.id, kind: aiPaused }, 'AI allowance used up during scheduled task')
@@ -156,7 +160,7 @@ export async function runDueTasks(): Promise<void> {
           deferredRetries.delete(task.id)
           try {
             logger.info({ taskId: task.id }, 'Running deferred retry')
-            const { text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined))
+            const { text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', undefined, task.role ? { role: task.role, taskId: task.id } : undefined)))
             if (retryPaused) {
               logger.info({ taskId: task.id, kind: retryPaused }, 'AI allowance used up during deferred retry')
               skipWhilePaused(task, nextRun)
