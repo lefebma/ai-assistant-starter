@@ -1,7 +1,7 @@
 /** Web routes: connections, and the update notice. */
 import { registerWebRoutes } from './http.js'
 import { sendJson, sendError, readJsonCapped, BodyError } from './respond.js'
-import { getConnections, checkConnectionsNow, defaultConnectionDeps } from './connections.js'
+import { getConnections, checkConnectionsNow, connectionDeps } from './connections.js'
 import { checkForUpdate, restartPending, getCurrentVersion } from '../updater.js'
 import { getAppState, setAppState } from '../db.js'
 
@@ -13,7 +13,7 @@ registerWebRoutes([
     pattern: /^\/api\/web\/connections$/,
     auth: true,
     async handler(ctx) {
-      sendJson(ctx.res, 200, await getConnections({ ...defaultConnectionDeps, chatId: () => ctx.chatId }))
+      sendJson(ctx.res, 200, await getConnections({ ...connectionDeps(), chatId: () => ctx.chatId }))
     },
   },
   {
@@ -21,7 +21,7 @@ registerWebRoutes([
     pattern: /^\/api\/web\/connections\/check$/,
     auth: true,
     async handler(ctx) {
-      sendJson(ctx.res, 200, await checkConnectionsNow({ ...defaultConnectionDeps, chatId: () => ctx.chatId }))
+      sendJson(ctx.res, 200, await checkConnectionsNow({ ...connectionDeps(), chatId: () => ctx.chatId }))
     },
   },
   {

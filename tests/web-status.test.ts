@@ -32,7 +32,23 @@ beforeAll(async () => {
   db.initDatabase()
   const sessions = await import('../src/web/sessions.js')
   server = await import('../src/http-server.js')
-  port = 5900 + Math.floor(Math.random() * 90) * 3
+  // The route runs injected sources: no gog lookup, no `claude auth status`.
+  const connections = await import('../src/web/connections.js')
+  connections.setConnectionDepsForTest({
+    model: async () => ({ ok: true, detail: 'fake model ok' }),
+    telegramConfigured: () => true,
+    gmailAccounts: async () => [],
+    outlookAccounts: () => [],
+    imapAccounts: () => [],
+    voice: () => ({ stt: false, tts: false }),
+    shortcut: (chatId) => (chatId === '4242' ? { createdAt: 1, lastUsedAt: null } : null),
+    managedAi: () => false,
+    aiUsage: () => null,
+    brokenMailboxes: async () => [],
+    chatId: () => 'not-the-session-chat',
+  })
+  // Band 5560-5574.
+  port = 5560 + Math.floor(Math.random() * 15)
   server.startHttpServer(port)
   const deadline = Date.now() + 5000
   for (;;) {
@@ -48,6 +64,7 @@ beforeAll(async () => {
   cookie = `havn_web=${sessions.exchangeWebLink(token, 'test')!.sessionId}`
 })
 afterAll(async () => {
+  ;(await import('../src/web/connections.js')).setConnectionDepsForTest(null)
   await server.stopHttpServer()
 })
 
@@ -103,6 +120,12 @@ describe('web status', () => {
     expect(r.status).toBe(200)
     const l = (await r.json()) as any[]
     expect(l.map((c) => c.id)).toContain('telegram')
+    expect(l.find((c) => c.id === 'model').detail).toBe('fake model ok')
+    // The signed-in chat, not the injected default, decides the shortcut entry.
+    expect(l.find((c) => c.id === 'shortcut').status).toBe('connected')
     expect(JSON.stringify(l)).not.toContain('\u2014')
+    const now = await fetch(`${base()}/api/web/connections/check`, { method: 'POST', headers: H(), body: '{}' })
+    expect(now.status).toBe(200)
+    expect(((await now.json()) as any[]).find((c) => c.id === 'model').detail).toBe('fake model ok')
   })
 })

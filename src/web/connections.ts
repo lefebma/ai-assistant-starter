@@ -14,6 +14,8 @@ import { voiceCapabilities } from '../voice.js'
 import { shortcutTokenInfo } from '../shortcut-tokens.js'
 import { isManagedAi } from '../ai-limit.js'
 import { readAiUsage } from '../ai-usage.js'
+import { spawnClaudeAsync } from '../infra/claude-auth.js'
+import { parseGmailAccounts } from '../email-alerts/sources.js'
 
 export interface Connection {
   id: string
@@ -46,51 +48,82 @@ const ASK_PROVIDER = 'Ask your provider to set this up.'
 const COULD_NOT_CHECK = 'Could not check'
 
 const GMAIL_TIMEOUT_MS = 5_000
-const GMAIL_CACHE_MS = 5 * 60_000
-let gmailCache: { at: number; value: string[] | null } | null = null
+const CHECK_CACHE_MS = 5 * 60_000
 
-export function resetConnectionCache(): void {
-  gmailCache = null
-}
-
-function parseGmail(stdout: string): string[] {
-  const seen: string[] = []
-  for (const line of stdout.split('\n')) {
-    const cols = line.split('\t')
-    const acct = (cols[0] ?? '').trim()
-    if (!/^[^\s@]+@[^\s@]+$/.test(acct)) continue
-    const hasGmail = cols.slice(1).some((c) => c.split(/[,\s]+/).some((s) => s.trim().toLowerCase() === 'gmail'))
-    if (hasGmail && !seen.includes(acct)) seen.push(acct)
+/**
+ * A slow check run at most once per `ttlMs`, with concurrent callers sharing
+ * the one in flight. A failure is not cached, so the next call tries again.
+ */
+export function cachedCheck<T>(
+  fn: () => Promise<T>,
+  ttlMs: number,
+  now: () => number = Date.now,
+): { get(): Promise<T>; reset(): void } {
+  let cached: { at: number; value: T } | null = null
+  let inFlight: Promise<T> | null = null
+  let generation = 0
+  return {
+    get() {
+      if (cached && now() - cached.at < ttlMs) return Promise.resolve(cached.value)
+      if (inFlight) return inFlight
+      const gen = generation
+      const p = fn().then(
+        (value) => {
+          if (gen === generation) cached = { at: now(), value }
+          return value
+        },
+      )
+      inFlight = p
+      const clear = () => {
+        if (inFlight === p) inFlight = null
+      }
+      p.then(clear, clear)
+      return p
+    },
+    reset() {
+      generation++
+      cached = null
+      inFlight = null
+    },
   }
-  return seen
 }
 
-async function realGmailAccounts(): Promise<string[] | null> {
-  const now = Date.now()
-  if (gmailCache && now - gmailCache.at < GMAIL_CACHE_MS) return gmailCache.value
+function runGog(): Promise<string[] | null> {
   const bin = resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) })
-  const value = await new Promise<string[] | null>((resolve, reject) => {
+  return new Promise<string[] | null>((resolve, reject) => {
     execFile(bin, ['auth', 'list', '--plain'], { timeout: GMAIL_TIMEOUT_MS, maxBuffer: 1024 * 1024 }, (err, stdout) => {
       if (err) {
         // Not installed: Gmail is simply off. Any other failure is a real problem.
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return resolve(null)
         return reject(err)
       }
-      resolve(parseGmail(String(stdout)))
+      resolve(parseGmailAccounts(String(stdout)))
     })
   })
-  gmailCache = { at: now, value }
-  return value
+}
+
+/**
+ * The model check asks `claude auth status`, which costs a process start.
+ * Async (never spawnSync on a request path), cached and shared like Gmail.
+ */
+async function runModelCheck(): Promise<{ ok: boolean; detail: string }> {
+  const { credentialStatus } = await import('../selftest.js')
+  const s = await credentialStatus(spawnClaudeAsync)
+  return { ok: s.ok, detail: s.detail }
+}
+
+const gmailCheck = cachedCheck(runGog, CHECK_CACHE_MS)
+const modelCheck = cachedCheck(runModelCheck, CHECK_CACHE_MS)
+
+export function resetConnectionCache(): void {
+  gmailCheck.reset()
+  modelCheck.reset()
 }
 
 export const defaultConnectionDeps: ConnectionDeps = {
-  async model() {
-    const { credentialStatus } = await import('../selftest.js')
-    const s = await credentialStatus()
-    return { ok: s.ok, detail: s.detail }
-  },
+  model: () => modelCheck.get(),
   telegramConfigured: () => TELEGRAM_BOT_TOKEN.trim() !== '',
-  gmailAccounts: realGmailAccounts,
+  gmailAccounts: () => gmailCheck.get(),
   outlookAccounts: () => listAuthedAccounts(),
   imapAccounts: () => listImapAccounts().map((a) => a.address),
   voice: () => voiceCapabilities(),
@@ -105,6 +138,18 @@ export const defaultConnectionDeps: ConnectionDeps = {
     return (await discoverMailboxes()).broken
   },
   chatId: () => PRIMARY_CHAT_ID,
+}
+
+let activeDeps: ConnectionDeps = defaultConnectionDeps
+
+/** The sources the web routes use. Tests swap them so no real binary runs. */
+export function connectionDeps(): ConnectionDeps {
+  return activeDeps
+}
+
+/** Test hook: replace the route's sources. Pass null to restore the real ones. */
+export function setConnectionDepsForTest(deps: ConnectionDeps | null): void {
+  activeDeps = deps ?? defaultConnectionDeps
 }
 
 /** Run one source; any throw becomes an attention entry rather than an error. */

@@ -47,7 +47,7 @@ export async function runChecks(checks: Check[]): Promise<{ ok: boolean; results
 
 export interface SelfTestOptions {
   quiet?: boolean
-  /** Structural checks only — skip the credentials check. */
+  /** Structural checks only: skip the credentials check. */
   skipAuth?: boolean
   /** Add a real one-shot model call. Costs a few tokens and needs network. */
   live?: boolean
@@ -60,11 +60,17 @@ export interface SelfTestOptions {
  * wizard, which asks the same question at the end of an install call so the
  * person running it finds out while they are still there to fix it.
  */
-export async function credentialStatus(): Promise<CredentialStatus> {
+/**
+ * Pass `runAsync` on a request path: the sign-in check then runs without
+ * blocking the event loop. The self-test and setup keep the synchronous spawn.
+ */
+export async function credentialStatus(
+  runAsync?: import('./infra/claude-auth.js').RunCommandAsync
+): Promise<CredentialStatus> {
   const { readEnvFile, PROJECT_ROOT } = await import('./env.js')
   const { getSecret } = await import('./vault/index.js')
   const { resolveBundledClaude } = await import('./infra/claude-bin.js')
-  const { checkClaudeAuth, spawnClaude } = await import('./infra/claude-auth.js')
+  const { checkClaudeAuth, checkClaudeAuthAsync, spawnClaude } = await import('./infra/claude-auth.js')
   const { checkCredentials } = await import('./setup/credentials.js')
   const { isManagedAi } = await import('./ai-limit.js')
   const { join } = await import('node:path')
@@ -77,9 +83,11 @@ export async function credentialStatus(): Promise<CredentialStatus> {
   // Only the claude runtime can use an interactive sign-in, and asking costs a
   // subprocess spawn, so skip it entirely on the API-key path.
   const auth =
-    runtime === 'claude'
-      ? checkClaudeAuth(resolveBundledClaude(process.env, PROJECT_ROOT), spawnClaude)
-      : { loggedIn: false, detail: '' }
+    runtime !== 'claude'
+      ? { loggedIn: false, detail: '' }
+      : runAsync
+        ? await checkClaudeAuthAsync(resolveBundledClaude(process.env, PROJECT_ROOT), runAsync)
+        : checkClaudeAuth(resolveBundledClaude(process.env, PROJECT_ROOT), spawnClaude)
 
   return checkCredentials({ runtime, provider, env: read, signedIn: auth.loggedIn, signInDetail: auth.detail, managed: isManagedAi(join(PROJECT_ROOT, 'store')) })
 }
@@ -90,7 +98,7 @@ export function defaultChecks(opts: SelfTestOptions = {}): Check[] {
       name: 'node-version',
       run: () => {
         const major = parseInt(process.versions.node.split('.')[0], 10)
-        if (major < 20) throw new Error(`Node ${process.versions.node} — need v20+`)
+        if (major < 20) throw new Error(`Node ${process.versions.node}: need v20+`)
         return `v${process.versions.node}`
       },
     },
@@ -98,7 +106,7 @@ export function defaultChecks(opts: SelfTestOptions = {}): Check[] {
       name: 'config',
       run: async () => {
         const config = await import('./config.js')
-        return config.TELEGRAM_BOT_TOKEN ? 'loaded (bot token configured)' : 'loaded (bot token not set yet — fill .env)'
+        return config.TELEGRAM_BOT_TOKEN ? 'loaded (bot token configured)' : 'loaded (bot token not set yet, fill .env)'
       },
     },
     {
@@ -131,7 +139,7 @@ export function defaultChecks(opts: SelfTestOptions = {}): Check[] {
       run: async () => {
         const { PROJECT_ROOT } = await import('./env.js')
         if (!existsSync(resolve(PROJECT_ROOT, 'package.json'))) {
-          throw new Error(`package.json not found at ${PROJECT_ROOT} — install layout broken`)
+          throw new Error(`package.json not found at ${PROJECT_ROOT}: install layout broken`)
         }
         return PROJECT_ROOT
       },

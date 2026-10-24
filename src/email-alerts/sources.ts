@@ -310,7 +310,7 @@ export function outlookMailbox(account: string, client: GraphLike, address?: str
  * first: a line counts when its first column is an address and any later
  * column lists gmail.
  */
-function gmailAccounts(stdout: string): string[] {
+export function parseGmailAccounts(stdout: string): string[] {
   const seen: string[] = []
   for (const line of stdout.split('\n')) {
     const cols = line.split('\t')
@@ -353,7 +353,7 @@ export async function discoverMailboxes(
   // marks that side broken and leaves the other working.
   try {
     const auth = await exec(gogBin(), ['auth', 'list', '--plain'])
-    if (auth.ok) for (const a of gmailAccounts(auth.stdout)) candidates.push(gmailMailbox(a, exec))
+    if (auth.ok) for (const a of parseGmailAccounts(auth.stdout)) candidates.push(gmailMailbox(a, exec))
   } catch {
     broken.push({ id: 'gmail', why: 'Gmail needs reconnecting.' })
   }
