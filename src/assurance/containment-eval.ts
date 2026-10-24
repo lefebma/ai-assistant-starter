@@ -166,7 +166,8 @@ export class ProxyEgress implements Egress {
     for (let hop = 0; hop < 6; hop++) {
       const res = await new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }>((resolveP, reject) => {
         const target = new URL(current)
-        const req = httpRequest({ host: proxy.hostname, port: Number(proxy.port), method, path: target.toString(), headers: { host: target.host } }, (r) => {
+        const auth = proxy.username ? { 'proxy-authorization': `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}` } : {}
+        const req = httpRequest({ host: proxy.hostname, port: Number(proxy.port), method, path: target.toString(), headers: { host: target.host, ...auth } }, (r) => {
           let b = ''
           r.on('data', (c) => { b += c })
           r.on('end', () => resolveP({ status: r.statusCode ?? 0, headers: r.headers, body: b }))

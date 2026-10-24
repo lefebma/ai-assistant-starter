@@ -11,8 +11,9 @@
  *   "playwright": { "command": "node", "args": ["dist/scripts/playwright-mcp.js"] }
  */
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { PROJECT_ROOT } from '../src/env.js'
 import { CDP_ENDPOINT, chromeChannelInstalled, playwrightMcpBrowserArgs } from '../src/browser-channel.js'
 
@@ -37,9 +38,8 @@ async function main(): Promise<void> {
     passthrough,
   })
 
-  // Egress enforced (card #231): the browser goes through the run's proxy too.
-  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy
-  const proxyArgs = proxy && !passthrough.some((a) => a.startsWith('--proxy-server')) ? ['--proxy-server', proxy] : []
+  const proxy = proxyArgsFor(process.env.HTTPS_PROXY || process.env.https_proxy, passthrough)
+  const proxyArgs = proxy.args
   const [cmd, args, useShell] = existsSync(local)
     ? [process.execPath, [local, ...browserArgs, ...proxyArgs, ...passthrough], false]
     : ['npx', ['@playwright/mcp@latest', ...browserArgs, ...proxyArgs, ...passthrough], process.platform === 'win32']
@@ -49,7 +49,26 @@ async function main(): Promise<void> {
     console.error(`Failed to launch Playwright MCP: ${String(err)}`)
     process.exit(1)
   })
-  child.on('exit', (code) => process.exit(code ?? 1))
+  child.on('exit', (code) => { proxy.cleanup(); process.exit(code ?? 1) })
+}
+
+/**
+ * Egress enforced (card #231): the browser goes through the run's proxy too.
+ * Chromium will not take a password from --proxy-server, so when the proxy
+ * URL carries the run's secret it goes in a private config file instead, and
+ * Playwright answers the proxy's 407 with it. A --config of your own wins;
+ * the browser then has no secret and the proxy refuses it (fails closed).
+ */
+function proxyArgsFor(proxy: string | undefined, passthrough: string[]): { args: string[]; cleanup: () => void } {
+  const none = { args: [], cleanup: () => {} }
+  if (!proxy || passthrough.some((a) => a.startsWith('--proxy-server'))) return none
+  const u = new URL(proxy)
+  if (!u.username || passthrough.some((a) => a.startsWith('--config'))) return { args: ['--proxy-server', `${u.protocol}//${u.host}`], cleanup: () => {} }
+  const dir = mkdtempSync(join(tmpdir(), 'havn-pw-'))
+  const file = join(dir, 'config.json')
+  const server = `${u.protocol}//${u.host}`
+  writeFileSync(file, JSON.stringify({ browser: { launchOptions: { proxy: { server, username: decodeURIComponent(u.username), password: decodeURIComponent(u.password) } } } }), { mode: 0o600 })
+  return { args: ['--config', file], cleanup: () => rmSync(dir, { recursive: true, force: true }) }
 }
 
 main()

@@ -220,3 +220,13 @@ blocked; children stay in the cgroup; a failed join refuses to run the
 command. `enable-egress --prove` passed. The lab also caught a crash: a client
 that reset a tunnel before its socket had an error handler took the process
 down. Fixed, with a regression test.
+
+A review before merge found that the kernel rule admits every proxy port, so
+a tool in a narrow job could route through a chat run's proxy (or the ai-sdk
+runtime's long-lived MCP proxy) and get chat's allowlist. Each proxy now has
+its own secret in the URL its tools get, and refuses a request without it
+(407). Checked on macOS against a live proxy: curl, Python urllib, Node fetch
+(NODE_USE_ENV_PROXY), the Claude CLI 2.1.310 and Chromium through Playwright
+(credentials in launchOptions, answering the 407) all send it; each without
+it is refused. Chromium's first try never carries credentials, so only a
+wrong credential is audited.

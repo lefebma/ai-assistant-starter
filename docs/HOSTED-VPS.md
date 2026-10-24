@@ -244,6 +244,11 @@ to the audit log. A command that ignores the proxy settings gets nowhere: no
 direct connections, no DNS. The assistant's own connections (Telegram, email
 alerts) are not affected.
 
+Each run's proxy also has its own secret, carried in the proxy address its
+tools are given. A tool cannot borrow another run's proxy (and with it a wider
+allowlist): without that run's secret the proxy answers 407, and a wrong
+secret is written to the audit log.
+
 What a run may reach:
 
 | Who | Reaches |

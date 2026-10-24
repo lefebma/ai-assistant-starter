@@ -8,12 +8,15 @@ import { createServer, request, type Server } from 'node:http'
 import { connect, createServer as createTcpServer, type Server as TcpServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { decide, expandRules, isInternalAddress, listFromEnv, parseRule, type EgressPolicy } from '../src/egress/policy.js'
-import { openRunProxy, type EgressRecord } from '../src/egress/proxy.js'
+import { openRunProxy, type EgressRecord, type RunProxy } from '../src/egress/proxy.js'
 import { chatPolicy, currentProxy, parsePorts, policyFor, proxyEnv, rolePolicy, withEgress } from '../src/egress/index.js'
 import { toolEnv, toolEnvOption } from '../src/egress/tool-env.js'
 import { inToolsCgroup, nftRules } from '../src/egress/hosted.js'
 import { withGrant } from '../src/assurance/grant.js'
 import { BUILTIN_ROLES } from '../src/assurance/roles.js'
+
+// The Proxy-Authorization a client builds from a proxy URL with credentials.
+const authOf = (proxyUrl: string) => { const u = new URL(proxyUrl); return `Basic ${Buffer.from(`${u.username}:${u.password}`).toString('base64')}` }
 
 const cfg = { approved: ['api.partner.example'], read: ['docs.example.org'], imapHosts: () => ['imap.mail.yahoo.com:993', 'smtp.mail.yahoo.com:465'] }
 const role = (id: string) => BUILTIN_ROLES.find((r) => r.id === id)!
@@ -124,10 +127,10 @@ describe('proxy', () => {
   // Names that "resolve" to the local test servers, as a public name would.
   const resolveTo = (map: Record<string, string>) => async (h: string) => { if (!map[h]) throw new Error('nx'); return map[h] }
 
-  function viaProxy(proxyPort: number, url: string, method = 'GET', body?: string): Promise<{ status: number; body: string; denied: boolean }> {
+  function viaProxy(p: RunProxy, url: string, method = 'GET', body?: string, auth: string | null = p.authorization): Promise<{ status: number; body: string; denied: boolean }> {
     return new Promise((resolveP, reject) => {
       const u = new URL(url)
-      const req = request({ host: '127.0.0.1', port: proxyPort, method, path: url, headers: { host: u.host, 'proxy-authorization': 'Basic x' } }, (r) => {
+      const req = request({ host: '127.0.0.1', port: p.port, method, path: url, headers: { host: u.host, ...(auth ? { 'proxy-authorization': auth } : {}) } }, (r) => {
         let b = ''
         r.on('data', (c) => { b += c })
         r.on('end', () => resolveP({ status: r.statusCode ?? 0, body: b, denied: r.headers['x-havn-egress'] === 'denied' }))
@@ -137,9 +140,9 @@ describe('proxy', () => {
     })
   }
 
-  function tunnel(proxyPort: number, authority: string): Promise<{ status: string; data: string }> {
+  function tunnel(p: RunProxy, authority: string, auth: string | null = p.authorization): Promise<{ status: string; data: string }> {
     return new Promise((resolveP, reject) => {
-      const s = connect(proxyPort, '127.0.0.1', () => s.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`))
+      const s = connect(p.port, '127.0.0.1', () => s.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n${auth ? `Proxy-Authorization: ${auth}\r\n` : ''}\r\n`))
       let buf = ''
       s.on('data', (c) => { buf += c })
       s.on('end', () => resolveP({ status: buf.split('\r\n')[0], data: buf }))
@@ -150,7 +153,7 @@ describe('proxy', () => {
   it('forwards an allowed plain HTTP request, strips proxy credentials, and records it', async () => {
     const seen: EgressRecord[] = []
     const p2 = await openRunProxy({ policy: () => ({ name: 't', write: expandRules([`127.0.0.1:${sitePort}`]), read: [] }), record: (r) => seen.push(r) })
-    const r = await viaProxy(p2.port, `http://127.0.0.1:${sitePort}/page?q=1`, 'POST', 'a=1')
+    const r = await viaProxy(p2, `http://127.0.0.1:${sitePort}/page?q=1`, 'POST', 'a=1')
     expect(r.status).toBe(200)
     expect(r.body).toBe(`POST /page?q=1 host=127.0.0.1:${sitePort} auth=`)
     expect(seen.at(-1)).toMatchObject({ method: 'POST', host: '127.0.0.1', port: sitePort, path: '/page', decision: 'allowed' })
@@ -160,7 +163,7 @@ describe('proxy', () => {
   it('denies an unlisted host with 403 and the reason, and records it', async () => {
     const seen: EgressRecord[] = []
     const p = await openRunProxy({ policy: () => ({ name: 'chat', write: [], read: [] }), record: (r) => seen.push(r) })
-    const r = await viaProxy(p.port, `http://127.0.0.1:${sitePort}/page`)
+    const r = await viaProxy(p, `http://127.0.0.1:${sitePort}/page`)
     expect(r).toMatchObject({ status: 403, denied: true })
     expect(r.body).toMatch(/not on chat's allowlist/)
     expect(seen).toEqual([expect.objectContaining({ decision: 'denied' })])
@@ -169,19 +172,19 @@ describe('proxy', () => {
 
   it('checks each redirect hop on its own: the client follows, the proxy judges again', async () => {
     const p = await openRunProxy({ policy: () => ({ name: 't', write: expandRules([`127.0.0.1:${sitePort}`]), read: [] }) })
-    const first = await viaProxy(p.port, `http://127.0.0.1:${sitePort}/redirect`)
+    const first = await viaProxy(p, `http://127.0.0.1:${sitePort}/redirect`)
     expect(first.status).toBe(302)
-    const second = await viaProxy(p.port, 'http://blocked.example/x')
+    const second = await viaProxy(p, 'http://blocked.example/x')
     expect(second.denied).toBe(true)
     await p.close()
   })
 
   it('tunnels an allowed CONNECT and refuses one that is not listed', async () => {
     const p = await openRunProxy({ policy: () => ({ name: 't', write: expandRules([`127.0.0.1:${tcpPort}`]), read: [] }) })
-    const ok = await tunnel(p.port, `127.0.0.1:${tcpPort}`)
+    const ok = await tunnel(p, `127.0.0.1:${tcpPort}`)
     expect(ok.status).toBe('HTTP/1.1 200 Connection Established')
     expect(ok.data).toContain('hello over the tunnel')
-    const no = await tunnel(p.port, 'pastebin.com:443')
+    const no = await tunnel(p, 'pastebin.com:443')
     expect(no.status).toBe('HTTP/1.1 403 Forbidden')
     await p.close()
   })
@@ -193,7 +196,7 @@ describe('proxy', () => {
       resolve: resolveTo({ 'sneaky.example': '169.254.169.254' }),
       record: (r) => seen.push(r),
     })
-    const r = await tunnel(p.port, 'sneaky.example:443')
+    const r = await tunnel(p, 'sneaky.example:443')
     expect(r.status).toBe('HTTP/1.1 403 Forbidden')
     expect(seen[0].reason).toMatch(/internal address/)
     await p.close()
@@ -202,9 +205,9 @@ describe('proxy', () => {
   it('reads the policy per connection, so a change applies to the next one', async () => {
     let allow = true
     const p = await openRunProxy({ policy: () => ({ name: 't', write: allow ? expandRules([`127.0.0.1:${sitePort}`]) : [], read: [] }) })
-    expect((await viaProxy(p.port, `http://127.0.0.1:${sitePort}/a`)).status).toBe(200)
+    expect((await viaProxy(p, `http://127.0.0.1:${sitePort}/a`)).status).toBe(200)
     allow = false
-    expect((await viaProxy(p.port, `http://127.0.0.1:${sitePort}/b`)).denied).toBe(true)
+    expect((await viaProxy(p, `http://127.0.0.1:${sitePort}/b`)).denied).toBe(true)
     await p.close()
   })
 
@@ -212,12 +215,12 @@ describe('proxy', () => {
     const p = await openRunProxy({ policy: () => ({ name: 't', write: expandRules([`127.0.0.1:${tcpPort}`, `127.0.0.1:${sitePort}`]), read: [] }), resolve: async () => { await new Promise((r) => setTimeout(r, 50)); return '8.8.8.8' } })
     for (const authority of ['slow.example:443', `127.0.0.1:${tcpPort}`]) {
       await new Promise<void>((r) => {
-        const s = connect(p.port, '127.0.0.1', () => { s.write(`CONNECT ${authority} HTTP/1.1\r\n\r\n`); s.resetAndDestroy(); r() })
+        const s = connect(p.port, '127.0.0.1', () => { s.write(`CONNECT ${authority} HTTP/1.1\r\nProxy-Authorization: ${p.authorization}\r\n\r\n`); s.resetAndDestroy(); r() })
         s.on('error', () => r())
       })
     }
     await new Promise((r) => setTimeout(r, 100))
-    expect((await viaProxy(p.port, `http://127.0.0.1:${sitePort}/still-up`)).status).toBe(200)
+    expect((await viaProxy(p, `http://127.0.0.1:${sitePort}/still-up`)).status).toBe(200)
     await p.close()
   })
 
@@ -225,6 +228,37 @@ describe('proxy', () => {
     const p = await openRunProxy({ policy: () => chatPolicy(cfg), ports: [47900, 47999] })
     expect(p.port).toBeGreaterThanOrEqual(47900)
     expect(p.port).toBeLessThanOrEqual(47999)
+    await p.close()
+  })
+
+  it("refuses a caller without this proxy's secret, so a run cannot borrow another run's allowlist", async () => {
+    const seen: EgressRecord[] = []
+    const policy = (): EgressPolicy => ({ name: 'chat', write: expandRules([`127.0.0.1:${sitePort}`, `127.0.0.1:${tcpPort}`]), read: [] })
+    const chat = await openRunProxy({ policy, record: (r) => seen.push(r) })
+    const job = await openRunProxy({ policy })
+    expect(chat.url).not.toBe(job.url)
+    for (const auth of [null, 'Basic x', job.authorization]) {
+      const r = await viaProxy(chat, `http://127.0.0.1:${sitePort}/a`, 'GET', undefined, auth)
+      expect(r.status).toBe(407)
+      expect(r.denied).toBe(true)
+      const t = await tunnel(chat, `127.0.0.1:${tcpPort}`, auth)
+      expect(t.status).toMatch(/^HTTP\/1\.1 407/)
+      expect(t.data).toMatch(/Proxy-Authenticate: Basic/)
+    }
+    // No header is a browser's first try, answered silently; a wrong one is a probe and recorded.
+    expect(seen.length).toBe(4)
+    expect(seen.every((r) => r.decision === 'denied' && /credentials/.test(r.reason ?? ''))).toBe(true)
+    expect((await viaProxy(chat, `http://127.0.0.1:${sitePort}/a`)).status).toBe(200)
+    expect(authOf(chat.url)).toBe(chat.authorization)
+    await chat.close()
+    await job.close()
+  })
+
+  it('a proxy opened with auth off accepts any caller (test-only mode)', async () => {
+    const p = await openRunProxy({ policy: () => ({ name: 't', write: expandRules([`127.0.0.1:${sitePort}`]), read: [] }), auth: false })
+    expect(p.url).toBe(p.server)
+    expect(p.authorization).toBeNull()
+    expect((await viaProxy(p, `http://127.0.0.1:${sitePort}/a`, 'GET', undefined, null)).status).toBe(200)
     await p.close()
   })
 })
@@ -241,7 +275,7 @@ describe('run wrapper and tool env', () => {
     let url = ''
     await withEgress({ enforce: true, cfg, record: () => {} }, async () => {
       url = currentProxy()!
-      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+      expect(url).toMatch(/^http:\/\/run:[0-9a-f]{48}@127\.0\.0\.1:\d+$/)
       const env = toolEnv({ PATH: '/bin' })
       expect(env).toMatchObject({ PATH: '/bin', HTTPS_PROXY: url, http_proxy: url, NO_PROXY: '', NODE_USE_ENV_PROXY: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' })
       expect(proxyEnv(url).ALL_PROXY).toBe(url)
@@ -256,9 +290,10 @@ describe('run wrapper and tool env', () => {
     const seen: EgressRecord[] = []
     await withGrant(grant, () => withEgress({ enforce: true, cfg: { ...cfg, approved: ['127.0.0.1:9'] }, record: (r) => seen.push(r) }, async () => {
       const port = Number(new URL(currentProxy()!).port)
+      const auth = authOf(currentProxy()!)
       ok = false
       await new Promise<void>((r) => {
-        const s = connect(port, '127.0.0.1', () => s.write('CONNECT 127.0.0.1:9 HTTP/1.1\r\n\r\n'))
+        const s = connect(port, '127.0.0.1', () => s.write(`CONNECT 127.0.0.1:9 HTTP/1.1\r\nProxy-Authorization: ${auth}\r\n\r\n`))
         s.on('data', () => s.destroy())
         s.on('close', () => r())
       })

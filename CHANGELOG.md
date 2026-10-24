@@ -8,6 +8,7 @@ On a hosted assistant, tools can only reach the places you approved.
 - **What is approved.** Chat reaches the AI, your mail and calendar services, and the hosts you list in `EGRESS_ALLOW` (anything) and `EGRESS_READ` (reading). A scheduled job with a role reaches only what its role lists: inbox-triage reaches mail only, briefing and research only read. Reading-only is enforced on plain `http://`; over HTTPS a listed host is reachable for anything.
 - **Changed: on a new hosted box, chat cannot open arbitrary websites** until you add hosts to `EGRESS_READ` or `EGRESS_ALLOW`. The settings live in a root-owned file, `/etc/havn/egress.env`, so the assistant cannot widen its own allowlist.
 - **New: blocked attempts are in the audit log**, with the run, the host and the reason.
+- **Each run's proxy has its own secret**, so a narrow scheduled job cannot route through a chat run's proxy to reach chat's wider list. The browser gets the secret too.
 - **Existing hosted boxes** need a one-time step: `npm run enable-egress -- <ip>`, a restart, then `--prove`. See `docs/HOSTED-VPS.md` > Egress allowlist.
 - **On your own machine** it is off by default. `EGRESS=enforce` in `.env` turns on the proxy without the kernel rule, which is best effort: a command that ignores proxy settings still goes out.
 
