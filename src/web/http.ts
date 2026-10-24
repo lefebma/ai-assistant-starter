@@ -216,7 +216,10 @@ function servePage(req: IncomingMessage, res: ServerResponse, rawPath: string): 
 // ---------- dispatcher ----------
 
 export function isWebPath(raw: string): boolean {
-  return raw === '/app' || raw.startsWith('/app/') || raw.startsWith('/api/web/') || raw === '/api/web'
+  // Case-insensitive: on a case-insensitive disk (macOS) the general static
+  // router would otherwise serve /APP/index.html without this layer's headers.
+  const p = raw.toLowerCase()
+  return p === '/app' || p.startsWith('/app/') || p.startsWith('/api/web/') || p === '/api/web'
 }
 
 /**

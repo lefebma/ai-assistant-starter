@@ -196,6 +196,11 @@ describe('browser hardening', () => {
       expect(r.headers['x-frame-options'], p).toBe('DENY')
       expect(r.headers['x-content-type-options'], p).toBe('nosniff')
     }
+    // Upper case never reaches the general static router (a macOS disk would
+    // match it to public/app/index.html without these headers).
+    const upper = await raw('/APP/index.html')
+    expect(upper.headers['content-security-policy']).toContain("default-src 'none'")
+    expect(upper.headers['x-frame-options']).toBe('DENY')
     const api = await raw('/./api/web/me', { Authorization: `Bearer ${BEARER}` })
     expect(api.status).toBe(401)
     expect(api.headers['content-security-policy']).toContain("default-src 'none'")
