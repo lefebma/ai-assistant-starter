@@ -7,6 +7,7 @@
  * (Telegram bot, scheduler, cockpit, lane tracking) is provider-neutral;
  * everything below it is the implementation detail of one provider harness.
  */
+import type { AiLimitKind } from '../ai-limit.js'
 
 /** Fired once when a billing/provider fallback lane engages mid-turn. */
 export type LaneSwitchInfo = { rateLimitType?: string; resetsAt?: number }
@@ -61,6 +62,12 @@ export type AgentRunOptions = {
 export type AgentRunResult = {
   text: string | null
   newSessionId?: string
+  /**
+   * Managed boxes only (card #158): set when the turn did not run, or stopped,
+   * because the AI allowance is used up. `text` is null; the caller tells the
+   * owner. Never set on a non-managed box.
+   */
+  aiPaused?: AiLimitKind
 }
 
 export interface AgentRuntime {

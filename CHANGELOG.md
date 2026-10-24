@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.42.0 - 2026-10-23
+
+An assistant can now run on an AI allowance supplied by its provider, and pauses cleanly when the month's allowance is used up.
+
+- **New: an assistant can run on an AI key you supply.** For a hosted client with no AI account of their own, the operator puts a capped key on the box with one command. Setup then asks the client only for their messaging app; the AI and voice questions are skipped. The steps are in `docs/MANAGED-AI-KEY.md`.
+- **New: the assistant pauses and says so when the month's allowance is used up.** It tells the owner once, then at most a short reminder a day. It does not retry or switch to anything else. Scheduled jobs, email-alert mail reading and the nightly memory job wait; a one-time task is kept until the pause lifts, and alerts already triaged still go out.
+- **New: it resumes by itself.** While paused, the assistant checks about every 15 minutes with one small request. Once the limit is raised, the first success lifts the pause with no restart.
+- **Changed: voice and video are off on these assistants.** Voice messages get a plain "not available" reply, and the AI keys cannot be changed from chat. Assistants that are not on a supplied key behave exactly as before.
+
 ## 1.41.0 - 2026-10-22
 
 The weather skill works from your city, and answers for any city you ask about.

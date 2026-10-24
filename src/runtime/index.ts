@@ -16,6 +16,7 @@
  * switching runtimes only needs a .env edit, not a service restart.
  * Instances are cached per runtime id and can coexist.
  */
+import { isManagedAi } from '../ai-limit.js'
 import { readEnvFile } from '../env.js'
 import { logger } from '../logger.js'
 import { AiSdkAgentRuntime } from './ai-sdk/index.js'
@@ -36,6 +37,10 @@ const instances = new Map<string, AgentRuntime>()
 let override: AgentRuntime | null = null
 
 function resolveRuntimeId(lane: RuntimeLane): string {
+  // A managed box (card #158) runs every lane on the claude runtime: that is
+  // where the managed key, the pause and the guards live. AGENT_RUNTIME and
+  // AGENT_RUNTIME_CRON are ignored while managed.
+  if (isManagedAi()) return 'claude'
   const env = readEnvFile()
   if (lane === 'cron') {
     const cronId = env.AGENT_RUNTIME_CRON?.trim() || process.env.AGENT_RUNTIME_CRON?.trim()

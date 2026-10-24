@@ -5,6 +5,7 @@ import { getAgentRuntime } from '../runtime/index.js'
 import { withActor } from '../assurance/audit-trail.js'
 import { PROJECT_ROOT } from '../config.js'
 import { logger } from '../logger.js'
+import { AiPausedError, aiPausedForBackground } from '../ai-limit.js'
 
 // Auto-detect the Claude Code project directory from PROJECT_ROOT
 const projectKey = PROJECT_ROOT.replace(/\//g, '-').replace(/^-/, '')
@@ -170,6 +171,10 @@ function appendDream(body: string): void {
 }
 
 export async function runDream(options: { dryRun?: boolean } = {}): Promise<void> {
+  if (!options.dryRun && aiPausedForBackground()) {
+    logger.info('AI allowance used up, skipping dream sweep')
+    return
+  }
   const cutoffMs = Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000
   const turns = collectRecentUserTurns(cutoffMs)
   logger.info({ turnCount: turns.length, lookbackDays: LOOKBACK_DAYS }, 'Collected user turns')
@@ -190,7 +195,16 @@ export async function runDream(options: { dryRun?: boolean } = {}): Promise<void
   }
 
   logger.info({ promptChars: prompt.length }, 'Calling dreaming agent')
-  const body = await runDreamingAgent(prompt)
+  let body: string
+  try {
+    body = await runDreamingAgent(prompt)
+  } catch (err) {
+    if (err instanceof AiPausedError) {
+      logger.info({ kind: err.kind }, 'AI allowance used up, dream sweep skipped')
+      return
+    }
+    throw err
+  }
   if (!body) {
     logger.warn('Dreaming agent returned empty body, skipping write')
     return

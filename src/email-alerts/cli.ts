@@ -7,6 +7,7 @@
 import { initDatabase } from '../db.js'
 import { installTimezone, readEnvFile } from '../env.js'
 import { logger } from '../logger.js'
+import { aiPausedForBackground } from '../ai-limit.js'
 import { runControl, replayTriage } from './control.js'
 import { discoverMailboxes } from './sources.js'
 import { withTimeout } from './triage.js'
@@ -28,6 +29,10 @@ export function loadAgentToken(
 }
 
 export async function main(argv: string[]): Promise<string> {
+  if (argv[0] === 'replay' && aiPausedForBackground()) {
+    logger.info('AI allowance used up, replay not run')
+    return "The assistant's AI allowance for this month is used up, so a replay can't run now."
+  }
   initDatabase()
   const tz = installTimezone()
   const now = (): Date => new Date()

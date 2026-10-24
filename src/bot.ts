@@ -22,6 +22,7 @@ import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
 import { saveConversationTurn } from './memory.js'
+import { isManagedAi, ownerPauseReply, readAiLimit, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
@@ -283,7 +284,7 @@ async function handleMessage(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: response, newSessionId } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg))
+    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg))
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
@@ -294,6 +295,36 @@ async function handleMessage(
       setSession(chatId, newSessionId)
     }
     bumpSessionMessageCount(chatId)
+
+    // A managed box whose AI allowance is used up. The owner hears it once, then
+    // at most once a day; nothing else about the turn happens (no memory save,
+    // voice or buttons), and the "(no response)" branch must not fire.
+    if (aiPaused) {
+      // Only the runtime writes a fresh marker. None here means the box has
+      // just recovered, so there is nothing to tell the owner.
+      const marker = readAiLimit()
+      if (!marker) {
+        if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
+        return
+      }
+      const now = new Date()
+      const reply = ownerPauseReply(marker, now)
+      if (reply) {
+        try {
+          writeAiLimit(reply.next)
+        } catch (err) {
+          logger.warn({ err: String(err) }, 'Could not record the pause reply; sending it anyway')
+        }
+        if (previewMessageId != null) {
+          await adapter.editMessage(chatId, previewMessageId, reply.text)
+        } else {
+          await deliverText(adapter, chatId, reply.text)
+        }
+      } else if (previewMessageId != null) {
+        await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
+      }
+      return
+    }
 
     if (!response) {
       if (previewMessageId != null) {
@@ -1238,7 +1269,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     }
     if (type === 'voice' && msg.filePath) {
       if (!voiceCapabilities().stt) {
-        await adapter.sendMessage(chatId, 'Voice transcription is not enabled. Add OPENAI_API_KEY to .env.')
+        await adapter.sendMessage(chatId, isManagedAi() ? VOICE_OFF_REPLY : 'Voice transcription is not enabled. Add OPENAI_API_KEY to .env.')
         return
       }
       try {
@@ -1346,6 +1377,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
     if (cmd === '/voice') {
+      if (isManagedAi()) {
+        await adapter.sendMessage(chatId, VOICE_OFF_REPLY)
+        return
+      }
       const sub = trimmed.split(/\s+/).slice(1).map((w) => w.toLowerCase())
       if (sub[0] === 'ui') {
         await handleVoiceUiCommand(adapter, chatId, sub[1])

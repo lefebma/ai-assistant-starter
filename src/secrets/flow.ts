@@ -15,6 +15,7 @@
 import { SecretVault } from '../vault/store.js'
 import { defaultVault } from '../vault/index.js'
 import { readEnvFile } from '../env.js'
+import { isManagedAi, MANAGED_SECRET_NAMES, MANAGED_SECRET_REPLY } from '../ai-limit.js'
 import { createValidator, type ValidateFn, type ValidationResult } from './validate.js'
 import { buildSecretInventory, formatSecretInventory, isEngineSecret, KNOWN_SECRET_NAMES, maskSecret } from './inventory.js'
 
@@ -49,18 +50,24 @@ export interface SecretFlowOpts {
   /** The other two sources getSecret() reads. Injected so tests never touch the real .env. */
   readEnvFile?: () => Record<string, string>
   processEnv?: () => Record<string, string | undefined>
+  /** Managed box check. Injected so tests need no marker file. */
+  isManaged?: () => boolean
 }
 
-const USAGE = [
-  'Manage API keys (stored in the encrypted vault, never shown to the AI model):',
-  '',
-  '/secret set <NAME> - store a key; I ask for the value as your next message',
-  '/secret list - show which keys are set and where they come from (values stay masked)',
-  '/secret rm <NAME> - remove a key',
-  '/secret cancel - abort a pending /secret set',
-  '',
-  `Keys the engine reads: ${KNOWN_SECRET_NAMES.join(', ')}`,
-].join('\n')
+/** Help text. A managed box gets its AI keys from its provider, so they are not listed there. */
+function usage(managed: boolean): string {
+  const names = managed ? KNOWN_SECRET_NAMES.filter((n) => !MANAGED_SECRET_NAMES.includes(n)) : KNOWN_SECRET_NAMES
+  return [
+    'Manage API keys (stored in the encrypted vault, never shown to the AI model):',
+    '',
+    '/secret set <NAME> - store a key; I ask for the value as your next message',
+    '/secret list - show which keys are set and where they come from (values stay masked)',
+    '/secret rm <NAME> - remove a key',
+    '/secret cancel - abort a pending /secret set',
+    '',
+    `Keys the engine reads: ${names.join(', ')}`,
+  ].join('\n')
+}
 
 export class SecretFlow {
   private readonly vault: () => SecretVault
@@ -69,6 +76,7 @@ export class SecretFlow {
   private readonly ttlMs: number
   private readonly readEnv: () => Record<string, string>
   private readonly processEnv: () => Record<string, string | undefined>
+  private readonly isManaged: () => boolean
   private readonly pending = new Map<string, Pending>()
 
   constructor(opts: SecretFlowOpts = {}) {
@@ -78,6 +86,7 @@ export class SecretFlow {
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS
     this.readEnv = opts.readEnvFile ?? (() => readEnvFile())
     this.processEnv = opts.processEnv ?? (() => process.env)
+    this.isManaged = opts.isManaged ?? (() => isManagedAi())
   }
 
   hasPending(chatId: string): boolean {
@@ -138,9 +147,10 @@ export class SecretFlow {
         return {
           reply:
             'That does not look like a valid secret name. Use uppercase letters, digits and ' +
-            'underscores, e.g. /secret set OPENAI_API_KEY',
+            `underscores, e.g. /secret set ${this.isManaged() ? 'HTTP_BEARER_TOKEN' : 'OPENAI_API_KEY'}`,
         }
       }
+      if (this.isManaged() && MANAGED_SECRET_NAMES.includes(name)) return { reply: MANAGED_SECRET_REPLY, deleteUserMessage: parts.length > 3 }
       const inlineValue = parts.slice(3).join(' ').trim()
       if (inlineValue) {
         const outcome = await this.store(chatId, name, inlineValue, { keepPendingOnInvalid: false })
@@ -157,7 +167,7 @@ export class SecretFlow {
       }
     }
 
-    return { reply: USAGE }
+    return { reply: usage(this.isManaged()) }
   }
 
   /**
@@ -194,6 +204,10 @@ export class SecretFlow {
     value: string,
     opts: { keepPendingOnInvalid: boolean }
   ): Promise<{ reply: string; saved: boolean }> {
+    if (this.isManaged() && MANAGED_SECRET_NAMES.includes(name)) {
+      this.pending.delete(chatId)
+      return { saved: false, reply: MANAGED_SECRET_REPLY }
+    }
     const result = await this.validate(name, value)
 
     if (result.status === 'invalid') {

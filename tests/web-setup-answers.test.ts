@@ -57,6 +57,19 @@ describe('parseEngine', () => {
   })
 })
 
+describe('managed engine', () => {
+  it('is never accepted from a request body', () => {
+    expect(() => parseEngine({ kind: 'managed' }, true)).toThrow(InputError)
+  })
+
+  it('carries through answersFromWeb with no provider or model', () => {
+    const a = answersFromWeb(PROFILE, { kind: 'managed' }, null, '/p')
+    expect(a.engine).toBe('managed')
+    expect(a.aiProvider).toBeUndefined()
+    expect(a.aiModel).toBeUndefined()
+  })
+})
+
 describe('answersFromWeb', () => {
   it('maps to the answers a skip-everything wizard run gives, with no secrets', () => {
     const a = answersFromWeb(PROFILE, { kind: 'api-key', provider: 'openai', model: 'gpt-5' }, { latitude: '43.70', longitude: '-79.42', tempUnit: 'celsius', label: 'Toronto' }, '/p')
