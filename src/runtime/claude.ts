@@ -572,6 +572,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             ...(laneEnv ? { env: laneEnv } : {}),
           } : {
             model,
+            ...(options.effort ? { effort: options.effort } : {}),
             cwd,
             permissionMode: 'bypassPermissions',
             settingSources: ['project', 'user'],

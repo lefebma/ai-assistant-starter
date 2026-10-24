@@ -50,6 +50,8 @@ export type AgentRunOptions = {
    * The ai-sdk runtime maps those to the provider's configured models.
    */
   model?: string
+  /** Reasoning effort for this turn only. Omitted means the SDK default. */
+  effort?: 'low' | 'medium' | 'high'
   /**
    * A turn that cannot act, for feeding untrusted text (e.g. email triage):
    * no tools, no MCP servers, no skills or settings sources (no CLAUDE.md),

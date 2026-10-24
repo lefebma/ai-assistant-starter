@@ -44,7 +44,7 @@ import {
 } from './shortcut-setup.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
 import { abortAllScheduledRuns, cancelScheduledForChat, cancelScheduledTask, computeNextRun } from './scheduler.js'
-import { createTurnQueue, describeCancel } from './turn-queue.js'
+import { createTurnQueue, describeCancel, type CancelResult } from './turn-queue.js'
 import { logger } from './logger.js'
 import { commandWord } from './infra/command-text.js'
 import { CronExpressionParser } from 'cron-parser'
@@ -189,6 +189,27 @@ export function abortAllRuns(): void {
 /** Tests: wait for every queued turn to finish. */
 export function turnsIdle(): Promise<void> {
   return turnQueue.idle()
+}
+
+/**
+ * The owner-facing text for a turn that came back paused (managed box out of
+ * AI allowance), or null when there is nothing to say: no fresh marker, or the
+ * once-a-day repeat window has not reopened. Records that it was said, so call
+ * it only when the text will actually be shown. Shared by chat and web turns.
+ */
+function takePauseNotice(): string | null {
+  // Only the runtime writes a fresh marker. None here means the box has
+  // just recovered, so there is nothing to tell the owner.
+  const marker = readAiLimit()
+  if (!marker) return null
+  const reply = ownerPauseReply(marker, new Date())
+  if (!reply) return null
+  try {
+    writeAiLimit(reply.next)
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'Could not record the pause reply; sending it anyway')
+  }
+  return reply.text
 }
 
 type TurnOpts = {
@@ -363,25 +384,12 @@ async function runTurn(
     // at most once a day; nothing else about the turn happens (no memory save,
     // voice or buttons), and the "(no response)" branch must not fire.
     if (aiPaused) {
-      // Only the runtime writes a fresh marker. None here means the box has
-      // just recovered, so there is nothing to tell the owner.
-      const marker = readAiLimit()
-      if (!marker) {
-        if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
-        return
-      }
-      const now = new Date()
-      const reply = ownerPauseReply(marker, now)
-      if (reply) {
-        try {
-          writeAiLimit(reply.next)
-        } catch (err) {
-          logger.warn({ err: String(err) }, 'Could not record the pause reply; sending it anyway')
-        }
+      const pauseText = takePauseNotice()
+      if (pauseText) {
         if (previewMessageId != null) {
-          await adapter.editMessage(chatId, previewMessageId, reply.text)
+          await adapter.editMessage(chatId, previewMessageId, pauseText)
         } else {
-          await deliverText(adapter, chatId, reply.text)
+          await deliverText(adapter, chatId, pauseText)
         }
       } else if (previewMessageId != null) {
         await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
@@ -588,6 +596,85 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     return text
   } finally {
     clearLane(chatId)
+  }
+}
+
+// --- Web UI turns ---
+
+export interface WebTurnInput {
+  chatId: string
+  conversationId: string
+  text: string
+  framing?: string
+  sessionId?: string
+  model?: string
+  effort?: 'low' | 'medium' | 'high'
+  onQueued?: (ahead: number) => void
+  onPartial?: (accumulated: string) => void
+  onToolProgress?: (tool: string, status: string) => void
+}
+
+export interface WebTurnResult {
+  text: string | null
+  newSessionId?: string
+  cancelled: boolean
+  paused?: string
+}
+
+const webQueueKey = (conversationId: string): string => `web:${conversationId}`
+
+/**
+ * One turn from the web UI, on the same queue as chat turns but keyed per web
+ * conversation. It brings its own session id and never touches the chat's
+ * `sessions` row; the caller stores what comes back. Errors reject.
+ */
+export function runWebTurn(input: WebTurnInput): Promise<WebTurnResult> {
+  const key = webQueueKey(input.conversationId)
+  return new Promise((resolveTurn, rejectTurn) => {
+    const ahead = turnQueue.enqueue(
+      key,
+      async (signal) => {
+        try {
+          resolveTurn(await webTurn(input, key, signal))
+        } catch (err) {
+          rejectTurn(err)
+        }
+      },
+      () => resolveTurn({ text: null, cancelled: true }),
+    )
+    if (ahead > 0) logger.info({ key, ahead }, 'Web turn queued behind a running turn')
+    try { input.onQueued?.(ahead) } catch { /* a bad callback must not break the turn */ }
+  })
+}
+
+export function cancelWebTurn(conversationId: string): CancelResult {
+  return turnQueue.cancel(webQueueKey(conversationId))
+}
+
+async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): Promise<WebTurnResult> {
+  const { chatId, text, framing, sessionId } = input
+  if (signal.aborted) return { text: null, cancelled: true }
+  markLane(key, 'chat')
+  try {
+    const skillIndex = buildSkillIndex()
+    const memoryContext = await contextEngine.buildContext(chatId, text)
+    const fullMessage = [skillIndex, memoryContext, framing, text].filter(Boolean).join('\n\n')
+    logger.info({ chatId, key, messageLength: text.length }, 'Processing web message')
+    const { text: reply, newSessionId, aiPaused } = await withActor(`web:${chatId}`, () =>
+      runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
+        model: input.model,
+        effort: input.effort,
+      }),
+    )
+    if (signal.aborted) return { text: null, cancelled: true }
+    if (aiPaused) {
+      const notice = takePauseNotice()
+      return { text: null, newSessionId, cancelled: false, ...(notice ? { paused: notice } : {}) }
+    }
+    if (reply) await saveConversationTurn(chatId, text, reply)
+    return { text: reply, newSessionId, cancelled: false }
+  } finally {
+    clearLane(key)
   }
 }
 

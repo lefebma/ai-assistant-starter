@@ -57,7 +57,8 @@ export async function runAgent(
   onToolProgress?: (toolName: string, status: string) => void,
   lane: RuntimeLane = 'chat',
   signal?: AbortSignal,
-  scope?: RunScope
+  scope?: RunScope,
+  opts?: { model?: string; effort?: 'low' | 'medium' | 'high' }
 ): Promise<AgentRunResult> {
   // One turn is one run for the effect journal (card #229), unless the caller
   // already named the run: a scheduled job or an approval card.
@@ -70,5 +71,7 @@ export async function runAgent(
     onToolProgress,
     signal,
     scope,
+    ...(opts?.model ? { model: opts.model } : {}),
+    ...(opts?.effort ? { effort: opts.effort } : {}),
   })))
 }
