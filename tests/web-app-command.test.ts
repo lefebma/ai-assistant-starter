@@ -34,7 +34,12 @@ function harness() {
     sendFile: async () => {},
   }
   createBot(adapter as never)
-  return { sent, sayFrom: (chatId: string, text: string) => handler({ chatId, text, type: 'text' }) }
+  return {
+    sent,
+    // 'unknown' sends no isPrivate at all, which must count as a group.
+    sayFrom: (chatId: string, text: string, isPrivate: boolean | 'unknown' = true) =>
+      handler({ chatId, text, type: 'text', ...(isPrivate === 'unknown' ? {} : { isPrivate }) }),
+  }
 }
 
 describe('/app', () => {
@@ -65,6 +70,18 @@ describe('/app', () => {
   it('tells the operator the exact enable command when the box has no address', () => {
     const src = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../src/bot.ts'), 'utf-8') as string
     expect(src).toContain('enable-teams.js <hostname> --web')
+  })
+
+  it('refuses in a group chat and mints nothing, signout included', async () => {
+    const { sent, sayFrom } = harness()
+    await sayFrom('owner', '/app')
+    exchangeWebLink(sent[0]!.match(/#token=(\S+)/)![1]!, 'a')
+    await sayFrom('owner', '/app', false)
+    expect(sent[1]).toBe('Sign-in links are only handed out in a one-to-one chat with me. Send /app there.')
+    expect(sent[1]).not.toContain('#token=')
+    await sayFrom('owner', '/app signout', 'unknown')
+    expect(sent[2]).toBe('Sign-in links are only handed out in a one-to-one chat with me. Send /app there.')
+    expect(listWebSessions('owner')).toHaveLength(1)
   })
 
   it('does not mint a link for a chat that is not allowed', async () => {

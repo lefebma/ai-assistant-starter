@@ -25,7 +25,7 @@ vi.mock('../src/memory.js', async (orig) => ({
   saveConversationTurn: h.saveTurn,
 }))
 
-import { createBot, turnsIdle } from '../src/bot.js'
+import { createBot, turnsIdle, runWebTurn } from '../src/bot.js'
 import { getSession, initDatabase, setSession } from '../src/db.js'
 import { currentRun } from '../src/assurance/effect-journal.js'
 
@@ -85,6 +85,24 @@ describe('/cancel in chat', () => {
     expect(sent.at(-1)).toBe('Cancelled.')
     expect(getSession('owner')).toBe('previous-session')
     expect(h.saveTurn).not.toHaveBeenCalled()
+  })
+
+  it("also stops this chat's web turns, running and queued, and counts them", async () => {
+    const { sent, send } = harness()
+    const started = runsUntilCancelled()
+    const running = runWebTurn({ chatId: 'owner', conversationId: 'w1', text: 'long web thing' })
+    const signal = await started
+    const queued = runWebTurn({ chatId: 'owner', conversationId: 'w2', text: 'next web thing' })
+    const other = runWebTurn({ chatId: 'someone-else', conversationId: 'w3', text: 'not mine' })
+    h.runAgent.mockResolvedValueOnce({ text: 'other reply' })
+
+    await send({ text: '/cancel' })
+    expect(sent).toContain('Stopping the current reply. Dropped 1 queued message.')
+    expect(signal.aborted).toBe(true)
+    expect((await running).cancelled).toBe(true)
+    expect(await queued).toEqual({ text: null, cancelled: true })
+    expect((await other).text).toBe('other reply')
+    await turnsIdle()
   })
 
   it('with nothing running it says so, and the next message runs normally', async () => {

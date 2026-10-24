@@ -196,7 +196,8 @@ export function turnsIdle(): Promise<void> {
  * The owner-facing text for a turn that came back paused (managed box out of
  * AI allowance), or null when there is nothing to say: no fresh marker, or the
  * once-a-day repeat window has not reopened. Records that it was said, so call
- * it only when the text will actually be shown. Shared by chat and web turns.
+ * it only when the text will actually be shown. Chat turns only: web turns read
+ * the same text without recording it (see webTurn).
  */
 function takePauseNotice(): string | null {
   // Only the runtime writes a fresh marker. None here means the box has
@@ -625,6 +626,41 @@ export interface WebTurnResult {
 const webQueueKey = (conversationId: string): string => `web:${conversationId}`
 
 /**
+ * Which chat each queued or running web turn belongs to, so `/cancel` in that
+ * chat also stops its web turns. Counted per key: one conversation can have a
+ * turn running and another waiting. Set on enqueue, dropped when the turn
+ * settles.
+ */
+const webTurnChats = new Map<string, { chatId: string; count: number }>()
+
+function trackWebTurn(key: string, chatId: string): () => void {
+  const cur = webTurnChats.get(key)
+  if (cur) cur.count++
+  else webTurnChats.set(key, { chatId, count: 1 })
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    const e = webTurnChats.get(key)
+    if (!e) return
+    if (--e.count <= 0) webTurnChats.delete(key)
+  }
+}
+
+/** Stop every web turn, running or queued, that belongs to this chat. */
+export function cancelWebTurnsForChat(chatId: string): CancelResult {
+  let stoppedActive = false
+  let droppedQueued = 0
+  for (const [key, e] of [...webTurnChats]) {
+    if (e.chatId !== chatId) continue
+    const r = turnQueue.cancel(key)
+    stoppedActive = stoppedActive || r.stoppedActive
+    droppedQueued += r.droppedQueued
+  }
+  return { stoppedActive, droppedQueued }
+}
+
+/**
  * One turn from the web UI, on the same queue as chat turns but keyed per web
  * conversation. It brings its own session id and never touches the chat's
  * `sessions` row; the caller stores what comes back. Errors reject.
@@ -632,6 +668,7 @@ const webQueueKey = (conversationId: string): string => `web:${conversationId}`
 export function runWebTurn(input: WebTurnInput): Promise<WebTurnResult> {
   const key = webQueueKey(input.conversationId)
   return new Promise((resolveTurn, rejectTurn) => {
+    const settle = trackWebTurn(key, input.chatId)
     const ahead = turnQueue.enqueue(
       key,
       async (signal) => {
@@ -639,9 +676,14 @@ export function runWebTurn(input: WebTurnInput): Promise<WebTurnResult> {
           resolveTurn(await webTurn(input, key, signal))
         } catch (err) {
           rejectTurn(err)
+        } finally {
+          settle()
         }
       },
-      () => resolveTurn({ text: null, cancelled: true }),
+      () => {
+        settle()
+        resolveTurn({ text: null, cancelled: true })
+      },
     )
     if (ahead > 0) logger.info({ key, ahead }, 'Web turn queued behind a running turn')
     try { input.onQueued?.(ahead) } catch { /* a bad callback must not break the turn */ }
@@ -671,7 +713,10 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
     if (aiPaused) {
       // The web is a pull surface: the owner is looking at the page, so a
       // paused turn always says why, even inside Telegram's once-a-day window.
-      const paused = takePauseNotice() ?? repeatReply(readAiLimit()?.resumesAt)
+      // It never records the notice: that marker is Telegram's, and spending
+      // it here would leave the chat silent for the day.
+      const marker = readAiLimit()
+      const paused = (marker ? ownerPauseReply(marker, new Date())?.text : undefined) ?? repeatReply(marker?.resumesAt)
       return { text: null, newSessionId, cancelled: false, paused }
     }
     if (reply) await saveConversationTurn(chatId, text, reply)
@@ -1020,7 +1065,20 @@ async function handleVoiceUiCommand(
  * every browser out. Access is already gated above (accessFor), so only an
  * allowed chat gets here. See src/web/sessions.ts.
  */
-async function handleAppCommand(adapter: PlatformAdapter, chatId: string, action: string | undefined): Promise<void> {
+async function handleAppCommand(
+  adapter: PlatformAdapter,
+  chatId: string,
+  action: string | undefined,
+  isPrivate: boolean | undefined
+): Promise<void> {
+  // Private chats only, signout included, for the same reason as /shortcut:
+  // in a group whoever opened the link first would hold a session as that
+  // chat, it would outlive their membership, and any member could sign
+  // everyone else out. Unknown counts as a group.
+  if (isPrivate !== true) {
+    await adapter.sendMessage(chatId, 'Sign-in links are only handed out in a one-to-one chat with me. Send /app there.')
+    return
+  }
   if (action === 'signout') {
     const n = revokeAllWebSessions(chatId)
     await adapter.sendMessage(
@@ -1571,7 +1629,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
 
     // A pending /secret set owns the next text message: capture it in code,
     // delete it from the chat, never let it near the model. This must run
-    // before the busy check and the support flow — the capture touches
+    // before the busy check and the support flow: the capture touches
     // nothing but the vault. capture() is the single gate (it also owns the
     // expired case, where the late message probably IS a key and still needs
     // deleting). A command other than /secret cancels the capture instead,
@@ -1658,7 +1716,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
     if (cmd === '/app') {
-      await handleAppCommand(adapter, chatId, trimmed.split(/\s+/)[1]?.toLowerCase())
+      await handleAppCommand(adapter, chatId, trimmed.split(/\s+/)[1]?.toLowerCase(), msg.isPrivate)
       return
     }
     if (cmd === '/shortcut') {
@@ -1725,7 +1783,9 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     // /cancel: stop this chat's running turn, drop its queued messages, and stop
     // the scheduled runs and pending retries that deliver here (card #232).
     if (cmd === '/cancel') {
-      const turns = turnQueue.cancel(chatId)
+      const own = turnQueue.cancel(chatId)
+      const web = cancelWebTurnsForChat(chatId)
+      const turns = { stoppedActive: own.stoppedActive || web.stoppedActive, droppedQueued: own.droppedQueued + web.droppedQueued }
       const scheduled = cancelScheduledForChat(chatId)
       await adapter.sendMessage(chatId, describeCancel(turns, scheduled))
       return
@@ -1748,7 +1808,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     if (cmd === '/secret') {
       if (!isPrimaryChat(chatId)) {
         // An inline `/secret set NAME value` from a non-primary chat still
-        // holds a key — delete it even though the command is refused.
+        // holds a key, so delete it even though the command is refused.
         await sendSecretReply(adapter, chatId, 'Only the primary chat can manage secrets.', {
           deleteUserMessage: trimmed.split(/\s+/).length > 3,
           messageId: msg.messageId,

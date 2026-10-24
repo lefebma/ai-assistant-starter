@@ -18,6 +18,7 @@ vi.mock('../src/memory.js', async (orig) => ({
 import { runWebTurn, cancelWebTurn, turnsIdle } from '../src/bot.js'
 import { getSession, setSession, initDatabase } from '../src/db.js'
 import { setAgentRuntime } from '../src/runtime/index.js'
+import { readAiLimit, writeAiLimit, clearAiLimit, FIRST_REPLY, REPEAT_REPLY } from '../src/ai-limit.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime } from '../src/runtime/types.js'
 
 class FakeRuntime implements AgentRuntime {
@@ -118,5 +119,22 @@ describe('runWebTurn', () => {
     expect(res.text).toBeNull()
     expect(res.paused).toMatch(/paused/i)
     expect(h.saveTurn).not.toHaveBeenCalled()
+  })
+
+  it("a web pause shows the first-notice text without using up Telegram's once-a-day notice", async () => {
+    rt.result = { text: null, aiPaused: 'spend_limit' }
+    const marker = { kind: 'spend_limit' as const, since: new Date().toISOString() }
+    writeAiLimit(marker)
+    const res = await runWebTurn({ chatId: 'owner', conversationId: 'p2', text: 'hello?' })
+    expect(res.paused).toBe(FIRST_REPLY)
+    expect(readAiLimit()).toEqual(marker)
+
+    // Inside the repeat window the web still says why, with the repeat text.
+    const told = { ...marker, lastToldAt: new Date().toISOString(), toldFull: true }
+    writeAiLimit(told)
+    const again = await runWebTurn({ chatId: 'owner', conversationId: 'p3', text: 'still?' })
+    expect(again.paused).toBe(REPEAT_REPLY)
+    expect(readAiLimit()).toEqual(told)
+    clearAiLimit()
   })
 })
