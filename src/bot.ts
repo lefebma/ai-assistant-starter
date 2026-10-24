@@ -136,7 +136,7 @@ function accessFor(chatId: string, text: string) {
 const BUTTONS_RE = /\[\[buttons:\s*([^\]]+)\]\]/i
 const MAX_BUTTON_LABEL = 30
 
-function extractButtons(text: string): { cleanText: string; labels: string[] } {
+export function extractButtons(text: string): { cleanText: string; labels: string[] } {
   const match = text.match(BUTTONS_RE)
   if (!match) return { cleanText: text, labels: [] }
   const labels = match[1]

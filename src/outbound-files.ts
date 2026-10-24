@@ -44,7 +44,7 @@ const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
  * stores, and the assistant's own database, which holds every memory and
  * every conversation turn it has saved.
  */
-const NEVER_SEND = [
+export const NEVER_SEND = [
   /(^|\.)env(\..*)?$/i,
   /\.(key|pem|p12|pfx|jks|keystore)$/i,
   /^id_(rsa|dsa|ecdsa|ed25519)$/i,

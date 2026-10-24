@@ -211,6 +211,11 @@ export function initDatabase(): void {
     )
   `)
   d.exec('CREATE INDEX IF NOT EXISTS idx_web_messages_conv ON web_messages(conversation_id)')
+  // Additive: quick-reply button labels parsed from an assistant message.
+  const webMsgCols = d.pragma('table_info(web_messages)') as { name: string }[]
+  if (!webMsgCols.some((c) => c.name === 'buttons')) {
+    d.exec("ALTER TABLE web_messages ADD COLUMN buttons TEXT NOT NULL DEFAULT '[]'")
+  }
 
   // Apple Shortcuts credentials (see src/shortcut-tokens.ts). One row per chat,
   // keyed by chat so minting a new one replaces the old. Only the hash is kept:
