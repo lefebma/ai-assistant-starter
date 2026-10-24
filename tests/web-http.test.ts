@@ -27,7 +27,8 @@ beforeAll(async () => {
   sessions = await import('../src/web/sessions.js')
   web = await import('../src/web/http.js')
   server = await import('../src/http-server.js')
-  port = 5400 + Math.floor(Math.random() * 190) * 3
+  // Band 5450-5489: each HTTP test file draws from its own slice of 5400-5600.
+  port = 5450 + Math.floor(Math.random() * 40)
   server.startHttpServer(port)
   const deadline = Date.now() + 5000
   for (;;) {
@@ -55,12 +56,15 @@ function sessionFor(chatId: string): string {
 }
 
 /** Raw request so the path reaches the server un-normalised. */
-function raw(path: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
+function raw(
+  path: string,
+  headers: Record<string, string> = {}
+): Promise<{ status: number; body: string; headers: import('node:http').IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const req = request({ host: '127.0.0.1', port, path, method: 'GET', headers }, (res) => {
       let b = ''
       res.on('data', (c) => (b += c))
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: b }))
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: b, headers: res.headers }))
     })
     req.on('error', reject)
     req.end()
@@ -99,6 +103,36 @@ describe('web auth boundary', () => {
     expect((await fetch(`${base()}/api/web/me`, { headers: { Cookie: cookie } })).status).toBe(200)
     db.removeAuthorizedChat('777')
     expect((await fetch(`${base()}/api/web/me`, { headers: { Cookie: cookie } })).status).toBe(401)
+  })
+  it('deletes every web session of a chat that is no longer allowed, so re-allowing it revives none', async () => {
+    db.addAuthorizedChat('778', 'x', PRIMARY)
+    const a = sessionFor('778')
+    sessionFor('778')
+    expect(sessions.listWebSessions('778')).toHaveLength(2)
+    db.removeAuthorizedChat('778')
+    expect((await fetch(`${base()}/api/web/me`, { headers: { Cookie: a } })).status).toBe(401)
+    expect(sessions.listWebSessions('778')).toHaveLength(0)
+    db.addAuthorizedChat('778', 'x', PRIMARY)
+    expect((await fetch(`${base()}/api/web/me`, { headers: { Cookie: a } })).status).toBe(401)
+  })
+  it('re-sends the cookie with a fresh Max-Age when the session slides', async () => {
+    const cookie = sessionFor(PRIMARY)
+    const id = cookie.slice('havn_web='.length)
+    const fresh = await fetch(`${base()}/api/web/me`, { headers: { Cookie: cookie } })
+    expect(fresh.status).toBe(200)
+    expect(fresh.headers.get('set-cookie')).toBeNull()
+    // Two hours idle: the next request slides the session and the browser must hear about it.
+    const { createHash } = await import('node:crypto')
+    const idHash = createHash('sha256').update(id, 'utf8').digest('hex')
+    db.getDb().prepare('UPDATE web_sessions SET last_seen_at = ? WHERE id_hash = ?').run(Date.now() - 2 * 3600_000, idHash)
+    const slid = await fetch(`${base()}/api/web/me`, { headers: { Cookie: cookie } })
+    expect(slid.status).toBe(200)
+    const c = slid.headers.get('set-cookie')!
+    expect(c).toContain(`havn_web=${id}`)
+    expect(c).toContain('Max-Age=2592000')
+    expect(c).toContain('HttpOnly')
+    expect(c).toContain('SameSite=Strict')
+    expect(c).toContain('Path=/')
   })
   it('gives 404 for an unknown api path and 405 for a wrong method', async () => {
     const cookie = sessionFor(PRIMARY)
@@ -153,6 +187,18 @@ describe('browser hardening', () => {
       expect(r.headers.get('referrer-policy')).toBe('no-referrer')
       expect(r.headers.get('x-frame-options')).toBe('DENY')
     }
+  })
+  it('gives a non-canonical path to the page the same headers', async () => {
+    for (const p of ['/./app/index.html', '/x/%2e%2e/app/index.html']) {
+      const r = await raw(p)
+      expect(r.status, p).toBe(200)
+      expect(r.headers['content-security-policy'], p).toContain("default-src 'none'")
+      expect(r.headers['x-frame-options'], p).toBe('DENY')
+      expect(r.headers['x-content-type-options'], p).toBe('nosniff')
+    }
+    const api = await raw('/./api/web/me', { Authorization: `Bearer ${BEARER}` })
+    expect(api.status).toBe(401)
+    expect(api.headers['content-security-policy']).toContain("default-src 'none'")
   })
   it('puts the same headers on api errors', async () => {
     const r = await fetch(`${base()}/api/web/me`)

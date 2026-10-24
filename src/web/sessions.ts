@@ -66,10 +66,16 @@ export function exchangeWebLink(
   return { sessionId, chatId: row.chat_id, expiresAt }
 }
 
+/**
+ * Look up a session and slide it. `slid` is true when this call pushed the
+ * expiry forward (at most once an hour), so the caller can re-send the cookie
+ * with a fresh Max-Age: the browser drops a cookie at its own Max-Age no matter
+ * what the server thinks.
+ */
 export function resolveWebSession(
   sessionId: string,
   now: number = Date.now()
-): { chatId: string; idHash: string } | null {
+): { chatId: string; idHash: string; slid: boolean; expiresAt: number } | null {
   if (!sessionId) return null
   const d = getDb()
   const idHash = hash(sessionId)
@@ -82,13 +88,11 @@ export function resolveWebSession(
     return null
   }
   if (now - row.last_seen_at > SLIDE_AFTER_MS) {
-    d.prepare('UPDATE web_sessions SET expires_at = ?, last_seen_at = ? WHERE id_hash = ?').run(
-      now + SESSION_TTL_MS,
-      now,
-      idHash
-    )
+    const expiresAt = now + SESSION_TTL_MS
+    d.prepare('UPDATE web_sessions SET expires_at = ?, last_seen_at = ? WHERE id_hash = ?').run(expiresAt, now, idHash)
+    return { chatId: row.chat_id, idHash, slid: true, expiresAt }
   }
-  return { chatId: row.chat_id, idHash }
+  return { chatId: row.chat_id, idHash, slid: false, expiresAt: row.expires_at }
 }
 
 export function listWebSessions(

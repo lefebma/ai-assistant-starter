@@ -24,6 +24,7 @@ import {
   listWebSessions,
   revokeWebSession,
   revokeOtherWebSessions,
+  revokeAllWebSessions,
   webSessionCookie,
   clearWebCookie,
   webSessionFromCookies,
@@ -214,8 +215,21 @@ function servePage(req: IncomingMessage, res: ServerResponse, rawPath: string): 
 
 // ---------- dispatcher ----------
 
-function isWebPath(raw: string): boolean {
+export function isWebPath(raw: string): boolean {
   return raw === '/app' || raw.startsWith('/app/') || raw.startsWith('/api/web/') || raw === '/api/web'
+}
+
+/**
+ * The path the web layer routes on, or null when the request is not for it.
+ * The raw path wins when it is a web path. Otherwise the normalised
+ * `url.pathname` is checked too: the general router serves files by pathname,
+ * so `/./app/index.html` must not slip past this layer's headers to reach it.
+ */
+export function webPathFor(rawUrl: string | undefined, pathname: string): string | null {
+  const raw = (rawUrl ?? '').split('?')[0]!.split('#')[0]!
+  if (isWebPath(raw)) return raw
+  if (isWebPath(pathname)) return pathname
+  return null
 }
 
 function originAllowed(req: IncomingMessage): boolean {
@@ -232,8 +246,8 @@ function originAllowed(req: IncomingMessage): boolean {
 
 /** True when the request was handled (the caller must stop). */
 export async function handleWebRequest(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
-  const rawPath = (req.url ?? '').split('?')[0].split('#')[0]
-  if (!isWebPath(rawPath)) return false
+  const rawPath = webPathFor(req.url, url.pathname)
+  if (rawPath === null) return false
 
   const api = rawPath.startsWith('/api/web')
   applySecurityHeaders(res, { api })
@@ -280,14 +294,26 @@ export async function handleWebRequest(req: IncomingMessage, res: ServerResponse
     let sessionIdHash = ''
 
     if (route.auth) {
-      const session = resolveWebSession(webSessionFromCookies(req.headers.cookie) ?? '')
+      const presented = webSessionFromCookies(req.headers.cookie) ?? ''
+      const session = resolveWebSession(presented)
+      if (!session) {
+        sendError(res, 401, 'unauthorized')
+        return true
+      }
       // Re-checked on every request so revoking a chat locks the web out too.
-      if (!session || !isChatAllowed(session.chatId)) {
+      // Its sessions go with it, so allowing the chat again later does not
+      // bring old browsers back.
+      if (!isChatAllowed(session.chatId)) {
+        revokeAllWebSessions(session.chatId)
         sendError(res, 401, 'unauthorized')
         return true
       }
       chatId = session.chatId
       sessionIdHash = session.idHash
+      // The session slid on the server: tell the browser too, or it drops the
+      // cookie at the Max-Age it was first given. A handler that sets its own
+      // cookie (sign out) overrides this through writeHead.
+      if (session.slid) res.setHeader('Set-Cookie', webSessionCookie(presented, secure, SESSION_TTL_MS))
     }
 
     if (method !== 'GET' && method !== 'HEAD') {

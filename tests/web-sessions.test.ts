@@ -52,10 +52,13 @@ describe('web sessions', () => {
     const { token } = s.mintWebLink('c5', 0)
     const { sessionId } = s.exchangeWebLink(token, '', 0)!
     expect(s.resolveWebSession(sessionId, 1000)?.chatId).toBe('c5')
+    expect(s.resolveWebSession(sessionId, 1000)?.slid).toBe(false)
     const exp = () =>
       (db.getDb().prepare('SELECT expires_at FROM web_sessions WHERE chat_id = ?').get('c5') as { expires_at: number }).expires_at
     expect(exp()).toBe(s.SESSION_TTL_MS)
-    s.resolveWebSession(sessionId, 3_600_001)
+    const slid = s.resolveWebSession(sessionId, 3_600_001)
+    expect(slid?.slid).toBe(true)
+    expect(slid?.expiresAt).toBe(3_600_001 + s.SESSION_TTL_MS)
     expect(exp()).toBe(3_600_001 + s.SESSION_TTL_MS)
     expect(s.resolveWebSession(sessionId, 3_600_001 + s.SESSION_TTL_MS)).toBeNull()
     expect(s.resolveWebSession('', 1)).toBeNull()

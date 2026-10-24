@@ -18,7 +18,7 @@ import { isChatBusy } from './agent.js'
 import { resolveShortcutToken } from './shortcut-tokens.js'
 import { handleShortcut } from './shortcut-route.js'
 import { logger } from './logger.js'
-import { handleWebRequest } from './web/index.js'
+import { handleWebRequest, webPathFor } from './web/index.js'
 import { detectPlatform, type PlatformName } from './platform/index.js'
 import { getUsageSnapshot, getActivitySeries } from './cockpit/usage.js'
 import { readRecentActivity } from './cockpit/activity.js'
@@ -746,9 +746,10 @@ export function startHttpServer(port: number = HTTP_PORT): void {
 
     // The web app (/app, /api/web/*) is dispatched first and has its own
     // auth, hardening and no CORS, so applyCors must never run for it.
+    // Either the raw path or the normalised pathname counts, so a path such as
+    // `/./app/index.html` still gets the web layer's headers.
     {
-      const raw = (req.url ?? '').split('?')[0]
-      if (raw === '/app' || raw.startsWith('/app/') || raw.startsWith('/api/web/')) {
+      if (webPathFor(req.url, url.pathname) !== null) {
         void handleWebRequest(req, res, url).catch((err) => {
           logger.error({ err }, 'web request failed')
           if (!res.headersSent) res.writeHead(500)

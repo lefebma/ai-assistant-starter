@@ -9,4 +9,4 @@ import './project-goal-routes.js'
 import './file-routes.js'
 import './status-routes.js'
 
-export { handleWebRequest } from './http.js'
+export { handleWebRequest, webPathFor } from './http.js'
