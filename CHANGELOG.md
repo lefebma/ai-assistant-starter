@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.51.0 - 2026-10-25
+
+Your chat app's commands now work in the web app.
+
+- **New: slash commands in the web app.** Every command from your chat app works in the web chat and does the same thing: `/schedule`, `/cancel`, `/skill`, `/memory`, `/support` and the rest. Type `/` to see the list. A command's answer, buttons included, shows up in the conversation.
+- `/newchat` in the web app starts that conversation fresh and leaves your chat app thread alone. `/audit` runs inside the conversation, so Stop works on it.
+- A message holding a key for `/secret set` is never saved in the web chat history.
+
 ## 1.50.0 - 2026-10-25
 
 A restart in the middle of a scheduled job no longer leaves it stuck or forgotten.

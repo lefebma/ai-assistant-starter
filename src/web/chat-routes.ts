@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs'
 import { PROJECT_ROOT } from '../config.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
-import { runWebTurn, cancelWebTurn, extractButtons } from '../bot.js'
+import { runWebTurn, cancelWebTurn, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
@@ -22,6 +22,9 @@ import {
   getMessageForChat,
   buttonClickLabel,
   claimButtonClick,
+  setMessageContent,
+  markButtonsUsed,
+  latestAssistantMessageId,
   type ConversationRow,
   type MessageRow,
   type StoredFile,
@@ -109,6 +112,14 @@ function panelVisible(abs: string): boolean {
 }
 
 registerWebRoutes([
+  {
+    method: 'GET',
+    pattern: /^\/api\/web\/commands$/,
+    auth: true,
+    handler(ctx) {
+      sendJson(ctx.res, 200, { commands: COMMAND_MENU })
+    },
+  },
   {
     method: 'GET',
     pattern: /^\/api\/web\/conversations$/,
@@ -203,25 +214,48 @@ registerWebRoutes([
       // A click answers the latest reply's card once. A stale tab, a second
       // click, or a label that card does not offer is refused.
       const clicked = buttonClickLabel(text)
+      const clickedMessageId = clicked !== null ? latestAssistantMessageId(id) : undefined
       if (clicked !== null && !claimButtonClick(id, clicked)) return sendError(ctx.res, 409, 'buttons_used')
 
       running.add(id)
       try {
-        addMessage(id, 'user', text)
-        if (!conv.title) updateConversation(ctx.chatId, id, { title: text.replace(/\s+/g, ' ').slice(0, 60) })
         const sse = openSse(ctx.res, { heartbeatMs: 15_000 })
         // Deliberately no cancel on close: the turn finishes and is stored.
 
-        let sent = ''
-        try {
+        // The owner's message is stored once something answers it, so a key
+        // pasted for /secret (which the command deletes) never reaches history.
+        let userStored = false
+        let userDropped = false
+        const storeUser = () => {
+          if (userStored || userDropped) return
+          userStored = true
+          addMessage(id, 'user', text)
+          if (!conv.title) updateConversation(ctx.chatId, id, { title: text.replace(/\s+/g, ' ').slice(0, 60) })
+        }
+        const stored = (mid: number) => msgJson(listMessages(id).find((m) => m.id === mid)!)
+        const reply = (content: string, files: StoredFile[] = [], buttons: string[] = []): number => {
+          storeUser()
+          const mid = addMessage(id, 'assistant', content, files, buttons)
+          sse.writeEvent('reply', { message: stored(mid) })
+          return mid
+        }
+
+        /** One agent turn on this conversation's session, streamed to the page. */
+        const agentTurn = async (turnText: string, skipMemory = false): Promise<
+          { kind: 'reply'; mid: number } | { kind: 'paused'; text: string } | { kind: 'cancelled' }
+        > => {
+          // Read the session now: /newchat may have just cleared it.
+          const current = getConversation(ctx.chatId, id) ?? conv
+          let sent = ''
           const result = await runWebTurn({
             chatId: ctx.chatId,
             conversationId: id,
-            text,
-            framing: framingFor(conv.projectId),
-            sessionId: conv.sessionId ?? undefined,
-            model: conv.model || undefined,
-            effort: (conv.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | undefined,
+            text: turnText,
+            framing: framingFor(current.projectId),
+            sessionId: current.sessionId || undefined,
+            model: current.model || undefined,
+            effort: (current.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | undefined,
+            skipMemory,
             onQueued: (ahead) => sse.writeEvent('queued', { ahead }),
             onPartial: (acc) => {
               // A runtime retry restarts the text from scratch. Appending it
@@ -237,30 +271,84 @@ registerWebRoutes([
             },
             onToolProgress: (tool, status) => sse.writeEvent('tool', { tool, status }),
           })
-
           if (result.newSessionId) updateConversation(ctx.chatId, id, { sessionId: result.newSessionId })
-
           if (result.paused) {
             addMessage(id, 'assistant', result.paused)
-            sse.writeEvent('paused', { text: result.paused })
-          } else if (result.cancelled || result.text === null) {
-            sse.writeEvent('done', { cancelled: true })
-          } else {
-            const { cleanText: noFiles, requests } = extractFileMarkers(result.text)
-            const { cleanText, labels } = extractButtons(noFiles)
-            const files: StoredFile[] = []
-            const notes: string[] = []
-            for (const req of requests) {
-              const r = resolveOutboundFile(req.requested, { projectRoot: PROJECT_ROOT, uploadsDir: UPLOADS_DIR })
-              if (r.ok && !panelVisible(r.path)) notes.push('(file not sent: it is in a part of the box the web app keeps hidden)')
-              else if (r.ok) files.push({ path: r.path, name: r.name, kind: r.kind })
-              else notes.push(`(file not sent: ${r.reason})`)
-            }
-            const content = [cleanText, ...notes].filter(Boolean).join('\n\n')
-            const mid = addMessage(id, 'assistant', content, files, labels)
-            const stored = listMessages(id).find((m) => m.id === mid)!
-            sse.writeEvent('done', { cancelled: false, message: msgJson(stored) })
+            return { kind: 'paused', text: result.paused }
           }
+          if (result.cancelled || result.text === null) return { kind: 'cancelled' }
+          const { cleanText: noFiles, requests } = extractFileMarkers(result.text)
+          const { cleanText, labels } = extractButtons(noFiles)
+          const files: StoredFile[] = []
+          const notes: string[] = []
+          for (const req of requests) {
+            const r = resolveOutboundFile(req.requested, { projectRoot: PROJECT_ROOT, uploadsDir: UPLOADS_DIR })
+            if (r.ok && !panelVisible(r.path)) notes.push('(file not sent: it is in a part of the box the web app keeps hidden)')
+            else if (r.ok) files.push({ path: r.path, name: r.name, kind: r.kind })
+            else notes.push(`(file not sent: ${r.reason})`)
+          }
+          const content = [cleanText, ...notes].filter(Boolean).join('\n\n')
+          return { kind: 'reply', mid: addMessage(id, 'assistant', content, files, labels) }
+        }
+
+        // Slash commands, and the flows they start, answer the same way they
+        // do in Telegram. Anything they do not own goes to the agent below.
+        try {
+          const cmd = await runWebCommand({
+            chatId: ctx.chatId,
+            conversationId: id,
+            text,
+            clickedMessageId,
+            hooks: {
+              send: (t, buttons) => String(reply(t, [], buttons)),
+              edit: (mid, t) => setMessageContent(id, Number(mid), t),
+              clearButtons: (mid) => markButtonsUsed(id, Number(mid)),
+              dropUserMessage: () => {
+                userDropped = true
+                sse.writeEvent('dropped', {})
+              },
+              file: (path, kind) => {
+                if (kind === 'voice') return // the web has no voice replies
+                const r = resolveOutboundFile(path, { projectRoot: PROJECT_ROOT, uploadsDir: UPLOADS_DIR })
+                if (r.ok && panelVisible(r.path)) reply('', [{ path: r.path, name: r.name, kind: r.kind }])
+                else reply('(file not sent: it is in a part of the box the web app keeps hidden)')
+              },
+              turn: async (t, opts) => {
+                storeUser()
+                try {
+                  const r = await agentTurn(t, opts.skipMemory)
+                  if (r.kind === 'reply') sse.writeEvent('reply', { message: stored(r.mid) })
+                  else if (r.kind === 'paused') sse.writeEvent('reply', { message: stored(latestAssistantMessageId(id)!) })
+                  else reply('*Stopped.*')
+                } catch (err) {
+                  logger.error({ err, conversationId: id }, 'web command turn failed')
+                  reply(ownerMessage(err))
+                }
+              },
+            },
+          })
+          if (cmd.handled) {
+            storeUser()
+            if (cmd.clearSession) updateConversation(ctx.chatId, id, { sessionId: '' })
+            sse.writeEvent('done', { cancelled: false, command: true })
+            sse.close()
+            return
+          }
+        } catch (err) {
+          // The owner's message stays unstored: a command that failed half way
+          // through a /secret set may have been holding a key.
+          logger.error({ err, conversationId: id }, 'web chat command failed')
+          sse.writeEvent('error', { message: ownerMessage(err) })
+          sse.close()
+          return
+        }
+        storeUser()
+
+        try {
+          const r = await agentTurn(text)
+          if (r.kind === 'paused') sse.writeEvent('paused', { text: r.text })
+          else if (r.kind === 'cancelled') sse.writeEvent('done', { cancelled: true })
+          else sse.writeEvent('done', { cancelled: false, message: stored(r.mid) })
         } catch (err) {
           logger.error({ err, conversationId: id }, 'web chat turn failed')
           sse.writeEvent('error', { message: ownerMessage(err) })

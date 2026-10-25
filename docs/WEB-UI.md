@@ -42,6 +42,20 @@ Each conversation has two pickers at the top.
 - **Effort.** How hard it thinks before answering: Low is quick, High takes
   longer and goes deeper. Default leaves it to the assistant.
 
+### Commands
+
+The slash commands from your chat app work here too, and they do the same
+thing: `/schedule`, `/cancel`, `/skill`, `/memory`, `/support`, `/update`
+and the rest. Type `/` in the message box to see the list. A command's answer
+shows up in the conversation, buttons included.
+
+- **`/newchat`** starts this conversation fresh. Your chat app's thread is
+  left alone, and `/newchat` there leaves the web app alone.
+- **`/secret set`** works as it does in your chat app. The message holding the
+  key is never saved in the conversation history.
+- A command the assistant does not know goes to the assistant as a normal
+  message, as it does in your chat app.
+
 ## What the file panel hides, and why
 
 The file panel never shows your assistant's working parts, data that covers
