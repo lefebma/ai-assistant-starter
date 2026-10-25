@@ -28,7 +28,7 @@ vi.mock('../src/agent.js', () => ({
 import { rmSync } from 'node:fs'
 import type { ModelMessage } from 'ai'
 import * as db from '../src/db.js'
-import { runDueTasks } from '../src/scheduler.js'
+import { runDueTasks, sweepInterruptedRuns } from '../src/scheduler.js'
 import { saveConversationTurn } from '../src/memory.js'
 import { ContextEngine } from '../src/memory/engine.js'
 import { EpisodicProvider } from '../src/memory/providers/episodic.js'
@@ -38,6 +38,7 @@ import { applyReplyContext } from '../src/prompt-safety.js'
 import { createRun, type AuthorityFacet } from '../src/assurance/obligations.js'
 import { checkRole, loadRoles } from '../src/assurance/roles.js'
 import { cardRunKey, journalForRun } from '../src/assurance/effect-journal.js'
+import { openRun } from '../src/assurance/run-state.js'
 import { gateToolCall } from '../src/assurance/scope-gate.js'
 import {
   ALL_PURPOSES, CLIENT, CrashSignal, DECISION_LEDGER, FACTS, MockDestination, OBLIGATIONS, STEPS, THRESHOLDS,
@@ -255,7 +256,9 @@ describe('S2 restart: process dies after the email is sent, before the run finis
     db.createTask(id, 'chat-s2', 'Run the Northpine follow-up', '0 9 * * *', nowS() - 60, 'Northpine follow-up', 'silent', 'America/Toronto', true)
     const dest = new MockDestination(), trace: TraceEvent[] = []
     const key = arm === 'reference' ? stableKey(id) : undefined
-    let boot = createRun(`${id}#boot1`, OBLIGATIONS).authority
+    // As-is: obligation state on disk under the job's run key (card #234).
+    const openBoot = (n: number) => (arm === 'as-is' ? openRun(`job:${id}`, OBLIGATIONS).authority : createRun(`${id}#boot${n}`, OBLIGATIONS).authority)
+    let boot = openBoot(1)
     let n = 0
     h.impl = async () => {
       n += 1
@@ -275,16 +278,20 @@ describe('S2 restart: process dies after the email is sent, before the run finis
     expect(stuck.next_run).toBeGreaterThan(nowS())
     expect(dest.effects()).toHaveLength(2)
 
-    // Restart. In-memory obligation state is gone with the process.
-    boot = createRun(`${id}#boot2`, OBLIGATIONS).authority
-    let interventions = 0
+    // Restart. The reference arm's in-memory obligations are gone with the process.
+    boot = openBoot(2)
+    const interventions = 0
+    const alerts: string[] = []
     if (arm === 'reference') {
       reconcile(boot, dest, key!)
       db.resumeTask(id, nowS()) // orphan detection: re-queue a RUNNING... row at boot
       vi.advanceTimersByTime(60_000)
     } else {
-      interventions = 1 // a stuck row with no alert; it only re-runs because the cron happens to fire again
-      vi.setSystemTime(stuck.next_run * 1000 + 1000)
+      // The boot sweep (card #234) finds the row, tells the owner what went
+      // out, and re-queues the one-shot under the same run key.
+      const swept = await sweepInterruptedRuns(async (_chat, text) => { alerts.push(text) })
+      expect(swept.map(r => r.action)).toEqual(['resumed'])
+      expect(alerts[0]).toContain('Already went out: crm.update; email.send to billing@northpine.example.')
     }
     await runDueTasks()
     const check = verifyDestination(dest)
@@ -294,9 +301,9 @@ describe('S2 restart: process dies after the email is sent, before the run finis
       expect(check.duplicates).toBe(0)
       expect(check.verified).toBe(true)
       expect(journalForRun(`job:${id}`).filter(r => r.repeats > 0).map(r => r.kind).sort()).toEqual(['crm.update', 'email.send'])
-      // Still pinned: obligation state is in memory, so the second boot cannot
-      // see the first one's evidence and reads incomplete (defect 5, #234).
-      expect(boot.requestCompletion().status).toBe('incomplete')
+      // Obligation state is on disk, so the second boot sees the first one's
+      // evidence and the run reads complete (defect 5, fixed in #234).
+      expect(boot.requestCompletion().status).toBe('complete')
     } else {
       expect(check.verified).toBe(true)
     }

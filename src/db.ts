@@ -5,6 +5,7 @@ import { STORE_DIR } from './config.js'
 import { installTimezone } from './env.js'
 import { initEmailAlertTables } from './email-alerts/store.js'
 import { initEffectJournalTables } from './assurance/effect-journal.js'
+import { initRunStateTables } from './assurance/run-state.js'
 
 let db: Database.Database
 
@@ -266,9 +267,15 @@ export function initDatabase(): void {
   if (!colNames.has('role')) {
     d.exec('ALTER TABLE scheduled_tasks ADD COLUMN role TEXT')
   }
+  // The run in flight or waiting on a retry (card #234). Set when a run
+  // starts, cleared when it ends; one still set at boot was cut off.
+  if (!colNames.has('run_key')) {
+    d.exec('ALTER TABLE scheduled_tasks ADD COLUMN run_key TEXT')
+  }
 
   initEmailAlertTables(d)
   initEffectJournalTables(d)
+  initRunStateTables(d)
 }
 
 // --- App state (one-shot install flags) ---
@@ -445,6 +452,8 @@ export interface ScheduledTask {
   run_once: number
   /** Role the unattended run is limited to (card #195); null for every tool. */
   role?: string | null
+  /** Run key of the run in flight or waiting on a retry (card #234); null when idle. */
+  run_key?: string | null
   created_at: number
 }
 
@@ -481,11 +490,37 @@ export function getDueTasks(): ScheduledTask[] {
     .all(now()) as ScheduledTask[]
 }
 
-export function updateTaskAfterRun(id: string, result: string, nextRun: number): void {
+/**
+ * Record a run's outcome. `runKey` stays on the row only while the run still
+ * owes something (a deferred retry); every final outcome clears it.
+ */
+export function updateTaskAfterRun(id: string, result: string, nextRun: number, runKey: string | null = null): void {
   const d = getDb()
   d.prepare(
-    `UPDATE scheduled_tasks SET last_run = ?, last_result = ?, next_run = ? WHERE id = ?`
-  ).run(now(), result, nextRun, id)
+    `UPDATE scheduled_tasks SET last_run = ?, last_result = ?, next_run = ?, run_key = ? WHERE id = ?`
+  ).run(now(), result, nextRun, runKey, id)
+}
+
+/** A run is starting: mark the row so a crash before it ends is found at boot (card #234). */
+export function markTaskRunning(id: string, runKey: string, nextRun: number, label = 'RUNNING...'): void {
+  updateTaskAfterRun(id, label, nextRun, runKey)
+}
+
+/** The run ended without a result to record. Leaves a newer run's key alone. */
+export function clearTaskRun(id: string, runKey: string): void {
+  getDb().prepare('UPDATE scheduled_tasks SET run_key = NULL WHERE id = ? AND run_key = ?').run(id, runKey)
+}
+
+/** Rows a previous process left mid-run: a run key still set, or a RUNNING... from before the column existed. */
+export function getInterruptedTasks(): ScheduledTask[] {
+  return getDb()
+    .prepare("SELECT * FROM scheduled_tasks WHERE run_key IS NOT NULL OR last_result = 'RUNNING...'")
+    .all() as ScheduledTask[]
+}
+
+/** Shutdown stopped this run: say so on the row, keep the run key for the sweep. */
+export function markTaskInterrupted(id: string): void {
+  getDb().prepare("UPDATE scheduled_tasks SET last_result = 'INTERRUPTED: stopped by a restart' WHERE id = ? AND run_key IS NOT NULL").run(id)
 }
 
 /** Move only the next run time, leaving last_run and last_result as they were. */

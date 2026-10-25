@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.50.0 - 2026-10-25
+
+A restart in the middle of a scheduled job no longer leaves it stuck or forgotten.
+
+- **New: interrupted jobs are found at startup.** A scheduled job that was running (or waiting to retry) when the assistant stopped used to sit at "RUNNING..." forever. Now the assistant finds it when it starts, and tells you what it had already sent and what it started but never got confirmed, so you know what to check.
+- **A one-shot job picks up where it left off.** It runs again straight away, told that it was interrupted. Anything it already sent is not sent twice. It runs with the task as it is now, so a job you paused stays paused and a role you narrowed applies. A job that is cut off twice in a row is paused instead, with a note to resume it once it is safe.
+- **A recurring job waits for its next time** rather than replaying the run that was cut off, and its last result reads "UNKNOWN".
+- A silent job that had not sent anything is picked up quietly, without a message.
+- Completion checks are now kept on disk, so a job that resumes after a restart still knows what it already did.
+
 ## 1.49.0 - 2026-10-25
 
 Your assistant now has a web app: chat, projects, goals and files in your browser.

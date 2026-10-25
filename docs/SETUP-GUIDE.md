@@ -582,6 +582,14 @@ pause or delete it and the next call is refused; change its role and the next
 call is checked against the new one. A retry waiting after an AI overload
 does the same when it fires, and picks up where the first attempt stopped.
 
+**If the assistant restarts mid-job**, it notices when it starts again and
+messages you: which job was cut off, what it had already sent, and anything it
+started but never got confirmed (check Sent for those). A one-shot job then
+picks up where it left off, as the task is now (still paused if you paused it,
+under the new role if you changed it), and never sends the same thing twice.
+A recurring job waits for its next time. A job that is cut off twice in a row
+is paused until you `/schedule resume` it.
+
 ## Voice
 
 Everything voice runs on an OpenAI API key (`OPENAI_API_KEY`), whichever AI

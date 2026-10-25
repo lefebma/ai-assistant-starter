@@ -1,9 +1,10 @@
 import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
-import { getDueTasks, getAllTasks, getTask, updateTaskAfterRun, setTaskNextRun, deleteTask, pauseTask, type ScheduledTask } from './db.js'
+import { getDueTasks, getAllTasks, getTask, updateTaskAfterRun, setTaskNextRun, deleteTask, pauseTask, markTaskRunning, clearTaskRun, getInterruptedTasks, markTaskInterrupted, type ScheduledTask } from './db.js'
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
-import { jobRunKey, withRun } from './assurance/effect-journal.js'
+import { jobRunKey, journalForRun, withRun, type JournalRow } from './assurance/effect-journal.js'
+import { markRunUnknown } from './assurance/run-state.js'
 import { taskGrant, withGrant } from './assurance/grant.js'
 import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
@@ -41,9 +42,9 @@ export function cancelDeferredRetry(taskId: string): boolean {
  * resumes the first attempt's session where there is one, so the model sees
  * what it already did; the effect journal (#229) refuses any repeat anyway.
  */
-export function continuationPrompt(prompt: string): string {
+export function continuationPrompt(prompt: string, why = 'because the AI service was overloaded'): string {
   return [
-    '[retry] An earlier attempt at this scheduled job stopped partway because the AI service was overloaded.',
+    `[retry] An earlier attempt at this scheduled job stopped partway ${why}.`,
     'Check what was already done before acting, and finish only what is left. Anything that already went out is recorded, and a repeat will be refused.',
     '',
     'The job:',
@@ -131,7 +132,12 @@ export function cancelScheduledTask(taskId: string): ScheduledCancelResult {
 export function abortAllScheduledRuns(): number {
   let n = 0
   for (const run of runningRuns.values()) {
-    if (!run.controller.signal.aborted) { run.controller.abort(); n++ }
+    if (!run.controller.signal.aborted) {
+      run.controller.abort()
+      // The row keeps its run key, so the boot sweep finds it (card #234).
+      try { markTaskInterrupted(run.taskId) } catch { /* the database may already be closed */ }
+      n++
+    }
   }
   return n
 }
@@ -143,6 +149,96 @@ export function isScheduledTaskRunning(taskId: string): boolean {
 
 const scopeOf = (task: Pick<ScheduledTask, 'id' | 'role'>) => (task.role ? { role: task.role, taskId: task.id } : undefined)
 
+/** last_result of a one-shot the sweep re-queued; runDueTasks resumes it instead of starting over. */
+export const RESUME_MARK = 'RESUMING: interrupted by a restart'
+/** last_result while a resumed run is in flight. Cut off again, it is paused, not resumed a second time. */
+const RESUMED_RUNNING = 'RUNNING... (resumed)'
+
+export type SweptRun = {
+  taskId: string
+  label: string
+  runKey: string | null
+  /**
+   * What happened to it: resumed now, left for its next scheduled time, left
+   * alone because the owner paused it, or paused here because it was cut off
+   * again after being resumed once (a job that takes the process down).
+   */
+  action: 'resumed' | 'next-run' | 'paused' | 'paused-again'
+  /** Effects the journal shows as done, and ones whose outcome never came back. */
+  done: JournalRow[]
+  unconfirmed: JournalRow[]
+  alerted: boolean
+}
+
+function describeEffect(r: JournalRow): string {
+  const to = (JSON.parse(r.recipients) as string[]).join(', ')
+  return to ? `${r.kind} to ${to}` : r.kind
+}
+
+/** The owner's alert for one cut-off run. Exported for tests. */
+export function sweepMessage(r: Pick<SweptRun, 'label' | 'action' | 'done' | 'unconfirmed'>, cause: string, nextAt?: string): string {
+  const lines = [`"${r.label}" was cut off ${cause}, so I can't tell whether it finished.`]
+  if (r.done.length) lines.push(`Already went out: ${r.done.map(describeEffect).join('; ')}.`)
+  if (r.unconfirmed.length) lines.push(`Started but never confirmed (check Sent before asking again): ${r.unconfirmed.map(describeEffect).join('; ')}.`)
+  if (!r.done.length && !r.unconfirmed.length) lines.push('Nothing it sends was recorded as going out.')
+  if (r.action === 'resumed') lines.push('Picking it up again now. Anything that already went out will not be sent twice.')
+  else if (r.action === 'paused') lines.push('The task is paused, so I have not picked it up again.')
+  else if (r.action === 'paused-again') lines.push('This is the second time in a row, so I have paused it. Resume it with /schedule resume once it is safe to run.')
+  else lines.push(`It runs again at its next scheduled time${nextAt ? ` (${nextAt})` : ''}.`)
+  return lines.join('\n')
+}
+
+/**
+ * Boot: find runs a previous process left mid-way (card #234). Nothing runs
+ * in this process yet, so every row still holding a run key was cut off: by
+ * a crash (RUNNING...), a shutdown (INTERRUPTED) or a lost deferred retry
+ * (DEFERRED). Each is marked unknown and the owner is told what the effect
+ * journal shows. An active one-shot is re-queued under the same run key, so
+ * the journal refuses repeats; it goes through getDueTasks and the live
+ * grant like any run, so a task paused or re-roled since is obeyed. A
+ * recurring run waits for its next occurrence instead of replaying this one.
+ */
+export async function sweepInterruptedRuns(send: Sender | null = sender): Promise<SweptRun[]> {
+  const out: SweptRun[] = []
+  for (const task of getInterruptedTasks()) {
+    const label = labelFor(task)
+    const runKey = task.run_key ?? (task.run_once ? jobRunKey(task.id, task.next_run, true) : null)
+    const journal = runKey ? journalForRun(runKey) : []
+    const done = journal.filter(r => r.status === 'done')
+    const unconfirmed = journal.filter(r => r.status !== 'done')
+    const last = task.last_result ?? ''
+    const cause = last.startsWith('INTERRUPTED') ? 'by a restart'
+      : last.startsWith('DEFERRED') ? 'by a restart while it waited to retry'
+      : 'when the assistant stopped unexpectedly'
+    const action: SweptRun['action'] = task.status !== 'active' ? 'paused'
+      : last === RESUMED_RUNNING ? 'paused-again'
+      : task.run_once ? 'resumed' : 'next-run'
+    const nowS = Math.floor(Date.now() / 1000)
+    if (action === 'paused-again') pauseTask(task.id)
+    if (action === 'resumed') {
+      updateTaskAfterRun(task.id, RESUME_MARK, nowS, runKey)
+    } else {
+      updateTaskAfterRun(task.id, `UNKNOWN: cut off ${cause}`, task.next_run)
+      if (runKey) markRunUnknown(runKey, `cut off ${cause}`)
+    }
+    // A silent job with nothing recorded is housekeeping: log it, don't page the owner.
+    const quiet = task.delivery_mode === 'silent' && !journal.length
+    let alerted = false
+    if (send && !quiet) {
+      const nextAt = action === 'next-run' ? new Date(task.next_run * 1000).toLocaleString('en-CA', { timeZone: task.timezone, dateStyle: 'medium', timeStyle: 'short' }) : undefined
+      try {
+        await send(task.chat_id, sweepMessage({ label, action, done, unconfirmed }, cause, nextAt))
+        alerted = true
+      } catch (err) {
+        logger.warn({ err, taskId: task.id }, 'Could not alert the owner about an interrupted run')
+      }
+    }
+    logger.warn({ taskId: task.id, runKey, action, done: done.length, unconfirmed: unconfirmed.length, alerted }, 'Interrupted scheduled run found at boot')
+    out.push({ taskId: task.id, label, runKey, action, done, unconfirmed, alerted })
+  }
+  return out
+}
+
 export function initScheduler(send: Sender): void {
   sender = send
   // Wrap in catch so a rejection can NEVER crash the process (unhandled promise → Node exit)
@@ -150,7 +246,10 @@ export function initScheduler(send: Sender): void {
     runDueTasks().catch((err) => logger.error({ err }, 'Scheduler poll failed'))
   }, 60_000)
   logger.info('Scheduler initialized, polling every 60s')
-  runDueTasks().catch((err) => logger.error({ err }, 'Initial scheduler run failed'))
+  sweepInterruptedRuns(send)
+    .catch((err) => logger.error({ err }, 'Interrupted-run sweep failed'))
+    .then(() => runDueTasks())
+    .catch((err) => logger.error({ err }, 'Initial scheduler run failed'))
 }
 
 export function stopScheduler(): void {
@@ -196,12 +295,15 @@ function syncDashboardJobs(): void {
  * moves to its next cron time; a one-shot is kept and retried when recovery
  * is due (or in 15 minutes), since its next cron occurrence is about a year out.
  */
-function skipWhilePaused(task: ScheduledTask, nextRun: number): void {
+function skipWhilePaused(task: ScheduledTask, nextRun: number, midRun = false): void {
   if (task.run_once) {
     const nowMs = Date.now()
     const marker = readAiLimit()
     const at = marker ? recoveryDueAt(marker) : nowMs
-    setTaskNextRun(task.id, Math.ceil((at > nowMs ? at : nowMs + 15 * 60_000) / 1000))
+    const retryAt = Math.ceil((at > nowMs ? at : nowMs + 15 * 60_000) / 1000)
+    // Mid-run the row says RUNNING..., which the boot sweep would take for a crash (#234).
+    if (midRun) updateTaskAfterRun(task.id, 'SKIPPED: AI allowance used up, trying again later', retryAt)
+    else setTaskNextRun(task.id, retryAt)
     return
   }
   updateTaskAfterRun(task.id, 'SKIPPED: AI allowance used up', nextRun)
@@ -244,9 +346,14 @@ export async function runDueTasks(): Promise<void> {
       skipWhilePaused(task, nextRun)
       continue
     }
-    updateTaskAfterRun(task.id, 'RUNNING...', nextRun)
+    // The deferred retry and a rerun after a crash reuse this run key, so an
+    // email the first attempt already sent is refused, not sent again (#229).
+    const runKey = jobRunKey(task.id, task.next_run, task.run_once === 1)
+    const resuming = task.last_result === RESUME_MARK
+    markTaskRunning(task.id, runKey, nextRun, resuming ? RESUMED_RUNNING : undefined)
     markLane(task.chat_id, 'cron')
     const { runId, controller } = registerRun(task, label)
+    let deferred = false
 
     try {
       // Only announce for non-silent jobs
@@ -257,13 +364,11 @@ export async function runDueTasks(): Promise<void> {
       // Task prompts are frozen in SQLite at creation, so a job that needs
       // current data carries a token instead of the data. Today that is only
       // the monthly audit; expandTaskPrompt is a no-op for every other job.
-      const prompt = expandTaskPrompt(task.prompt, () =>
+      const expanded = expandTaskPrompt(task.prompt, () =>
         buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
       )
-
-      // The deferred retry and a rerun after a crash reuse this run key, so an
-      // email the first attempt already sent is refused, not sent again (#229).
-      const runKey = jobRunKey(task.id, task.next_run, task.run_once === 1)
+      // Picked up after a restart cut it off (card #234): tell the model so.
+      const prompt = resuming ? continuationPrompt(expanded, 'because the assistant restarted') : expanded
       // Every tool call rereads the task (card #230): pausing, deleting or
       // re-roling the job takes effect at the next call, not the next run.
       const grant = taskGrant(task.id, getTask)
@@ -277,7 +382,7 @@ export async function runDueTasks(): Promise<void> {
       // The allowance ran out during this run: nothing to send, keep a one-shot.
       if (aiPaused) {
         logger.info({ taskId: task.id, kind: aiPaused }, 'AI allowance used up during scheduled task')
-        skipWhilePaused(task, nextRun)
+        skipWhilePaused(task, nextRun, true)
         continue
       }
       const result = text ?? '(no response)'
@@ -296,6 +401,7 @@ export async function runDueTasks(): Promise<void> {
               return
             }
             logger.info({ taskId: task.id, resume: Boolean(newSessionId), role: now.role }, 'Running deferred retry')
+            markTaskRunning(task.id, runKey, nextRun, 'RUNNING... (retry)')
             const retry = registerRun(now, label)
             let retryText: AgentResult['text']
             let retryPaused: AgentResult['aiPaused']
@@ -303,6 +409,8 @@ export async function runDueTasks(): Promise<void> {
               ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now))))))
             } finally {
               runningRuns.delete(retry.runId)
+              // Shutdown keeps the key for the boot sweep; a cancel already cleared it.
+              if (!retry.controller.signal.aborted) clearTaskRun(task.id, runKey)
             }
             if (retry.controller.signal.aborted) {
               logger.info({ taskId: task.id }, 'Cancelled deferred retry stopped')
@@ -310,7 +418,7 @@ export async function runDueTasks(): Promise<void> {
             }
             if (retryPaused) {
               logger.info({ taskId: task.id, kind: retryPaused }, 'AI allowance used up during deferred retry')
-              skipWhilePaused(task, nextRun)
+              skipWhilePaused(task, nextRun, true)
               return
             }
             const retryResult = retryText ?? '(no response)'
@@ -337,9 +445,11 @@ export async function runDueTasks(): Promise<void> {
           }
         }, RETRY_DELAY_MS)
         deferredRetries.set(task.id, retryHandle)
+        deferred = true
 
-        // Don't send the overload message to the user
-        updateTaskAfterRun(task.id, 'DEFERRED: API overloaded, retrying in 10 min', nextRun)
+        // Don't send the overload message to the user. The run key stays: a
+        // restart before the retry fires loses the timer, and the sweep finds it.
+        updateTaskAfterRun(task.id, 'DEFERRED: API overloaded, retrying in 10 min', nextRun, runKey)
         logger.info({ taskId: task.id, name: task.name, nextRun }, 'Scheduled task deferred')
         continue
       }
@@ -379,6 +489,12 @@ export async function runDueTasks(): Promise<void> {
     } finally {
       runningRuns.delete(runId)
       clearLane(task.chat_id)
+      // Every final outcome already cleared it; this catches any path that ends
+      // without one. A pending retry still owes the run, and shutdown keeps it
+      // for the boot sweep.
+      if (!deferred && !controller.signal.aborted) {
+        try { clearTaskRun(task.id, runKey) } catch { /* best effort */ }
+      }
     }
   }
 

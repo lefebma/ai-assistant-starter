@@ -15,6 +15,9 @@
  * Prototype status: pure logic, not yet wired into the runtime. Wiring means
  * the tool-execution path calling `authority.record` with evidence derived
  * from real tool results, and the reply path consulting `requestCompletion`.
+ *
+ * State can be handed in and reported out (card #234), so `run-state.ts` can
+ * keep it on disk and a restart picks up the evidence the first boot saw.
  */
 
 export type Obligation = {
@@ -65,6 +68,25 @@ export interface AuthorityFacet extends ModelFacet {
   markUnknown(reason: string): void
 }
 
+/** Everything a run knows, as plain data: what run-state.ts writes to disk. */
+export type RunState = {
+  runId: string
+  version: number
+  obligations: Obligation[]
+  /** obligationId -> eventIds counted under the current spec. */
+  satisfied: Record<string, string[]>
+  /** Every eventId ever accepted, so a replay stays a duplicate after an amend. */
+  seen: string[]
+  terminal: { status: Exclude<RunStatus, 'complete' | 'incomplete'>; reason: string } | null
+}
+
+export type RunOptions = {
+  /** Start from saved state instead of `initial`. */
+  state?: RunState
+  /** Called after every change, with the state as it now is. */
+  onChange?: (state: RunState) => void
+}
+
 const QUALIFIED: ReadonlySet<EvidenceOrigin> = new Set(['app', 'tool'])
 
 function freezeObligations(list: Obligation[]): readonly Readonly<Obligation>[] {
@@ -77,13 +99,26 @@ function sameSpec(a: Obligation, b: Obligation): boolean {
   return a.evidenceType === b.evidenceType && (a.minCount ?? 1) === (b.minCount ?? 1) && maxOf(a) === maxOf(b)
 }
 
-export function createRun(runId: string, initial: Obligation[]): { authority: AuthorityFacet; model: ModelFacet } {
-  let version = 1
-  let obligations = freezeObligations(initial)
+export function createRun(runId: string, initial: Obligation[], opts: RunOptions = {}): { authority: AuthorityFacet; model: ModelFacet } {
+  const saved = opts.state
+  let version = saved?.version ?? 1
+  let obligations = freezeObligations(saved?.obligations ?? initial)
   // obligationId -> distinct eventIds that satisfied it under the current spec
-  let satisfied = new Map<string, Set<string>>()
-  const seenEvents = new Set<string>()
-  let terminal: { status: Exclude<RunStatus, 'complete' | 'incomplete'>; reason: string } | null = null
+  let satisfied = new Map<string, Set<string>>(Object.entries(saved?.satisfied ?? {}).map(([k, v]) => [k, new Set(v)]))
+  const seenEvents = new Set<string>(saved?.seen ?? [])
+  let terminal: RunState['terminal'] = saved?.terminal ?? null
+
+  function state(): RunState {
+    return {
+      runId,
+      version,
+      obligations: obligations.map(o => ({ ...o })),
+      satisfied: Object.fromEntries([...satisfied].map(([k, v]) => [k, [...v]])),
+      seen: [...seenEvents],
+      terminal,
+    }
+  }
+  const changed = () => opts.onChange?.(state())
 
   function verdict(): Verdict {
     if (terminal) return { status: terminal.status, version, unmet: [], reason: terminal.reason }
@@ -106,6 +141,12 @@ export function createRun(runId: string, initial: Obligation[]): { authority: Au
     return Object.freeze({ runId, version, obligations })
   }
 
+  function close(status: NonNullable<RunState['terminal']>['status'], reason: string): void {
+    if (terminal) return
+    terminal = { status, reason }
+    changed()
+  }
+
   const model: ModelFacet = Object.freeze({ snapshot, requestCompletion: verdict })
 
   const authority: AuthorityFacet = Object.freeze({
@@ -123,6 +164,7 @@ export function createRun(runId: string, initial: Obligation[]): { authority: Au
       const set = satisfied.get(o.id) ?? new Set<string>()
       set.add(e.eventId)
       satisfied.set(o.id, set)
+      changed()
       // Kept, so the verdict can see it, but never counted toward completion.
       if (set.size > maxOf(o)) return { accepted: false, reason: 'over-limit' }
       return { accepted: true }
@@ -139,10 +181,11 @@ export function createRun(runId: string, initial: Obligation[]): { authority: Au
       satisfied = kept
       obligations = freezeObligations(next)
       version += 1
+      changed()
     },
-    fail(reason: string): void { terminal ??= { status: 'failed', reason } },
-    cancel(reason: string): void { terminal ??= { status: 'cancelled', reason } },
-    markUnknown(reason: string): void { terminal ??= { status: 'unknown', reason } },
+    fail(reason: string): void { close('failed', reason) },
+    cancel(reason: string): void { close('cancelled', reason) },
+    markUnknown(reason: string): void { close('unknown', reason) },
   })
 
   return { authority, model }
