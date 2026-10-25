@@ -22,8 +22,13 @@ export interface WebCommandHooks {
   clearButtons(id: string): void
   /** The command deleted the owner's message (a pasted key): it must not be stored. */
   dropUserMessage(): void
-  /** A file the command (or a turn it started) handed over. */
+  /** A file the command handed over. */
   file(path: string, kind: 'voice' | 'document' | 'photo'): void
+  /**
+   * Run an agent turn the command started (`/audit`) as a web turn on this
+   * conversation, its answer shown as a reply. Never rejects.
+   */
+  turn(text: string, opts: { skipMemory?: boolean }): Promise<void>
 }
 
 export function createWebCommandAdapter(hooks: WebCommandHooks): PlatformAdapter {

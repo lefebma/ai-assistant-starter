@@ -233,21 +233,15 @@ async function handleMessage(
   forceVoiceReply = false,
   opts: TurnOpts = {}
 ): Promise<void> {
-  // A turn a web command started is awaited by that command (see runWebCommand).
-  const tracked = webCommandTurns.get(adapter)
-  let settle = () => {}
-  if (tracked) tracked.push(new Promise<void>((r) => (settle = r)))
-  const ahead = turnQueue.enqueue(
-    chatId,
-    async (signal) => {
-      try {
-        await runTurn(adapter, chatId, rawText, forceVoiceReply, opts, signal)
-      } finally {
-        settle()
-      }
-    },
-    () => settle(),
-  )
+  // A turn a web command starts (/audit) runs as a web turn on that
+  // conversation's session, so Stop reaches it and its answer lands in the
+  // page. The command waits for it (see runWebCommand).
+  const web = webCommands.get(adapter)
+  if (web) {
+    web.turns.push(web.hooks.turn(rawText, { skipMemory: opts.skipMemory }))
+    return
+  }
+  const ahead = turnQueue.enqueue(chatId, (signal) => runTurn(adapter, chatId, rawText, forceVoiceReply, opts, signal))
   if (ahead > 0) logger.info({ chatId, ahead }, 'Agent turn queued behind a running turn')
 }
 
@@ -629,6 +623,8 @@ export interface WebTurnInput {
   onQueued?: (ahead: number) => void
   onPartial?: (accumulated: string) => void
   onToolProgress?: (tool: string, status: string) => void
+  /** Keep the turn out of memory (the audit prompt, see TurnOpts). */
+  skipMemory?: boolean
 }
 
 export interface WebTurnResult {
@@ -734,7 +730,7 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
       const paused = (marker ? ownerPauseReply(marker, new Date())?.text : undefined) ?? repeatReply(marker?.resumesAt)
       return { text: null, newSessionId, cancelled: false, paused }
     }
-    if (reply) await saveConversationTurn(chatId, text, reply)
+    if (reply && !input.skipMemory) await saveConversationTurn(chatId, text, reply)
     return { text: reply, newSessionId, cancelled: false }
   } finally {
     clearLane(key)
@@ -748,6 +744,8 @@ export interface WebCommandInput {
   conversationId: string
   text: string
   hooks: WebCommandHooks
+  /** For a button click: the stored message the clicked card is on. */
+  clickedMessageId?: number
 }
 
 export interface WebCommandResult {
@@ -758,10 +756,19 @@ export interface WebCommandResult {
 }
 
 /**
- * Agent turns a web command queued (`/audit` runs one). The web keeps its
- * reply stream open until they finish so their answer lands in the page.
+ * The web command each capture adapter belongs to: its hooks, and the agent
+ * turns it started (`/audit` runs one). The web keeps its reply stream open
+ * until they finish so their answer lands in the page.
  */
-const webCommandTurns = new WeakMap<PlatformAdapter, Promise<void>[]>()
+const webCommands = new WeakMap<PlatformAdapter, { hooks: WebCommandHooks; turns: Promise<void>[] }>()
+
+/**
+ * The web card a support draft was sent on, so only a click on that card
+ * resolves it. Telegram's click lands on the draft's own message; the web
+ * needs the same, or Send on an agent's card in another conversation would
+ * mail the support request.
+ */
+const webSupportCards = new Map<string, { draft: SupportDraft; card: string }>()
 
 /**
  * A message from the web chat that a command, or a flow a command started,
@@ -774,9 +781,19 @@ const webCommandTurns = new WeakMap<PlatformAdapter, Promise<void>[]>()
 export async function runWebCommand(input: WebCommandInput): Promise<WebCommandResult> {
   const { chatId } = input
   const trimmed = input.text.trim()
-  const adapter = createWebCommandAdapter(input.hooks)
+  // Note which reply carries the support draft's buttons, if this command sends one.
+  let draftCardId: string | null = null
+  const hooks: WebCommandHooks = {
+    ...input.hooks,
+    send: (text, buttons) => {
+      const id = input.hooks.send(text, buttons)
+      if (buttons.join('|') === SUPPORT_BUTTONS.join('|')) draftCardId = id
+      return id
+    },
+  }
+  const adapter = createWebCommandAdapter(hooks)
   const turns: Promise<void>[] = []
-  webCommandTurns.set(adapter, turns)
+  webCommands.set(adapter, { hooks, turns })
   try {
     // The one difference from Telegram: a web chat has its own agent session,
     // so starting fresh here clears that one and leaves the chat's alone.
@@ -791,11 +808,20 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
       await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
       return { handled: true, clearSession: true }
     }
-    // A click on a card a command sent (the support draft) resolves it the
-    // way Telegram's callback does. Other clicks are for the agent.
+    // A click goes where Telegram's callback sends it: a click on the support
+    // draft's own card resolves it, and every other click is for the agent.
+    // It never reaches the text router, where a pending /secret set or support
+    // description would swallow it.
     const click = /^\[button_click\]: (.+)$/.exec(trimmed)
-    if (click && pendingSupport.has(chatId) && (await resolveSupportAction(adapter, chatId, click[1]!))) {
-      return { handled: true, clearSession: false }
+    if (click) {
+      const draft = pendingSupport.get(chatId)
+      const card = webSupportCards.get(chatId)
+      const onDraftCard = !!draft && card?.draft === draft && card.card === `${input.conversationId}:${input.clickedMessageId}`
+      if (onDraftCard && (await resolveSupportAction(adapter, chatId, click[1]!))) {
+        webSupportCards.delete(chatId)
+        return { handled: true, clearSession: false }
+      }
+      return { handled: false, clearSession: false }
     }
     const handled = await routeText(adapter, {
       chatId,
@@ -805,10 +831,12 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
       messageId: WEB_USER_MESSAGE_ID,
       isPrivate: true,
     })
+    const draft = pendingSupport.get(chatId)
+    if (draft && draftCardId) webSupportCards.set(chatId, { draft, card: `${input.conversationId}:${draftCardId}` })
     await Promise.all(turns)
     return { handled, clearSession: false }
   } finally {
-    webCommandTurns.delete(adapter)
+    webCommands.delete(adapter)
   }
 }
 
@@ -1383,6 +1411,8 @@ async function handleWorkspaceCommand(adapter: PlatformAdapter, chatId: string, 
 // Discard buttons (or types one of those words on platforms without buttons).
 // Nothing is ever sent without that explicit confirmation.
 const pendingSupport = new Map<string, SupportDraft>()
+const SUPPORT_BUTTONS = ['Send', 'Edit', 'Discard']
+
 // Chats where a bare /support (or Edit) is waiting for the problem description.
 const awaitingSupportDescription = new Set<string>()
 
@@ -1398,7 +1428,7 @@ async function draftSupportRequest(
 
   const preview = formatDraftPreview(draft)
   if (adapter.supportsButtons) {
-    await adapter.sendMessage(chatId, preview, { buttons: ['Send', 'Edit', 'Discard'] })
+    await adapter.sendMessage(chatId, preview, { buttons: SUPPORT_BUTTONS })
   } else {
     await adapter.sendMessage(chatId, `${preview}\n\nReply Send, Edit, or Discard.`)
   }
