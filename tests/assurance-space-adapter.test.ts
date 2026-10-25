@@ -130,7 +130,7 @@ describe('SpaceRoute behind the real gate', () => {
     const api = new FakeSpace()
     const route = new SpaceRoute({ api, grantFor: grants })
     await runCase(byId('C20'), harness(route)) // web-reader: first curl allowed, second refused by role
-    await runCase(byId('C01'), harness(route)) // briefing
+    await runCase(byId('L01'), harness(route)) // briefing reads (its POST in C01 is now refused at the gate, #233)
     expect(api.creates.map((c) => c.policy.egress.default_action)).toEqual(['deny', 'deny'])
     expect(api.creates[0].policy.egress.allow).toEqual([{ ip: '127.0.0.1' }])
     expect(api.runs).toHaveLength(2)

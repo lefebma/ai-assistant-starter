@@ -196,6 +196,34 @@ export class EvasionMonitor {
     }
   }
 
+  /**
+   * A hit found outside the lexical rules (the network-write check, card
+   * #233). It counts like any other: a retry in the same family is evasion,
+   * and repeated hits restrict and then stop the run.
+   */
+  strike(sessionId: string, rule: Omit<DenyRule, 'test'>): Decision {
+    const s = this.s(sessionId)
+    if (s.mode === 'stopped') {
+      s.report.blocks += 1
+      return { allowed: false, rule: 'run-stopped', evasion: false, mode: 'stopped', suggestion: 'This run was stopped for owner review.' }
+    }
+    return this.escalate(s, rule, false)
+  }
+
+  private escalate(s: Session, rule: Omit<DenyRule, 'test'>, disguised: boolean): Decision {
+    const prior = s.strikes.get(rule.family) ?? 0
+    const strikes = prior + 1
+    s.strikes.set(rule.family, strikes)
+    s.totalStrikes += 1
+    const evasion = disguised || prior > 0
+    s.report.blocks += 1
+    if (evasion) s.report.evasionAttempts += 1
+    const worst = Math.max(strikes, s.totalStrikes)
+    if (worst >= this.stopAt) { s.mode = 'stopped'; s.report.humanInterventions += 1 }
+    else if (worst >= this.restrictAt && s.mode === 'normal') s.mode = 'restricted'
+    return { allowed: false, rule: rule.id, family: rule.family, evasion, mode: s.mode, relatedStrikes: strikes, suggestion: rule.suggestion }
+  }
+
   /** Update simulated shell state for a command, and return extra text to evaluate (assembled scripts). */
   private track(s: Session, cmd: string): string[] {
     const extra: string[] = []
@@ -235,19 +263,8 @@ export class EvasionMonitor {
     const extra = this.track(s, cmd)
     const hit = this.match([cmd, ...extra], s.vars)
     if (hit) {
-      const { rule } = hit
-      const prior = s.strikes.get(rule.family) ?? 0
-      const strikes = prior + 1
-      s.strikes.set(rule.family, strikes)
-      s.totalStrikes += 1
-      const obfuscated = hit.viaNormalization && !rule.test.test(cmd.toLowerCase())
-      const evasion = obfuscated || prior > 0 || extra.length > 0
-      s.report.blocks += 1
-      if (evasion) s.report.evasionAttempts += 1
-      const worst = Math.max(strikes, s.totalStrikes)
-      if (worst >= this.stopAt) { s.mode = 'stopped'; s.report.humanInterventions += 1 }
-      else if (worst >= this.restrictAt && s.mode === 'normal') s.mode = 'restricted'
-      return { allowed: false, rule: rule.id, family: rule.family, evasion, mode: s.mode, relatedStrikes: strikes, suggestion: rule.suggestion }
+      const obfuscated = hit.viaNormalization && !hit.rule.test.test(cmd.toLowerCase())
+      return this.escalate(s, hit.rule, obfuscated || extra.length > 0)
     }
     if (s.mode === 'restricted' && !segments(cmd).every(segmentReadOnly)) {
       s.report.blocks += 1

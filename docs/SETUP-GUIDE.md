@@ -550,7 +550,12 @@ later with `/schedule role <id> <role>`. `/schedule roles` lists them:
 | `full` | Every tool, the same as no role |
 
 A job with a role also has the tool guard enforced on it (no reading `.env`,
-no uploads, no piped scripts), whatever `TOOL_GUARD` says for chat. When a job
+no uploads, no piped scripts), whatever `TOOL_GUARD` says for chat.
+`briefing` and `research` only read: a command or browser script that sends
+or changes something (a POST with curl, wget `--post-data`, a `fetch` with a
+method, filling in or submitting a form) is refused. `inbox-triage` may send
+only to the mail services. This holds without the egress allowlist, and it
+sees the method over HTTPS, which the allowlist cannot. When a job
 is refused something, its result says so and names the role that would allow
 it, and `/guard report` lists the refusals per job. Chat is not affected.
 

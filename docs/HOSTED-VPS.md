@@ -37,6 +37,13 @@ machine you can snapshot, rebuild, and reach without touching their hardware.
   hoc and piping a downloaded script into a shell. It also catches disguised
   versions: encoded, split across several commands, or retried after a block.
   Repeated attempts reduce privileges and then stop the run for the owner.
+  It also checks requests that send or change something (a POST from curl,
+  wget, httpie, an inline script or the browser) against the hosts the run
+  may write to: for chat, the mail and calendar services, Slack and
+  `EGRESS_ALLOW`. Before switching chat to `enforce`, run
+  `npm run guard-replay -- --days 30` on the box: it replays the commands in
+  the audit log and lists, by host, what enforce would have refused. Add the
+  hosts the client uses on purpose to `EGRESS_ALLOW` first.
   `TOOL_GUARD` in `.env` sets the mode: `log` (the default) records what
   *would* have been blocked in `store/tool-guard.jsonl` and blocks nothing,
   `enforce` blocks, `off` skips it. `/guard report` in the owner's chat
