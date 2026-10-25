@@ -202,3 +202,11 @@ export function setMessageContent(convId: string, messageId: number, content: st
 export function markButtonsUsed(convId: string, messageId: number): void {
   getDb().prepare('UPDATE web_messages SET buttons_used = 1 WHERE id = ? AND conversation_id = ?').run(messageId, convId)
 }
+
+/** The newest assistant message in a conversation (the one whose card a click answers). */
+export function latestAssistantMessageId(convId: string): number | undefined {
+  const row = getDb()
+    .prepare("SELECT id FROM web_messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
+    .get(convId) as { id: number } | undefined
+  return row?.id
+}

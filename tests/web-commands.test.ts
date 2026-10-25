@@ -219,6 +219,43 @@ describe('web chat commands', () => {
     expect(replies(evs).map((m) => m.content)).toContain('Your month in review.')
     expect(evs.at(-1)!.data.command).toBe(true)
     expect(conv.listMessages(id).at(-1)!.content).toBe('Your month in review.')
+    // It ran as a web turn: this conversation's session, not the Telegram chat's.
+    const db = await import('../src/db.js')
+    expect(conv.getConversation('4242', id)!.sessionId).toBe('audit-sess')
+    expect(db.getSession('4242')).not.toBe('audit-sess')
+  })
+
+  it('sends a click to the agent even while a support description is awaited', async () => {
+    const r = useRuntime()
+    r.result = { text: 'Pick one [[buttons: Yes | No]]', newSessionId: 's' }
+    const a = await newConv()
+    await chat(a, 'ask me something')
+    const b = await newConv()
+    await chat(b, '/support')
+    const evs = await chat(a, '[button_click]: Yes')
+    expect(r.calls).toHaveLength(2)
+    expect(evs.at(-1)!.name).toBe('done')
+    expect(evs.at(-1)!.data.command).toBeUndefined()
+    // The support flow is still waiting for its description.
+    const draft = await chat(b, 'the briefing is late')
+    expect(replies(draft)[0].buttons).toEqual(['Send', 'Edit', 'Discard'])
+    await chat(b, '[button_click]: Discard')
+  })
+
+  it('resolves a support draft only from its own card', async () => {
+    const r = useRuntime()
+    const a = await newConv()
+    await chat(a, '/support the inbox sweep stopped')
+    r.result = { text: 'Ready to email Gus? [[buttons: Send | Discard]]', newSessionId: 's' }
+    const b = await newConv()
+    await chat(b, 'draft a note to Gus')
+    const calls = r.calls.length
+    const evs = await chat(b, '[button_click]: Send')
+    // The agent got the click; the support draft did not go anywhere.
+    expect(r.calls).toHaveLength(calls + 1)
+    expect(replies(evs)).toHaveLength(0)
+    const done = await chat(a, '[button_click]: Discard')
+    expect(replies(done).map((m) => m.content)).toEqual(['Support request discarded. Nothing was sent.'])
   })
 
   it('serves the command menu Telegram shows', async () => {
