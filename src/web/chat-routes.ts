@@ -28,7 +28,7 @@ import {
 } from './conversations.js'
 
 const MODELS = ['', 'haiku', 'sonnet', 'opus']
-const EFFORTS = ['', 'low', 'medium', 'high']
+const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh']
 const MAX_TEXT = 100_000
 const MAX_TITLE = 120
 
@@ -221,7 +221,7 @@ registerWebRoutes([
             framing: framingFor(conv.projectId),
             sessionId: conv.sessionId ?? undefined,
             model: conv.model || undefined,
-            effort: (conv.effort || undefined) as 'low' | 'medium' | 'high' | undefined,
+            effort: (conv.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | undefined,
             onQueued: (ahead) => sse.writeEvent('queued', { ahead }),
             onPartial: (acc) => {
               // A runtime retry restarts the text from scratch. Appending it

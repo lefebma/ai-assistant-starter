@@ -3,11 +3,21 @@ import { registerWebRoutes } from './http.js'
 import { sendJson, sendError, readJsonCapped, BodyError } from './respond.js'
 import { getConnections, checkConnectionsNow, connectionDeps } from './connections.js'
 import { checkForUpdate, restartPending, getCurrentVersion } from '../updater.js'
+import { pickerDefaults } from './defaults.js'
+import { resolveModel } from '../runtime/claude.js'
 import { getAppState, setAppState } from '../db.js'
 
 export const DISMISS_KEY = 'web.update.dismissed'
 
 registerWebRoutes([
+  {
+    method: 'GET',
+    pattern: /^\/api\/web\/defaults$/,
+    auth: true,
+    handler(ctx) {
+      sendJson(ctx.res, 200, pickerDefaults(undefined, resolveModel()))
+    },
+  },
   {
     method: 'GET',
     pattern: /^\/api\/web\/connections$/,

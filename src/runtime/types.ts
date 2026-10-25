@@ -51,7 +51,7 @@ export type AgentRunOptions = {
    */
   model?: string
   /** Reasoning effort for this turn only. Omitted means the SDK default. */
-  effort?: 'low' | 'medium' | 'high'
+  effort?: 'low' | 'medium' | 'high' | 'xhigh'
   /**
    * A turn that cannot act, for feeding untrusted text (e.g. email triage):
    * no tools, no MCP servers, no skills or settings sources (no CLAUDE.md),

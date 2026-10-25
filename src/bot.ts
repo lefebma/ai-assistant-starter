@@ -610,7 +610,7 @@ export interface WebTurnInput {
   framing?: string
   sessionId?: string
   model?: string
-  effort?: 'low' | 'medium' | 'high'
+  effort?: 'low' | 'medium' | 'high' | 'xhigh'
   onQueued?: (ahead: number) => void
   onPartial?: (accumulated: string) => void
   onToolProgress?: (tool: string, status: string) => void

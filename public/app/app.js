@@ -42,11 +42,14 @@ const state = {
   running: null, // conversation id with a turn streaming from this page
   goals: { goals: [], version: 'none' },
   status: null,
+  defaults: { model: null, effort: null },
+  pending: { model: '', effort: '' }, // picks made before the first message creates the chat
   treeLoaded: false,
   previewPath: '',
 }
 
-const MODEL_LABEL = { '': 'Default', haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' }
+const MODELS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']]
+const EFFORTS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'XHigh']]
 const narrow = window.matchMedia('(max-width: 899.98px)')
 
 // ---------- small helpers ----------
@@ -149,7 +152,7 @@ async function start() {
   show($('app'))
   renderMessages()
   if (!narrow.matches && window.innerWidth >= 1280) setFilesOpen(true)
-  await Promise.all([loadProjects(), loadGoals(), loadStatus()])
+  await Promise.all([loadProjects(), loadGoals(), loadStatus(), loadDefaults()])
   $('input').focus()
 }
 
@@ -313,16 +316,51 @@ async function openConversation(id) {
   }
 }
 
+// Fill a picker so the entry that is really the default says so. The default
+// entry keeps value '' (follow the default); when the default is unknown it
+// stays a plain "Default" entry.
+function fillPicker(select, choices, defaultValue) {
+  select.textContent = ''
+  if (!defaultValue) select.append(new Option('Default', ''))
+  for (const [value, label] of choices) {
+    if (value === defaultValue) select.append(new Option(label + ' (default)', ''))
+    else select.append(new Option(label, value))
+  }
+}
+
+function pickerValue(stored, defaultValue) {
+  return !stored || stored === defaultValue ? '' : stored
+}
+
+function renderPickers() {
+  const { model, effort } = state.defaults
+  fillPicker($('chat-model'), MODELS, model)
+  fillPicker($('chat-effort'), EFFORTS, effort)
+  const c = state.current
+  $('chat-model').value = pickerValue(c ? c.model : state.pending.model, model)
+  $('chat-effort').value = pickerValue(c ? c.effort : state.pending.effort, effort)
+}
+
+async function loadDefaults() {
+  try {
+    const d = await api.get('/api/web/defaults')
+    state.defaults = { model: (d && d.model) || null, effort: (d && d.effort) || null }
+  } catch {
+    // keep what we have: the pickers fall back to a plain "Default"
+  }
+  renderPickers()
+}
+
 function setCurrent(conv, messages) {
   state.current = conv
   state.messages = messages
   const has = Boolean(conv)
   $('chat-title').disabled = !has
-  $('chat-model').disabled = !has
-  $('chat-effort').disabled = !has
+  if (has) state.pending = { model: '', effort: '' }
   $('chat-title').value = has ? conv.title || '' : ''
-  $('chat-model').value = has ? conv.model || '' : ''
-  $('chat-effort').value = has ? conv.effort || '' : ''
+  renderPickers()
+  // /model in Telegram can change the default between chats.
+  if (has) loadDefaults()
   $('chat-project').textContent = has ? projectName(conv.projectId) : ''
   if (has) state.expanded.add(conv.projectId)
   renderMessages()
@@ -359,8 +397,14 @@ $('chat-title').addEventListener('change', () => {
   const title = $('chat-title').value.trim()
   if (state.current && title !== (state.current.title || '')) saveConversation({ title })
 })
-$('chat-model').addEventListener('change', () => saveConversation({ model: $('chat-model').value }))
-$('chat-effort').addEventListener('change', () => saveConversation({ effort: $('chat-effort').value }))
+// With no chat yet (fresh page), remember the pick; ensureConversation applies it.
+function pick(field) {
+  const value = $(field === 'model' ? 'chat-model' : 'chat-effort').value
+  if (state.current) saveConversation({ [field]: value })
+  else state.pending[field] = value
+}
+$('chat-model').addEventListener('change', () => pick('model'))
+$('chat-effort').addEventListener('change', () => pick('effort'))
 
 // ---------- messages ----------
 
@@ -456,9 +500,19 @@ function updateRunning() {
 async function ensureConversation() {
   if (state.current) return state.current
   const r = await api.post('/api/web/conversations', { projectId: '' })
-  state.conversations.unshift(r.conversation)
-  setCurrent(r.conversation, [])
-  return r.conversation
+  let conv = r.conversation
+  const { model, effort } = state.pending
+  if (model || effort) {
+    try {
+      const u = await api.post('/api/web/conversations/' + encodeURIComponent(conv.id), { model, effort })
+      conv = u.conversation
+    } catch {
+      // the chat still starts, on the defaults
+    }
+  }
+  state.conversations.unshift(conv)
+  setCurrent(conv, [])
+  return conv
 }
 
 async function send(text) {

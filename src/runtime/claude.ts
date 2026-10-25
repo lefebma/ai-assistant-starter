@@ -52,7 +52,7 @@ const LOOP_THRESHOLD = 3 // consecutive identical events
  */
 const DEFAULT_MODEL = 'sonnet'
 
-function resolveModel(): string {
+export function resolveModel(): string {
   const env = readEnvFile()
   return env.AGENT_MODEL?.trim() || process.env.AGENT_MODEL?.trim() || DEFAULT_MODEL
 }
