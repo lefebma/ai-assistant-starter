@@ -12,7 +12,8 @@ import { resolve } from 'node:path'
 // that landed on either failed the readiness loop for five seconds and then
 // threw "fetch failed", which reads exactly like a hung server and is not one.
 // 5400-5600 is clear of that list and of the band tests/voice-tts.test.ts uses.
-let nextPort = 5400 + Math.floor(Math.random() * 20) * 10
+// This file keeps 5400-5449; the web tests each take their own slice above it.
+let nextPort = 5400 + Math.floor(Math.random() * 5) * 10
 
 /** Start the server and wait until it actually answers, rather than guessing at a sleep. */
 async function startServer(): Promise<number> {

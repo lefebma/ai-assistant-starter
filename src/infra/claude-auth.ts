@@ -11,7 +11,7 @@
  * exit 0 when logged out, so the body is what we read; a non-zero exit with no
  * parseable body is treated as "cannot tell", not as "signed in".
  */
-import { spawnSync } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 
 export type AuthStatus = {
   loggedIn: boolean
@@ -82,6 +82,38 @@ export function spawnClaude(bin: string, args: string[]): string | null {
 export function checkClaudeAuth(bin: string | null, run: RunCommand): AuthStatus {
   if (!bin) return { loggedIn: false, detail: 'Claude engine not found in this install' }
   const out = run(bin, ['auth', 'status', '--json'])
+  if (out === null) return { loggedIn: false, detail: 'could not run the Claude engine' }
+  return parseAuthStatus(out)
+}
+
+/** Async RunCommand: same contract as RunCommand, without blocking the event loop. */
+export type RunCommandAsync = (bin: string, args: string[]) => Promise<string | null>
+
+/**
+ * Async twin of spawnClaude for request paths (the web Settings panel): a
+ * synchronous spawn there would freeze every stream, the Telegram poll and
+ * webhooks while the CLI starts. Same rule on exit status: whatever was
+ * printed is handed back; null only when the binary could not run at all.
+ */
+export function spawnClaudeAsync(bin: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      execFile(bin, args, { encoding: 'utf-8', timeout: 20_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+        // A string code is a spawn failure (ENOENT, EACCES); killed is the
+        // timeout. A non-zero exit (numeric code) still printed its answer.
+        if (err && (typeof (err as NodeJS.ErrnoException).code === 'string' || err.killed)) return resolve(null)
+        resolve(typeof stdout === 'string' ? stdout : null)
+      })
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+/** Async twin of checkClaudeAuth. */
+export async function checkClaudeAuthAsync(bin: string | null, run: RunCommandAsync): Promise<AuthStatus> {
+  if (!bin) return { loggedIn: false, detail: 'Claude engine not found in this install' }
+  const out = await run(bin, ['auth', 'status', '--json'])
   if (out === null) return { loggedIn: false, detail: 'could not run the Claude engine' }
   return parseAuthStatus(out)
 }

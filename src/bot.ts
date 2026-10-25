@@ -23,10 +23,11 @@ import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.j
 import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
-import { isManagedAi, ownerPauseReply, readAiLimit, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
+import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
+import { mintWebLink, revokeAllWebSessions, webAppUrl } from './web/sessions.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
 import { applyReplyContext } from './prompt-safety.js'
@@ -44,7 +45,7 @@ import {
 } from './shortcut-setup.js'
 import { rotationConfig, needsRotation, rotateSession } from './session-rotation.js'
 import { abortAllScheduledRuns, cancelScheduledForChat, cancelScheduledTask, computeNextRun } from './scheduler.js'
-import { createTurnQueue, describeCancel } from './turn-queue.js'
+import { createTurnQueue, describeCancel, type CancelResult } from './turn-queue.js'
 import { logger } from './logger.js'
 import { commandWord } from './infra/command-text.js'
 import { CronExpressionParser } from 'cron-parser'
@@ -135,7 +136,7 @@ function accessFor(chatId: string, text: string) {
 const BUTTONS_RE = /\[\[buttons:\s*([^\]]+)\]\]/i
 const MAX_BUTTON_LABEL = 30
 
-function extractButtons(text: string): { cleanText: string; labels: string[] } {
+export function extractButtons(text: string): { cleanText: string; labels: string[] } {
   const match = text.match(BUTTONS_RE)
   if (!match) return { cleanText: text, labels: [] }
   const labels = match[1]
@@ -189,6 +190,28 @@ export function abortAllRuns(): void {
 /** Tests: wait for every queued turn to finish. */
 export function turnsIdle(): Promise<void> {
   return turnQueue.idle()
+}
+
+/**
+ * The owner-facing text for a turn that came back paused (managed box out of
+ * AI allowance), or null when there is nothing to say: no fresh marker, or the
+ * once-a-day repeat window has not reopened. Records that it was said, so call
+ * it only when the text will actually be shown. Chat turns only: web turns read
+ * the same text without recording it (see webTurn).
+ */
+function takePauseNotice(): string | null {
+  // Only the runtime writes a fresh marker. None here means the box has
+  // just recovered, so there is nothing to tell the owner.
+  const marker = readAiLimit()
+  if (!marker) return null
+  const reply = ownerPauseReply(marker, new Date())
+  if (!reply) return null
+  try {
+    writeAiLimit(reply.next)
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'Could not record the pause reply; sending it anyway')
+  }
+  return reply.text
 }
 
 type TurnOpts = {
@@ -363,25 +386,12 @@ async function runTurn(
     // at most once a day; nothing else about the turn happens (no memory save,
     // voice or buttons), and the "(no response)" branch must not fire.
     if (aiPaused) {
-      // Only the runtime writes a fresh marker. None here means the box has
-      // just recovered, so there is nothing to tell the owner.
-      const marker = readAiLimit()
-      if (!marker) {
-        if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
-        return
-      }
-      const now = new Date()
-      const reply = ownerPauseReply(marker, now)
-      if (reply) {
-        try {
-          writeAiLimit(reply.next)
-        } catch (err) {
-          logger.warn({ err: String(err) }, 'Could not record the pause reply; sending it anyway')
-        }
+      const pauseText = takePauseNotice()
+      if (pauseText) {
         if (previewMessageId != null) {
-          await adapter.editMessage(chatId, previewMessageId, reply.text)
+          await adapter.editMessage(chatId, previewMessageId, pauseText)
         } else {
-          await deliverText(adapter, chatId, reply.text)
+          await deliverText(adapter, chatId, pauseText)
         }
       } else if (previewMessageId != null) {
         await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
@@ -588,6 +598,131 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     return text
   } finally {
     clearLane(chatId)
+  }
+}
+
+// --- Web UI turns ---
+
+export interface WebTurnInput {
+  chatId: string
+  conversationId: string
+  text: string
+  framing?: string
+  sessionId?: string
+  model?: string
+  effort?: 'low' | 'medium' | 'high' | 'xhigh'
+  onQueued?: (ahead: number) => void
+  onPartial?: (accumulated: string) => void
+  onToolProgress?: (tool: string, status: string) => void
+}
+
+export interface WebTurnResult {
+  text: string | null
+  newSessionId?: string
+  cancelled: boolean
+  paused?: string
+}
+
+const webQueueKey = (conversationId: string): string => `web:${conversationId}`
+
+/**
+ * Which chat each queued or running web turn belongs to, so `/cancel` in that
+ * chat also stops its web turns. Counted per key: one conversation can have a
+ * turn running and another waiting. Set on enqueue, dropped when the turn
+ * settles.
+ */
+const webTurnChats = new Map<string, { chatId: string; count: number }>()
+
+function trackWebTurn(key: string, chatId: string): () => void {
+  const cur = webTurnChats.get(key)
+  if (cur) cur.count++
+  else webTurnChats.set(key, { chatId, count: 1 })
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    const e = webTurnChats.get(key)
+    if (!e) return
+    if (--e.count <= 0) webTurnChats.delete(key)
+  }
+}
+
+/** Stop every web turn, running or queued, that belongs to this chat. */
+export function cancelWebTurnsForChat(chatId: string): CancelResult {
+  let stoppedActive = false
+  let droppedQueued = 0
+  for (const [key, e] of [...webTurnChats]) {
+    if (e.chatId !== chatId) continue
+    const r = turnQueue.cancel(key)
+    stoppedActive = stoppedActive || r.stoppedActive
+    droppedQueued += r.droppedQueued
+  }
+  return { stoppedActive, droppedQueued }
+}
+
+/**
+ * One turn from the web UI, on the same queue as chat turns but keyed per web
+ * conversation. It brings its own session id and never touches the chat's
+ * `sessions` row; the caller stores what comes back. Errors reject.
+ */
+export function runWebTurn(input: WebTurnInput): Promise<WebTurnResult> {
+  const key = webQueueKey(input.conversationId)
+  return new Promise((resolveTurn, rejectTurn) => {
+    const settle = trackWebTurn(key, input.chatId)
+    const ahead = turnQueue.enqueue(
+      key,
+      async (signal) => {
+        try {
+          resolveTurn(await webTurn(input, key, signal))
+        } catch (err) {
+          rejectTurn(err)
+        } finally {
+          settle()
+        }
+      },
+      () => {
+        settle()
+        resolveTurn({ text: null, cancelled: true })
+      },
+    )
+    if (ahead > 0) logger.info({ key, ahead }, 'Web turn queued behind a running turn')
+    try { input.onQueued?.(ahead) } catch { /* a bad callback must not break the turn */ }
+  })
+}
+
+export function cancelWebTurn(conversationId: string): CancelResult {
+  return turnQueue.cancel(webQueueKey(conversationId))
+}
+
+async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): Promise<WebTurnResult> {
+  const { chatId, text, framing, sessionId } = input
+  if (signal.aborted) return { text: null, cancelled: true }
+  markLane(key, 'chat')
+  try {
+    const skillIndex = buildSkillIndex()
+    const memoryContext = await contextEngine.buildContext(chatId, text)
+    const fullMessage = [skillIndex, memoryContext, framing, text].filter(Boolean).join('\n\n')
+    logger.info({ chatId, key, messageLength: text.length }, 'Processing web message')
+    const { text: reply, newSessionId, aiPaused } = await withActor(`web:${chatId}`, () =>
+      runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
+        model: input.model,
+        effort: input.effort,
+      }),
+    )
+    if (signal.aborted) return { text: null, cancelled: true }
+    if (aiPaused) {
+      // The web is a pull surface: the owner is looking at the page, so a
+      // paused turn always says why, even inside Telegram's once-a-day window.
+      // It never records the notice: that marker is Telegram's, and spending
+      // it here would leave the chat silent for the day.
+      const marker = readAiLimit()
+      const paused = (marker ? ownerPauseReply(marker, new Date())?.text : undefined) ?? repeatReply(marker?.resumesAt)
+      return { text: null, newSessionId, cancelled: false, paused }
+    }
+    if (reply) await saveConversationTurn(chatId, text, reply)
+    return { text: reply, newSessionId, cancelled: false }
+  } finally {
+    clearLane(key)
   }
 }
 
@@ -923,6 +1058,59 @@ async function handleVoiceUiCommand(
     parts.push('', 'Heads up: speech-to-text is off (no OPENAI_API_KEY), so the page will only accept typed input.')
   }
   await adapter.sendMessage(chatId, parts.join('\n'))
+}
+
+/**
+ * `/app` mints a one-time sign-in link to the web app; `/app signout` signs
+ * every browser out. Access is already gated above (accessFor), so only an
+ * allowed chat gets here. See src/web/sessions.ts.
+ */
+async function handleAppCommand(
+  adapter: PlatformAdapter,
+  chatId: string,
+  action: string | undefined,
+  isPrivate: boolean | undefined
+): Promise<void> {
+  // Private chats only, signout included, for the same reason as /shortcut:
+  // in a group whoever opened the link first would hold a session as that
+  // chat, it would outlive their membership, and any member could sign
+  // everyone else out. Unknown counts as a group.
+  if (isPrivate !== true) {
+    await adapter.sendMessage(chatId, 'Sign-in links are only handed out in a one-to-one chat with me. Send /app there.')
+    return
+  }
+  if (action === 'signout') {
+    const n = revokeAllWebSessions(chatId)
+    await adapter.sendMessage(
+      chatId,
+      n > 0
+        ? `Signed out ${n} browser${n === 1 ? '' : 's'} of the web app.`
+        : 'No browsers are signed in to the web app.'
+    )
+    return
+  }
+  if (action) {
+    await adapter.sendMessage(chatId, 'Usage: /app (sign-in link), or /app signout')
+    return
+  }
+  const link = mintWebLink(chatId)
+  const url = webAppUrl(link.token)
+  if (!url) {
+    await adapter.sendMessage(
+      chatId,
+      [
+        'This box has no public address and I could not find one on your network, so there is no web app to link to.',
+        '',
+        'Operator: as havn-admin, run',
+        '  sudo node /home/havn/havn/dist/scripts/hosted/enable-teams.js <hostname> --web',
+        'then restart the service. (Re-running it without --voice or --web removes those pages, so pass every flag the box needs.)',
+      ].join('\n')
+    )
+    return
+  }
+  const lines = [`Here is your sign-in link for the web app. It works once and expires in 15 minutes:\n${url}`]
+  if (!PUBLIC_HOSTNAME) lines.push('', 'This box has no public address, so the link only works on the same Wi-Fi as the box.')
+  await adapter.sendMessage(chatId, lines.join('\n'))
 }
 
 /** An owner file from the install root, or null. Never throws: a missing file just means no name. */
@@ -1441,7 +1629,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
 
     // A pending /secret set owns the next text message: capture it in code,
     // delete it from the chat, never let it near the model. This must run
-    // before the busy check and the support flow — the capture touches
+    // before the busy check and the support flow: the capture touches
     // nothing but the vault. capture() is the single gate (it also owns the
     // expired case, where the late message probably IS a key and still needs
     // deleting). A command other than /secret cancels the capture instead,
@@ -1527,6 +1715,10 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       }
       return
     }
+    if (cmd === '/app') {
+      await handleAppCommand(adapter, chatId, trimmed.split(/\s+/)[1]?.toLowerCase(), msg.isPrivate)
+      return
+    }
     if (cmd === '/shortcut') {
       await handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)
       return
@@ -1591,7 +1783,9 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     // /cancel: stop this chat's running turn, drop its queued messages, and stop
     // the scheduled runs and pending retries that deliver here (card #232).
     if (cmd === '/cancel') {
-      const turns = turnQueue.cancel(chatId)
+      const own = turnQueue.cancel(chatId)
+      const web = cancelWebTurnsForChat(chatId)
+      const turns = { stoppedActive: own.stoppedActive || web.stoppedActive, droppedQueued: own.droppedQueued + web.droppedQueued }
       const scheduled = cancelScheduledForChat(chatId)
       await adapter.sendMessage(chatId, describeCancel(turns, scheduled))
       return
@@ -1614,7 +1808,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
     if (cmd === '/secret') {
       if (!isPrimaryChat(chatId)) {
         // An inline `/secret set NAME value` from a non-primary chat still
-        // holds a key — delete it even though the command is refused.
+        // holds a key, so delete it even though the command is refused.
         await sendSecretReply(adapter, chatId, 'Only the primary chat can manage secrets.', {
           deleteUserMessage: trimmed.split(/\s+/).length > 3,
           messageId: msg.messageId,
@@ -1666,6 +1860,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         '/memory - Show stored memories',
         '/voice - Toggle voice replies',
         '/voice ui - Get your private link to the voice chat page',
+        '/app - Get a sign-in link to the web app (signout)',
         '/shortcut - Talk to me from Siri and Apple Shortcuts (status/revoke)',
         '/schedule - Manage scheduled tasks',
         '/guard report [days] - What the tool guard caught (or would have)',
@@ -1699,6 +1894,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           { command: 'newchat', description: 'Clear session, start fresh' },
           { command: 'memory', description: 'Show recent stored memories' },
           { command: 'voice', description: 'Toggle voice replies' },
+          { command: 'app', description: 'Sign-in link to the web app' },
           { command: 'shortcut', description: 'Use me from Siri and Apple Shortcuts' },
           { command: 'schedule', description: 'Manage scheduled tasks' },
           { command: 'dashboard', description: 'Dashboard (start/stop)' },

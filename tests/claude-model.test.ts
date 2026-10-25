@@ -95,6 +95,18 @@ describe('model pin is applied at both query() call sites', () => {
   })
 })
 
+describe('effort per turn', () => {
+  it('passes effort when given', async () => {
+    await new ClaudeAgentRuntime().run({ message: 'hello', effort: 'high' })
+    expect(lastQueryOptions().effort).toBe('high')
+  })
+
+  it('has no effort key when not given', async () => {
+    await new ClaudeAgentRuntime().run({ message: 'hello' })
+    expect('effort' in lastQueryOptions()).toBe(false)
+  })
+})
+
 describe('resolveModel precedence', () => {
   it('.env AGENT_MODEL wins over the default', async () => {
     mockReadEnvFile.mockReturnValue({ AGENT_MODEL: 'opus' })

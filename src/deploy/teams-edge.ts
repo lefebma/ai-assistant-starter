@@ -67,6 +67,12 @@ export interface CaddyfileOptions {
    * the assistant owns the port and has no /setup, so it is a 404 either way.
    */
   setup?: boolean
+  /**
+   * Expose the web app (default: false). Like the voice routes, nothing secret
+   * lives here: /app is static and every /api/web/* route needs the session
+   * cookie the app issues from a one-time link (src/web/sessions.ts).
+   */
+  web?: boolean
 }
 
 /**
@@ -99,6 +105,7 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
   const voice = options?.voice === true
   const shortcuts = options?.shortcuts !== false
   const setup = options?.setup === true
+  const web = options?.web === true
   const bufferStyle = bufferStyleFor(options?.caddyVersion)
 
   const lines: string[] = [
@@ -214,6 +221,19 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       '\t\t\tlb_try_duration 10s',
       '\t\t\tlb_try_interval 500ms',
       '\t\t}',
+      '\t}',
+    )
+  }
+
+  if (web) {
+    lines.push(
+      '',
+      '\t# Web app (static pages; the API checks the per-chat session cookie)',
+      '\t@web {',
+      '\t\tpath /app /app/ /app/* /api/web/*',
+      '\t}',
+      '\thandle @web {',
+      `\t\treverse_proxy ${APP_UPSTREAM}`,
       '\t}',
     )
   }

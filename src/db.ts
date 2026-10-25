@@ -164,6 +164,64 @@ export function initDatabase(): void {
     ON voice_sessions(chat_id)
   `)
 
+  // Web app (see src/web/sessions.ts). Only hashes of link tokens and session
+  // ids are stored, so the database is not a list of working credentials.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS web_link_tokens (
+      token_hash TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      used_at INTEGER
+    )
+  `)
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS web_sessions (
+      id_hash TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL
+    )
+  `)
+  d.exec('CREATE INDEX IF NOT EXISTS idx_web_sessions_chat ON web_sessions(chat_id)')
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS web_conversations (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      project_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      session_id TEXT,
+      model TEXT NOT NULL DEFAULT '',
+      effort TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  d.exec('CREATE INDEX IF NOT EXISTS idx_web_conversations_chat ON web_conversations(chat_id, project_id, updated_at)')
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS web_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+      content TEXT NOT NULL,
+      files TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL
+    )
+  `)
+  d.exec('CREATE INDEX IF NOT EXISTS idx_web_messages_conv ON web_messages(conversation_id)')
+  // Additive: quick-reply button labels parsed from an assistant message.
+  const webMsgCols = d.pragma('table_info(web_messages)') as { name: string }[]
+  if (!webMsgCols.some((c) => c.name === 'buttons')) {
+    d.exec("ALTER TABLE web_messages ADD COLUMN buttons TEXT NOT NULL DEFAULT '[]'")
+  }
+  // Additive: set once a button on this assistant message has been clicked,
+  // so a card takes exactly one answer even across tabs and reloads.
+  if (!webMsgCols.some((c) => c.name === 'buttons_used')) {
+    d.exec('ALTER TABLE web_messages ADD COLUMN buttons_used INTEGER DEFAULT 0')
+  }
+
   // Apple Shortcuts credentials (see src/shortcut-tokens.ts). One row per chat,
   // keyed by chat so minting a new one replaces the old. Only the hash is kept:
   // unlike a voice link this lives for months on a phone, so the database

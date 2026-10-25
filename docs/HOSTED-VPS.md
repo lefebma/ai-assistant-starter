@@ -26,7 +26,7 @@ machine you can snapshot, rebuild, and reach without touching their hardware.
   "Teams instead of Telegram" below.
 - **SSH is key-only** (`ssh_pwauth: false`), and exists in one of two modes:
   - **Without Tailscale:** ufw allows inbound SSH (key-only) so you can log in.
-  - **With Tailscale:** inbound SSH is closed too — zero open ports. You SSH
+  - **With Tailscale:** inbound SSH is closed too: zero open ports. You SSH
     over the tailnet (`tailscale up --ssh` is baked in).
 - **One login on the box:** the `havn` user, which owns the install and runs
   the service. The image's default `ubuntu` user is not created.
@@ -96,14 +96,14 @@ Any provider that takes cloud-init user-data works. Recommendations:
 
 | Provider | Plan | Region | Why |
 |---|---|---|---|
-| **Hetzner** | CAX11 (2 vCPU ARM, 4 GB) | Falkenstein/Nuremberg/Helsinki | Cheapest solid option by a wide margin. EU only — fine when residency doesn't matter. |
+| **Hetzner** | CAX11 (2 vCPU ARM, 4 GB) | Falkenstein/Nuremberg/Helsinki | Cheapest solid option by a wide margin. EU only, fine when residency doesn't matter. |
 | **OVH** | b2-7 or d2-4 (Public Cloud) | **Beauharnois (BHS)** | Canadian data residency, for clients who care where their data sleeps. |
 | **DigitalOcean** | s-1vcpu-2gb | Toronto (tor1) | Canadian region, best tooling/docs, slightly dearer. |
 | **Vultr** | vc2-1c-2gb | Toronto (yto) | Canadian region, cheap, fine. |
 
 Sizing: **2 GB RAM minimum.** `npm ci` plus the TypeScript build is the
 heaviest thing the box ever does; 1 GB machines OOM there. Disk: 25 GB is
-plenty. ARM (Hetzner CAX) is fine — Node 22, better-sqlite3, and gog all ship
+plenty. ARM (Hetzner CAX) is fine: Node 22, better-sqlite3, and gog all ship
 arm64 builds; the provisioner picks the right gog asset from `dpkg
 --print-architecture`.
 
@@ -305,7 +305,7 @@ Havn: provisioned, awaiting first-run setup.
   As the havn user:  cd /home/havn/havn && npm run setup
 ```
 
-Provisioning leaves the systemd unit **registered but disabled** — the
+Provisioning leaves the systemd unit **registered but disabled**: the
 service has nothing to run on yet. That is the point of the finishing steps.
 
 ## If provisioning fails
@@ -385,12 +385,12 @@ Answer the questions (owner, personality, platform token, skills) as on any
 install. Two VPS-specific notes:
 
 - The Telegram bot token and chat id go in during the wizard or into `.env`
-  after — either way, the bot polls outbound; nothing needs to be exposed.
+  after; either way, the bot polls outbound; nothing needs to be exposed.
 - If the wizard offers to install a background service, **decline it**: the
   box already has the system-wide `havn.service`, and the wizard's user-level
   unit would fight it. (Exact prompt wording: confirm during pilot.)
 
-### 2. Sign in to Claude — *verify during pilot*
+### 2. Sign in to Claude (*verify during pilot*)
 
 There is no browser on the box, so the standard `auth login` flow needs a
 detour. Two candidate paths, **neither yet proven on a headless Havn VPS**:
@@ -429,8 +429,8 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   ```
 
   (That's a config key, not a CLI flag.) File-backend tokens are encrypted
-  with `GOG_KEYRING_PASSWORD`. Put it in `.env` — systemd's `EnvironmentFile`
-  picks it up for the service automatically — but it must **also** be
+  with `GOG_KEYRING_PASSWORD`. Put it in `.env` (systemd's `EnvironmentFile`
+  picks it up for the service automatically), but it must **also** be
   exported by hand in any interactive SSH session, since `.env` isn't
   auto-sourced by a plain shell:
 
@@ -444,7 +444,7 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   **Extracting the password from `.env` with `cut`: use `-f2-`, not `-f2`.**
   A password from `openssl rand -base64` routinely ends in `=` padding, so
   the line has two `=` characters (`KEY=value=`). Plain `cut -d= -f2` keeps
-  only the text between the first two `=` and silently drops the padding —
+  only the text between the first two `=` and silently drops the padding:
   the value you export is one character short of what's actually in `.env`.
   This is dangerous specifically because it's *consistent*: every command
   that reads `.env` with the same broken `cut` keeps agreeing with itself,
@@ -453,17 +453,17 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   different value than what's actually encrypting the keyring on disk. That
   mismatch surfaces as `aes.KeyUnwrap(): integrity check failed` on a real
   send, with nothing in the error pointing back at a shell one-liner. Use
-  `cut -d= -f2-` (trailing dash — take field 2 onward) or
+  `cut -d= -f2-` (trailing dash: take field 2 onward) or
   `sed 's/^[^=]*=//'` instead.
 
   **Restart the service after any `.env` edit.** `EnvironmentFile=` only
-  loads at service start — a running `havn` process keeps its stale
+  loads at service start: a running `havn` process keeps its stale
   environment even after you edit `.env` and re-export the value by hand in
   your own shell. Confirmed on havn-test: the service ran a full day with a
   keyring password `.env` didn't have yet, and every automated send (e.g.
   the `/support` command) failed until `sudo systemctl restart havn`. Don't
   just trust `systemctl is-active` to confirm a restart picked up a new
-  value — check the running process's real environment:
+  value; check the running process's real environment:
 
   ```bash
   sudo systemctl restart havn
@@ -471,7 +471,7 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   cat /proc/$PID/environ | tr '\0' '\n' | grep GOG_KEYRING_PASSWORD   # same user, no sudo needed
   ```
 
-- **OAuth without a browser.** Use gog's built-in remote flow — no listener,
+- **OAuth without a browser.** Use gog's built-in remote flow: no listener,
   no open port needed, which fits these boxes better than SSH port-forwarding
   the callback (ufw denies all inbound, remember):
 
@@ -489,14 +489,14 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   ```
 
   **The `--auth-url` value must be single-quoted.** It contains unescaped
-  `&`, which bash reads as background-job separators — paste it unquoted and
+  `&`, which bash reads as background-job separators; paste it unquoted and
   the command silently receives only the fragment before the first `&` (no
   `code=` param), while the discarded remainder shows up as bogus background
   "commands". Don't try to fix a parse error by stripping `http://` or the
-  host either — that makes it worse: Go's URL parser then rejects it with
+  host either; that makes it worse: Go's URL parser then rejects it with
   `first path segment cannot contain colon`. OAuth codes are single-use and
   short-lived, so after a couple of mangled attempts don't try to salvage
-  one — rerun `--step 1` for a fresh code and do `--step 2` once, correctly
+  one: rerun `--step 1` for a fresh code and do `--step 2` once, correctly
   quoted.
 
 **Common follow-on failure** (dedicated clients only; the shared Havn project
@@ -509,7 +509,7 @@ re-auth needed.
 **Multi-account boxes:** anything in the app that calls `gog` without an
 explicit `--account` (the support-request emailer, for one) resolves the
 account from `skills/gmail/SKILL.md`'s `Account:` (or hand-edited `Default
-account:`) line — not from gog's own "exactly one stored token" fallback.
+account:`) line, not from gog's own "exactly one stored token" fallback.
 That fallback is unusable the moment a box has more than one Google account
 authorized, which happens easily once accounts get added by hand outside
 the setup wizard's two-address limit. If you add accounts manually, keep
@@ -573,7 +573,7 @@ Message the bot. Say hello.
 
 With Tailscale baked in, the box appears in your admin console under the
 client's hostname. `ssh havn@havn-marina` works from any of your devices on
-the tailnet (Tailscale SSH — no keys to manage per-box), and the public
+the tailnet (Tailscale SSH: no keys to manage per-box), and the public
 internet sees a machine with zero open ports. If you skipped Tailscale at
 provision time you can add it later: install per tailscale.com/download, then
 `sudo tailscale up --ssh`, then close the SSH hole with
@@ -878,7 +878,9 @@ Reading it:
 sudo tail -n 50 /var/log/caddy/access.log   # as havn-admin | jq -c '{ts,status,uri:.request.uri,ua:.request.headers["User-Agent"][0]}'
 ```
 
-Existing boxes pick this up on the next `enable-teams` run.
+Existing boxes pick this up on the next `enable-teams` run. Pass every flag
+the box already uses (`--web`, `--voice`) on that run: it rewrites the whole
+edge config, so a flag left off closes that page.
 
 ## Email alerts
 
@@ -924,7 +926,8 @@ access, which connections made through this runbook already have.
   poller does not start inside Telegram's ~60s `getUpdates` conflict window; a
   webhook box has no poller, and every one of those seconds is a message it
   cannot receive. **Re-run `enable-teams` on any box provisioned before
-  1.20.1** to pick both up.
+  1.20.1** to pick both up, with `--web` and `--voice` if the box has them:
+  the run rewrites the whole edge config, and a flag left off closes that page.
 - **Do not update a hosted box with `git pull`.** The updater replaces engine
   files in place rather than pulling, so git on a box that has ever run
   `/update` still points at whatever commit was cloned and reports a long list
@@ -943,8 +946,8 @@ access, which connections made through this runbook already have.
   commands above once to get past it, after which `/update` works.
 - **Snapshot before app updates.** Every provider above does whole-disk
   snapshots (Hetzner/DO/Vultr one click or one CLI call; OVH via the manager).
-  A snapshot taken while the service runs is fine for this workload — SQLite
-  is crash-safe — but `sudo systemctl stop havn` first makes it perfect.
+  A snapshot taken while the service runs is fine for this workload (SQLite
+  is crash-safe), but `sudo systemctl stop havn` first makes it perfect.
 - **What actually needs backing up** if you'd rather not pay for snapshots:
   `.env`, `PERSONALITY.md`, `CLAUDE.md`, `store/` (SQLite), `skills/`,
   `decisions/`, and gog's config/token store in the havn user's home. A tar of
