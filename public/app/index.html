@@ -116,17 +116,18 @@
 
     <form id="composer" class="composer" autocomplete="off">
       <p id="composer-note" class="composer-note" hidden></p>
+      <ul id="cmd-menu" class="cmd-menu" role="listbox" aria-label="Commands" hidden></ul>
       <div class="composer-box">
         <button type="button" id="attach" class="icon-btn attach-btn" aria-label="Attach a file">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.3 8.3a5 5 0 0 1-7.1-7.1l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.8 8.8a1.7 1.7 0 0 1-2.4-2.4l8-8"/></svg>
         </button>
         <input id="attach-input" type="file" multiple hidden>
-        <textarea id="input" rows="1" maxlength="100000" placeholder="Message your assistant" aria-label="Message"></textarea>
+        <textarea id="input" aria-controls="cmd-menu" rows="1" maxlength="100000" placeholder="Message your assistant" aria-label="Message"></textarea>
         <button type="submit" id="send" class="send-btn" aria-label="Send">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
         </button>
       </div>
-      <p class="composer-hint">Enter to send, Shift+Enter for a new line.</p>
+      <p class="composer-hint">Enter to send, Shift+Enter for a new line. Type / for commands.</p>
     </form>
   </main>
 

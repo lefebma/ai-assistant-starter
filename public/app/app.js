@@ -592,8 +592,24 @@ async function send(text) {
         if (!frame) frame = requestAnimationFrame(paint)
       },
       onTool: (tool) => setStatus(tool ? 'Working: ' + tool : 'Working'),
+      onReply: (m) => {
+        // A command's answer: each reply is its own message, shown above the
+        // working bubble until the command finishes.
+        if (!here()) return
+        state.messages.push(m)
+        reply.before(messageEl(m))
+        updateReplyButtons()
+        scrollDown(true)
+      },
+      onDropped: () => {
+        // The command deleted the message (it held a key): take it off the page too.
+        userEl.remove()
+        const i = state.messages.indexOf(userMsg)
+        if (i >= 0) state.messages.splice(i, 1)
+      },
       onDone: (d) => {
-        if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
+        if (d.command) finishWith(null)
+        else if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
         else finishWith(d.message)
       },
       onPaused: (t) => finishWith({ id: 0, role: 'assistant', content: t, files: [], buttons: [] }, 'paused'),
@@ -683,8 +699,102 @@ $('composer').addEventListener('submit', (e) => {
   send(text)
 })
 
+// ---------- command suggestions ----------
+
+// The same command list Telegram shows in its menu, fetched once.
+let commands = null
+const menu = { items: [], index: -1 }
+
+async function loadCommands() {
+  if (commands) return commands
+  try {
+    commands = (await api.get('/api/web/commands')).commands || []
+  } catch {
+    commands = null
+    return []
+  }
+  return commands
+}
+
+function closeMenu() {
+  menu.items = []
+  menu.index = -1
+  $('cmd-menu').replaceChildren()
+  show($('cmd-menu'), false)
+  $('input').removeAttribute('aria-activedescendant')
+}
+
+function pickCommand(c) {
+  const input = $('input')
+  input.value = '/' + c.command + ' '
+  closeMenu()
+  input.focus()
+}
+
+function paintMenu() {
+  const list = $('cmd-menu')
+  list.replaceChildren(
+    ...menu.items.map((c, i) => {
+      const li = h(
+        'li',
+        { id: 'cmd-' + c.command, class: 'cmd-item', role: 'option', 'aria-selected': i === menu.index ? 'true' : 'false' },
+        h('span', { class: 'cmd-name', text: '/' + c.command }),
+        h('span', { class: 'cmd-desc', text: c.description })
+      )
+      // mousedown, not click: keep the focus in the textarea.
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        pickCommand(c)
+      })
+      return li
+    })
+  )
+  show(list, menu.items.length > 0)
+  const active = menu.items[menu.index]
+  if (active) {
+    $('input').setAttribute('aria-activedescendant', 'cmd-' + active.command)
+    $('cmd-' + active.command).scrollIntoView({ block: 'nearest' })
+  } else {
+    $('input').removeAttribute('aria-activedescendant')
+  }
+}
+
+$('input').addEventListener('input', async () => {
+  // Only while the message is a bare command word, as in Telegram's menu.
+  const m = $('input').value.match(/^\/(\S*)$/)
+  if (!m) return closeMenu()
+  const all = await loadCommands()
+  const now = $('input').value.match(/^\/(\S*)$/)
+  if (!now) return closeMenu()
+  const prefix = now[1].toLowerCase()
+  menu.items = all.filter((c) => c.command.startsWith(prefix))
+  menu.index = -1
+  paintMenu()
+})
+$('input').addEventListener('blur', () => closeMenu())
+
 $('input').addEventListener('keydown', (e) => {
+  if (menu.items.length && !e.isComposing) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const n = menu.items.length
+      menu.index = e.key === 'ArrowDown' ? (menu.index + 1) % n : (menu.index - 1 + n) % n
+      paintMenu()
+      return
+    }
+    if (e.key === 'Tab' || (e.key === 'Enter' && menu.index >= 0)) {
+      e.preventDefault()
+      pickCommand(menu.items[Math.max(0, menu.index)])
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeMenu()
+      return
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    closeMenu()
     e.preventDefault()
     $('composer').requestSubmit()
   }
@@ -1041,7 +1151,7 @@ async function loadStatus() {
   }
   const s = state.status
   if (s.updateAvailable && !s.dismissed && s.latestVersion) {
-    $('update-text').textContent = 'Version ' + s.latestVersion + ' is available. Send /update to your assistant to install it.'
+    $('update-text').textContent = 'Version ' + s.latestVersion + ' is available. Send /update to install it.'
     show($('update-banner'))
   } else if (s.restartPending) {
     $('update-text').textContent = 'An update is installed and starts on the next restart.'

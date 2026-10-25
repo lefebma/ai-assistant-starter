@@ -18,6 +18,7 @@ Your assistant now has a web app: chat, projects, goals and files in your browse
 - **New: chats with history.** Web conversations keep their own history, grouped into projects, with a model and an effort picker on each and a Stop button while it works.
 - **New: goals.** The Priorities section of your `PROFILE.md` as a list you can add to, edit and tick off.
 - **New: files.** Browse and preview what your assistant works with, and upload files for it. Credentials, settings and the assistant's own working files are never shown.
+- **New: slash commands in the web app.** Every command from your chat app works in the web chat and does the same thing. Type `/` to see the list. `/newchat` there starts that conversation fresh and leaves your chat app thread alone.
 - **New: `/app signout`** signs out every browser. Settings shows what is connected and which browsers are signed in.
 - **New: hosted boxes** need one provider step to open the page: `enable-teams.js <hostname> --web`. See `docs/WEB-UI.md`.
 

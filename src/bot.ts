@@ -83,6 +83,7 @@ import {
 } from './support/index.js'
 import type { SupportDraft } from './support/index.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
+import { createWebCommandAdapter, WEB_USER_MESSAGE_ID, type WebCommandHooks } from './web/command-adapter.js'
 import { MEDIA_MESSAGE_TYPES } from './platform/types.js'
 
 // Non-abort text patterns (OpenClaw v2026.5.18 -- /btw non-abort behavior).
@@ -232,7 +233,21 @@ async function handleMessage(
   forceVoiceReply = false,
   opts: TurnOpts = {}
 ): Promise<void> {
-  const ahead = turnQueue.enqueue(chatId, (signal) => runTurn(adapter, chatId, rawText, forceVoiceReply, opts, signal))
+  // A turn a web command started is awaited by that command (see runWebCommand).
+  const tracked = webCommandTurns.get(adapter)
+  let settle = () => {}
+  if (tracked) tracked.push(new Promise<void>((r) => (settle = r)))
+  const ahead = turnQueue.enqueue(
+    chatId,
+    async (signal) => {
+      try {
+        await runTurn(adapter, chatId, rawText, forceVoiceReply, opts, signal)
+      } finally {
+        settle()
+      }
+    },
+    () => settle(),
+  )
   if (ahead > 0) logger.info({ chatId, ahead }, 'Agent turn queued behind a running turn')
 }
 
@@ -723,6 +738,77 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
     return { text: reply, newSessionId, cancelled: false }
   } finally {
     clearLane(key)
+  }
+}
+
+// --- Web UI commands ---
+
+export interface WebCommandInput {
+  chatId: string
+  conversationId: string
+  text: string
+  hooks: WebCommandHooks
+}
+
+export interface WebCommandResult {
+  /** False: the text is for the agent, so the caller runs it as a web turn. */
+  handled: boolean
+  /** /newchat in the web clears this conversation's session, not the chat's. */
+  clearSession: boolean
+}
+
+/**
+ * Agent turns a web command queued (`/audit` runs one). The web keeps its
+ * reply stream open until they finish so their answer lands in the page.
+ */
+const webCommandTurns = new WeakMap<PlatformAdapter, Promise<void>[]>()
+
+/**
+ * A message from the web chat that a command, or a flow a command started,
+ * may own: slash commands, the value a pending /secret set is waiting for, a
+ * support description, a click on a support draft's buttons. It goes through
+ * the same router as Telegram and Teams, as the session's own chat, so a
+ * command behaves the same on every surface. A web session is only ever
+ * minted in a private chat (see handleAppCommand), so it counts as private.
+ */
+export async function runWebCommand(input: WebCommandInput): Promise<WebCommandResult> {
+  const { chatId } = input
+  const trimmed = input.text.trim()
+  const adapter = createWebCommandAdapter(input.hooks)
+  const turns: Promise<void>[] = []
+  webCommandTurns.set(adapter, turns)
+  try {
+    // The one difference from Telegram: a web chat has its own agent session,
+    // so starting fresh here clears that one and leaves the chat's alone.
+    const cmd = commandWord(trimmed)
+    if (cmd === '/newchat' || cmd === '/forget') {
+      logger.info({ chatId, command: cmd, surface: 'web' }, 'Handling command')
+      if (secretFlow.cancelPending(chatId)) await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
+      reloadSkills()
+      contextEngine.invalidateCaches()
+      pendingSupport.delete(chatId)
+      awaitingSupportDescription.delete(chatId)
+      await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
+      return { handled: true, clearSession: true }
+    }
+    // A click on a card a command sent (the support draft) resolves it the
+    // way Telegram's callback does. Other clicks are for the agent.
+    const click = /^\[button_click\]: (.+)$/.exec(trimmed)
+    if (click && pendingSupport.has(chatId) && (await resolveSupportAction(adapter, chatId, click[1]!))) {
+      return { handled: true, clearSession: false }
+    }
+    const handled = await routeText(adapter, {
+      chatId,
+      userId: chatId,
+      text: trimmed,
+      type: 'text',
+      messageId: WEB_USER_MESSAGE_ID,
+      isPrivate: true,
+    })
+    await Promise.all(turns)
+    return { handled, clearSession: false }
+  } finally {
+    webCommandTurns.delete(adapter)
   }
 }
 
@@ -1492,6 +1578,301 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
   await adapter.sendMessage(chatId, 'Usage: /update [check|apply]')
 }
 
+/**
+ * Answer a text message without the agent when something other than the
+ * agent owns it: a pending /secret capture, the support flow, or a slash
+ * command. Returns false when the text is for the agent. Telegram, Teams and
+ * the web chat all route through here, so a command works the same on each.
+ */
+async function routeText(adapter: PlatformAdapter, msg: IncomingMessage): Promise<boolean> {
+  const { chatId, text } = msg
+  // `cmd` is the leading word, lowercased; handlers still receive `trimmed`
+  // so argument case survives.
+  const trimmed = text.trim()
+  const cmd = commandWord(trimmed)
+
+  // A pending /secret set owns the next text message: capture it in code,
+  // delete it from the chat, never let it near the model. This must run
+  // before the busy check and the support flow: the capture touches
+  // nothing but the vault. capture() is the single gate (it also owns the
+  // expired case, where the late message probably IS a key and still needs
+  // deleting). A command other than /secret cancels the capture instead,
+  // so stale state can't swallow unrelated commands.
+  if (!trimmed.startsWith('/')) {
+    const captured = await secretFlow.capture(chatId, trimmed)
+    if (captured) {
+      await sendSecretReply(adapter, chatId, captured.reply, {
+        deleteUserMessage: captured.deleteUserMessage,
+        messageId: msg.messageId,
+      })
+      return true
+    }
+  } else if (cmd !== '/secret' && secretFlow.cancelPending(chatId)) {
+    await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
+  }
+
+  // /btw non-abort: read-only commands during active run
+  if (isChatBusy(chatId) && isNonAbortMessage(trimmed)) {
+    logger.info({ chatId, text: trimmed.slice(0, 40) }, 'Non-abort command during active run')
+    await adapter.sendMessage(chatId, 'Agent is busy. That command will work once the current task finishes.')
+    return true
+  }
+
+  // Support flow: a typed Send/Edit/Discard resolves a pending draft
+  // (platforms without buttons), and the message after a bare /support
+  // (or Edit) is the problem description.
+  if (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(trimmed)) {
+    if (await resolveSupportAction(adapter, chatId, trimmed)) return true
+  }
+  if (awaitingSupportDescription.has(chatId) && !trimmed.startsWith('/')) {
+    await draftSupportRequest(adapter, chatId, trimmed)
+    return true
+  }
+
+  // Command routing. The log line is the only trace a command leaves at
+  // info level (agent-bound messages log "Processing message" instead);
+  // without it a handled command is indistinguishable from a dropped one.
+  if (trimmed.startsWith('/')) {
+    logger.info({ chatId, command: cmd }, 'Handling command')
+  }
+  if (cmd === '/start') {
+    await adapter.sendMessage(chatId, 'AI Assistant is running. Send me anything and I\'ll process it with Claude Code.')
+    return true
+  }
+  if (cmd === '/chatid') {
+    await adapter.sendMessage(chatId, `Your chat ID is: ${chatId}`)
+    return true
+  }
+  if (cmd === '/newchat' || cmd === '/forget') {
+    clearSession(chatId)
+    reloadSkills()
+    contextEngine.invalidateCaches()
+    pendingSupport.delete(chatId)
+    awaitingSupportDescription.delete(chatId)
+    await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
+    return true
+  }
+  if (cmd === '/voice') {
+    if (isManagedAi()) {
+      await adapter.sendMessage(chatId, VOICE_OFF_REPLY)
+      return true
+    }
+    const sub = trimmed.split(/\s+/).slice(1).map((w) => w.toLowerCase())
+    if (sub[0] === 'ui') {
+      await handleVoiceUiCommand(adapter, chatId, sub[1])
+      return true
+    }
+    if (sub.length > 0) {
+      await adapter.sendMessage(chatId, 'Usage: /voice (toggle voice replies), /voice ui (link to the voice chat page), /voice ui revoke')
+      return true
+    }
+    if (voiceModeChats.has(chatId)) {
+      voiceModeChats.delete(chatId)
+      await adapter.sendMessage(chatId, 'Voice replies disabled.')
+    } else {
+      if (!voiceCapabilities().tts) {
+        await adapter.sendMessage(chatId, 'TTS not configured. Set OPENAI_API_KEY in .env')
+        return true
+      }
+      voiceModeChats.add(chatId)
+      await adapter.sendMessage(chatId, 'Voice replies enabled. Send /voice again to disable.')
+    }
+    return true
+  }
+  if (cmd === '/app') {
+    await handleAppCommand(adapter, chatId, trimmed.split(/\s+/)[1]?.toLowerCase(), msg.isPrivate)
+    return true
+  }
+  if (cmd === '/shortcut') {
+    await handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)
+    return true
+  }
+  if (cmd === '/guard') {
+    // The owner's view of the tool guard log (card #194). Commands in it are
+    // redacted, but they are still the assistant's work, so primary chat only.
+    if (!isPrimaryChat(chatId)) {
+      await adapter.sendMessage(chatId, 'The tool guard report is only available in the owner\'s chat.')
+      return true
+    }
+    const days = Math.min(90, Math.max(1, parseInt(trimmed.split(/\s+/)[2] ?? '7', 10) || 7))
+    const since = Date.now() - days * 86_400_000
+    const entries = readGuardLog(guardLogPath(STORE_DIR), since)
+    // Role refusals (card #195) share the JSONL shape and the `at` field.
+    const refused = readGuardLog(roleLogPath(STORE_DIR), since) as unknown as RoleLogEntry[]
+    await adapter.sendMessage(chatId, [formatGuardReport(entries, parseGuardMode(TOOL_GUARD), days), formatRoleReport(refused)].filter(Boolean).join('\n\n'))
+    return true
+  }
+  if (cmd === '/memory') {
+    const memories = getMemoriesForChat(chatId, 10)
+    if (memories.length === 0) {
+      await adapter.sendMessage(chatId, 'No memories stored yet.')
+    } else {
+      const lines = memories.map(
+        (m) => `[${m.sector}] (${m.salience.toFixed(2)}) ${m.content.slice(0, 100)}`
+      )
+      await adapter.sendMessage(chatId, `Recent memories:\n\n${lines.join('\n')}`)
+    }
+    return true
+  }
+  if (cmd === '/schedule') {
+    await handleScheduleCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/dashboard') {
+    const dashSubcmd = trimmed.split(/\s+/)[1]?.toLowerCase()
+    const plist = resolve(homedir(), 'Library/LaunchAgents/com.ai-assistant.dashboard.plist')
+    if (dashSubcmd === 'start') {
+      try {
+        execFileSync('launchctl', ['load', plist], { stdio: 'ignore' })
+        await adapter.sendMessage(chatId, 'Dashboard data API started on port 3002.')
+      } catch {
+        await adapter.sendMessage(chatId, 'Failed to start dashboard. Check the plist exists.')
+      }
+    } else if (dashSubcmd === 'stop') {
+      try {
+        execFileSync('launchctl', ['unload', plist], { stdio: 'ignore' })
+        await adapter.sendMessage(chatId, 'Dashboard service stopped.')
+      } catch {
+        await adapter.sendMessage(chatId, 'Failed to stop dashboard.')
+      }
+    } else {
+      await adapter.sendMessage(chatId, 'Dashboard: /dashboard start, /dashboard stop')
+    }
+    return true
+  }
+  if (cmd === '/browser') {
+    await handleBrowserCommand(adapter, chatId, trimmed)
+    return true
+  }
+  // /cancel: stop this chat's running turn, drop its queued messages, and stop
+  // the scheduled runs and pending retries that deliver here (card #232).
+  if (cmd === '/cancel') {
+    const own = turnQueue.cancel(chatId)
+    const web = cancelWebTurnsForChat(chatId)
+    const turns = { stoppedActive: own.stoppedActive || web.stoppedActive, droppedQueued: own.droppedQueued + web.droppedQueued }
+    const scheduled = cancelScheduledForChat(chatId)
+    await adapter.sendMessage(chatId, describeCancel(turns, scheduled))
+    return true
+  }
+
+  if (cmd === '/steer') {
+    const steerText = trimmed.replace(/^\/steer\s*/i, '').trim()
+    if (!steerText) {
+      await adapter.sendMessage(chatId, 'Usage: /steer <message>\nInjects a steering message into the currently running agent.')
+      return true
+    }
+    steerAgent(steerText)
+    await adapter.sendMessage(chatId, `Steer queued: "${steerText.slice(0, 80)}${steerText.length > 80 ? '...' : ''}"`)
+    return true
+  }
+  if (cmd === '/skill') {
+    await handleSkillCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/secret') {
+    if (!isPrimaryChat(chatId)) {
+      // An inline `/secret set NAME value` from a non-primary chat still
+      // holds a key, so delete it even though the command is refused.
+      await sendSecretReply(adapter, chatId, 'Only the primary chat can manage secrets.', {
+        deleteUserMessage: trimmed.split(/\s+/).length > 3,
+        messageId: msg.messageId,
+      })
+      return true
+    }
+    const outcome = await secretFlow.handleCommand(chatId, trimmed)
+    await sendSecretReply(adapter, chatId, outcome.reply, {
+      deleteUserMessage: outcome.deleteUserMessage,
+      messageId: msg.messageId,
+    })
+    return true
+  }
+  if (cmd === '/authorize') {
+    await handleAuthorizeCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/workspace') {
+    await handleWorkspaceCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/support') {
+    await handleSupportCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/version') {
+    // Report what is running, not what is on disk. Those differ for exactly
+    // as long as an applied update waits for a restart, which is the window
+    // where someone is most likely to be asking.
+    const reply = restartPending()
+      ? `AI Assistant v${getBootVersion()} (running)\n` +
+        `v${getCurrentVersion()} is installed and starts on the next restart.`
+      : `AI Assistant v${getBootVersion()}`
+    await adapter.sendMessage(chatId, reply)
+    return true
+  }
+  if (cmd === '/update') {
+    await handleUpdateCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/audit') {
+    await handleAuditCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/help') {
+    await adapter.sendMessage(chatId, [
+      'Commands:',
+      '/newchat - Clear session, start fresh',
+      '/memory - Show stored memories',
+      '/voice - Toggle voice replies',
+      '/voice ui - Get your private link to the voice chat page',
+      '/app - Get a sign-in link to the web app (signout)',
+      '/shortcut - Talk to me from Siri and Apple Shortcuts (status/revoke)',
+      '/schedule - Manage scheduled tasks',
+      '/guard report [days] - What the tool guard caught (or would have)',
+      '/dashboard - Dashboard (start/stop)',
+      '/browser - Chrome CDP (start/stop/status)',
+      '/cancel - Stop what is running: the reply, queued messages, scheduled runs',
+      '/steer - Inject mid-run steering message',
+      '/skill - Manage skills (list/enable/disable/reload)',
+      '/secret - Manage API keys in the encrypted vault (set/list/rm)',
+      '/authorize - Manage multi-chat access (add/remove/list)',
+      '/workspace - Shared workspaces (join/status/sync/leave, primary only)',
+      '/audit - Review how you have been using the assistant (monthly on/off)',
+      '/support - Draft and send a support request (confirms before sending)',
+      '/update - Check for and apply updates (check/apply)',
+      '/version - Show current version',
+      '/chatid - Show your chat ID',
+      '/help - This message',
+    ].join('\n'))
+    return true
+  }
+
+  return false
+}
+
+/** The command menu: Telegram's native menu and the web chat's suggestions. */
+export const COMMAND_MENU: Array<{ command: string; description: string }> = [
+  { command: 'newchat', description: 'Clear session, start fresh' },
+  { command: 'memory', description: 'Show recent stored memories' },
+  { command: 'voice', description: 'Toggle voice replies' },
+  { command: 'app', description: 'Sign-in link to the web app' },
+  { command: 'shortcut', description: 'Use me from Siri and Apple Shortcuts' },
+  { command: 'schedule', description: 'Manage scheduled tasks' },
+  { command: 'dashboard', description: 'Dashboard (start/stop)' },
+  { command: 'browser', description: 'Chrome CDP (start/stop/status)' },
+  { command: 'cancel', description: 'Stop what is running in this chat' },
+  { command: 'steer', description: 'Inject mid-run steering message' },
+  { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
+  { command: 'secret', description: 'Manage API keys in the encrypted vault' },
+  { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
+  { command: 'workspace', description: 'Shared workspaces (primary only)' },
+  { command: 'audit', description: 'Review how you have been using the assistant' },
+  { command: 'support', description: 'Draft and send a support request' },
+  { command: 'update', description: 'Check for and apply updates' },
+  { command: 'version', description: 'Show current version' },
+  { command: 'chatid', description: 'Show your chat ID' },
+  { command: 'help', description: 'Show help' },
+]
+
 // --- Bot creation ---
 
 export interface BotCore {
@@ -1622,265 +2003,8 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       return
     }
 
-    // Text messages: route commands. `cmd` is the leading word, lowercased;
-    // handlers still receive `trimmed` so argument case survives.
-    const trimmed = text.trim()
-    const cmd = commandWord(trimmed)
-
-    // A pending /secret set owns the next text message: capture it in code,
-    // delete it from the chat, never let it near the model. This must run
-    // before the busy check and the support flow: the capture touches
-    // nothing but the vault. capture() is the single gate (it also owns the
-    // expired case, where the late message probably IS a key and still needs
-    // deleting). A command other than /secret cancels the capture instead,
-    // so stale state can't swallow unrelated commands.
-    if (!trimmed.startsWith('/')) {
-      const captured = await secretFlow.capture(chatId, trimmed)
-      if (captured) {
-        await sendSecretReply(adapter, chatId, captured.reply, {
-          deleteUserMessage: captured.deleteUserMessage,
-          messageId: msg.messageId,
-        })
-        return
-      }
-    } else if (cmd !== '/secret' && secretFlow.cancelPending(chatId)) {
-      await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
-    }
-
-    // /btw non-abort: read-only commands during active run
-    if (isChatBusy(chatId) && isNonAbortMessage(trimmed)) {
-      logger.info({ chatId, text: trimmed.slice(0, 40) }, 'Non-abort command during active run')
-      await adapter.sendMessage(chatId, 'Agent is busy. That command will work once the current task finishes.')
-      return
-    }
-
-    // Support flow: a typed Send/Edit/Discard resolves a pending draft
-    // (platforms without buttons), and the message after a bare /support
-    // (or Edit) is the problem description.
-    if (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(trimmed)) {
-      if (await resolveSupportAction(adapter, chatId, trimmed)) return
-    }
-    if (awaitingSupportDescription.has(chatId) && !trimmed.startsWith('/')) {
-      await draftSupportRequest(adapter, chatId, trimmed)
-      return
-    }
-
-    // Command routing. The log line is the only trace a command leaves at
-    // info level (agent-bound messages log "Processing message" instead);
-    // without it a handled command is indistinguishable from a dropped one.
-    if (trimmed.startsWith('/')) {
-      logger.info({ chatId, command: cmd }, 'Handling command')
-    }
-    if (cmd === '/start') {
-      await adapter.sendMessage(chatId, 'AI Assistant is running. Send me anything and I\'ll process it with Claude Code.')
-      return
-    }
-    if (cmd === '/chatid') {
-      await adapter.sendMessage(chatId, `Your chat ID is: ${chatId}`)
-      return
-    }
-    if (cmd === '/newchat' || cmd === '/forget') {
-      clearSession(chatId)
-      reloadSkills()
-      contextEngine.invalidateCaches()
-      pendingSupport.delete(chatId)
-      awaitingSupportDescription.delete(chatId)
-      await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
-      return
-    }
-    if (cmd === '/voice') {
-      if (isManagedAi()) {
-        await adapter.sendMessage(chatId, VOICE_OFF_REPLY)
-        return
-      }
-      const sub = trimmed.split(/\s+/).slice(1).map((w) => w.toLowerCase())
-      if (sub[0] === 'ui') {
-        await handleVoiceUiCommand(adapter, chatId, sub[1])
-        return
-      }
-      if (sub.length > 0) {
-        await adapter.sendMessage(chatId, 'Usage: /voice (toggle voice replies), /voice ui (link to the voice chat page), /voice ui revoke')
-        return
-      }
-      if (voiceModeChats.has(chatId)) {
-        voiceModeChats.delete(chatId)
-        await adapter.sendMessage(chatId, 'Voice replies disabled.')
-      } else {
-        if (!voiceCapabilities().tts) {
-          await adapter.sendMessage(chatId, 'TTS not configured. Set OPENAI_API_KEY in .env')
-          return
-        }
-        voiceModeChats.add(chatId)
-        await adapter.sendMessage(chatId, 'Voice replies enabled. Send /voice again to disable.')
-      }
-      return
-    }
-    if (cmd === '/app') {
-      await handleAppCommand(adapter, chatId, trimmed.split(/\s+/)[1]?.toLowerCase(), msg.isPrivate)
-      return
-    }
-    if (cmd === '/shortcut') {
-      await handleShortcutCommand(adapter, chatId, trimmed, msg.isPrivate)
-      return
-    }
-    if (cmd === '/guard') {
-      // The owner's view of the tool guard log (card #194). Commands in it are
-      // redacted, but they are still the assistant's work, so primary chat only.
-      if (!isPrimaryChat(chatId)) {
-        await adapter.sendMessage(chatId, 'The tool guard report is only available in the owner\'s chat.')
-        return
-      }
-      const days = Math.min(90, Math.max(1, parseInt(trimmed.split(/\s+/)[2] ?? '7', 10) || 7))
-      const since = Date.now() - days * 86_400_000
-      const entries = readGuardLog(guardLogPath(STORE_DIR), since)
-      // Role refusals (card #195) share the JSONL shape and the `at` field.
-      const refused = readGuardLog(roleLogPath(STORE_DIR), since) as unknown as RoleLogEntry[]
-      await adapter.sendMessage(chatId, [formatGuardReport(entries, parseGuardMode(TOOL_GUARD), days), formatRoleReport(refused)].filter(Boolean).join('\n\n'))
-      return
-    }
-    if (cmd === '/memory') {
-      const memories = getMemoriesForChat(chatId, 10)
-      if (memories.length === 0) {
-        await adapter.sendMessage(chatId, 'No memories stored yet.')
-      } else {
-        const lines = memories.map(
-          (m) => `[${m.sector}] (${m.salience.toFixed(2)}) ${m.content.slice(0, 100)}`
-        )
-        await adapter.sendMessage(chatId, `Recent memories:\n\n${lines.join('\n')}`)
-      }
-      return
-    }
-    if (cmd === '/schedule') {
-      await handleScheduleCommand(adapter, chatId, trimmed)
-      return
-    }
-    if (cmd === '/dashboard') {
-      const dashSubcmd = trimmed.split(/\s+/)[1]?.toLowerCase()
-      const plist = resolve(homedir(), 'Library/LaunchAgents/com.ai-assistant.dashboard.plist')
-      if (dashSubcmd === 'start') {
-        try {
-          execFileSync('launchctl', ['load', plist], { stdio: 'ignore' })
-          await adapter.sendMessage(chatId, 'Dashboard data API started on port 3002.')
-        } catch {
-          await adapter.sendMessage(chatId, 'Failed to start dashboard. Check the plist exists.')
-        }
-      } else if (dashSubcmd === 'stop') {
-        try {
-          execFileSync('launchctl', ['unload', plist], { stdio: 'ignore' })
-          await adapter.sendMessage(chatId, 'Dashboard service stopped.')
-        } catch {
-          await adapter.sendMessage(chatId, 'Failed to stop dashboard.')
-        }
-      } else {
-        await adapter.sendMessage(chatId, 'Dashboard: /dashboard start, /dashboard stop')
-      }
-      return
-    }
-    if (cmd === '/browser') {
-      await handleBrowserCommand(adapter, chatId, trimmed)
-      return
-    }
-    // /cancel: stop this chat's running turn, drop its queued messages, and stop
-    // the scheduled runs and pending retries that deliver here (card #232).
-    if (cmd === '/cancel') {
-      const own = turnQueue.cancel(chatId)
-      const web = cancelWebTurnsForChat(chatId)
-      const turns = { stoppedActive: own.stoppedActive || web.stoppedActive, droppedQueued: own.droppedQueued + web.droppedQueued }
-      const scheduled = cancelScheduledForChat(chatId)
-      await adapter.sendMessage(chatId, describeCancel(turns, scheduled))
-      return
-    }
-
-    if (cmd === '/steer') {
-      const steerText = trimmed.replace(/^\/steer\s*/i, '').trim()
-      if (!steerText) {
-        await adapter.sendMessage(chatId, 'Usage: /steer <message>\nInjects a steering message into the currently running agent.')
-        return
-      }
-      steerAgent(steerText)
-      await adapter.sendMessage(chatId, `Steer queued: "${steerText.slice(0, 80)}${steerText.length > 80 ? '...' : ''}"`)
-      return
-    }
-    if (cmd === '/skill') {
-      await handleSkillCommand(adapter, chatId, trimmed)
-      return
-    }
-    if (cmd === '/secret') {
-      if (!isPrimaryChat(chatId)) {
-        // An inline `/secret set NAME value` from a non-primary chat still
-        // holds a key, so delete it even though the command is refused.
-        await sendSecretReply(adapter, chatId, 'Only the primary chat can manage secrets.', {
-          deleteUserMessage: trimmed.split(/\s+/).length > 3,
-          messageId: msg.messageId,
-        })
-        return
-      }
-      const outcome = await secretFlow.handleCommand(chatId, trimmed)
-      await sendSecretReply(adapter, chatId, outcome.reply, {
-        deleteUserMessage: outcome.deleteUserMessage,
-        messageId: msg.messageId,
-      })
-      return
-    }
-    if (cmd === '/authorize') {
-      await handleAuthorizeCommand(adapter, chatId, trimmed)
-      return
-    }
-    if (cmd === '/workspace') {
-      await handleWorkspaceCommand(adapter, chatId, trimmed)
-      return
-    }
-    if (cmd === '/support') {
-      await handleSupportCommand(adapter, chatId, trimmed)
-      return
-    }
-    if (cmd === '/version') {
-      // Report what is running, not what is on disk. Those differ for exactly
-      // as long as an applied update waits for a restart, which is the window
-      // where someone is most likely to be asking.
-      const msg = restartPending()
-        ? `AI Assistant v${getBootVersion()} (running)\n` +
-          `v${getCurrentVersion()} is installed and starts on the next restart.`
-        : `AI Assistant v${getBootVersion()}`
-      await adapter.sendMessage(chatId, msg)
-      return
-    }
-    if (cmd === '/update') {
-      await handleUpdateCommand(adapter, chatId, trimmed)
-      return
-    }
-    if (cmd === '/audit') {
-      await handleAuditCommand(adapter, chatId, trimmed)
-      return
-    }
-    if (cmd === '/help') {
-      await adapter.sendMessage(chatId, [
-        'Commands:',
-        '/newchat - Clear session, start fresh',
-        '/memory - Show stored memories',
-        '/voice - Toggle voice replies',
-        '/voice ui - Get your private link to the voice chat page',
-        '/app - Get a sign-in link to the web app (signout)',
-        '/shortcut - Talk to me from Siri and Apple Shortcuts (status/revoke)',
-        '/schedule - Manage scheduled tasks',
-        '/guard report [days] - What the tool guard caught (or would have)',
-        '/dashboard - Dashboard (start/stop)',
-        '/browser - Chrome CDP (start/stop/status)',
-        '/cancel - Stop what is running: the reply, queued messages, scheduled runs',
-        '/steer - Inject mid-run steering message',
-        '/skill - Manage skills (list/enable/disable/reload)',
-        '/secret - Manage API keys in the encrypted vault (set/list/rm)',
-        '/authorize - Manage multi-chat access (add/remove/list)',
-        '/workspace - Shared workspaces (join/status/sync/leave, primary only)',
-        '/audit - Review how you have been using the assistant (monthly on/off)',
-        '/support - Draft and send a support request (confirms before sending)',
-        '/update - Check for and apply updates (check/apply)',
-        '/version - Show current version',
-        '/chatid - Show your chat ID',
-        '/help - This message',
-      ].join('\n'))
-      return
-    }
+    // Text messages: commands and the flows that answer without the agent.
+    if (await routeText(adapter, msg)) return
 
     // Regular text message -> agent. Reply / quote / forward context rides
     // along as clearly-bounded untrusted text.
@@ -1890,28 +2014,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
   return {
     async registerCommands(): Promise<void> {
       if (adapter.setCommands) {
-        await adapter.setCommands([
-          { command: 'newchat', description: 'Clear session, start fresh' },
-          { command: 'memory', description: 'Show recent stored memories' },
-          { command: 'voice', description: 'Toggle voice replies' },
-          { command: 'app', description: 'Sign-in link to the web app' },
-          { command: 'shortcut', description: 'Use me from Siri and Apple Shortcuts' },
-          { command: 'schedule', description: 'Manage scheduled tasks' },
-          { command: 'dashboard', description: 'Dashboard (start/stop)' },
-          { command: 'browser', description: 'Chrome CDP (start/stop/status)' },
-          { command: 'cancel', description: 'Stop what is running in this chat' },
-          { command: 'steer', description: 'Inject mid-run steering message' },
-          { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
-          { command: 'secret', description: 'Manage API keys in the encrypted vault' },
-          { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
-          { command: 'workspace', description: 'Shared workspaces (primary only)' },
-          { command: 'audit', description: 'Review how you have been using the assistant' },
-          { command: 'support', description: 'Draft and send a support request' },
-          { command: 'update', description: 'Check for and apply updates' },
-          { command: 'version', description: 'Show current version' },
-          { command: 'chatid', description: 'Show your chat ID' },
-          { command: 'help', description: 'Show help' },
-        ])
+        await adapter.setCommands(COMMAND_MENU)
       }
     },
   }
