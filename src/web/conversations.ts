@@ -192,3 +192,13 @@ export function claimButtonClick(convId: string, label: string): boolean {
   if (!parseArr<string>(latest.buttons).includes(label)) return false
   return d.prepare('UPDATE web_messages SET buttons_used = 1 WHERE id = ? AND COALESCE(buttons_used, 0) = 0').run(latest.id).changes === 1
 }
+
+/** Replace an assistant message's text (a command that edits what it sent). */
+export function setMessageContent(convId: string, messageId: number, content: string): void {
+  getDb().prepare("UPDATE web_messages SET content = ? WHERE id = ? AND conversation_id = ? AND role = 'assistant'").run(content, messageId, convId)
+}
+
+/** Turn a message's buttons off without a click (a command cleared them). */
+export function markButtonsUsed(convId: string, messageId: number): void {
+  getDb().prepare('UPDATE web_messages SET buttons_used = 1 WHERE id = ? AND conversation_id = ?').run(messageId, convId)
+}

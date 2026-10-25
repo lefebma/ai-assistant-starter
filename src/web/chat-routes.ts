@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs'
 import { PROJECT_ROOT } from '../config.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
-import { runWebTurn, cancelWebTurn, extractButtons } from '../bot.js'
+import { runWebTurn, cancelWebTurn, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
@@ -22,6 +22,8 @@ import {
   getMessageForChat,
   buttonClickLabel,
   claimButtonClick,
+  setMessageContent,
+  markButtonsUsed,
   type ConversationRow,
   type MessageRow,
   type StoredFile,
@@ -109,6 +111,14 @@ function panelVisible(abs: string): boolean {
 }
 
 registerWebRoutes([
+  {
+    method: 'GET',
+    pattern: /^\/api\/web\/commands$/,
+    auth: true,
+    handler(ctx) {
+      sendJson(ctx.res, 200, { commands: COMMAND_MENU })
+    },
+  },
   {
     method: 'GET',
     pattern: /^\/api\/web\/conversations$/,
@@ -207,10 +217,64 @@ registerWebRoutes([
 
       running.add(id)
       try {
-        addMessage(id, 'user', text)
-        if (!conv.title) updateConversation(ctx.chatId, id, { title: text.replace(/\s+/g, ' ').slice(0, 60) })
         const sse = openSse(ctx.res, { heartbeatMs: 15_000 })
         // Deliberately no cancel on close: the turn finishes and is stored.
+
+        // The owner's message is stored once something answers it, so a key
+        // pasted for /secret (which the command deletes) never reaches history.
+        let userStored = false
+        let userDropped = false
+        const storeUser = () => {
+          if (userStored || userDropped) return
+          userStored = true
+          addMessage(id, 'user', text)
+          if (!conv.title) updateConversation(ctx.chatId, id, { title: text.replace(/\s+/g, ' ').slice(0, 60) })
+        }
+        const reply = (content: string, files: StoredFile[] = [], buttons: string[] = []): number => {
+          storeUser()
+          const mid = addMessage(id, 'assistant', content, files, buttons)
+          sse.writeEvent('reply', { message: msgJson(listMessages(id).find((m) => m.id === mid)!) })
+          return mid
+        }
+
+        // Slash commands, and the flows they start, answer the same way they
+        // do in Telegram. Anything they do not own goes to the agent below.
+        try {
+          const cmd = await runWebCommand({
+            chatId: ctx.chatId,
+            conversationId: id,
+            text,
+            hooks: {
+              send: (t, buttons) => String(reply(t, [], buttons)),
+              edit: (mid, t) => setMessageContent(id, Number(mid), t),
+              clearButtons: (mid) => markButtonsUsed(id, Number(mid)),
+              dropUserMessage: () => {
+                userDropped = true
+                sse.writeEvent('dropped', {})
+              },
+              file: (path, kind) => {
+                if (kind === 'voice') return // the web has no voice replies
+                const r = resolveOutboundFile(path, { projectRoot: PROJECT_ROOT, uploadsDir: UPLOADS_DIR })
+                if (r.ok && panelVisible(r.path)) reply('', [{ path: r.path, name: r.name, kind: r.kind }])
+                else reply('(file not sent: it is in a part of the box the web app keeps hidden)')
+              },
+            },
+          })
+          if (cmd.handled) {
+            storeUser()
+            if (cmd.clearSession) updateConversation(ctx.chatId, id, { sessionId: '' })
+            sse.writeEvent('done', { cancelled: false, command: true })
+            sse.close()
+            return
+          }
+        } catch (err) {
+          logger.error({ err, conversationId: id }, 'web chat command failed')
+          storeUser()
+          sse.writeEvent('error', { message: ownerMessage(err) })
+          sse.close()
+          return
+        }
+        storeUser()
 
         let sent = ''
         try {
@@ -219,7 +283,7 @@ registerWebRoutes([
             conversationId: id,
             text,
             framing: framingFor(conv.projectId),
-            sessionId: conv.sessionId ?? undefined,
+            sessionId: conv.sessionId || undefined,
             model: conv.model || undefined,
             effort: (conv.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | undefined,
             onQueued: (ahead) => sse.writeEvent('queued', { ahead }),
