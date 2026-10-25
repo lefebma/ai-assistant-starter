@@ -96,7 +96,7 @@ describe('cancel a scheduled run in flight', () => {
     expect(signal.aborted).toBe(true)
   })
 
-  it('shutdown aborts the run but leaves its row, so a one-shot runs again after the restart', async () => {
+  it('shutdown aborts the run and marks its row, so the boot sweep picks the one-shot up again (#234)', async () => {
     createTask('c-4', 'chat-a', 'once at shutdown', '0 9 * * *', due(), 'Shut', 'silent', 'America/Toronto', true)
     const job = runsUntilCancelled()
     const run = runDueTasks()
@@ -104,7 +104,7 @@ describe('cancel a scheduled run in flight', () => {
     expect(abortAllScheduledRuns()).toBe(1)
     await run
     expect(signal.aborted).toBe(true)
-    expect(getTask('c-4')).toMatchObject({ status: 'active', last_result: 'RUNNING...' })
+    expect(getTask('c-4')).toMatchObject({ status: 'active', last_result: 'INTERRUPTED: stopped by a restart', run_key: 'job:c-4' })
   })
 })
 

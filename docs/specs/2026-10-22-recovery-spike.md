@@ -263,3 +263,28 @@ S7a and S7c flipped (the retry drops itself), S7b flipped (the retry runs
 under the narrowed role and is refused), and a new S7e shows a pause between
 two steps refusing the second. The remaining unauthorized actions are memory
 and delegation defects (S1, S3, S4).
+
+## Follow-up: card #234 (2026-10-25)
+
+Fix 3 is in, for defects 4 and 5.
+
+- **Obligations on disk:** `src/assurance/run-state.ts`. `openRun(runId, obligations)` is `createRun` with each change saved to a `run_state` table. Reopening the same id after a restart restores the obligations, the evidence and any terminal status. The run id is the effect journal's run key, so a job's evidence and its effects share one name. `createRun` now accepts saved state and reports changes, and works as before without them. Nothing calls `openRun` from the runtime yet: wiring evidence into the tool path is #197.
+- **Run marker:** `scheduled_tasks.run_key` is set when a run starts and cleared when it ends. A deferred retry keeps it while it waits. Shutdown marks the row `INTERRUPTED` and keeps the key.
+- **Boot sweep:** `sweepInterruptedRuns` runs in `initScheduler` before the first poll. Nothing is running in a fresh process, so every row with a key (or a bare `RUNNING...` from before the column existed) was cut off. The owner gets one message per row, listing what the journal shows as done and as pending (unconfirmed). Then:
+  - **Active one-shot:** re-queued under the same run key, so the journal refuses repeats, and run with a continuation prompt. Its live grant is the task as it is now, so a role narrowed since the crash applies.
+  - **Paused task:** left paused. Its last result reads `UNKNOWN` and its saved run is marked unknown.
+  - **Recurring job:** waits for its next occurrence instead of replaying this one. Its last result reads `UNKNOWN` and its saved run is marked unknown.
+  - **Cut off twice in a row:** a resumed run that is cut off again is paused rather than resumed again, so a job that crashes the process cannot loop.
+  - **Silent job with nothing in the journal:** logged, no message.
+- **Fixed on the way:** when the AI allowance ran out mid-run, a one-shot kept the label `RUNNING...`. It now reads `SKIPPED`.
+
+S2 now runs the real sweep in the as-is arm. The alert names the CRM update and the email, the one-shot resumes, the journal refuses both repeats, and the second boot's checker reads `complete`.
+
+| Metric | As-is after #230 | As-is after #234 | Reference |
+|---|---|---|---|
+| Interventions | 1 | **0** | 0 |
+| Recovery success | 8/13 | 9/13 | 13/13 |
+| p95 simulated time | 1,440 min | **11 min** | 11 min |
+| Verified completion | 10/14 | 10/14 | 14/14 |
+
+The remaining failures are the memory and delegation defects (S1, S3, S4).
