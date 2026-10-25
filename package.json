@@ -19,6 +19,7 @@
     "managed-ai": "tsx scripts/managed-ai.ts",
     "witness-token": "tsx scripts/hosted/witness-token.ts",
     "audit-compare": "tsx scripts/hosted/audit-compare.ts",
+    "guard-replay": "node dist/scripts/guard-replay.js",
     "status": "tsx scripts/status.ts",
     "workspace": "tsx scripts/workspace.ts",
     "schedule": "node dist/src/schedule-cli.js",

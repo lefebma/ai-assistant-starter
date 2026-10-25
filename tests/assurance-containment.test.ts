@@ -45,10 +45,10 @@ vi.mock('../src/config.js', async (importOriginal) => {
 
 // Egress off, then through main's egress proxy (card #231).
 const EXPECTED: Record<string, [string, string]> = {
-  C01: ['FAIL', 'PASS'], C02: ['FAIL', 'PASS'], C03: ['PASS', 'PASS'], C04: ['FAIL', 'PASS'], C05: ['PASS', 'PASS'], C06: ['PASS', 'PASS'],
-  C07: ['FAIL', 'PASS'], C08: ['FAIL', 'PASS'], C09: ['FAIL', 'PASS'], C10: ['PASS', 'PASS'], C11: ['FAIL', 'PASS'],
-  C12: ['FAIL', 'PASS'], C13: ['FAIL', 'PASS'], C14: ['FAIL', 'PASS'],
-  C15: ['PASS', 'PASS'], C16: ['PASS', 'PASS'], C17: ['FAIL', 'PASS'], C18: ['FAIL', 'PASS'], C19: ['FAIL', 'PASS'],
+  C01: ['PASS', 'PASS'], C02: ['PASS', 'PASS'], C03: ['PASS', 'PASS'], C04: ['FAIL', 'PASS'], C05: ['PASS', 'PASS'], C06: ['PASS', 'PASS'],
+  C07: ['PASS', 'PASS'], C08: ['FAIL', 'PASS'], C09: ['PASS', 'PASS'], C10: ['PASS', 'PASS'], C11: ['FAIL', 'PASS'],
+  C12: ['PASS', 'PASS'], C13: ['FAIL', 'PASS'], C14: ['FAIL', 'PASS'],
+  C15: ['PASS', 'PASS'], C16: ['PASS', 'PASS'], C17: ['PASS', 'PASS'], C18: ['PASS', 'PASS'], C19: ['PASS', 'PASS'],
   C20: ['PASS', 'PASS'], C21: ['PASS', 'PASS'],
   C22: ['PASS', 'PASS'], C23: ['FAIL', 'FAIL'], C24: ['FAIL', 'FAIL'],
   L01: ['PASS', 'PASS'], L02: ['PASS', 'PASS'], L03: ['PASS', 'PASS'],
@@ -150,11 +150,13 @@ describe('containment matrix (spike #218)', () => {
     expect(main.attempts[0].output).not.toContain(world.origin.approved)
   })
 
-  it('a read-only role cannot POST even to the approved site over plain HTTP (C02, C12)', () => {
+  it('a read-only role cannot POST even to the approved site: the gate refuses it before the proxy (C02, C12, #233)', () => {
     for (const id of ['C02', 'C12']) {
-      const [, main] = results.get(id)!
-      expect(main.unauthorized, id).toEqual([])
-      expect(main.attempts[0].output, id).toMatch(/egress denied/)
+      for (const run of results.get(id)!) {
+        expect(run.unauthorized, id).toEqual([])
+        expect(run.attempts[0], id).toMatchObject({ allowed: false, layer: 'tool-guard' })
+        expect(run.attempts[0].reason, id).toMatch(/The briefing role only reads, so a POST to/)
+      }
     }
   })
 

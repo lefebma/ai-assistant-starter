@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.48.0 - 2026-10-24
+
+Read-only jobs stay read-only, and the tool guard sees what a command sends.
+
+- **Changed: `briefing` and `research` jobs cannot send or change anything on the web.** A POST with curl, wget `--post-data`, httpie, an inline `node`/`python` request, a `fetch` with a method in a browser script, or filling in a form is refused. This holds on every install, not just hosted boxes with the egress allowlist, and it sees the method over HTTPS too. `inbox-triage` may send only to the mail services.
+- **New: the tool guard checks what a command sends.** In chat, a request that sends or changes something is checked against the hosts chat may write to (the mail and calendar services, Slack, and `EGRESS_ALLOW`). Inline `curl -d`, `wget --post-data` and browser scripts are now caught, not just file uploads. A retry with another tool after a refusal counts as evasion, like the other rules. Chat follows `TOOL_GUARD`, so with the default `log` this is recorded and nothing is blocked.
+- **New: `npm run guard-replay`** replays the shell commands in an install's audit log and lists, by host, what `TOOL_GUARD=enforce` would have refused. Run it before switching chat to enforce, and add the hosts the owner uses on purpose to `EGRESS_ALLOW`.
+- A custom role in `roles.json` without `egress` is unchanged: its command list is its only limit.
+
 ## 1.47.0 - 2026-10-24
 
 Stopping the assistant now actually stops it.
