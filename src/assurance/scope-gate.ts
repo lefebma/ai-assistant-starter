@@ -15,6 +15,11 @@
  * call: a task the owner paused or deleted refuses the call, and the role
  * checked is the one the task has now, not the one the run started with.
  *
+ * Requests that change something (card #233) are checked against where the
+ * run may write: nowhere for a read-only role (briefing, research), its write
+ * list for a role that has one, and the approved hosts for chat. Like the
+ * guard's other rules, chat follows TOOL_GUARD and a scoped job enforces.
+ *
  * Every call is then written to the audit log (card #196) with its outcome,
  * and a call that would change the audit store is refused before anything
  * else. See audit-trail.ts.
@@ -30,6 +35,9 @@ import type { RunScope } from '../runtime/types.js'
 import { currentGrant } from './grant.js'
 import { beginEffect, commitEffect, releaseEffect } from './effect-journal.js'
 import { effectsOfCommand } from './effect-commands.js'
+import { netWrites, type NetWrite } from './net-intent.js'
+import { chatPolicy, rolePolicy, type EgressConfig } from '../egress/index.js'
+import { decide as decideEgress, ESSENTIALS, type EgressPolicy } from '../egress/policy.js'
 
 export interface RoleLogEntry {
   at: string
@@ -162,10 +170,45 @@ function decide(call: ToolCall): { result: GateResult; outcome: ToolOutcome; not
       note = `tool guard ${g.entry.enforced ? 'blocked' : 'would block'}: ${g.entry.rule}`
     }
     if (!g.allow) return { result: { allow: false, reason: g.reason ?? 'Blocked by the tool guard.' }, outcome: 'blocked', note }
+    const net = netRefusal(call.scope?.role ? loadRoles(ROLES_FILE).get(call.scope.role) : undefined)
+    if (net) {
+      const n = getToolGuard(mode, STORE_DIR).checkNet({ session: call.session, tool: call.tool, input: call.input, writes: netWrites(call.tool, call.input), refuse: net })
+      if (n.entry) {
+        logger.warn({ tool: call.tool, rule: n.entry.rule, enforced: n.entry.enforced }, 'tool guard hit')
+        note = `tool guard ${n.entry.enforced ? 'blocked' : 'would block'}: ${n.entry.rule}`
+      }
+      if (!n.allow) return { result: { allow: false, reason: n.reason ?? 'Blocked by the tool guard.' }, outcome: 'blocked', note }
+    }
   } catch (err) {
     logger.warn({ err: String(err) }, 'tool guard failed open')
   }
   return { result: { allow: true }, outcome: 'allowed', note }
+}
+
+/**
+ * Why a network write is refused for this run, or null when it is not, or
+ * null for the whole run when nothing is checked: a custom role that sets no
+ * egress keeps its command allowlist as its only limit, as before.
+ */
+export function netRefusal(role: RoleSpec | undefined, cfg?: EgressConfig): ((w: NetWrite) => { rule: string; why: string } | null) | null {
+  const chat = !role || (role.tools.includes('*') && !role.egress)
+  if (!chat && !role!.egress) return null
+  const policy: EgressPolicy = chat ? chatPolicy(cfg) : rolePolicy(role!, cfg)
+  const essentials = new Set(ESSENTIALS)
+  const readOnly = !chat && (role!.egress?.write ?? []).every((h) => essentials.has(h))
+  const rule = readOnly ? 'read-only-role' : 'unapproved-write'
+  const who = chat ? 'chat' : `the ${role!.id} role`
+  const Who = chat ? 'Chat' : `The ${role!.id} role`
+  return (w) => {
+    if (w.host === null) {
+      // A destination the command does not name: a role cannot vouch for it, chat lets it pass.
+      return chat ? null : { rule, why: `${Who} cannot tell where this ${w.method} goes, and ${readOnly ? 'only reads' : 'may write only to its approved hosts'}` }
+    }
+    const d = decideEgress(policy, { host: w.host, port: w.port ?? 443, method: w.method })
+    if (d.allow && d.via === 'write') return null
+    if (readOnly) return { rule, why: `${Who} only reads, so a ${w.method} to ${w.host} is refused` }
+    return { rule, why: `${w.host} is not one of the hosts ${who} may send to (add it to EGRESS_ALLOW if the owner approves)` }
+  }
 }
 
 /**

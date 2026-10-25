@@ -248,3 +248,29 @@ Writing that test found `execFile` ignores `detached`, so the first version of
 the group kill silently did nothing; it uses `spawn` now. Covered by
 tests/turn-queue, scheduler-cancel (a cancel during a run, a pending retry and
 the retry's own run), ai-sdk-cancel-delegation and bot-cancel.
+
+## Follow-up: card #233 (2026-10-24)
+
+Defects 2 and 3 are fixed at the gate, without the egress proxy. A new
+reader (`src/assurance/net-intent.ts`) finds the requests a call would make
+that send or change something: curl (every data, method and upload flag),
+wget `--post-data`/`--method`, httpie, inline `node -e` and `python -c`
+requests, and in Playwright scripts `fetch` with a method, XMLHttpRequest,
+`sendBeacon`, axios and form submits; filling a form or uploading a file
+counts as a submit. The gate checks each against where the run may write:
+nowhere for a read-only role (briefing, research), its write list for one
+that has one (inbox-triage: the mail services), and chat's approved hosts for
+chat. Hits go through the tool guard, so chat follows TOOL_GUARD and a
+retry with another tool counts as evasion (C18). With egress off the matrix
+is now 20 of 27: C01, C02, C07, C09, C12, C17, C18 and C19 pass. Left are C08
+and C11 (chat in log mode, by design), C04, C13 and C14 (a GET that changes
+state and two redirects, which need the egress proxy), and C23 and C24
+(#237). With the proxy it stays 25 of 27.
+
+The false-refusal check has two parts. A labelled corpus in
+tests/net-intent.test.ts (everyday commands, including POSTs to the mail
+services, Slack and an approved host, against attack shapes) shows no false
+refusal. `npm run guard-replay` runs an install's real audit log through the
+same check; it should be run on the soak boxes before chat moves to enforce.
+Browser scripts are not in the audit log (only argument names are), so the
+replay covers shell commands only.

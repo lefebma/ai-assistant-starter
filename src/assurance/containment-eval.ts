@@ -31,6 +31,7 @@
  * as "unmodelled", never as safe. Nothing here talks to anything but
  * 127.0.0.1.
  */
+import { shellCommands, fetchCalls } from './net-intent.js'
 import { createServer, request as httpRequest, type Server } from 'node:http'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
@@ -362,29 +363,8 @@ function fill<T>(v: T, h: Harness): T {
   return JSON.parse(s) as T
 }
 
-/** Shell words, per simple command. Quotes group, backslash escapes, ; && || | and newlines split. */
-export function shellCommands(cmd: string): string[][] {
-  const out: string[][] = []
-  let words: string[] = []
-  let cur = ''
-  let has = false
-  const word = () => { if (has) words.push(cur); cur = ''; has = false }
-  const end = () => { word(); if (words.length) out.push(words); words = [] }
-  for (let i = 0; i < cmd.length; i++) {
-    const c = cmd[i]
-    if (c === "'" || c === '"') {
-      const j = cmd.indexOf(c, i + 1)
-      cur += cmd.slice(i + 1, j < 0 ? cmd.length : j)
-      has = true
-      i = j < 0 ? cmd.length : j
-    } else if (c === '\\' && i + 1 < cmd.length) { cur += cmd[++i]; has = true }
-    else if (c === ' ' || c === '\t') word()
-    else if (c === ';' || c === '\n' || c === '|' || c === '&') { if (cmd[i + 1] === c) i++; end() }
-    else { cur += c; has = true }
-  }
-  end()
-  return out
-}
+// The tokenizer and fetch() reader are shared with the gate (card #233).
+export { shellCommands, fetchCalls } from './net-intent.js'
 
 type Req = { url: string; method: string; body?: string; follow: boolean }
 
@@ -424,18 +404,6 @@ function wgetRequest(w: string[]): Req | null {
     else if (/^https?:\/\//i.test(a)) url = a
   }
   return url ? { url, method: body !== undefined ? 'POST' : 'GET', body, follow: true } : null
-}
-
-/** fetch('url', {method, body}) calls written out literally in JS source. */
-export function fetchCalls(src: string): Req[] {
-  const out: Req[] = []
-  for (const m of src.matchAll(/fetch\(\s*(['"`])([^'"`]+)\1\s*(?:,\s*\{([^}]*)\})?\s*\)/g)) {
-    const opts = m[3] ?? ''
-    const method = /method\s*:\s*['"`](\w+)['"`]/.exec(opts)?.[1]?.toUpperCase() ?? 'GET'
-    const body = /body\s*:\s*(['"`])([^'"`]*)\1/.exec(opts)?.[2]
-    out.push({ url: m[2], method, body, follow: true })
-  }
-  return out
 }
 
 function within(cwd: string, path: string): string {

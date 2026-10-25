@@ -15,14 +15,20 @@
  * real work, and how many of those are false refusals, before anything is
  * blocked. /guard report summarises the log.
  *
- * Only the tools that touch the shell or the filesystem are checked. MCP tool
- * arguments are free text (an email body can mention ".env") and checking them
- * lexically would mostly produce false refusals; their limits belong to the
- * role-scoped capabilities in card #195.
+ * Only the tools that touch the shell or the filesystem are checked by the
+ * lexical rules. MCP tool arguments are free text (an email body can mention
+ * ".env") and checking them lexically would mostly produce false refusals;
+ * their limits belong to the role-scoped capabilities in card #195.
+ *
+ * checkNet (card #233) is the one exception: requests that change something
+ * (a POST from curl, wget, a script, or the browser) are checked against the
+ * hosts the run may write to. Its hits share the session's strikes, so a
+ * refused curl followed by wget --post-data reads as an evasion attempt.
  */
 import { appendFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { EvasionMonitor, type Decision } from './evasion.js'
+import type { NetWrite } from './net-intent.js'
 import { redactSensitive } from '../support/redact.js'
 
 export type GuardMode = 'off' | 'log' | 'enforce'
@@ -100,7 +106,30 @@ export class ToolGuard {
     if (text === null) return { allow: true }
     const d = this.monitor.check(call.session || 'unknown', text)
     if (d.allowed) return { allow: true }
+    return this.verdict(call, text, d)
+  }
 
+  /**
+   * Network writes the call would make, against what the run may write to.
+   * `refuse` says why one write is not allowed, or null when it is. The first
+   * refused write decides; the rest of the call is not looked at.
+   */
+  checkNet(call: { session: string; tool: string; input: unknown; writes: NetWrite[]; refuse: (w: NetWrite) => { rule: string; why: string } | null }): GuardVerdict {
+    if (this.mode === 'off' || !call.writes.length) return { allow: true }
+    for (const w of call.writes) {
+      const bad = call.refuse(w)
+      if (!bad) continue
+      const d = this.monitor.strike(call.session || 'unknown', {
+        id: bad.rule,
+        family: 'exfil',
+        suggestion: `${bad.why}. Reading is fine; anything that sends or changes something needs the owner to approve the destination.`,
+      })
+      return this.verdict(call, `${w.method} ${w.host ?? '(destination not written out)'} via ${w.via}`, d)
+    }
+    return { allow: true }
+  }
+
+  private verdict(call: { session: string; tool: string }, text: string, d: Decision): GuardVerdict {
     const enforced = this.mode === 'enforce'
     const entry: GuardEntry = {
       at: new Date().toISOString(),
