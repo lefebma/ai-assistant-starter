@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.52.1 - 2026-10-25
+
+- **Fixed: an updated assistant could not say what changed.** Updating an install that was set up from the source code replaced the app but never its changelog, so asked about recent versions it read the notes it was installed with. A test box on 1.51.0 said its notes stopped at 1.22.1. Updates now replace the changelog too, and the first update to this version brings it current.
+
 ## 1.52.0 - 2026-10-25
 
 Paste a screenshot or a block of text straight into the web chat.

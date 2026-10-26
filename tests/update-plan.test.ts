@@ -90,6 +90,14 @@ describe('source update', () => {
     expect(SOURCE_ENGINE_PATHS).toContain('VERSION')
   })
 
+  it('replaces CHANGELOG.md, so the assistant can describe the version it is running', () => {
+    // havn-test reported v1.51.0 while its changelog stopped at 1.22.1: no
+    // source update had ever replaced the file, so "what changed?" was answered
+    // from a September changelog.
+    expect(SOURCE_ENGINE_PATHS).toContain('CHANGELOG.md')
+    expect(BUNDLE_PAYLOAD_PATHS).toContain('CHANGELOG.md')
+  })
+
   it('never replaces a path the user owns', () => {
     const collisions = SOURCE_ENGINE_PATHS.filter((p) => PRESERVED_PATHS.includes(p))
     expect(collisions).toEqual([])

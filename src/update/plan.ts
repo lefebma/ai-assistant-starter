@@ -83,6 +83,10 @@ export const PRESERVED_PATHS = ['.env', 'CLAUDE.md', 'PERSONALITY.md', 'PROFILE.
  * list until 2026-08-27, so no update of either kind could deliver it and the
  * page reached havn-test only by hand copy. Anything a user owns lives in
  * PRESERVED_PATHS, so replacing this wholesale costs them nothing.
+ *
+ * `CHANGELOG.md` is what the assistant reads when asked what changed. It was
+ * missing here until 1.52.1, so a source install kept the changelog it was
+ * cloned with: havn-test ran 1.51.0 with notes that stopped at 1.22.1.
  */
 export const SOURCE_ENGINE_PATHS = [
   'src',
@@ -92,6 +96,7 @@ export const SOURCE_ENGINE_PATHS = [
   'package-lock.json',
   'tsconfig.json',
   'templates',
+  'CHANGELOG.md',
   'LICENSE',
   'VERSION',
 ]
