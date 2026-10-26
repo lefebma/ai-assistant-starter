@@ -51,13 +51,19 @@ as soon as the reply before it is done. Send several and they run in the
 order you sent them.
 
 - **Edit or Remove** sit under each waiting message. Once it has started it
-  can no longer be changed.
+  can no longer be changed. A waiting message cannot be edited into `/cancel`,
+  `/steer`, `/secret` or a key; send those as a new message.
 - **Stop** ends the reply in progress only. The waiting messages stay and the
-  next one starts.
+  next one starts. If the reply had already finished when you pressed it, Stop
+  leaves the next message alone and the page catches up; press it again to
+  stop that one.
+- **`/cancel`** stops everything in the chat: the reply in progress, every
+  waiting message in any of your chats, and scheduled runs.
 - **Commands and buttons** wait their turn like any message, except `/cancel`
-  and `/steer`, which act on the reply in progress straight away.
+  and `/steer`, which act straight away.
 - **`/secret`** always runs straight away, and so does the key a `/secret set`
-  is waiting for. A key is never put in the queue.
+  is waiting for. A key is never put in the queue, and a message that was
+  already waiting is never mistaken for the key.
 - **Reloading the page** loses nothing. The waiting messages are kept on the
   box, the page picks up the reply where it is, and a message is never sent
   twice. If you hit the AI limit, the waiting messages hold until you open

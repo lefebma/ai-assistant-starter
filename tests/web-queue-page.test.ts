@@ -128,4 +128,18 @@ describe('the page', () => {
   it('follows a chat with a reply in progress or messages waiting when it opens', () => {
     expect(js).toMatch(/if \(r\.running \|\| \(r\.queue && r\.queue\.length\)\) follow\(id\)/)
   })
+
+  it('Stop names the message whose reply it stops, and catches up when that one had finished', () => {
+    expect(js).toMatch(/onStart: \(item\) => state\.replying\.set\(convId, item\)/)
+    expect(js).toMatch(/'\/cancel', cur \? \{ itemId: cur\.id, clientId: cur\.clientId \} : \{\}\)/)
+    expect(js).toMatch(/r\.reason === 'finished'[^\n]*\n[^\n]*\n\s*follow\(id\)/)
+  })
+
+  it('a refused edit (a command that runs at once) goes back to the box as a new message', () => {
+    expect(js).toMatch(/err\.code === 'runs_now'/)
+  })
+
+  it('a follow that hears anything starts its retry count again', () => {
+    expect(js).toMatch(/follow\(convId, heard \? 1 : tries \+ 1\)/)
+  })
 })

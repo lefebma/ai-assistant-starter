@@ -28,6 +28,7 @@ vi.mock('../src/memory.js', async (orig) => ({
 import { createBot, turnsIdle, runWebTurn } from '../src/bot.js'
 import { getSession, initDatabase, setSession } from '../src/db.js'
 import { currentRun } from '../src/assurance/effect-journal.js'
+import { addItem, listQueued } from '../src/web/queue.js'
 
 function harness() {
   const sent: string[] = []
@@ -103,6 +104,20 @@ describe('/cancel in chat', () => {
     expect(await queued).toEqual({ text: null, cancelled: true })
     expect((await other).text).toBe('other reply')
     await turnsIdle()
+  })
+
+  it("also drops the messages waiting in this chat's web conversations, and only this chat's (#250)", async () => {
+    const { sent, send } = harness()
+    const wait = (conversationId: string, chatId: string, text: string) =>
+      addItem({ conversationId, chatId, clientId: '', text, attachments: [], pastes: [], state: 'queued' })
+    wait('wq1', 'owner', 'first waiting')
+    wait('wq2', 'owner', 'second waiting')
+    wait('wq3', 'someone-else', 'not mine')
+    await send({ text: '/cancel' })
+    expect(sent).toContain('Dropped 2 queued messages.')
+    expect(listQueued('wq1')).toEqual([])
+    expect(listQueued('wq2')).toEqual([])
+    expect(listQueued('wq3').map((q) => q.text)).toEqual(['not mine'])
   })
 
   it('with nothing running it says so, and the next message runs normally', async () => {

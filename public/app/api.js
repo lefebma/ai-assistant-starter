@@ -155,7 +155,8 @@ async function readEvents(res, onEvent, isLast) {
 function turnEvent(handlers, name, payload) {
   switch (name) {
     case 'start':
-      // A message that waited has started (only when following).
+      // A message's turn has started: the one this send made, or, when
+      // following, each waiting message in turn. Names it, never its words.
       if (payload.item) handlers.onStart?.(payload.item)
       break
     case 'user':

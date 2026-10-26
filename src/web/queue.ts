@@ -108,7 +108,8 @@ export function addItem(
     attachments: string[]
     pastes: string[]
     clickedMessageId?: number | null
-    state: 'queued' | 'running'
+    /** 'done': a message answered at once outside the queue, kept only so a retry of its send is recognised. */
+    state: QueueState
   },
   now: number = Date.now(),
 ): QueueItem {
@@ -135,6 +136,14 @@ export function findByClientId(conversationId: string, clientId: string): QueueI
   if (!clientId) return null
   const r = db().prepare('SELECT * FROM web_queue WHERE conversation_id = ? AND client_id = ?').get(conversationId, clientId) as RawItem | undefined
   return r ? toItem(r) : null
+}
+
+/**
+ * Drop every waiting message in this chat's conversations: `/cancel` stops
+ * everything in the chat, the waiting web messages included. Returns how many.
+ */
+export function dropQueuedForChat(chatId: string): number {
+  return db().prepare("DELETE FROM web_queue WHERE chat_id = ? AND state = 'queued'").run(chatId).changes
 }
 
 /** Waiting messages, oldest first. */

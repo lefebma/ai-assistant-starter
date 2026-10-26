@@ -62,6 +62,8 @@ const MAX_CHAT_BODY = 2 * 1024 * 1024
 
 /** Conversations with a turn in flight. Added on start, removed when the turn settles. */
 const running = new Set<string>()
+/** The message each conversation's turn in flight is answering, so Stop can name the one it means. */
+const runningItem = new Map<string, QueueItem>()
 
 const framingFor = (projectId: string): string => projectFraming(projectId)
 
@@ -167,6 +169,7 @@ async function answer(
   attached: Attached[],
   clickedMessageId: number | undefined,
   sse: Sink,
+  fromQueue = false,
 ): Promise<'paused' | void> {
   const id = conv.id
   const attaching = attached.length > 0
@@ -250,6 +253,7 @@ async function answer(
       conversationId: id,
       text,
       clickedMessageId,
+      fromQueue,
       hooks: {
         send: (t, buttons) => String(reply(t, [], buttons)),
         edit: (mid, t) => setMessageContent(id, Number(mid), t),
@@ -316,14 +320,19 @@ async function answer(
  * Run one message's turn through the conversation's hub, then start the next
  * waiting one. The caller has already put the conversation in `running`.
  * `attached` is null for a message that waited: its uploads are moved now.
- * `onBegin` runs once the turn is announced, before anything else is written.
+ * `onBegin` runs just before the turn is announced, so the sender hears it all.
  * After the AI limit pauses a turn, the queue waits: it starts again when the
  * owner sends something or a page follows the chat.
  */
 async function runTurn(chatId: string, conv: ConversationRow, item: QueueItem, attached: Attached[] | null, onBegin?: () => void): Promise<void> {
   const id = conv.id
-  hubBegin(id, item)
+  // A message that waited was sent before anything that came after it, such
+  // as a /secret set now waiting for its key, so it is never that key.
+  const waited = attached === null
+  runningItem.set(id, item)
+  // The sender listens first, so its stream names the message too (Stop uses it).
   onBegin?.()
+  hubBegin(id, item)
   const sink: Sink = { writeEvent: (n, d) => hubWrite(id, n, d), close: () => {} }
   let held = false
   try {
@@ -335,16 +344,27 @@ async function runTurn(chatId: string, conv: ConversationRow, item: QueueItem, a
       }
       attached = commitAttachments(id, planned.plan)
     }
-    held = (await answer(chatId, conv, item.text, attached, item.clickedMessageId ?? undefined, sink)) === 'paused'
+    held = (await answer(chatId, conv, item.text, attached, item.clickedMessageId ?? undefined, sink, waited)) === 'paused'
   } catch (err) {
     logger.error({ err, conversationId: id }, 'web chat queued turn failed')
     sink.writeEvent('error', { message: ownerMessage(err) })
   } finally {
-    finishItem(item.id)
+    try {
+      finishItem(item.id)
+    } catch (err) {
+      logger.error({ err, conversationId: id }, 'web chat queue row could not be finished')
+    }
     running.delete(id)
+    runningItem.delete(id)
     hubEnd(id)
-    if (held) hubIdle(id)
-    else startNext(chatId, id)
+    try {
+      if (held) hubIdle(id)
+      else startNext(chatId, id)
+    } catch (err) {
+      // Nothing restarts the queue until a page follows the chat or sends.
+      logger.error({ err, conversationId: id }, 'web chat queue could not start the next message')
+      hubIdle(id)
+    }
   }
 }
 
@@ -461,6 +481,17 @@ registerWebRoutes([
     async handler(ctx) {
       const id = ctx.params[0]!
       if (!getConversation(ctx.chatId, id)) return sendError(ctx.res, 404, 'not_found')
+      // The page names the message whose reply it means to stop. If that one
+      // has already finished and the next waiting message has just started,
+      // nothing is stopped: Stop never takes the next message by mistake.
+      const b = await jsonBody(ctx).catch(() => ({}) as Record<string, unknown>)
+      const itemId = typeof b.itemId === 'number' ? b.itemId : null
+      const clientId = typeof b.clientId === 'string' && b.clientId ? b.clientId : null
+      if (itemId !== null || clientId !== null) {
+        const cur = runningItem.get(id)
+        const same = !!cur && (itemId !== null ? cur.id === itemId : cur.clientId === clientId)
+        if (!same) return sendJson(ctx.res, 200, { stopped: false, reason: 'finished' })
+      }
       const r = cancelWebTurn(id)
       sendJson(ctx.res, 200, { stopped: Boolean(r.stoppedActive || r.droppedQueued) })
     },
@@ -500,6 +531,10 @@ registerWebRoutes([
           logger.error({ err, conversationId: id }, 'web chat attachments could not be saved')
           return sendError(ctx.res, 500, 'attachments_failed')
         }
+        // Remember the send by its clientId only, never its words, so a
+        // retry (the answer got lost on the way back) is not sent again,
+        // and above all is not queued as a plain message.
+        if (clientId) addItem({ conversationId: id, chatId: ctx.chatId, clientId, text: '', attachments: [], pastes: [], state: 'done' })
         const sse = openSse(ctx.res, { heartbeatMs: 15_000 })
         await answer(ctx.chatId, conv, text, attached, undefined, sse)
         return
@@ -603,6 +638,9 @@ registerWebRoutes([
       // A click claimed its card when it was sent; it is not text to rewrite.
       if (buttonClickLabel(item.text) !== null || buttonClickLabel(text) !== null) return sendError(ctx.res, 400, 'bad_text')
       if (attaching && text.startsWith('/')) return sendError(ctx.res, 400, 'attachments_with_command')
+      // What would run at once (/cancel, /steer, /secret, or the key a
+      // /secret set waits for) is never written into a waiting message.
+      if (RUNS_NOW.test(text) || (!text.startsWith('/') && webSecretAwaited(ctx.chatId))) return sendError(ctx.res, 400, 'runs_now')
       const r = editQueued(id, qid, text)
       if (r === 'started') return sendError(ctx.res, 409, 'started')
       if (r === 'missing') return sendError(ctx.res, 404, 'not_found')

@@ -118,8 +118,11 @@ describe('web chat', () => {
     useRuntime().partials = ['hel', 'hello']
     const id = await newConv()
     const evs = await chat(id, 'hi')
-    expect(evs[0]!.name).toBe('user')
-    expect(evs[0]!.data.message).toMatchObject({ role: 'user', content: 'hi' })
+    // The stream names the message first (Stop uses it), never its words.
+    expect(evs[0]!.name).toBe('start')
+    expect(evs[0]!.data.item.text).toBeUndefined()
+    expect(evs[1]!.name).toBe('user')
+    expect(evs[1]!.data.message).toMatchObject({ role: 'user', content: 'hi' })
     expect(evs.find((e) => e.name === 'queued')).toEqual({ name: 'queued', data: { ahead: 0 } })
     expect(evs.filter((e) => e.name === 'delta').map((e) => e.data.text).join('')).toBe('hello')
     const done = evs.at(-1)!

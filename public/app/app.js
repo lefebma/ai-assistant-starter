@@ -44,6 +44,7 @@ const state = {
   messages: [],
   busy: new Set(), // conversation ids with a reply in progress, as this page sees it
   queue: [], // the current chat's messages waiting their turn (card #250)
+  replying: new Map(), // chat id -> { id, clientId } of the message its reply in progress answers (Stop names it)
   gen: 0, // bumped whenever the page shows another chat
   goals: { goals: [], version: 'none' },
   status: null,
@@ -657,7 +658,13 @@ async function saveQueued(q) {
     Object.assign(q, r.item)
     q.editing = false
   } catch (err) {
-    if (err.status === 409 || err.status === 404) {
+    if (err.status === 400 && err.code === 'runs_now') {
+      // A command that acts at once (or a key a /secret set waits for) is
+      // never written into a waiting message: it goes as a new message.
+      q.editing = false
+      if (!$('input').value.trim()) $('input').value = text
+      note($('composer-note'), 'That one cannot wait in line. It is back in the box: send it as a new message.')
+    } else if (err.status === 409 || err.status === 404) {
       // Too late: it has started (or finished) as it was.
       q.editing = false
       note($('composer-note'), 'That message had already started, so it went as it was.')
@@ -881,6 +888,7 @@ async function send(text, extra = {}) {
   try {
     finished = await sendOnce(convId, text, {
       ...view.handlers,
+      onStart: (item) => state.replying.set(convId, item),
       // The box had messages waiting (a restart left them): this one joined them.
       onItem: (item) => {
         view.dropUser()
@@ -941,6 +949,7 @@ async function enqueue(convId, text, tray, body) {
     })
     finished = await sendOnce(convId, text, {
       ...lazy,
+      onStart: (it) => state.replying.set(convId, it),
       onItem: (saved) => {
         Object.assign(item, saved)
         if (saved.state !== 'queued') dropQueued(convId, (x) => x === item)
@@ -969,7 +978,8 @@ async function enqueue(convId, text, tray, body) {
 
 /** A reply this page sent has ended, or its connection dropped: follow whatever comes next. */
 function afterStream(convId, finished) {
-  if (!finished || (isHere(convId) && state.queue.length)) {
+  // A message this page is still sending is not waiting yet: its own answer says what became of it.
+  if (!finished || (isHere(convId) && state.queue.some((q) => q.state !== 'sending'))) {
     follow(convId)
     return
   }
@@ -1007,13 +1017,20 @@ async function follow(convId, tries = 0) {
   updateRunning()
 
   let view = null
+  // Any event means the connection works: retries count drops in a row.
+  let heard = false
   const toView = {}
-  for (const name of TURN_EVENTS) toView[name] = (...a) => view && view.handlers[name](...a)
+  for (const name of TURN_EVENTS) toView[name] = (...a) => {
+    heard = true
+    if (view) view.handlers[name](...a)
+  }
   let ended = false
   try {
     ended = await api.follow(convId, {
       ...toView,
       onStart: (item) => {
+        heard = true
+        state.replying.set(convId, item)
         if (view) view.finishWith(null)
         dropQueued(convId, (q) => q.id === item.id || (item.clientId && q.clientId === item.clientId))
         view = isHere(convId) ? turnView(convId, null) : null
@@ -1043,12 +1060,13 @@ async function follow(convId, tries = 0) {
       note($('composer-note'), 'Connection lost. Reconnecting...')
     }
     setTimeout(() => {
-      if (followers.get(convId) === ac) follow(convId, tries + 1)
+      if (followers.get(convId) === ac) follow(convId, heard ? 1 : tries + 1)
     }, 2500)
     return
   }
   followers.delete(convId)
   state.busy.delete(convId)
+  state.replying.delete(convId)
   dirty.delete(convId)
   if (tries) note($('composer-note'), '')
   await reloadIf(convId)
@@ -1058,11 +1076,18 @@ async function follow(convId, tries = 0) {
 
 $('stop').addEventListener('click', async () => {
   // Stops the reply in progress only. Waiting messages stay and run next.
+  // It names the message that reply answers: if that one has just finished
+  // and the next has started, the box stops nothing and the page catches up.
   const id = state.current && state.busy.has(state.current.id) ? state.current.id : null
   if (!id) return
+  const cur = state.replying.get(id)
   $('stop').disabled = true
   try {
-    await api.post('/api/web/conversations/' + encodeURIComponent(id) + '/cancel')
+    const r = await api.post('/api/web/conversations/' + encodeURIComponent(id) + '/cancel', cur ? { itemId: cur.id, clientId: cur.clientId } : {})
+    if (r && r.stopped === false && r.reason === 'finished' && isHere(id)) {
+      note($('composer-note'), 'That reply had already finished. Press Stop again to stop the one now running.')
+      follow(id)
+    }
   } catch (err) {
     note($('composer-note'), friendly(err, 'Could not stop it.'))
   } finally {

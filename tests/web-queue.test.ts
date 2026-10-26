@@ -289,21 +289,131 @@ describe('web chat queue', () => {
     expect(rt.calls).toEqual(['waiting'])
   })
 
-  it('a command typed mid-turn waits; /cancel runs at once and the queue carries on', async () => {
+  it('a command typed mid-turn waits; /cancel runs at once and stops everything, the queue included', async () => {
     useRuntime()
     const id = await newConv()
+    const other = await newConv()
     const first = await startHeld(id, 'A', new Promise(() => {}))
     const queued = await enqueue(id, '/chatid', 'q1')
     expect(queued.item.state).toBe('queued')
+    await enqueue(id, 'B', 'q1b')
+    // A message waiting in another chat of the same owner goes too.
+    queue.addItem({ conversationId: other, chatId: '4242', clientId: 'q1y', text: 'Y', attachments: [], pastes: [], state: 'queued' })
     const now = await post(`/api/web/conversations/${id}/chat`, { text: '/cancel', clientId: 'q2' })
     expect(now.headers.get('content-type')).toContain('text/event-stream')
     const cancelEvs = parseSse(await now.text())
-    expect(cancelEvs.some((e) => e.name === 'reply')).toBe(true)
+    const said = cancelEvs.filter((e) => e.name === 'reply').map((e) => e.data.message.content).join(' ')
+    expect(said).toContain('Stopping the current reply.')
+    expect(said).toContain('Dropped 3 queued messages.')
     expect(parseSse(await (await first).text()).at(-1)).toEqual({ name: 'done', data: { cancelled: true } })
-    await vi.waitFor(() => expect(history(id).at(-1)).toEqual(['assistant', 'Your chat ID is: 4242']))
-    const roles = history(id).map((m) => m[1])
-    expect(roles.indexOf('/cancel')).toBeLessThan(roles.indexOf('/chatid'))
+    await bot.turnsIdle()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(queue.listQueued(id)).toEqual([])
+    expect(queue.listQueued(other)).toEqual([])
     expect(rt.calls).toEqual(['A'])
+    expect(history(id).map((m) => m[1])).not.toContain('/chatid')
+  })
+
+  it('Stop names the reply it means: pressed during the hand-off, it leaves the next message alone', async () => {
+    useRuntime()
+    const id = await newConv()
+    const a = gate()
+    rt.gates[0] = a.promise
+    const first = post(`/api/web/conversations/${id}/chat`, { text: 'A', clientId: 'ca' })
+    await vi.waitFor(() => expect(rt.calls).toHaveLength(1))
+    rt.gates[1] = new Promise(() => {})
+    const B = (await enqueue(id, 'B', 'cb')).item
+    // A ends on the box and B starts at once, but the page still shows A.
+    a.open()
+    await (await first).text()
+    await vi.waitFor(() => expect(rt.calls).toEqual(['A', 'B']))
+    const late = (await (await post(`/api/web/conversations/${id}/cancel`, { clientId: 'ca' })).json()) as any
+    expect(late).toEqual({ stopped: false, reason: 'finished' })
+    const byId = (await (await post(`/api/web/conversations/${id}/cancel`, { itemId: B.id + 1000 })).json()) as any
+    expect(byId).toEqual({ stopped: false, reason: 'finished' })
+    expect((await get(`/api/web/conversations/${id}/messages`)).running).toBe(true)
+    // Naming B stops B.
+    const stop = (await (await post(`/api/web/conversations/${id}/cancel`, { itemId: B.id, clientId: 'cb' })).json()) as any
+    expect(stop.stopped).toBe(true)
+    await untilIdle(id, 3)
+    expect(history(id).map((m) => m[1])).toEqual(['A', 're: A', 'B'])
+  })
+
+  it('a waiting message that starts while /secret set waits for its key is not taken as the key', async () => {
+    useRuntime()
+    const id = await newConv()
+    const a = gate()
+    const b = gate()
+    const first = await startHeld(id, 'A', a.promise)
+    rt.gates[1] = b.promise
+    await enqueue(id, 'also check the invoice', 'cb')
+    const ask = parseSse(await (await post(`/api/web/conversations/${id}/chat`, { text: '/secret set FOO_TOKEN', clientId: 's1' })).text())
+    expect(ask.filter((e) => e.name === 'reply').map((e) => e.data.message.content).join('')).toContain('Send the key for FOO_TOKEN')
+    a.open()
+    await (await first).text()
+    // The waiting message ran as an ordinary message, and the flow still waits.
+    await vi.waitFor(() => expect(rt.calls).toEqual(['A', 'also check the invoice']))
+    expect(bot.webSecretAwaited('4242')).toBe(true)
+    // The real key, typed now, goes to the flow: never the queue, the history or the agent.
+    const key = await post(`/api/web/conversations/${id}/chat`, { text: 'real-key-not-real-789', clientId: 'k1' })
+    expect(key.headers.get('content-type')).toContain('text/event-stream')
+    expect(parseSse(await key.text()).map((e) => e.name)).toContain('dropped')
+    expect(bot.webSecretAwaited('4242')).toBe(false)
+    b.open()
+    await untilIdle(id, 6)
+    expect(rt.calls).toEqual(['A', 'also check the invoice'])
+    expect(history(id).map((m) => m[1])).toContain('also check the invoice')
+    expect(JSON.stringify(conv.listMessages(id))).not.toContain('real-key-not-real-789')
+    expect(JSON.stringify(queue.listAllForTest(id))).not.toContain('real-key-not-real-789')
+  })
+
+  it('a retried send of a key, or of /secret, is recognised without keeping the words', async () => {
+    useRuntime()
+    const id = await newConv()
+    const first = await startHeld(id, 'A', new Promise(() => {}))
+    await (await post(`/api/web/conversations/${id}/chat`, { text: '/secret set FOO_TOKEN', clientId: 's1' })).text()
+    await (await post(`/api/web/conversations/${id}/chat`, { text: 'retry-key-not-real-1', clientId: 'k1' })).text()
+    // The page never saw the answer and sends the same thing again.
+    const again = await post(`/api/web/conversations/${id}/chat`, { text: 'retry-key-not-real-1', clientId: 'k1' })
+    expect(again.status).toBe(202)
+    expect(((await again.json()) as any).item).toMatchObject({ clientId: 'k1', state: 'done', text: '' })
+    const inline = { text: '/secret set FOO_TOKEN inline-retry-not-real-2', clientId: 's2' }
+    await (await post(`/api/web/conversations/${id}/chat`, inline)).text()
+    const again2 = await post(`/api/web/conversations/${id}/chat`, inline)
+    expect(again2.status).toBe(202)
+    expect(queue.listQueued(id)).toEqual([])
+    const rows = JSON.stringify(queue.listAllForTest(id))
+    expect(rows).not.toContain('retry-key-not-real-1')
+    expect(rows).not.toContain('inline-retry-not-real-2')
+    expect(JSON.stringify(conv.listMessages(id))).not.toContain('retry-key-not-real-1')
+    expect(rt.calls).toEqual(['A'])
+    await post(`/api/web/conversations/${id}/cancel`)
+    await (await first).text()
+  })
+
+  it('editing a waiting message refuses /secret, /cancel and a pending key, and stores none of them', async () => {
+    useRuntime()
+    const id = await newConv()
+    const first = await startHeld(id, 'A', new Promise(() => {}))
+    const B = (await enqueue(id, 'B', 'b')).item
+    const edit = (text: string) => post(`/api/web/conversations/${id}/queue/${B.id}`, { text })
+    for (const t of ['/secret set FOO_TOKEN edit-not-real-3', '/cancel', '/steer go left']) {
+      const r = await edit(t)
+      expect(r.status).toBe(400)
+      expect(await r.json()).toEqual({ error: 'runs_now' })
+    }
+    await (await post(`/api/web/conversations/${id}/chat`, { text: '/secret set FOO_TOKEN', clientId: 's1' })).text()
+    const key = await edit('pasted-key-not-real-4')
+    expect(key.status).toBe(400)
+    expect(await key.json()).toEqual({ error: 'runs_now' })
+    // A command is still fine to wait.
+    expect((await edit('/chatid')).status).toBe(200)
+    const rows = JSON.stringify(queue.listAllForTest(id))
+    expect(rows).not.toContain('edit-not-real-3')
+    expect(rows).not.toContain('pasted-key-not-real-4')
+    await (await post(`/api/web/conversations/${id}/chat`, { text: '/secret cancel', clientId: 's2' })).text()
+    await post(`/api/web/conversations/${id}/cancel`)
+    await (await first).text()
   })
 
   it('a button click mid-turn claims its card and waits its turn', async () => {
