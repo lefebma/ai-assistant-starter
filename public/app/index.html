@@ -59,6 +59,9 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
       </button>
+      <button type="button" id="update-flag" class="icon-btn update-flag" aria-label="Update available" title="Update available" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="3.5" r="2" fill="currentColor" stroke="none"/><path d="M12 8.5v9M7.5 13l4.5 4.5 4.5-4.5M5 21h14"/></svg>
+      </button>
     </div>
   </aside>
 
@@ -166,6 +169,12 @@
     </button>
   </div>
   <div class="settings-body">
+    <section id="update-section" aria-labelledby="update-title" hidden>
+      <div class="settings-row-head">
+        <h3 id="update-title">Update</h3>
+      </div>
+      <p id="update-detail" class="update-detail"></p>
+    </section>
     <section aria-labelledby="conn-title">
       <div class="settings-row-head">
         <h3 id="conn-title">Connections</h3>

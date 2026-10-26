@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.53.0 - 2026-10-25
+
+Small improvements to the web app.
+
+- **New: an update icon next to Settings.** When a new version is waiting, a download icon shows beside the Settings link in the web app, in the accent colour. Click it to open Settings at the update, which says which version is ready and how to install it. The icon stays after you dismiss the banner and goes away once the update is installed.
+
 ## 1.52.2 - 2026-10-25
 
 - **Fixed: updates now deliver the guides in `docs/`.** Like the changelog in 1.52.1, an install set up from the source code kept the guides it was installed with, so the assistant could not read up on features added since (a 1.51 box had no web app guide). Updates now replace them. Any files you added to `docs/` yourself stay where they are.

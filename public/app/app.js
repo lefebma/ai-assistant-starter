@@ -3,6 +3,7 @@
 
 import * as api from './api.js'
 import { renderMarkdown } from './markdown.js'
+import { updateInfo, RESTART_TEXT } from './update.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -1355,7 +1356,7 @@ async function loadDevices() {
   }
 }
 
-$('open-settings').addEventListener('click', () => {
+function openSettings() {
   closeDrawers()
   note($('dev-note'), '')
   const s = state.status
@@ -1363,6 +1364,14 @@ $('open-settings').addEventListener('click', () => {
   $('settings').showModal()
   loadConnections(false)
   loadDevices()
+}
+
+$('open-settings').addEventListener('click', openSettings)
+// The update icon opens Settings at the update section.
+$('update-flag').addEventListener('click', () => {
+  openSettings()
+  const section = $('update-section')
+  if (!section.hidden) section.scrollIntoView({ block: 'start' })
 })
 $('settings-close').addEventListener('click', () => $('settings').close())
 $('settings').addEventListener('click', (e) => {
@@ -1397,11 +1406,16 @@ async function loadStatus() {
     return
   }
   const s = state.status
-  if (s.updateAvailable && !s.dismissed && s.latestVersion) {
-    $('update-text').textContent = 'Version ' + s.latestVersion + ' is available. Send /update to install it.'
+  const u = updateInfo(s)
+  // The icon and the Settings section stay after the banner is dismissed.
+  show($('update-flag'), u.available)
+  $('update-detail').textContent = u.text
+  show($('update-section'), !!u.text)
+  if (u.available && !s.dismissed) {
+    $('update-text').textContent = u.text
     show($('update-banner'))
   } else if (s.restartPending) {
-    $('update-text').textContent = 'An update is installed and starts on the next restart.'
+    $('update-text').textContent = RESTART_TEXT
     show($('update-banner'))
   }
 }

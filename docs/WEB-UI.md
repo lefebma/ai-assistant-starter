@@ -38,7 +38,10 @@ many. You can also sign out from **Settings** in the page.
   larger than 2048 pixels are scaled down first. Your assistant sees the
   pictures themselves, not just their names.
 - **Settings.** What is connected (AI provider, Telegram, mail and calendar,
-  voice), and your signed-in browsers.
+  voice), and your signed-in browsers. When a new version is waiting, a small
+  download icon shows next to the Settings link; click it to see the update
+  in Settings. It stays until the update is installed, even if you dismiss
+  the banner.
 
 ### Model and effort
 
