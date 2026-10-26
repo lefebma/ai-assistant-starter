@@ -84,6 +84,8 @@ import {
 import type { SupportDraft } from './support/index.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
 import { createWebCommandAdapter, WEB_USER_MESSAGE_ID, type WebCommandHooks } from './web/command-adapter.js'
+import { dropQueuedForChat } from './web/queue.js'
+import { cancelVoiceForChat } from './web/voice-chat.js'
 import { MEDIA_MESSAGE_TYPES } from './platform/types.js'
 
 // Non-abort text patterns (OpenClaw v2026.5.18 -- /btw non-abort behavior).
@@ -746,6 +748,12 @@ export interface WebCommandInput {
   hooks: WebCommandHooks
   /** For a button click: the stored message the clicked card is on. */
   clickedMessageId?: number
+  /**
+   * The message waited in the web queue: it was sent before anything after
+   * it, so a /secret set started since then neither captures it as the key
+   * nor is cancelled by it (card #250).
+   */
+  fromQueue?: boolean
 }
 
 export interface WebCommandResult {
@@ -778,6 +786,25 @@ const webSupportCards = new Map<string, { draft: SupportDraft; card: string }>()
  * command behaves the same on every surface. A web session is only ever
  * minted in a private chat (see handleAppCommand), so it counts as private.
  */
+/**
+ * True while a /secret set waits for its key from this chat. The web chat runs
+ * such a message at once instead of queueing it, so the key is never written
+ * to the queue (card #250).
+ */
+export function webSecretAwaited(chatId: string): boolean {
+  return secretFlow.isAwaiting(chatId)
+}
+
+/**
+ * True when the support flow is waiting for this text from this chat (see
+ * supportAnswer). The web chat runs it at once instead of queueing it: a
+ * message that waited is never taken as the answer, so the one typed now
+ * must not wait (card #250).
+ */
+export function webSupportAwaited(chatId: string, text: string): boolean {
+  return supportAnswer(chatId, text.trim())
+}
+
 export async function runWebCommand(input: WebCommandInput): Promise<WebCommandResult> {
   const { chatId } = input
   const trimmed = input.text.trim()
@@ -800,7 +827,7 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
     const cmd = commandWord(trimmed)
     if (cmd === '/newchat' || cmd === '/forget') {
       logger.info({ chatId, command: cmd, surface: 'web' }, 'Handling command')
-      if (secretFlow.cancelPending(chatId)) await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
+      if (!input.fromQueue && secretFlow.cancelPending(chatId)) await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
       reloadSkills()
       contextEngine.invalidateCaches()
       pendingSupport.delete(chatId)
@@ -830,7 +857,7 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
       type: 'text',
       messageId: WEB_USER_MESSAGE_ID,
       isPrivate: true,
-    })
+    }, { fromQueue: input.fromQueue })
     const draft = pendingSupport.get(chatId)
     if (draft && draftCardId) webSupportCards.set(chatId, { draft, card: `${input.conversationId}:${draftCardId}` })
     await Promise.all(turns)
@@ -1416,6 +1443,15 @@ const SUPPORT_BUTTONS = ['Send', 'Edit', 'Discard']
 // Chats where a bare /support (or Edit) is waiting for the problem description.
 const awaitingSupportDescription = new Set<string>()
 
+/**
+ * True when the support flow owns this text: the description a bare /support
+ * (or Edit) waits for, or a typed Send/Edit/Discard on a pending draft.
+ */
+function supportAnswer(chatId: string, text: string): boolean {
+  return (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(text))
+    || (awaitingSupportDescription.has(chatId) && !text.startsWith('/'))
+}
+
 async function draftSupportRequest(
   adapter: PlatformAdapter,
   chatId: string,
@@ -1614,7 +1650,7 @@ async function handleUpdateCommand(adapter: PlatformAdapter, chatId: string, tex
  * command. Returns false when the text is for the agent. Telegram, Teams and
  * the web chat all route through here, so a command works the same on each.
  */
-async function routeText(adapter: PlatformAdapter, msg: IncomingMessage): Promise<boolean> {
+async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: { fromQueue?: boolean } = {}): Promise<boolean> {
   const { chatId, text } = msg
   // `cmd` is the leading word, lowercased; handlers still receive `trimmed`
   // so argument case survives.
@@ -1628,17 +1664,22 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage): Promis
   // expired case, where the late message probably IS a key and still needs
   // deleting). A command other than /secret cancels the capture instead,
   // so stale state can't swallow unrelated commands.
-  if (!trimmed.startsWith('/')) {
-    const captured = await secretFlow.capture(chatId, trimmed)
-    if (captured) {
-      await sendSecretReply(adapter, chatId, captured.reply, {
-        deleteUserMessage: captured.deleteUserMessage,
-        messageId: msg.messageId,
-      })
-      return true
+  // A web message that waited in the queue skips both: it was sent before
+  // the /secret set, so it is not the key, and it must not cancel the
+  // capture the key typed next belongs to (card #250).
+  if (!opts.fromQueue) {
+    if (!trimmed.startsWith('/')) {
+      const captured = await secretFlow.capture(chatId, trimmed)
+      if (captured) {
+        await sendSecretReply(adapter, chatId, captured.reply, {
+          deleteUserMessage: captured.deleteUserMessage,
+          messageId: msg.messageId,
+        })
+        return true
+      }
+    } else if (cmd !== '/secret' && secretFlow.cancelPending(chatId)) {
+      await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
     }
-  } else if (cmd !== '/secret' && secretFlow.cancelPending(chatId)) {
-    await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
   }
 
   // /btw non-abort: read-only commands during active run
@@ -1650,13 +1691,17 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage): Promis
 
   // Support flow: a typed Send/Edit/Discard resolves a pending draft
   // (platforms without buttons), and the message after a bare /support
-  // (or Edit) is the problem description.
-  if (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(trimmed)) {
-    if (await resolveSupportAction(adapter, chatId, trimmed)) return true
-  }
-  if (awaitingSupportDescription.has(chatId) && !trimmed.startsWith('/')) {
-    await draftSupportRequest(adapter, chatId, trimmed)
-    return true
+  // (or Edit) is the problem description. A web message that waited in the
+  // queue skips both, as it skips /secret above: it was sent before the
+  // draft or the question, so it is not the answer (card #250).
+  if (!opts.fromQueue) {
+    if (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(trimmed)) {
+      if (await resolveSupportAction(adapter, chatId, trimmed)) return true
+    }
+    if (awaitingSupportDescription.has(chatId) && !trimmed.startsWith('/')) {
+      await draftSupportRequest(adapter, chatId, trimmed)
+      return true
+    }
   }
 
   // Command routing. The log line is the only trace a command leaves at
@@ -1776,12 +1821,28 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage): Promis
   }
   // /cancel: stop this chat's running turn, drop its queued messages, and stop
   // the scheduled runs and pending retries that deliver here (card #232).
+  // Everything in the chat stops, so the messages waiting in its web
+  // conversations are dropped too (card #250; the web Stop button keeps them).
+  // A voice call of this chat ends too, with the lookups it handed off.
   if (cmd === '/cancel') {
     const own = turnQueue.cancel(chatId)
+    // A store error here must not stop the rest of the kill switch.
+    let webWaiting = 0
+    try {
+      webWaiting = dropQueuedForChat(chatId)
+    } catch (err) {
+      logger.error({ err, chatId }, '/cancel could not drop the web queue')
+    }
     const web = cancelWebTurnsForChat(chatId)
-    const turns = { stoppedActive: own.stoppedActive || web.stoppedActive, droppedQueued: own.droppedQueued + web.droppedQueued }
+    const turns = { stoppedActive: own.stoppedActive || web.stoppedActive, droppedQueued: own.droppedQueued + web.droppedQueued + webWaiting }
     const scheduled = cancelScheduledForChat(chatId)
-    await adapter.sendMessage(chatId, describeCancel(turns, scheduled))
+    let voice = { calls: 0, runs: 0 }
+    try {
+      voice = cancelVoiceForChat(chatId)
+    } catch (err) {
+      logger.error({ err, chatId }, '/cancel could not end the voice call')
+    }
+    await adapter.sendMessage(chatId, describeCancel(turns, scheduled, voice))
     return true
   }
 

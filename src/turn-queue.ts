@@ -111,10 +111,13 @@ export function createTurnQueue(onError: (chatId: string, err: unknown) => void)
 export function describeCancel(
   turns: { stoppedActive: boolean; droppedQueued: number },
   scheduled: { stopped: string[]; retriesCleared: string[]; pausedOneShots?: string[] },
+  voice: { calls: number; runs: number } = { calls: 0, runs: 0 },
 ): string {
   const parts: string[] = []
   if (turns.stoppedActive) parts.push('Stopping the current reply.')
   if (turns.droppedQueued) parts.push(`Dropped ${turns.droppedQueued} queued message${turns.droppedQueued === 1 ? '' : 's'}.`)
+  if (voice.calls) parts.push(voice.calls === 1 ? 'Ended the voice call.' : `Ended ${voice.calls} voice calls.`)
+  if (voice.runs) parts.push(`Stopped ${voice.runs} lookup${voice.runs === 1 ? '' : 's'} the call started.`)
   if (scheduled.stopped.length) parts.push(`Stopping scheduled: ${scheduled.stopped.join(', ')}.`)
   if (scheduled.retriesCleared.length) parts.push(`Cleared pending retry: ${scheduled.retriesCleared.join(', ')}.`)
   const paused = scheduled.pausedOneShots ?? []

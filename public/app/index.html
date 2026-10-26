@@ -59,6 +59,9 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
       </button>
+      <button type="button" id="update-flag" class="icon-btn update-flag" aria-label="Update available" title="Update available" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="3.5" r="2" fill="currentColor" stroke="none"/><path d="M12 8.5v9M7.5 13l4.5 4.5 4.5-4.5M5 21h14"/></svg>
+      </button>
     </div>
   </aside>
 
@@ -118,16 +121,31 @@
       <p id="composer-note" class="composer-note" hidden></p>
       <ul id="cmd-menu" class="cmd-menu" role="listbox" aria-label="Commands" hidden></ul>
       <ul id="tray" class="tray" aria-label="Attached to this message" hidden></ul>
+      <div id="call-bar" class="call-bar" hidden>
+        <span class="call-dot" aria-hidden="true"></span>
+        <span id="call-state" class="call-state" role="status" aria-live="polite">Voice chat</span>
+        <span id="call-clock" class="call-clock">0:00</span>
+        <button type="button" id="call-mute" class="small-btn" aria-pressed="false">Mute</button>
+        <button type="button" id="call-end" class="small-btn danger">End call</button>
+      </div>
       <div class="composer-box">
         <button type="button" id="attach" class="icon-btn attach-btn" aria-label="Attach a file" title="Attach a file (or paste or drop one here)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5l-8.3 8.3a5 5 0 0 1-7.1-7.1l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.8 8.8a1.7 1.7 0 0 1-2.4-2.4l8-8"/></svg>
         </button>
         <input id="attach-input" type="file" multiple hidden>
         <textarea id="input" aria-controls="cmd-menu" rows="1" maxlength="100000" placeholder="Message your assistant" aria-label="Message"></textarea>
+        <span id="dictate-status" class="dictate-status" hidden></span>
+        <button type="button" id="call" class="icon-btn call-btn" aria-label="Start a voice chat" title="Start a voice chat" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 6v12"/></svg>
+        </button>
+        <button type="button" id="mic" class="icon-btn mic-btn" aria-label="Dictate a message" title="Dictate a message" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
+        </button>
         <button type="submit" id="send" class="send-btn" aria-label="Send">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
         </button>
       </div>
+      <audio id="call-audio" autoplay playsinline></audio>
       <p class="composer-hint">Enter to send, Shift+Enter for a new line. Type / for commands. Paste or drop images and files.</p>
     </form>
   </main>
@@ -166,6 +184,12 @@
     </button>
   </div>
   <div class="settings-body">
+    <section id="update-section" aria-labelledby="update-title" hidden>
+      <div class="settings-row-head">
+        <h3 id="update-title">Update</h3>
+      </div>
+      <p id="update-detail" class="update-detail"></p>
+    </section>
     <section aria-labelledby="conn-title">
       <div class="settings-row-head">
         <h3 id="conn-title">Connections</h3>

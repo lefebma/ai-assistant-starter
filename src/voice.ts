@@ -75,6 +75,31 @@ export function setEffectiveVoice(
   logger.info({ voice }, 'TTS voice changed')
 }
 
+/** Whisper picks its decoder from the filename, so the extension must match
+ *  what the browser actually recorded. Safari records MP4, Chrome WebM. */
+export function audioExtension(contentType: string | undefined): string {
+  const base = (contentType ?? '').split(';')[0]!.trim().toLowerCase()
+  const map: Record<string, string> = {
+    'audio/webm': 'webm',
+    'audio/ogg': 'ogg',
+    'audio/oga': 'oga',
+    // Safari records audio-only ISO-BMFF. OpenAI rejects that named .mp4
+    // ("Invalid file format") but accepts the identical bytes as .m4a.
+    'audio/mp4': 'm4a',
+    'audio/x-m4a': 'm4a',
+    'audio/m4a': 'm4a',
+    'audio/aac': 'm4a',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/wave': 'wav',
+    'audio/flac': 'flac',
+    'audio/x-flac': 'flac',
+  }
+  return map[base] ?? 'webm'
+}
+
 export async function transcribeAudio(filePath: string): Promise<string> {
   if (!OPENAI_API_KEY) {
     throw new Error('OpenAI API key not configured')

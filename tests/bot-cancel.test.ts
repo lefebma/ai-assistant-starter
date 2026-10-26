@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => {
   const store = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'bot-cancel-'))
   process.env['AGENT_STORE_DIR'] = store
-  return { runAgent: vi.fn(), saveTurn: vi.fn() }
+  return { runAgent: vi.fn(), saveTurn: vi.fn(), dropThrows: false }
 })
 
 vi.mock('../src/config.js', async (orig) => ({
@@ -25,9 +25,22 @@ vi.mock('../src/memory.js', async (orig) => ({
   saveConversationTurn: h.saveTurn,
 }))
 
+vi.mock('../src/web/queue.js', async (orig) => {
+  const real = (await orig()) as typeof import('../src/web/queue.js')
+  return {
+    ...real,
+    dropQueuedForChat: (chatId: string) => {
+      if (h.dropThrows) throw new Error('database is locked')
+      return real.dropQueuedForChat(chatId)
+    },
+  }
+})
+
 import { createBot, turnsIdle, runWebTurn } from '../src/bot.js'
+import { setVoiceChatDepsForTest } from '../src/web/voice-chat.js'
 import { getSession, initDatabase, setSession } from '../src/db.js'
 import { currentRun } from '../src/assurance/effect-journal.js'
+import { addItem, listQueued } from '../src/web/queue.js'
 
 function harness() {
   const sent: string[] = []
@@ -102,6 +115,58 @@ describe('/cancel in chat', () => {
     expect((await running).cancelled).toBe(true)
     expect(await queued).toEqual({ text: null, cancelled: true })
     expect((await other).text).toBe('other reply')
+    await turnsIdle()
+  })
+
+  it("also drops the messages waiting in this chat's web conversations, and only this chat's (#250)", async () => {
+    const { sent, send } = harness()
+    const wait = (conversationId: string, chatId: string, text: string) =>
+      addItem({ conversationId, chatId, clientId: '', text, attachments: [], pastes: [], state: 'queued' })
+    wait('wq1', 'owner', 'first waiting')
+    wait('wq2', 'owner', 'second waiting')
+    wait('wq3', 'someone-else', 'not mine')
+    await send({ text: '/cancel' })
+    expect(sent).toContain('Dropped 2 queued messages.')
+    expect(listQueued('wq1')).toEqual([])
+    expect(listQueued('wq2')).toEqual([])
+    expect(listQueued('wq3').map((q) => q.text)).toEqual(['not mine'])
+  })
+
+  it("also ends this chat's voice call and stops the lookups it handed off (final review I3)", async () => {
+    const asked: string[] = []
+    setVoiceChatDepsForTest({
+      block: () => '',
+      start: async () => ({}),
+      end: () => true,
+      cancel: (chatId) => {
+        asked.push(chatId)
+        return { calls: 1, runs: 2 }
+      },
+    })
+    try {
+      const { sent, send } = harness()
+      await send({ text: '/cancel' })
+      expect(asked).toEqual(['owner'])
+      expect(sent).toEqual(['Ended the voice call. Stopped 2 lookups the call started.'])
+    } finally {
+      setVoiceChatDepsForTest(null)
+    }
+  })
+
+  it('a store error dropping the web queue does not stop the rest (final review m6)', async () => {
+    const { sent, send } = harness()
+    const started = runsUntilCancelled()
+    const running = runWebTurn({ chatId: 'owner', conversationId: 'w9', text: 'long web thing' })
+    const signal = await started
+    h.dropThrows = true
+    try {
+      await send({ text: '/cancel' })
+    } finally {
+      h.dropThrows = false
+    }
+    expect(signal.aborted).toBe(true)
+    expect((await running).cancelled).toBe(true)
+    expect(sent).toContain('Stopping the current reply.')
     await turnsIdle()
   })
 

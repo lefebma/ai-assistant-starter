@@ -17,6 +17,8 @@ import { PROJECT_ROOT, PRIMARY_CHAT_ID } from '../config.js'
 import { logger } from '../logger.js'
 import { isChatAllowed } from '../bot.js'
 import { assistantName } from '../shortcut-setup.js'
+import { dictationDeps } from './dictation.js'
+import { voiceChatAvailable } from './voice-chat.js'
 import {
   SESSION_TTL_MS,
   exchangeWebLink,
@@ -424,6 +426,10 @@ registerWebRoutes([
         chatId: ctx.chatId,
         isPrimary: PRIMARY_CHAT_ID !== '' && ctx.chatId === PRIMARY_CHAT_ID,
         assistantName: currentAssistantName(),
+        // Whether the box can transcribe the chat box's microphone (card #252).
+        transcribe: dictationDeps().canTranscribe(),
+        // Whether the chat bar may start a live voice call (card #248).
+        voiceChat: voiceChatAvailable(ctx.chatId),
       })
     },
   },
