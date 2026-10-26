@@ -2,11 +2,12 @@
 
 ## 1.53.0 - 2026-10-25
 
-Small improvements to the web app.
+The web app gets an update icon, a queue for messages sent mid-reply, dictation, and live voice chat.
 
 - **New: an update icon next to Settings.** When a new version is waiting, a download icon shows beside the Settings link in the web app, in the accent colour. Click it to open Settings at the update, which says which version is ready and how to install it. The icon stays after you dismiss the banner and goes away once the update is installed.
 - **New: send while the assistant is still answering.** The message box stays usable while a reply is being written. What you send waits its turn, marked Queued, and runs as soon as the reply before it is done, in the order you sent it. You can edit or remove a waiting message until it starts. Stop ends only the reply in progress, so the next message still runs, and if that reply had just finished it leaves the next one alone. Typing /cancel stops everything, the waiting messages included. A reload keeps the queue, and nothing is ever sent twice.
 - **New: talk instead of type.** A microphone next to Send in the web app lets you dictate a message. Tap it, speak, and tap it again or press Send. The words go into the message box where your cursor was, without replacing what you typed, so you can check them before sending. It works while a reply is still being written, and stops by itself at two minutes. If your box can transcribe voice notes, the recording is sent to the box's transcription provider (OpenAI) for the words and is not kept, not on the box and not in the chat. Otherwise your browser's own speech recognition is used. The button is hidden when neither is available, and a blocked microphone gets a plain explanation of how to allow it.
+- **New: voice chat in the web app.** A waveform button next to the microphone starts a live voice call in the chat you have open: you talk, your assistant talks back, and it can look things up while you talk. A red bar shows how long the call has run, with Mute and End call. When the call ends, what was said is added to the chat, marked as a voice call, and the assistant remembers it when you type next. Calls are billed by the second to your OpenAI account (about $0.05 a minute), so a call ends when you press End, switch chats, or close the page, and after five quiet minutes. The button only shows on boxes with an OpenAI key that are not on a managed AI key, and a blocked microphone or a browser that cannot make calls gets a plain explanation.
 
 ## 1.52.2 - 2026-10-25
 

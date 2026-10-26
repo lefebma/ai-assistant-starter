@@ -11,6 +11,7 @@ import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
 import { registerWebRoutes, type WebContext } from './http.js'
 import { sendJson, sendError, readJsonCapped, openSse, BodyError } from './respond.js'
+import { voiceNoteFor, endCallsForConversation } from './voice-chat.js'
 import { attachmentTitle, attachmentTurnText, commitAttachments, planAttachments, removeConversationFiles, toStored, type Attached } from './attachments.js'
 import {
   createConversation,
@@ -83,6 +84,7 @@ const msgJson = (m: MessageRow) => ({
   files: m.files.map((f, index) => ({ index, name: f.name, kind: f.kind, ...(f.pasted ? { pasted: true } : {}) })),
   buttons: m.buttons,
   buttonsUsed: m.buttonsUsed,
+  ...(m.voice ? { voice: true } : {}),
   createdAt: m.createdAt,
 })
 
@@ -199,11 +201,14 @@ async function answer(
     // Read the session now: /newchat may have just cleared it.
     const current = getConversation(chatId, id) ?? conv
     let sent = ''
+    // A voice call since the last typed message happened outside this
+    // session: tell it what was said. Framing, so memory does not save it twice.
+    const voiceNote = voiceNoteFor(listMessages(id))
     const result = await runWebTurn({
       chatId,
       conversationId: id,
       text: turnText,
-      framing: framingFor(current.projectId),
+      framing: [framingFor(current.projectId), voiceNote].filter(Boolean).join('\n\n'),
       sessionId: current.sessionId || undefined,
       model: current.model || undefined,
       effort: (current.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | undefined,
@@ -450,6 +455,7 @@ registerWebRoutes([
       const id = ctx.params[0]!
       if (!getConversation(ctx.chatId, id)) return sendError(ctx.res, 404, 'not_found')
       if (running.has(id)) cancelWebTurn(id)
+      endCallsForConversation(ctx.chatId, id)
       deleteConversation(ctx.chatId, id)
       deleteQueueForConversation(id)
       removeConversationFiles(id)

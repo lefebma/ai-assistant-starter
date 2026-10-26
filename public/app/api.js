@@ -83,6 +83,31 @@ export async function transcribe(blob) {
   return (body && body.text) || ''
 }
 
+/**
+ * Start a voice call in a conversation (card #248): the browser's WebRTC
+ * offer goes to the box, which creates the session. Resolves to { sessionId, sdp }.
+ */
+export async function startVoiceCall(conversationId, sdp) {
+  return post('/api/web/conversations/' + encodeURIComponent(conversationId) + '/voice', { sdp })
+}
+
+/**
+ * End a voice call. `wait` holds the answer until the transcript is in the
+ * chat. `keepalive` lets the request outlive the page (it is closing).
+ */
+export async function endVoiceCall(sessionId, { wait = false, keepalive = false } = {}) {
+  const res = await fetch('/api/web/voice/end', {
+    method: 'POST',
+    credentials: 'same-origin',
+    keepalive,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ sessionId, wait }),
+  })
+  if (keepalive) return null
+  await check(res)
+  return readBody(res)
+}
+
 /** Exchange a one-time link token for a session cookie. Never triggers the signed-out handler. */
 export async function exchange(token) {
   const res = await fetch('/api/web/session', {

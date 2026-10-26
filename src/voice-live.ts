@@ -69,6 +69,7 @@ export function buildLiveInstructions(
   who: { assistant: string; owner: string } = identity(),
   personality: string = personalityExcerpt(),
   recentCalls: string = '',
+  chatContext: string = '',
 ): string {
   const owner = who.owner || 'the user'
   return [
@@ -98,7 +99,17 @@ Never claim something was sent, booked, or changed unless the backend confirmed 
     recentCalls
       ? `Recent voice calls with ${owner} (most recent first). Use them when ${owner} refers back to an earlier call ("remember when we talked about...", "like I said last time"). Don't bring them up unprompted, and delegate if they need more detail than this:\n${recentCalls}`
       : '',
+    chatContext
+      ? `This call was started from a chat in the web app. The latest messages in that chat, oldest first. Use them when ${owner} refers to something in it ("that draft", "the one above"), and delegate if you need more than this:\n${chatContext}`
+      : '',
   ].filter(Boolean).join('\n\n')
+}
+
+/** What the backend is told about the web chat a call was started from. */
+function chatContextNote(chatContext: string): string {
+  return chatContext
+    ? `This call was started from a chat in the web app. Its latest messages, oldest first, for context (the call is a continuation of it):\n${chatContext}`
+    : ''
 }
 
 function backendPreamble(owner: string): string {
@@ -524,6 +535,23 @@ export function liveStatus() {
   return { enabled: !!OPENAI_API_KEY && liveRuntimeSupported(), nodeSupported: liveRuntimeSupported(), active: activeSessions.size, max: MAX_CONCURRENT_SESSIONS, voices: LIVE_VOICES, defaultVoice: LIVE_VOICE, assistant: identity().assistant }
 }
 
+/** What a call looked like when it ended. Handed to `onEnded` (the web chat files it). */
+export interface EndedCall {
+  sessionId: string
+  startedAt: Date
+  endedAt: Date
+  turns: Turn[]
+  billedSeconds?: number
+}
+
+/** Extras a caller can give a call. The live voice page passes none. */
+export interface LiveCallOptions {
+  /** The web chat this call was started from, as plain lines, for both models. */
+  chatContext?: string
+  /** Runs once when the call is over, however it ended. */
+  onEnded?: (call: EndedCall) => void
+}
+
 export class LiveSessionError extends Error {
   constructor(public status: number, public code: string) {
     super(code)
@@ -534,7 +562,13 @@ export class LiveSessionError extends Error {
  * Exchange a browser SDP offer for an answer, then attach the sideband that
  * runs delegation. Returns OpenAI's JSON ({session:{id}, transport:{sdp}}).
  */
-export async function createLiveSession(sdp: string, voice?: string, chatId?: string | null, deliver?: (chatId: string, text: string) => Promise<boolean>): Promise<unknown> {
+export async function createLiveSession(
+  sdp: string,
+  voice?: string,
+  chatId?: string | null,
+  deliver?: (chatId: string, text: string) => Promise<boolean>,
+  options: LiveCallOptions = {},
+): Promise<unknown> {
   if (!OPENAI_API_KEY) throw new LiveSessionError(503, 'openai_not_configured')
   if (!liveRuntimeSupported()) throw new LiveSessionError(503, 'node_22_required')
   if (activeSessions.size >= MAX_CONCURRENT_SESSIONS) throw new LiveSessionError(429, 'too_many_sessions')
@@ -554,7 +588,7 @@ export async function createLiveSession(sdp: string, voice?: string, chatId?: st
     body: JSON.stringify({
       session: {
         model: LIVE_MODEL,
-        instructions: buildLiveInstructions(who, personalityExcerpt(), recent),
+        instructions: buildLiveInstructions(who, personalityExcerpt(), recent, options.chatContext ?? ''),
         audio: { output: { voice: chosenVoice } },
         delegation: { type: 'client' },
       },
@@ -570,11 +604,18 @@ export async function createLiveSession(sdp: string, voice?: string, chatId?: st
   const sessionId = result.session?.id
   if (!sessionId) throw new LiveSessionError(502, 'no_session_id')
   logger.info({ sessionId, voice: chosenVoice, chatId, recentCalls: !!recent }, 'live session created')
-  attachSideband(sessionId, backendPreamble(who.owner), chat, deliver)
+  const preamble = [backendPreamble(who.owner), chatContextNote(options.chatContext ?? '')].filter(Boolean).join('\n\n')
+  attachSideband(sessionId, preamble, chat, deliver, options.onEnded)
   return result
 }
 
-function attachSideband(sessionId: string, preamble: string, chatId: string, deliver?: (chatId: string, text: string) => Promise<boolean>): void {
+function attachSideband(
+  sessionId: string,
+  preamble: string,
+  chatId: string,
+  deliver?: (chatId: string, text: string) => Promise<boolean>,
+  onEnded?: (call: EndedCall) => void,
+): void {
   const ws = new WebSocket(`${LIVE_API.replace('https://', 'wss://')}/${encodeURIComponent(sessionId)}/attach`, {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
   } as any)
@@ -598,7 +639,13 @@ function attachSideband(sessionId: string, preamble: string, chatId: string, del
   const persist = (billedSeconds?: number) => {
     if (persisted) return
     persisted = true
-    saveVoiceCall({ sessionId, chatId, startedAt, endedAt: new Date(), turns: bridge.turns(), delegations: bridge.metrics().length, billedSeconds })
+    const endedAt = new Date()
+    try {
+      onEnded?.({ sessionId, startedAt, endedAt, turns: bridge.turns(), billedSeconds })
+    } catch (err) {
+      logger.error({ err, sessionId }, 'live call end hook failed')
+    }
+    saveVoiceCall({ sessionId, chatId, startedAt, endedAt, turns: bridge.turns(), delegations: bridge.metrics().length, billedSeconds })
       .then((path) => {
         if (path) logger.info({ sessionId, path }, 'live call saved to memory')
         pruneVoiceTranscripts()

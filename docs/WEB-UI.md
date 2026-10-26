@@ -93,6 +93,35 @@ before you send. Nothing is sent until you press Send yourself.
 - It works while the assistant is still answering. What you send waits its
   turn as usual.
 
+### Talking with your assistant (voice chat)
+
+The waveform button beside the microphone starts a live voice call inside the
+chat you have open. You talk, your assistant talks back, you can interrupt it,
+and it keeps talking while it looks things up. It is the same live
+conversation as `/voice/live` (see the setup guide), without a separate link:
+the web app's sign-in is enough.
+
+- **While a call is on** a red bar above the message box shows a running
+  clock, Mute and End call. The waveform turns red too; tapping it again also
+  ends the call. What you both say shows in the chat as you go.
+- **When the call ends** what was said is added to the chat, each line marked
+  Voice call, so the conversation reads in order. The next message you type
+  in that chat is told what was said on the call. Longer answers (a list, a
+  draft) that the assistant puts in the chat during the call appear in place.
+  The call is also saved under Calls on the live voice page.
+- **Cost.** Calls are billed by the second to the box's OpenAI account (about
+  $0.05 a minute, plus the thinking). A call ends when you press End, open
+  another chat, delete the chat, close or reload the page, or after five
+  minutes in which nobody speaks. Each call is capped at 45 minutes, and at
+  most two can run on a box at once.
+- **Typing still works** during a call, and messages wait their turn as
+  usual. Dictation is off while a call has the microphone.
+- **No waveform button?** The box has no OpenAI key, or uses a managed AI
+  key. A dimmed button means this browser cannot make calls, or the page was
+  opened over plain `http://`; tapping it says which.
+- **The first time**, your browser asks to use the microphone. On a laptop,
+  headphones stop the assistant hearing itself.
+
 ### Model and effort
 
 Each conversation has two pickers at the top.

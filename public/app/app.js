@@ -6,6 +6,7 @@ import { renderMarkdown } from './markdown.js'
 import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
 import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
+import { voiceCallSupport, createVoiceCall, callProblem } from './voicecall.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -18,6 +19,7 @@ const ICON = {
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v4h4"/></svg>',
   clip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v4h4"/></svg>',
+  wave: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 6v12"/></svg>',
 }
 
 /** Build an element. attrs never include style or on* (CSP and the static test forbid them). */
@@ -107,6 +109,7 @@ function stripMarkers(text) {
 // ---------- sign-in ----------
 
 function showSignedOut(message) {
+  leaveCall()
   show($('boot'), false)
   show($('app'), false)
   if ($('settings').open) $('settings').close()
@@ -159,6 +162,7 @@ async function start() {
   show($('app'))
   renderMessages()
   setupDictation()
+  setupVoiceCall()
   if (!narrow.matches && window.innerWidth >= 1280) setFilesOpen(true)
   await Promise.all([loadProjects(), loadGoals(), loadStatus(), loadDefaults()])
   $('input').focus()
@@ -362,6 +366,8 @@ async function loadDefaults() {
 }
 
 function setCurrent(conv, messages, queue = []) {
+  // A call belongs to its chat: showing another one ends it (it bills by the second).
+  if (vc.call && (!conv || conv.id !== vc.convId)) endCall()
   state.gen++
   state.current = conv
   state.messages = messages
@@ -457,6 +463,10 @@ function messageEl(m) {
     if (m.role === 'user') el.prepend(files)
     else el.append(files)
   }
+  if (m.voice) {
+    el.classList.add('voice')
+    el.append(h('span', { class: 'msg-tag', icon: 'wave' }, 'Voice call'))
+  }
   if (m.buttons && m.buttons.length) {
     // A card takes one answer: once clicked (here, in another tab, or before
     // a reload) its buttons stay off. The server enforces the same rule.
@@ -518,6 +528,7 @@ function renderMessages() {
     box.append($('empty-template').content.cloneNode(true))
   }
   for (const m of state.messages) box.append(messageEl(m))
+  if (vc.live && isHere(vc.convId)) box.append(vc.live)
   renderQueue()
   scrollDown(true)
 }
@@ -1151,6 +1162,13 @@ function paintDictation(ms) {
   else status.textContent = ''
   show(status, !!status.textContent)
   $('input').readOnly = !!dictate.phase
+  // One microphone user at a time: a voice call has it.
+  const inCall = Boolean(vc.call)
+  mic.disabled = inCall && !dictate.phase
+  if (inCall && !dictate.phase) {
+    mic.setAttribute('aria-label', 'Dictation is off during a voice chat')
+    mic.title = 'Dictation is off during a voice chat'
+  }
 }
 
 /** Show `words` where dictation started, keeping what was already typed. */
@@ -1161,6 +1179,7 @@ function placeWords(words) {
 }
 
 async function beginDictation() {
+  if (vc.call) return
   const input = $('input')
   // The cursor, or the end of a selection: what is typed is never replaced.
   // A textarea keeps its cursor after the microphone takes the focus.
@@ -1232,6 +1251,174 @@ $('mic').addEventListener('click', () => {
   if (!dictate.phase) beginDictation()
   else if (dictate.phase === 'listening') finishDictation()
 })
+
+// ---------- voice chat (card #248) ----------
+//
+// The waveform beside the microphone starts a live two-way voice call in this
+// chat: you talk, the assistant talks back, and it can look things up while
+// you talk. The call is billed by the second, so the bar shows a running
+// clock and End, and leaving the chat or the page ends it. When it ends, the
+// box adds what was said to this chat. Typing and the queue keep working
+// during a call; dictation is off (the call has the microphone).
+
+const vc = { block: '', call: null, convId: '', startedAt: 0, timer: 0, live: null, lines: null, cur: null }
+
+function setupVoiceCall() {
+  // The box says whether it can (an OpenAI key, not a managed-AI box). If it
+  // cannot, the button stays hidden. A browser that cannot keeps the button,
+  // and says why when it is tapped.
+  show($('call'), Boolean(state.me && state.me.voiceChat))
+  vc.block = voiceCallSupport(window)
+  paintCall()
+}
+
+function paintCall() {
+  const btn = $('call')
+  const phase = vc.call ? vc.call.phase : ''
+  const on = phase === 'live'
+  const busy = phase === 'connecting' || phase === 'ending'
+  btn.classList.toggle('live', on)
+  btn.classList.toggle('working', busy)
+  btn.classList.toggle('unavailable', !phase && Boolean(vc.block))
+  btn.setAttribute('aria-pressed', String(Boolean(phase)))
+  const label = on ? 'End the voice chat' : phase === 'connecting' ? 'Connecting the voice chat. Tap to cancel' : phase === 'ending' ? 'Ending the voice chat' : 'Start a voice chat'
+  btn.setAttribute('aria-label', label)
+  btn.title = label
+  const bar = $('call-bar')
+  show(bar, Boolean(phase))
+  bar.classList.toggle('connecting', phase === 'connecting')
+  $('call-state').textContent =
+    phase === 'connecting' ? 'Connecting...' : phase === 'ending' ? 'Ending the call...' : vc.call && vc.call.pending > 0 ? 'Voice chat · working on it' : 'Voice chat'
+  $('call-clock').textContent = on ? formatElapsed(Date.now() - vc.startedAt) : ''
+  $('call-mute').disabled = !on
+  $('call-end').disabled = phase === 'ending'
+  const muted = Boolean(vc.call && vc.call.muted)
+  $('call-mute').setAttribute('aria-pressed', String(muted))
+  $('call-mute').textContent = muted ? 'Muted' : 'Mute'
+  paintDictation()
+}
+
+/** The live captions, shown in the chat while the call is on. */
+function captionLine(who, delta, startMs, endMs) {
+  if (!vc.lines) return
+  const c = vc.cur
+  if (!c || c.who !== who || startMs - c.lastEnd > 1500) {
+    const empty = vc.lines.querySelector('.empty-line')
+    if (empty) empty.remove()
+    const text = h('span')
+    vc.lines.append(h('p', {}, h('span', { class: 'who', text: who === 'user' ? 'You' : state.me.assistantName || 'Assistant' }), text))
+    vc.cur = { who, text, lastEnd: endMs }
+  }
+  vc.cur.text.textContent += delta
+  vc.cur.lastEnd = endMs
+  scrollDown()
+}
+
+async function startCall() {
+  if (vc.call) return
+  if (vc.block) return note($('composer-note'), callProblem(vc.block))
+  if (dictate.phase) return note($('composer-note'), 'Finish dictating first, then start the voice chat.')
+  note($('composer-note'), '')
+  let conv
+  try {
+    conv = await ensureConversation()
+  } catch (err) {
+    return note($('composer-note'), friendly(err, 'Could not start a chat for the call.'))
+  }
+  const convId = conv.id
+  vc.convId = convId
+  vc.lines = h('div', {}, h('p', { class: 'empty-line', text: 'Say hello. What you both say shows here, and stays in this chat when the call ends.' }))
+  vc.live = h('div', { class: 'call-live', 'aria-live': 'off' }, h('p', { class: 'call-live-head', text: 'Voice call' }), vc.lines)
+  vc.cur = null
+  place(vc.live)
+  scrollDown(true)
+  const call = createVoiceCall(
+    {
+      getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
+      RTCPeerConnection: window.RTCPeerConnection,
+      MediaStream: window.MediaStream,
+      audio: $('call-audio'),
+      startSession: (sdp) => api.startVoiceCall(convId, sdp),
+      endSession: (id, opts) => api.endVoiceCall(id, opts),
+    },
+    {
+      live: () => {
+        if (vc.call !== call) return
+        vc.startedAt = Date.now()
+        clearInterval(vc.timer)
+        vc.timer = setInterval(paintCall, 1000)
+        paintCall()
+      },
+      caption: (who, delta, a, b) => {
+        if (vc.call === call) captionLine(who, delta, a, b)
+      },
+      working: () => {
+        if (vc.call === call) paintCall()
+      },
+      ended: (why, result) => callEnded(call, convId, why, result),
+    }
+  )
+  vc.call = call
+  paintCall()
+  try {
+    await call.start()
+  } catch (err) {
+    if (vc.call !== call) return
+    clearCall()
+    if (!(err && err.stopped)) note($('composer-note'), callProblem(err))
+    return
+  }
+  paintCall()
+}
+
+function clearCall() {
+  clearInterval(vc.timer)
+  if (vc.live) vc.live.remove()
+  vc.call = null
+  vc.live = null
+  vc.lines = null
+  vc.cur = null
+  paintCall()
+}
+
+function callEnded(call, convId, why, result) {
+  if (vc.call !== call) return
+  clearCall()
+  const filed = result && result.added > 0
+  if (why === 'lost') note($('composer-note'), filed ? 'The call dropped. What was said is in the chat.' : 'The call dropped.')
+  else if (why === 'closed') note($('composer-note'), 'The call ended.')
+  else if (!result) note($('composer-note'), 'The call has ended, but this page could not get what was said. Reload to see it.')
+  reloadIf(convId)
+  refreshConversations()
+}
+
+/** End pressed, or the page moved to another chat. */
+function endCall() {
+  const call = vc.call
+  if (!call) return
+  call.stop()
+  paintCall()
+}
+
+/** The page is closing: tell the box, without waiting for an answer. */
+function leaveCall() {
+  const call = vc.call
+  if (!call) return
+  call.leave()
+  clearCall()
+}
+
+$('call').addEventListener('click', () => {
+  if (vc.call) endCall()
+  else startCall()
+})
+$('call-end').addEventListener('click', endCall)
+$('call-mute').addEventListener('click', () => {
+  if (!vc.call) return
+  vc.call.mute(!vc.call.muted)
+  paintCall()
+})
+window.addEventListener('pagehide', leaveCall)
 
 // ---------- command suggestions ----------
 

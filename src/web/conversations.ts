@@ -30,6 +30,8 @@ export interface MessageRow {
   buttons: string[]
   /** A button on this message was clicked; the card takes no second answer. */
   buttonsUsed: boolean
+  /** Said on a voice call started from this chat (card #248). */
+  voice: boolean
   createdAt: number
 }
 
@@ -117,10 +119,11 @@ export function addMessage(
   files: StoredFile[] = [],
   buttons: string[] = [],
   now: number = Date.now(),
+  source: '' | 'voice' = '',
 ): number {
   const r = getDb()
-    .prepare('INSERT INTO web_messages (conversation_id, role, content, files, buttons, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(convId, role, content, JSON.stringify(files), JSON.stringify(buttons), now)
+    .prepare('INSERT INTO web_messages (conversation_id, role, content, files, buttons, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(convId, role, content, JSON.stringify(files), JSON.stringify(buttons), source, now)
   getDb().prepare('UPDATE web_conversations SET updated_at = ? WHERE id = ?').run(now, convId)
   return Number(r.lastInsertRowid)
 }
@@ -142,6 +145,7 @@ interface RawMsg {
   files: string
   buttons: string
   buttons_used: number | null
+  source: string | null
   created_at: number
 }
 
@@ -153,6 +157,7 @@ const toMsg = (r: RawMsg): MessageRow => ({
   files: parseArr<StoredFile>(r.files),
   buttons: parseArr<string>(r.buttons),
   buttonsUsed: r.buttons_used === 1,
+  voice: r.source === 'voice',
   createdAt: r.created_at,
 })
 
