@@ -98,6 +98,16 @@ describe('source update', () => {
     expect(BUNDLE_PAYLOAD_PATHS).toContain('CHANGELOG.md')
   })
 
+  it('replaces docs/, which the assistant reads to explain its own features', () => {
+    // havn-test on 1.51.0 had no docs/WEB-UI.md: docs/ was frozen at the clone.
+    expect(SOURCE_ENGINE_PATHS).toContain('docs')
+    // ...and keeps the box's own files there instead of leaving them in the backup.
+    const updater = readFileSync(resolve(__dirname, '../src/updater.ts'), 'utf-8')
+    const apply = updater.indexOf('moveInto(extractedDir, PROJECT_ROOT, ENGINE_PATHS)')
+    expect(apply).toBeGreaterThan(-1)
+    expect(updater.indexOf("carryOver(backupDir, PROJECT_ROOT, 'docs')", apply)).toBeGreaterThan(apply)
+  })
+
   it('never replaces a path the user owns', () => {
     const collisions = SOURCE_ENGINE_PATHS.filter((p) => PRESERVED_PATHS.includes(p))
     expect(collisions).toEqual([])

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.52.2 - 2026-10-25
+
+- **Fixed: updates now deliver the guides in `docs/`.** Like the changelog in 1.52.1, an install set up from the source code kept the guides it was installed with, so the assistant could not read up on features added since (a 1.51 box had no web app guide). Updates now replace them. Any files you added to `docs/` yourself stay where they are.
+
 ## 1.52.1 - 2026-10-25
 
 - **Fixed: an updated assistant could not say what changed.** Updating an install that was set up from the source code replaced the app but never its changelog, so asked about recent versions it read the notes it was installed with. A test box on 1.51.0 said its notes stopped at 1.22.1. Updates now replace the changelog too, and the first update to this version brings it current.

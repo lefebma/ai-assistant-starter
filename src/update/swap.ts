@@ -116,3 +116,25 @@ export function restoreBackup(
     if (existsSync(saved)) movePath(saved, target, rename)
   }
 }
+
+/**
+ * After a swap of `dir`, copy back every file from the backup's copy that the
+ * new payload did not ship. For a folder that is mostly engine but where a box
+ * may keep its own files (docs/ on a hand-run box holds onboarding notes and
+ * scripts). Copies, never moves, so the backup stays whole for a rollback; a
+ * shipped file always wins. A file upstream deleted is carried over too: with
+ * no record of what the last version shipped, it cannot be told from the box's.
+ */
+export function carryOver(backupDir: string, root: string, dir: string): void {
+  const saved = join(backupDir, dir)
+  if (!existsSync(saved)) return
+  for (const entry of readdirSync(saved)) {
+    const rel = join(dir, entry)
+    const live = join(root, rel)
+    if (lstatSync(join(saved, entry)).isDirectory() && existsSync(live) && lstatSync(live).isDirectory()) {
+      carryOver(backupDir, root, rel)
+    } else if (!existsSync(live)) {
+      cpSync(join(saved, entry), live, { recursive: true, verbatimSymlinks: true })
+    }
+  }
+}

@@ -87,6 +87,9 @@ export const PRESERVED_PATHS = ['.env', 'CLAUDE.md', 'PERSONALITY.md', 'PROFILE.
  * `CHANGELOG.md` is what the assistant reads when asked what changed. It was
  * missing here until 1.52.1, so a source install kept the changelog it was
  * cloned with: havn-test ran 1.51.0 with notes that stopped at 1.22.1.
+ * `docs/` had the same gap (no docs/WEB-UI.md on a 1.51 box) until 1.52.2.
+ * Boxes keep their own files there too, so the updater carries those over
+ * (carryOver in swap.ts) instead of leaving them in the backup.
  */
 export const SOURCE_ENGINE_PATHS = [
   'src',
@@ -97,6 +100,7 @@ export const SOURCE_ENGINE_PATHS = [
   'tsconfig.json',
   'templates',
   'CHANGELOG.md',
+  'docs',
   'LICENSE',
   'VERSION',
 ]
