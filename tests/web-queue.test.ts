@@ -67,6 +67,8 @@ let cookie = ''
 
 beforeAll(async () => {
   process.env['AGENT_STORE_DIR'] = mkdtempSync(join(tmpdir(), 'web-queue-'))
+  // /secret writes to a vault in a temp folder, never the real one.
+  process.env['AGENT_VAULT_DIR'] = mkdtempSync(join(tmpdir(), 'web-queue-vault-'))
   const db = await import('../src/db.js')
   db.initDatabase()
   sessions = await import('../src/web/sessions.js')
@@ -250,14 +252,15 @@ describe('web chat queue', () => {
     await (await first).text()
     const evs: Ev[] = parseSse(await text)
     const names = evs.map((e) => e.name)
-    expect(evs[0]).toMatchObject({ name: 'start', data: { item: { text: 'A', state: 'running' } } })
+    // The announcement names the message but never carries its words.
+    expect(evs[0]).toMatchObject({ name: 'start', data: { item: { state: 'running' } } })
+    expect(evs[0]!.data.item.text).toBeUndefined()
     // What A had said before the page joined arrives as one piece.
     expect(evs.filter((e) => e.name === 'delta').map((e) => e.data.text)[0]).toBe('Hello')
     expect(names.filter((n) => n === 'start')).toHaveLength(2)
     expect(names.filter((n) => n === 'done')).toHaveLength(2)
     expect(names.at(-1)).toBe('idle')
-    const starts = evs.filter((e) => e.name === 'start').map((e) => e.data.item.text)
-    expect(starts).toEqual(['A', 'B'])
+    expect(evs.filter((e) => e.name === 'start').map((e) => e.data.item.clientId)).toEqual(['', 'b'])
     const users = evs.filter((e) => e.name === 'user').map((e) => e.data.message.content)
     expect(users).toEqual(['A', 'B'])
     await bot.turnsIdle()
@@ -280,7 +283,8 @@ describe('web chat queue', () => {
     queue.addItem({ conversationId: id, chatId: '4242', clientId: 'old', text: 'cut off', attachments: [], pastes: [], state: 'running' })
     queue.addItem({ conversationId: id, chatId: '4242', clientId: 'w', text: 'waiting', attachments: [], pastes: [], state: 'queued' })
     const evs = parseSse(await (await fetch(`${base()}/api/web/conversations/${id}/stream`, { headers: H() })).text())
-    expect(evs.filter((e) => e.name === 'start').map((e) => e.data.item.text)).toEqual(['waiting'])
+    expect(evs.filter((e) => e.name === 'start').map((e) => e.data.item.clientId)).toEqual(['w'])
+    expect(evs.filter((e) => e.name === 'user').map((e) => e.data.message.content)).toEqual(['waiting'])
     expect(evs.at(-1)!.name).toBe('idle')
     expect(rt.calls).toEqual(['waiting'])
   })
@@ -350,7 +354,51 @@ describe('web chat queue', () => {
     expect(rt.calls).toEqual(['A'])
     expect(queue.listQueued(id).map((q) => q.text)).toEqual(['B'])
     const evs = parseSse(await (await fetch(`${base()}/api/web/conversations/${id}/stream`, { headers: H() })).text())
-    expect(evs.filter((e) => e.name === 'start').map((e) => e.data.item.text)).toEqual(['B'])
+    expect(evs.filter((e) => e.name === 'start').map((e) => e.data.item.clientId)).toEqual(['b'])
     expect(rt.calls).toEqual(['A', 'B'])
+  })
+
+  it('keeps a message in the store only while it waits, then blanks it', async () => {
+    useRuntime()
+    const id = await newConv()
+    const a = gate()
+    const first = await startHeld(id, 'A secret-ish text', a.promise)
+    const B = (await enqueue(id, 'B words', 'b')).item
+    const rows = () => queue.listAllForTest(id)
+    // The running message was never written down; the waiting one is, so a reload can show it.
+    expect(rows().map((r) => [r.state, r.text])).toEqual([['running', ''], ['queued', 'B words']])
+    a.open()
+    await (await first).text()
+    await untilIdle(id, 4)
+    expect(rows().map((r) => [r.state, r.text, r.pastes, r.attachments])).toEqual([['done', '', [], []], ['done', '', [], []]])
+    // A late retry still finds its row, without the words.
+    expect((await enqueue(id, 'B words', 'b')).item).toMatchObject({ id: B.id, state: 'done', text: '' })
+  })
+
+  it('never queues a key: /secret and the key a pending /secret set waits for run at once', async () => {
+    useRuntime()
+    const id = await newConv()
+    const first = await startHeld(id, 'A', new Promise(() => {}))
+    // /secret set typed mid-turn runs at once and waits for the key.
+    const askRes = await post(`/api/web/conversations/${id}/chat`, { text: '/secret set FOO_TOKEN', clientId: 's1' })
+    expect(askRes.headers.get('content-type')).toContain('text/event-stream')
+    const ask = parseSse(await askRes.text())
+    expect(ask.filter((e) => e.name === 'reply').map((e) => e.data.message.content).join('')).toContain('Send the key for FOO_TOKEN')
+    // The key, typed while A is still running: captured now, never queued or stored.
+    const key = await post(`/api/web/conversations/${id}/chat`, { text: 'not-a-real-key-123', clientId: 's2' })
+    expect(key.headers.get('content-type')).toContain('text/event-stream')
+    expect(parseSse(await key.text()).map((e) => e.name)).toContain('dropped')
+    // An inline key mid-turn runs at once too.
+    const inline = await post(`/api/web/conversations/${id}/chat`, { text: '/secret set FOO_TOKEN inline-not-real-456', clientId: 's3' })
+    expect(inline.headers.get('content-type')).toContain('text/event-stream')
+    await inline.text()
+    const rows = JSON.stringify(queue.listAllForTest(id))
+    expect(rows).not.toContain('not-a-real-key-123')
+    expect(rows).not.toContain('inline-not-real-456')
+    expect(queue.listQueued(id)).toEqual([])
+    expect(JSON.stringify(conv.listMessages(id))).not.toContain('not-a-real-key-123')
+    expect(rt.calls).toEqual(['A'])
+    await post(`/api/web/conversations/${id}/cancel`)
+    await (await first).text()
   })
 })

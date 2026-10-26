@@ -99,6 +99,15 @@ export class SecretFlow {
     return true
   }
 
+  /**
+   * Whether the next plain message from this chat belongs to the flow,
+   * expired or not (capture() answers both). Unlike hasPending it changes
+   * nothing, so asking does not turn a late key into an ordinary message.
+   */
+  isAwaiting(chatId: string): boolean {
+    return this.pending.has(chatId)
+  }
+
   /** Clear any pending capture (e.g. an unrelated command arrived mid-flow). */
   cancelPending(chatId: string): boolean {
     return this.pending.delete(chatId)

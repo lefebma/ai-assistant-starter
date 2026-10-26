@@ -56,6 +56,8 @@ order you sent them.
   next one starts.
 - **Commands and buttons** wait their turn like any message, except `/cancel`
   and `/steer`, which act on the reply in progress straight away.
+- **`/secret`** always runs straight away, and so does the key a `/secret set`
+  is waiting for. A key is never put in the queue.
 - **Reloading the page** loses nothing. The waiting messages are kept on the
   box, the page picks up the reply where it is, and a message is never sent
   twice. If you hit the AI limit, the waiting messages hold until you open

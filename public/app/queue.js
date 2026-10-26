@@ -2,11 +2,13 @@
 // keeps them in order and runs each when the one before it finishes.
 
 /**
- * Commands that act on the reply in progress run at once, as in Telegram.
- * Everything else sent mid-reply waits its turn. The box applies the same rule.
+ * Commands that act on the reply in progress run at once, as in Telegram, and
+ * so does /secret (it may carry a key). Everything else sent mid-reply waits
+ * its turn. The box applies the same rule, and also runs at once the key a
+ * pending /secret set is waiting for.
  */
 export function runsNow(text) {
-  return /^\/(cancel|steer)(?:@\S+)?(?:\s|$)/i.test((text || '').trim())
+  return /^\/(cancel|steer|secret)(?:@\S+)?(?:\s|$)/i.test((text || '').trim())
 }
 
 /** A fresh name for one message, so sending it twice cannot make two. */

@@ -778,6 +778,15 @@ const webSupportCards = new Map<string, { draft: SupportDraft; card: string }>()
  * command behaves the same on every surface. A web session is only ever
  * minted in a private chat (see handleAppCommand), so it counts as private.
  */
+/**
+ * True while a /secret set waits for its key from this chat. The web chat runs
+ * such a message at once instead of queueing it, so the key is never written
+ * to the queue (card #250).
+ */
+export function webSecretAwaited(chatId: string): boolean {
+  return secretFlow.isAwaiting(chatId)
+}
+
 export async function runWebCommand(input: WebCommandInput): Promise<WebCommandResult> {
   const { chatId } = input
   const trimmed = input.text.trim()

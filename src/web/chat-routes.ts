@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs'
 import { PROJECT_ROOT } from '../config.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
-import { runWebTurn, cancelWebTurn, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
+import { runWebTurn, cancelWebTurn, webSecretAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
@@ -138,9 +138,11 @@ function panelVisible(abs: string): boolean {
 
 /**
  * Commands that act on the reply in progress run at once, even mid-turn, as
- * they do in Telegram. Every other message sent mid-turn waits its turn.
+ * they do in Telegram. So does /secret (it may carry a key inline), and so
+ * does the key a pending /secret set waits for: neither is ever written to
+ * the queue. Every other message sent mid-turn waits its turn.
  */
-const RUNS_NOW = /^\/(cancel|steer)(?:@\S+)?(?:\s|$)/i
+const RUNS_NOW = /^\/(cancel|steer|secret)(?:@\S+)?(?:\s|$)/i
 
 /** Where a message's answer goes: the conversation's hub, or one response. */
 interface Sink {
@@ -320,7 +322,7 @@ async function answer(
  */
 async function runTurn(chatId: string, conv: ConversationRow, item: QueueItem, attached: Attached[] | null, onBegin?: () => void): Promise<void> {
   const id = conv.id
-  hubBegin(id, itemJson(item))
+  hubBegin(id, item)
   onBegin?.()
   const sink: Sink = { writeEvent: (n, d) => hubWrite(id, n, d), close: () => {} }
   let held = false
@@ -489,9 +491,17 @@ registerWebRoutes([
 
       settleStale(id, running.has(id))
       const busy = running.has(id) || hasQueued(id)
-      if (busy && RUNS_NOW.test(text)) {
+      const secretKey = !text.startsWith('/') && webSecretAwaited(ctx.chatId)
+      if (busy && (RUNS_NOW.test(text) || secretKey)) {
+        let attached: Attached[] = []
+        try {
+          attached = commitAttachments(id, planned.plan)
+        } catch (err) {
+          logger.error({ err, conversationId: id }, 'web chat attachments could not be saved')
+          return sendError(ctx.res, 500, 'attachments_failed')
+        }
         const sse = openSse(ctx.res, { heartbeatMs: 15_000 })
-        await answer(ctx.chatId, conv, text, [], undefined, sse)
+        await answer(ctx.chatId, conv, text, attached, undefined, sse)
         return
       }
       // A click answers the latest reply's card once. A stale tab, a second

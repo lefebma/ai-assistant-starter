@@ -3,6 +3,10 @@
  *
  * Every message sent from the web chat gets a row here: 'running' when it
  * starts straight away, 'queued' when it waits behind a reply in progress.
+ * Only a waiting row holds the message (its text, pastes and uploads), since
+ * a reload must show it and it can still be edited. The moment it starts the
+ * row is blanked down to its clientId and state, so the store never keeps a
+ * copy of what was said (a key pasted for /secret, say) once the turn owns it.
  * The queue lives in the store, not the browser, so a reload shows what is
  * waiting and a server restart does not lose it. The page names each message
  * with its own id (clientId), so a retried send finds the row it already made
@@ -109,13 +113,16 @@ export function addItem(
   now: number = Date.now(),
 ): QueueItem {
   const d = db()
+  // A message that starts at once is never written down: the turn has it.
+  const keep = input.state === 'queued'
   d.prepare("DELETE FROM web_queue WHERE state = 'done' AND created_at < ?").run(now - KEEP_DONE_MS)
   const r = d
     .prepare(
       'INSERT INTO web_queue (conversation_id, chat_id, client_id, text, attachments, pastes, clicked_message_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
-    .run(input.conversationId, input.chatId, input.clientId, input.text, JSON.stringify(input.attachments), JSON.stringify(input.pastes), input.clickedMessageId ?? null, input.state, now)
-  return getItem(input.conversationId, Number(r.lastInsertRowid))!
+    .run(input.conversationId, input.chatId, input.clientId, keep ? input.text : '', JSON.stringify(keep ? input.attachments : []), JSON.stringify(keep ? input.pastes : []), input.clickedMessageId ?? null, input.state, now)
+  const row = getItem(input.conversationId, Number(r.lastInsertRowid))!
+  return keep ? row : { ...row, text: input.text, attachments: input.attachments, pastes: input.pastes }
 }
 
 export function getItem(conversationId: string, id: number): QueueItem | null {
@@ -135,22 +142,35 @@ export function listQueued(conversationId: string): QueueItem[] {
   return (db().prepare("SELECT * FROM web_queue WHERE conversation_id = ? AND state = 'queued' ORDER BY id").all(conversationId) as RawItem[]).map(toItem)
 }
 
+/** Every row of a conversation, oldest first. For tests. */
+export function listAllForTest(conversationId: string): QueueItem[] {
+  return (db().prepare('SELECT * FROM web_queue WHERE conversation_id = ? ORDER BY id').all(conversationId) as RawItem[]).map(toItem)
+}
+
 export function hasQueued(conversationId: string): boolean {
   return !!db().prepare("SELECT 1 FROM web_queue WHERE conversation_id = ? AND state = 'queued' LIMIT 1").get(conversationId)
 }
 
-/** Take the oldest waiting message. The UPDATE is the claim: an edit or remove racing it loses. */
+const BLANK = "text = '', attachments = '[]', pastes = '[]'"
+
+/**
+ * Take the oldest waiting message. The UPDATE is the claim: an edit or remove
+ * racing it loses. It also blanks the row; the message is returned to the
+ * caller, who runs it.
+ */
 export function claimNext(conversationId: string): QueueItem | null {
   const d = db()
   for (;;) {
-    const r = d.prepare("SELECT id FROM web_queue WHERE conversation_id = ? AND state = 'queued' ORDER BY id LIMIT 1").get(conversationId) as { id: number } | undefined
+    const r = d.prepare("SELECT * FROM web_queue WHERE conversation_id = ? AND state = 'queued' ORDER BY id LIMIT 1").get(conversationId) as RawItem | undefined
     if (!r) return null
-    if (d.prepare("UPDATE web_queue SET state = 'running' WHERE id = ? AND state = 'queued'").run(r.id).changes === 1) return getItem(conversationId, r.id)
+    if (d.prepare(`UPDATE web_queue SET state = 'running', ${BLANK} WHERE id = ? AND state = 'queued'`).run(r.id).changes === 1) {
+      return { ...toItem(r), state: 'running' }
+    }
   }
 }
 
 export function finishItem(id: number): void {
-  db().prepare("UPDATE web_queue SET state = 'done' WHERE id = ?").run(id)
+  db().prepare(`UPDATE web_queue SET state = 'done', ${BLANK} WHERE id = ?`).run(id)
 }
 
 /**
@@ -159,7 +179,7 @@ export function finishItem(id: number): void {
  */
 export function settleStale(conversationId: string, isRunning: boolean): void {
   if (isRunning) return
-  db().prepare("UPDATE web_queue SET state = 'done' WHERE conversation_id = ? AND state = 'running'").run(conversationId)
+  db().prepare(`UPDATE web_queue SET state = 'done', ${BLANK} WHERE conversation_id = ? AND state = 'running'`).run(conversationId)
 }
 
 export type ChangeResult = 'ok' | 'missing' | 'started'
@@ -232,11 +252,16 @@ function emit(h: Hub, name: string, data: unknown): void {
   }
 }
 
-/** A turn starts: forget the last one's events and announce this one. */
-export function hubBegin(conversationId: string, item: ReturnType<typeof itemJson>): void {
+/**
+ * A turn starts: forget the last one's events and announce this one. The
+ * announcement names the message but never carries its words: the `user`
+ * event shows them once the turn stores them, and a command that holds a key
+ * never does.
+ */
+export function hubBegin(conversationId: string, item: QueueItem): void {
   const h = hub(conversationId)
   h.events = []
-  hubWrite(conversationId, 'start', { item })
+  hubWrite(conversationId, 'start', { item: { id: item.id, clientId: item.clientId, state: 'running' } })
 }
 
 /**

@@ -959,7 +959,10 @@ async function enqueue(convId, text, tray, body) {
     }
     return
   }
-  if (ran) afterStream(convId, finished)
+  // Answered at once: a command that runs mid-reply, or the reply had just
+  // ended. Only in the second case does this stream own the chat's state.
+  if (ran && state.busy.has(convId)) dirty.add(convId)
+  else if (ran) afterStream(convId, finished)
 }
 
 /** A reply this page sent has ended, or its connection dropped: follow whatever comes next. */

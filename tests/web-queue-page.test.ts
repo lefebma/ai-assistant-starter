@@ -26,11 +26,12 @@ function sse(events: Array<[string, unknown]>): Response {
 }
 
 describe('runsNow', () => {
-  it('runs /cancel and /steer at once, and nothing else', () => {
+  it('runs /cancel, /steer and /secret at once, and nothing else', () => {
     expect(runsNow('/cancel')).toBe(true)
     expect(runsNow('  /steer go left ')).toBe(true)
     expect(runsNow('/cancel@umi_bot')).toBe(true)
     expect(runsNow('/CANCEL')).toBe(true) // the router matches commands without regard to case
+    expect(runsNow('/secret set OPENAI_API_KEY')).toBe(true) // may carry a key: never queued
     expect(runsNow('/chatid')).toBe(false)
     expect(runsNow('/cancelled')).toBe(false)
     expect(runsNow('please /cancel')).toBe(false)
