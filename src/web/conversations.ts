@@ -17,6 +17,8 @@ export interface StoredFile {
   path: string
   name: string
   kind: 'photo' | 'document'
+  /** Long text the owner pasted, kept as a file (card #249). */
+  pasted?: boolean
 }
 
 export interface MessageRow {

@@ -17,6 +17,7 @@
  * per token, per step.
  */
 import { ToolLoopAgent, stepCountIs, tool, type LanguageModel, type ModelMessage, type ToolSet } from 'ai'
+import { withAttachedImages } from './images.js'
 import { z } from 'zod'
 import { PROJECT_ROOT } from '../../config.js'
 import { gateToolCall, resolveRole } from '../../assurance/scope-gate.js'
@@ -264,15 +265,18 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     // Provider switch since this session was written? Strip provider-specific
     // baggage (providerOptions, reasoning signatures) that other vendors reject.
     const turnProvider = this.modelOverride ? 'override' : configuredProvider()
+    // Photos the owner attached go to the model as images on this request
+    // only; the saved session keeps the text (card #249).
+    const userMessage: ModelMessage = { role: 'user', content: withAttachedImages(options.message) }
     const save = (msgs: ModelMessage[]) => {
-      if (!isolated) this.sessions.save(sessionId, msgs, turnProvider)
+      if (!isolated) this.sessions.save(sessionId, msgs.map((m) => (m === userMessage ? { role: 'user', content: options.message } : m)), turnProvider)
     }
     const storedProvider = resumeId ? this.sessions.loadProvider(resumeId) : null
     const history = reconcileHistory(trimmed, storedProvider, turnProvider)
     if (history !== trimmed && trimmed.length > 0) {
       logger.info({ storedProvider, turnProvider }, 'Provider changed; sanitized replayed session history')
     }
-    const messages: ModelMessage[] = [...history, { role: 'user', content: options.message }]
+    const messages: ModelMessage[] = [...history, userMessage]
 
     this.activeWorkspaces.set(sessionId, cwd)
     try {

@@ -30,6 +30,13 @@ many. You can also sign out from **Settings** in the page.
   Priorities section of your `PROFILE.md`, the same list your briefing reads.
 - **Files.** A panel on the right shows the files in your assistant's folder.
   You can preview text, images and PDFs, and upload files for your assistant.
+- **Pictures, files and pasted text in a message.** Paste a screenshot or an
+  image into the chat box, drop files on the chat, or use the paperclip. They
+  wait above the box until you send, and you can remove any of them. Pasted
+  text over about 4,000 characters becomes a "Pasted text" chip instead of
+  filling the box. Up to 10 attachments per message, 25 MB each; screenshots
+  larger than 2048 pixels are scaled down first. Your assistant sees the
+  pictures themselves, not just their names.
 - **Settings.** What is connected (AI provider, Telegram, mail and calendar,
   voice), and your signed-in browsers.
 
@@ -76,7 +83,8 @@ These names are hidden wherever they appear, not only at the top. A hidden file
 looks the same in the panel as a file that does not exist. The panel is the only
 thing that hides them: your assistant itself still works with your whole
 folder. Uploads land in `workspace/uploads/`; a file with the same name is kept
-and the new one gets a number added.
+and the new one gets a number added. Anything sent with a chat message moves to
+`workspace/uploads/chat/<conversation>/` and is deleted with the conversation.
 
 ## Hosted boxes
 

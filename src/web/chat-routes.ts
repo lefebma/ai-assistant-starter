@@ -11,6 +11,7 @@ import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
 import { registerWebRoutes, type WebContext } from './http.js'
 import { sendJson, sendError, readJsonCapped, openSse, BodyError } from './respond.js'
+import { attachmentTitle, attachmentTurnText, commitAttachments, planAttachments, removeConversationFiles, toStored, type Attached } from './attachments.js'
 import {
   createConversation,
   getConversation,
@@ -34,6 +35,8 @@ const MODELS = ['', 'haiku', 'sonnet', 'opus']
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh']
 const MAX_TEXT = 100_000
 const MAX_TITLE = 120
+/** Room for the text plus pasted text (card #249); uploads go through the upload route. */
+const MAX_CHAT_BODY = 2 * 1024 * 1024
 
 /** Conversations with a turn in flight. Added on start, removed when the turn settles. */
 const running = new Set<string>()
@@ -53,14 +56,14 @@ const msgJson = (m: MessageRow) => ({
   id: m.id,
   role: m.role,
   content: m.content,
-  files: m.files.map((f, index) => ({ index, name: f.name, kind: f.kind })),
+  files: m.files.map((f, index) => ({ index, name: f.name, kind: f.kind, ...(f.pasted ? { pasted: true } : {}) })),
   buttons: m.buttons,
   buttonsUsed: m.buttonsUsed,
   createdAt: m.createdAt,
 })
 
-async function jsonBody(ctx: WebContext): Promise<Record<string, unknown>> {
-  const parsed = await readJsonCapped(ctx.req)
+async function jsonBody(ctx: WebContext, max?: number): Promise<Record<string, unknown>> {
+  const parsed = await readJsonCapped(ctx.req, max)
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new BodyError(400, 'bad_json')
   return parsed as Record<string, unknown>
 }
@@ -174,6 +177,7 @@ registerWebRoutes([
       if (!getConversation(ctx.chatId, id)) return sendError(ctx.res, 404, 'not_found')
       if (running.has(id)) cancelWebTurn(id)
       deleteConversation(ctx.chatId, id)
+      removeConversationFiles(id)
       sendJson(ctx.res, 200, { ok: true })
     },
   },
@@ -207,9 +211,15 @@ registerWebRoutes([
       const id = ctx.params[0]!
       const conv = getConversation(ctx.chatId, id)
       if (!conv) return sendError(ctx.res, 404, 'not_found')
-      const b = await jsonBody(ctx)
+      const b = await jsonBody(ctx, MAX_CHAT_BODY)
       const text = typeof b.text === 'string' ? b.text.trim() : ''
-      if (!text || text.length > MAX_TEXT) return sendError(ctx.res, 400, 'bad_text')
+      if (text.length > MAX_TEXT) return sendError(ctx.res, 400, 'bad_text')
+      const planned = planAttachments(b.attachments, b.pastes)
+      if (!planned.ok) return sendError(ctx.res, 400, planned.code)
+      const attaching = planned.plan.uploads.length + planned.plan.pastes.length > 0
+      if (!text && !attaching) return sendError(ctx.res, 400, 'bad_text')
+      // A command or a button answer takes no attachments: it would drop them.
+      if (attaching && (text.startsWith('/') || buttonClickLabel(text) !== null)) return sendError(ctx.res, 400, 'attachments_with_command')
       if (running.has(id)) return sendError(ctx.res, 409, 'busy')
       // A click answers the latest reply's card once. A stale tab, a second
       // click, or a label that card does not offer is refused.
@@ -219,6 +229,13 @@ registerWebRoutes([
 
       running.add(id)
       try {
+        let attached: Attached[] = []
+        try {
+          attached = commitAttachments(id, planned.plan)
+        } catch (err) {
+          logger.error({ err, conversationId: id }, 'web chat attachments could not be saved')
+          return sendError(ctx.res, 500, 'attachments_failed')
+        }
         const sse = openSse(ctx.res, { heartbeatMs: 15_000 })
         // Deliberately no cancel on close: the turn finishes and is stored.
 
@@ -229,8 +246,8 @@ registerWebRoutes([
         const storeUser = () => {
           if (userStored || userDropped) return
           userStored = true
-          addMessage(id, 'user', text)
-          if (!conv.title) updateConversation(ctx.chatId, id, { title: text.replace(/\s+/g, ' ').slice(0, 60) })
+          addMessage(id, 'user', text, attached.map(toStored))
+          if (!conv.title) updateConversation(ctx.chatId, id, { title: text ? text.replace(/\s+/g, ' ').slice(0, 60) : attachmentTitle(attached) })
         }
         const stored = (mid: number) => msgJson(listMessages(id).find((m) => m.id === mid)!)
         const reply = (content: string, files: StoredFile[] = [], buttons: string[] = []): number => {
@@ -293,7 +310,8 @@ registerWebRoutes([
 
         // Slash commands, and the flows they start, answer the same way they
         // do in Telegram. Anything they do not own goes to the agent below.
-        try {
+        // A message with attachments is never a command (checked above).
+        if (!attaching) try {
           const cmd = await runWebCommand({
             chatId: ctx.chatId,
             conversationId: id,
@@ -345,7 +363,7 @@ registerWebRoutes([
         storeUser()
 
         try {
-          const r = await agentTurn(text)
+          const r = await agentTurn(attachmentTurnText(text, attached))
           if (r.kind === 'paused') sse.writeEvent('paused', { text: r.text })
           else if (r.kind === 'cancelled') sse.writeEvent('done', { cancelled: true })
           else sse.writeEvent('done', { cancelled: false, message: stored(r.mid) })
