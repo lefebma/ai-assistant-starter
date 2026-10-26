@@ -85,13 +85,14 @@ export async function exchange(token) {
  * dropped when it removed the owner's message (a pasted key). Resolves when the stream ends;
  * resolves to true when a terminal event arrived, false when it was cut off.
  */
-export async function streamChat(conversationId, text, handlers) {
+export async function streamChat(conversationId, text, handlers, extra = {}) {
   const res = await check(
     await fetch('/api/web/conversations/' + encodeURIComponent(conversationId) + '/chat', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ text }),
+      // extra: { attachments: [upload paths], pastes: [text] } (card #249)
+      body: JSON.stringify({ text, ...extra }),
     })
   )
   if (!res.body) return false

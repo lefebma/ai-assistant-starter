@@ -46,6 +46,7 @@ const state = {
   pending: { model: '', effort: '' }, // picks made before the first message creates the chat
   treeLoaded: false,
   previewPath: '',
+  attachments: [], // the tray: files and pasted text waiting to go with the next message
 }
 
 const MODELS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']]
@@ -429,13 +430,21 @@ function messageEl(m) {
   if (m.files && m.files.length) {
     const files = h('div', { class: 'msg-files' })
     for (const f of m.files) {
-      const url = fileUrl(m.id, f.index)
+      // A message still on its way shows the tray's local copy (f.url, f.text).
+      const url = f.url || fileUrl(m.id, f.index)
+      if (f.pasted) {
+        files.append(pastedEl(f, url))
+        continue
+      }
       if (f.kind === 'photo') {
-        files.append(h('a', { class: 'file-thumb', href: url, target: '_blank', rel: 'noopener' }, h('img', { src: url, alt: f.name, loading: 'lazy' })))
+        files.append(h('a', { class: 'file-thumb', href: url, target: '_blank', rel: 'noopener', title: 'Open full size' }, h('img', { src: url, alt: f.name, loading: 'lazy' })))
+        if (m.role === 'user') continue // the owner's own picture needs no download chip
       }
       files.append(h('a', { class: 'file-chip', href: url, download: f.name, icon: 'clip' }, h('span', { text: f.name })))
     }
-    el.append(files)
+    // The owner's attachments sit above their words, as they were in the tray.
+    if (m.role === 'user') el.prepend(files)
+    else el.append(files)
   }
   if (m.buttons && m.buttons.length) {
     // A card takes one answer: once clicked (here, in another tab, or before
@@ -460,6 +469,35 @@ function messageEl(m) {
     el.append(row)
   }
   return el
+}
+
+const lines = (t) => t.split('\n').length
+const pasteLabel = (t) => 'Pasted text' + (t == null ? '' : ' · ' + lines(t) + (lines(t) === 1 ? ' line' : ' lines'))
+
+/** Pasted text in a message: collapsed to a chip, opened on demand. */
+function pastedEl(f, url) {
+  const pre = h('pre', { class: 'paste-body' })
+  const summary = h('summary', { text: pasteLabel(f.text) })
+  const box = h('details', { class: 'paste-chip' }, summary, pre)
+  let loaded = false
+  const fill = (t) => {
+    loaded = true
+    pre.textContent = t
+    summary.textContent = pasteLabel(t)
+  }
+  if (f.text != null) fill(f.text)
+  box.addEventListener('toggle', async () => {
+    if (!box.open || loaded) return
+    pre.textContent = 'Loading...'
+    try {
+      const res = await fetch(url, { credentials: 'same-origin' })
+      if (!res.ok) throw new Error(String(res.status))
+      fill(await res.text())
+    } catch {
+      pre.textContent = 'Could not load the pasted text.'
+    }
+  })
+  return box
 }
 
 function renderMessages() {
@@ -515,9 +553,10 @@ async function ensureConversation() {
   return conv
 }
 
-async function send(text) {
+async function send(text, extra = {}) {
   text = (text || '').trim()
-  if (!text) return
+  const tray = extra.tray || []
+  if (!text && !tray.length) return
   if (state.running) {
     note($('composer-note'), 'Still working on the last message. Wait for it, or press Stop.')
     return
@@ -533,7 +572,13 @@ async function send(text) {
   const convId = conv.id
   const here = () => state.current && state.current.id === convId
 
-  const userMsg = { id: 0, role: 'user', content: text, files: [], buttons: [] }
+  const userMsg = {
+    id: 0,
+    role: 'user',
+    content: text,
+    files: tray.map((a) => (a.kind === 'paste' ? { name: 'pasted-text.txt', kind: 'document', pasted: true, text: a.text } : { name: a.name, kind: a.kind, url: a.url })),
+    buttons: [],
+  }
   state.messages.push(userMsg)
   const box = $('messages')
   const empty = box.querySelector('.empty')
@@ -579,6 +624,9 @@ async function send(text) {
   }
 
   try {
+    const body = tray.length
+      ? { attachments: tray.filter((a) => a.kind !== 'paste').map((a) => a.path), pastes: tray.filter((a) => a.kind === 'paste').map((a) => a.text) }
+      : {}
     const finished = await api.streamChat(convId, text, {
       onQueued: (ahead) => setStatus(ahead > 0 ? 'Waiting for ' + ahead + (ahead === 1 ? ' earlier request' : ' earlier requests') : ''),
       onDelta: (t) => {
@@ -614,7 +662,7 @@ async function send(text) {
       },
       onPaused: (t) => finishWith({ id: 0, role: 'assistant', content: t, files: [], buttons: [] }, 'paused'),
       onError: (t) => finishWith({ id: 0, role: 'assistant', content: t || 'Something went wrong with that reply.', files: [], buttons: [] }, 'error'),
-    })
+    }, body)
     if (!finished) {
       // Cut off: the box still finishes and stores the reply. Show it when it lands.
       if (here()) setStatus('Connection lost. The reply will appear when it is ready.')
@@ -642,7 +690,18 @@ async function send(text) {
     }
     if (here()) {
       reply.remove()
-      note($('composer-note'), friendly(err, 'Could not send that message.'))
+      if (tray.length) {
+        // Nothing was sent: put the message and its attachments back.
+        userEl.remove()
+        const i = state.messages.indexOf(userMsg)
+        if (i >= 0) state.messages.splice(i, 1)
+        if (!$('input').value.trim()) $('input').value = text
+        state.attachments = [...tray, ...state.attachments]
+        renderTray()
+      }
+      note($('composer-note'), err.code === 'attachment_missing' ? 'An attachment is no longer on the box. Remove it and attach it again.'
+        : err.code === 'attachments_with_command' ? 'Commands and button answers cannot carry attachments. Send the attachment on its own.'
+        : friendly(err, 'Could not send that message.'))
     }
   } finally {
     if (frame) cancelAnimationFrame(frame)
@@ -694,9 +753,20 @@ $('composer').addEventListener('submit', (e) => {
   e.preventDefault()
   const input = $('input')
   const text = input.value
-  if (!text.trim() || state.running) return
+  if ((!text.trim() && !state.attachments.length) || state.running) return
+  if (state.attachments.some((a) => a.status === 'uploading')) {
+    note($('composer-note'), 'Still uploading. It will be ready in a moment.')
+    return
+  }
+  if (state.attachments.some((a) => a.status === 'failed')) {
+    note($('composer-note'), 'Remove the attachment that did not upload, then send.')
+    return
+  }
+  const tray = state.attachments
+  state.attachments = []
+  renderTray()
   input.value = ''
-  send(text)
+  send(text, { tray })
 })
 
 // ---------- command suggestions ----------
@@ -800,35 +870,212 @@ $('input').addEventListener('keydown', (e) => {
   }
 })
 
-// ---------- uploads ----------
+// ---------- attachments (card #249) ----------
+//
+// Pasting, dropping and the paperclip all put things in the tray above the
+// box. A file uploads straight away (so Send is quick) and goes with the next
+// message; long pasted text stays here and is sent with it as text.
+
+const MAX_FILE_BYTES = 25 * 1024 * 1024
+const MAX_TRAY = 10
+const MAX_PASTES = 5
+const PASTE_CHIP_CHARS = 4000
+const MAX_PASTE_CHARS = 200000
+const MAX_TEXT = 100000
+// Big screenshots are scaled down before upload: the AI reads images up to
+// about this size anyway, and one over 5 MB cannot be shown to it at all.
+const MAX_IMAGE_SIDE = 2048
+const MAX_IMAGE_BYTES = 4.5 * 1024 * 1024
+const SCALABLE = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const PHOTO_TYPES = /^image\/(png|jpeg|gif|webp)$/
+
+let nextAttachment = 1
+
+function stamp() {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds())
+}
+
+/** A clipboard image arrives as "image.png"; give it a name worth keeping. */
+function nameFor(file, i) {
+  const generic = !file.name || /^image\.\w+$/i.test(file.name)
+  if (!generic) return file.name
+  const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
+  return 'pasted-image-' + stamp() + (i ? '-' + i : '') + '.' + ext
+}
+
+async function scaleDown(file, name) {
+  if (!SCALABLE.has(file.type) || typeof createImageBitmap !== 'function') return file
+  let bitmap
+  try {
+    bitmap = await createImageBitmap(file)
+  } catch {
+    return file
+  }
+  const side = Math.max(bitmap.width, bitmap.height)
+  if (side <= MAX_IMAGE_SIDE && file.size <= MAX_IMAGE_BYTES) {
+    bitmap.close()
+    return file
+  }
+  const k = Math.min(1, MAX_IMAGE_SIDE / side)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bitmap.width * k)
+  canvas.height = Math.round(bitmap.height * k)
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+  const encode = (type, q) => new Promise((resolve) => canvas.toBlob(resolve, type, q))
+  // Screenshots stay PNG (sharp text) unless that is still too big.
+  let type = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+  let blob = await encode(type, 0.9)
+  if (blob && blob.size > MAX_IMAGE_BYTES && type === 'image/png') {
+    type = 'image/jpeg'
+    blob = await encode(type, 0.88)
+  }
+  if (!blob || blob.size >= file.size) return file
+  const renamed = type === 'image/jpeg' ? name.replace(/\.(png|webp)$/i, '.jpg') : name
+  return new File([blob], renamed, { type })
+}
+
+function trayCount() {
+  return state.attachments.length
+}
+
+async function addFiles(list) {
+  const files = [...list]
+  if (!files.length) return
+  const problems = []
+  let i = 0
+  for (const raw of files) {
+    if (trayCount() >= MAX_TRAY) {
+      problems.push('Up to ' + MAX_TRAY + ' attachments per message')
+      break
+    }
+    const name = nameFor(raw, i++)
+    const photo = PHOTO_TYPES.test(raw.type)
+    const item = { id: nextAttachment++, kind: photo ? 'photo' : 'document', name, status: 'uploading', path: '', url: '' }
+    if (photo) item.url = URL.createObjectURL(raw)
+    state.attachments.push(item)
+    renderTray()
+    upload(item, raw, name, photo)
+  }
+  if (problems.length) note($('composer-note'), problems.join('. ') + '.')
+  $('input').focus()
+}
+
+async function upload(item, raw, name, photo) {
+  try {
+    const file = photo ? await scaleDown(raw, name) : raw.name === name ? raw : new File([raw], name, { type: raw.type })
+    if (file.size > MAX_FILE_BYTES) throw Object.assign(new Error('too big'), { status: 413 })
+    item.name = file.name
+    item.path = await api.upload(file)
+    if (!item.path) throw new Error('no path')
+    item.status = 'ready'
+  } catch (err) {
+    if (err.status === 401) return
+    item.status = 'failed'
+    item.error = err.status === 413 ? 'over 25 MB' : 'did not upload'
+  }
+  if (state.attachments.includes(item)) renderTray()
+  if (state.treeLoaded) loadTree()
+}
+
+function addPaste(text) {
+  if (text.length > MAX_PASTE_CHARS) {
+    note($('composer-note'), 'That paste is ' + text.length.toLocaleString() + ' characters, over the ' + MAX_PASTE_CHARS.toLocaleString() + ' limit. Nothing was added. Attach it as a file instead.')
+    return
+  }
+  if (state.attachments.filter((a) => a.kind === 'paste').length >= MAX_PASTES || trayCount() >= MAX_TRAY) {
+    note($('composer-note'), 'That is as much pasted text as one message can carry. Send this one first.')
+    return
+  }
+  state.attachments.push({ id: nextAttachment++, kind: 'paste', name: 'Pasted text', status: 'ready', text })
+  renderTray()
+  $('input').focus()
+}
+
+function removeAttachment(item) {
+  state.attachments = state.attachments.filter((a) => a !== item)
+  if (item.url) URL.revokeObjectURL(item.url)
+  renderTray()
+  $('input').focus()
+}
+
+function renderTray() {
+  const tray = $('tray')
+  tray.replaceChildren()
+  for (const a of state.attachments) {
+    const remove = h('button', { type: 'button', class: 'tray-remove', 'aria-label': 'Remove ' + a.name, title: 'Remove', text: '×', click: () => removeAttachment(a) })
+    let body
+    if (a.kind === 'paste') {
+      body = h('details', { class: 'paste-chip' }, h('summary', { text: pasteLabel(a.text) }), h('pre', { class: 'paste-body', text: a.text }))
+    } else if (a.kind === 'photo') {
+      body = h('img', { class: 'tray-thumb', src: a.url, alt: a.name, title: a.name })
+    } else {
+      body = h('span', { class: 'file-chip', icon: 'clip' }, h('span', { text: a.name }))
+    }
+    const status = a.status === 'uploading' ? h('span', { class: 'tray-status', text: 'Uploading' })
+      : a.status === 'failed' ? h('span', { class: 'tray-status failed', text: a.name + ' ' + a.error })
+      : null
+    tray.append(h('li', { class: 'tray-item ' + a.kind + (a.status !== 'ready' ? ' ' + a.status : '') }, body, status, remove))
+  }
+  show(tray, state.attachments.length > 0)
+}
 
 $('attach').addEventListener('click', () => $('attach-input').click())
-$('attach-input').addEventListener('change', async () => {
+$('attach-input').addEventListener('change', () => {
   const files = [...$('attach-input').files]
   $('attach-input').value = ''
-  if (!files.length) return
-  const input = $('input')
-  note($('composer-note'), files.length === 1 ? 'Uploading ' + files[0].name + '...' : 'Uploading ' + files.length + ' files...')
-  const failed = []
-  for (const f of files) {
-    if (f.size > 25 * 1024 * 1024) {
-      failed.push(f.name + ' is over 25 MB')
-      continue
-    }
-    try {
-      const path = await api.upload(f)
-      if (path) {
-        const line = 'I uploaded ' + path
-        input.value = input.value.trim() ? input.value.replace(/\s*$/, '\n') + line : line
-      }
-    } catch (err) {
-      if (err.status === 401) return
-      failed.push(f.name + (err.status === 413 ? ' is over 25 MB' : ' did not upload'))
-    }
+  addFiles(files)
+})
+
+$('input').addEventListener('paste', (e) => {
+  const dt = e.clipboardData
+  if (!dt) return
+  const text = dt.getData('text/plain')
+  // Cells copied from a spreadsheet or a document come with a picture of
+  // themselves as well as the text: the text is what the owner meant.
+  const files = text ? [] : [...dt.files]
+  if (files.length) {
+    e.preventDefault()
+    addFiles(files)
+    return
   }
-  note($('composer-note'), failed.length ? failed.join('. ') + '.' : '')
-  if (state.treeLoaded) loadTree()
-  input.focus()
+  if (!text) return
+  const input = $('input')
+  const room = MAX_TEXT - (input.value.length - (input.selectionEnd - input.selectionStart))
+  if (text.length > PASTE_CHIP_CHARS || text.length > room) {
+    e.preventDefault()
+    addPaste(text)
+  }
+})
+
+// Drop anywhere on the chat: messages or the box.
+const dropZone = document.querySelector('.centre')
+let dragDepth = 0
+const carriesFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files')
+dropZone.addEventListener('dragenter', (e) => {
+  if (!carriesFiles(e)) return
+  e.preventDefault()
+  dragDepth++
+  dropZone.classList.add('dropping')
+})
+dropZone.addEventListener('dragover', (e) => {
+  if (!carriesFiles(e)) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'copy'
+})
+dropZone.addEventListener('dragleave', (e) => {
+  if (!carriesFiles(e)) return
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (!dragDepth) dropZone.classList.remove('dropping')
+})
+dropZone.addEventListener('drop', (e) => {
+  if (!carriesFiles(e)) return
+  e.preventDefault()
+  dragDepth = 0
+  dropZone.classList.remove('dropping')
+  addFiles(e.dataTransfer.files)
 })
 
 // ---------- goals ----------

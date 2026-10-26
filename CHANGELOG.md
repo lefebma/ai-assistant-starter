@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.52.0 - 2026-10-25
+
+Paste a screenshot or a block of text straight into the web chat.
+
+- **New: paste images into the chat box.** Copy a screenshot or an image and paste it (Cmd/Ctrl+V). It shows above the box with a remove button, and several can go with one message. Big screenshots are scaled down before they upload.
+- **New: drag and drop.** Drop images or files anywhere on the chat. The paperclip now adds to the same row instead of typing a path into your message.
+- **New: long pasted text becomes a "Pasted text" chip** (over about 4,000 characters) instead of filling the box. Click it to read it. Line breaks and indentation are kept. Nothing is cut off silently: a paste over 200,000 characters is refused with a message saying so.
+- **Changed: your assistant actually looks at the pictures you send.** Images reach it the same way a photo sent from your chat app does. On boxes that use a managed AI key, photos sent from the chat app are now seen as images too; before, the assistant only got the file's location.
+- Pictures and pasted text stay with the conversation, so the history still shows them later. Deleting the conversation deletes them.
+
 ## 1.51.0 - 2026-10-25
 
 Your chat app's commands now work in the web app.
