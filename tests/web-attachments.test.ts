@@ -218,7 +218,7 @@ describe('what is refused', () => {
     expect(await refused({ text: '', pastes: ['   '] })).toMatchObject({ status: 400, code: 'bad_text' })
   })
 
-  it('a busy chat refuses the message and leaves the upload in place', async () => {
+  it('a busy chat queues the message and leaves the upload in place until it starts (card #250)', async () => {
     const r1 = useRuntime()
     let release!: () => void
     r1.gate = new Promise((r) => { release = r })
@@ -227,9 +227,13 @@ describe('what is refused', () => {
     for (let i = 0; i < 50 && !r1.calls.length; i++) await new Promise((r) => setTimeout(r, 10))
     const path = await upload('wait.png', PNG)
     const r = await post(`/api/web/conversations/${id}/chat`, { text: 'x', attachments: [path] })
-    expect(r.status).toBe(409)
+    expect(r.status).toBe(202)
+    expect(((await r.json()) as any).item.files).toEqual([{ name: 'wait.png', kind: 'photo' }])
     expect(existsSync(join(h.root, path))).toBe(true)
     release()
     await (await first).text()
+    // Once it runs, the upload moves into the conversation like any other.
+    await vi.waitFor(() => expect(existsSync(join(h.root, path))).toBe(false))
+    await vi.waitFor(() => expect(conv.listMessages(id).filter((m) => m.role === 'user').at(-1)!.files.map((f) => f.name)).toEqual(['wait.png']))
   })
 })

@@ -362,6 +362,31 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .msg.error .msg-body { border-left-color: var(--danger); color: var(--danger); }
 .msg.paused .msg-body { border-left-color: var(--warn); }
 
+/* A message waiting its turn (card #250): plainly not answered yet. */
+.msg.queued .msg-body {
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  color: var(--ink-soft);
+}
+.msg.queued .msg-body.click { border-style: dashed; }
+.queue-foot { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 12.5px; color: var(--ink-faint); }
+.queue-label { margin-right: 4px; }
+.queue-btn {
+  padding: 2px 6px;
+  border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink-soft);
+  font: inherit; cursor: pointer;
+}
+.queue-btn:hover { color: var(--accent); background: var(--accent-soft); }
+.queue-edit {
+  width: min(85%, 560px);
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong); border-radius: 12px;
+  background: var(--surface); color: var(--ink);
+  font: inherit; resize: vertical;
+}
+.queue-edit:focus { outline: none; border-color: var(--accent); }
+
 .msg-status { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-left: 16px; font-size: 13px; color: var(--ink-faint); }
 .msg-status:empty { display: none; }
 .dots { display: inline-flex; gap: 4px; }

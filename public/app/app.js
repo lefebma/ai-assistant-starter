@@ -4,6 +4,7 @@
 import * as api from './api.js'
 import { renderMarkdown } from './markdown.js'
 import { updateInfo, RESTART_TEXT } from './update.js'
+import { runsNow, newClientId, queueLabel } from './queue.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -40,7 +41,9 @@ const state = {
   expanded: new Set(['']),
   current: null, // conversation object
   messages: [],
-  running: null, // conversation id with a turn streaming from this page
+  busy: new Set(), // conversation ids with a reply in progress, as this page sees it
+  queue: [], // the current chat's messages waiting their turn (card #250)
+  gen: 0, // bumped whenever the page shows another chat
   goals: { goals: [], version: 'none' },
   status: null,
   defaults: { model: null, effort: null },
@@ -311,7 +314,9 @@ async function openConversation(id) {
   note($('composer-note'), '')
   try {
     const r = await api.get('/api/web/conversations/' + encodeURIComponent(id) + '/messages')
-    setCurrent(r.conversation, r.messages || [])
+    setCurrent(r.conversation, r.messages || [], r.queue || [])
+    // A reply in progress, or messages waiting: show them as they run.
+    if (r.running || (r.queue && r.queue.length)) follow(id)
   } catch (err) {
     note($('composer-note'), friendly(err, 'Could not open that chat.'))
     if (err.status === 404) refreshConversations()
@@ -353,9 +358,11 @@ async function loadDefaults() {
   renderPickers()
 }
 
-function setCurrent(conv, messages) {
+function setCurrent(conv, messages, queue = []) {
+  state.gen++
   state.current = conv
   state.messages = messages
+  state.queue = queue
   const has = Boolean(conv)
   $('chat-title').disabled = !has
   if (has) state.pending = { model: '', effort: '' }
@@ -458,7 +465,7 @@ function messageEl(m) {
           class: 'reply-btn',
           text: label,
           click: () => {
-            if (row.classList.contains('used') || state.running) return
+            if (row.classList.contains('used')) return
             m.buttonsUsed = true
             row.classList.add('used')
             updateReplyButtons()
@@ -508,7 +515,7 @@ function renderMessages() {
     box.append($('empty-template').content.cloneNode(true))
   }
   for (const m of state.messages) box.append(messageEl(m))
-  updateReplyButtons()
+  renderQueue()
   scrollDown(true)
 }
 
@@ -519,19 +526,164 @@ function scrollDown(force) {
 }
 
 function updateReplyButtons() {
-  // Like Telegram's keyboard: only the latest reply's buttons stay live.
-  const busy = Boolean(state.running)
-  const last = $('messages').lastElementChild
+  // Like Telegram's keyboard: only the latest reply's buttons stay live. A
+  // click while a reply is still being written waits its turn (card #250).
+  const replies = $('messages').querySelectorAll('.msg.assistant:not(.streaming)')
+  const last = replies[replies.length - 1]
   for (const b of $('messages').querySelectorAll('.reply-btn')) {
-    b.disabled = busy || !last || !last.contains(b) || b.closest('.msg-buttons').classList.contains('used')
+    b.disabled = !last || !last.contains(b) || b.closest('.msg-buttons').classList.contains('used')
   }
 }
 
 function updateRunning() {
-  const here = state.current && state.running === state.current.id
-  show($('stop'), Boolean(here))
-  $('send').disabled = Boolean(here)
+  // Send stays on while a reply is written: what is sent then waits its turn.
+  show($('stop'), Boolean(state.current && state.busy.has(state.current.id)))
   updateReplyButtons()
+}
+
+/** Put a message in the chat, above any that are still waiting. */
+function place(el) {
+  const box = $('messages')
+  const empty = box.querySelector('.empty')
+  if (empty) empty.remove()
+  box.insertBefore(el, box.querySelector('.msg.queued'))
+}
+
+const isHere = (convId) => Boolean(state.current && state.current.id === convId)
+
+// ---------- waiting messages (card #250) ----------
+//
+// A message sent while a reply is still being written waits on the box, in
+// order, and runs when the one before it finishes. Until it starts it can be
+// edited or removed here. The box keeps the queue, so a reload shows it.
+
+function queuedEl(q, position) {
+  const el = h('div', { class: 'msg user queued' })
+  const click = q.text.startsWith(CLICK_PREFIX)
+  if (q.files && q.files.length) {
+    el.append(h('div', { class: 'msg-files' }, q.files.map((f) => h('span', { class: 'file-chip', icon: 'clip' }, h('span', { text: f.name })))))
+  }
+  if (q.editing) {
+    const area = h('textarea', { class: 'queue-edit', rows: '3', maxlength: '100000', 'aria-label': 'Edit this waiting message' })
+    area.value = q.draft
+    area.addEventListener('input', () => {
+      q.draft = area.value
+    })
+    const done = () => {
+      q.editing = false
+      renderQueue()
+    }
+    area.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') done()
+      else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault()
+        saveQueued(q)
+      }
+    })
+    el.append(
+      area,
+      h(
+        'div',
+        { class: 'queue-foot' },
+        h('button', { type: 'button', class: 'small-btn', text: 'Save', click: () => saveQueued(q) }),
+        h('button', { type: 'button', class: 'small-btn ghost', text: 'Cancel', click: done })
+      )
+    )
+    requestAnimationFrame(() => area.focus())
+    return el
+  }
+  if (click) {
+    el.append(h('div', { class: 'msg-body click', text: q.text.slice(CLICK_PREFIX.length) }))
+  } else if (q.text) {
+    const body = h('div', { class: 'msg-body' })
+    body.innerHTML = renderMarkdown(q.text)
+    el.append(body)
+  }
+  const foot = h('div', { class: 'queue-foot' }, h('span', { class: 'queue-label', text: queueLabel(q, position) }))
+  if (q.id && q.state === 'queued') {
+    if (!click) {
+      foot.append(
+        h('button', {
+          type: 'button',
+          class: 'queue-btn',
+          text: 'Edit',
+          click: () => {
+            q.editing = true
+            q.draft = q.text
+            renderQueue()
+          },
+        })
+      )
+    }
+    foot.append(h('button', { type: 'button', class: 'queue-btn', text: 'Remove', 'aria-label': 'Remove this waiting message', click: () => removeQueued(q) }))
+  }
+  el.append(foot)
+  return el
+}
+
+function renderQueue() {
+  const box = $('messages')
+  for (const el of box.querySelectorAll('.msg.queued')) el.remove()
+  if (state.queue.length) {
+    const empty = box.querySelector('.empty')
+    if (empty) empty.remove()
+  }
+  state.queue.forEach((q, i) => box.append(queuedEl(q, i)))
+  updateReplyButtons()
+}
+
+/** Take a message off this page's queue: it started, or it is gone. */
+function dropQueued(convId, match) {
+  if (!isHere(convId)) return
+  const before = state.queue.length
+  state.queue = state.queue.filter((q) => !match(q))
+  if (state.queue.length !== before) renderQueue()
+}
+
+const queuePath = (convId, q) => '/api/web/conversations/' + encodeURIComponent(convId) + '/queue/' + encodeURIComponent(q.id)
+
+async function saveQueued(q) {
+  if (!state.current) return
+  const convId = state.current.id
+  const text = (q.draft || '').trim()
+  if (!text && !(q.files && q.files.length)) {
+    note($('composer-note'), 'Type something, or remove the message instead.')
+    return
+  }
+  try {
+    const r = await api.post(queuePath(convId, q), { text })
+    Object.assign(q, r.item)
+    q.editing = false
+  } catch (err) {
+    if (err.status === 409 || err.status === 404) {
+      // Too late: it has started (or finished) as it was.
+      q.editing = false
+      note($('composer-note'), 'That message had already started, so it went as it was.')
+      if (err.status === 404) dropQueued(convId, (x) => x === q)
+    } else {
+      note($('composer-note'), friendly(err, 'Could not save that change.'))
+      return
+    }
+  }
+  if (isHere(convId)) renderQueue()
+}
+
+async function removeQueued(q) {
+  if (!state.current) return
+  const convId = state.current.id
+  try {
+    await api.post(queuePath(convId, q) + '/delete')
+  } catch (err) {
+    if (err.status === 409) {
+      note($('composer-note'), 'That message had already started, so it could not be removed.')
+      return
+    }
+    if (err.status !== 404) {
+      note($('composer-note'), friendly(err, 'Could not remove that message.'))
+      return
+    }
+  }
+  dropQueued(convId, (x) => x === q)
 }
 
 // ---------- sending and streaming ----------
@@ -554,14 +706,152 @@ async function ensureConversation() {
   return conv
 }
 
+/** The owner's message as the page shows it before the box has stored it. */
+function localMessage(text, tray) {
+  return {
+    id: 0,
+    role: 'user',
+    content: text,
+    files: tray.map((a) => (a.kind === 'paste' ? { name: 'pasted-text.txt', kind: 'document', pasted: true, text: a.text } : { name: a.name, kind: a.kind, url: a.url })),
+    buttons: [],
+  }
+}
+
+/**
+ * One reply on the page: the working bubble and the stream handlers that fill
+ * it. userMsg is shown first when given; otherwise the box's `user` event adds
+ * it. Once the page shows another chat (setCurrent), the view goes quiet.
+ */
+function turnView(convId, userMsg) {
+  const gen = state.gen
+  const live = () => state.gen === gen && isHere(convId)
+  let userEl = null
+  if (userMsg) {
+    state.messages.push(userMsg)
+    userEl = messageEl(userMsg)
+    place(userEl)
+  }
+  const reply = h('div', { class: 'msg assistant streaming' })
+  const body = h('div', { class: 'msg-body' })
+  const status = h('div', { class: 'msg-status' })
+  const dots = () => h('span', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))
+  const setStatus = (label) => {
+    status.replaceChildren(dots(), label ? h('span', { text: label }) : '')
+  }
+  setStatus('')
+  reply.append(body, status)
+  place(reply)
+  scrollDown(true)
+
+  let acc = ''
+  let frame = 0
+  let over = false
+  const paint = () => {
+    frame = 0
+    if (over) return
+    body.innerHTML = renderMarkdown(stripMarkers(acc))
+    scrollDown(false)
+  }
+  const finishWith = (msg, cls) => {
+    if (over) return
+    over = true
+    if (frame) cancelAnimationFrame(frame)
+    if (!live()) return
+    if (msg) {
+      state.messages.push(msg)
+      const el = messageEl(msg)
+      if (cls) el.classList.add(cls)
+      reply.replaceWith(el)
+    } else {
+      reply.remove()
+    }
+    updateReplyButtons()
+  }
+  const dropUser = () => {
+    if (userEl) userEl.remove()
+    const i = state.messages.indexOf(userMsg)
+    if (i >= 0) state.messages.splice(i, 1)
+  }
+  const handlers = {
+    onUser: (m) => {
+      if (!live()) return
+      if (userMsg) {
+        userMsg.id = m.id // shown already; now it has the box's id
+        return
+      }
+      // A reloaded page already has it in the history.
+      if (state.messages.some((x) => x.id === m.id)) return
+      userMsg = m
+      state.messages.push(m)
+      userEl = messageEl(m)
+      reply.before(userEl)
+    },
+    onQueued: (ahead) => setStatus(ahead > 0 ? 'Waiting for ' + ahead + (ahead === 1 ? ' earlier request' : ' earlier requests') : ''),
+    onDelta: (t) => {
+      acc += t
+      setStatus('')
+      if (!frame) frame = requestAnimationFrame(paint)
+    },
+    onReset: (t) => {
+      acc = t
+      setStatus('')
+      if (!frame) frame = requestAnimationFrame(paint)
+    },
+    onTool: (tool) => setStatus(tool ? 'Working: ' + tool : 'Working'),
+    onReply: (m) => {
+      // A command's answer: each reply is its own message, shown above the
+      // working bubble until the command finishes.
+      if (!live()) return
+      state.messages.push(m)
+      reply.before(messageEl(m))
+      updateReplyButtons()
+      scrollDown(true)
+    },
+    onDropped: () => {
+      // The command deleted the message (it held a key): take it off the page too.
+      if (live()) dropUser()
+    },
+    onDone: (d) => {
+      if (d.command) finishWith(null)
+      else if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
+      else finishWith(d.message)
+    },
+    onPaused: (t) => finishWith({ id: 0, role: 'assistant', content: t, files: [], buttons: [] }, 'paused'),
+    onError: (t) => finishWith({ id: 0, role: 'assistant', content: t || 'Something went wrong with that reply.', files: [], buttons: [] }, 'error'),
+  }
+  return { handlers, live, setStatus, finishWith, dropUser }
+}
+
+const TURN_EVENTS = ['onUser', 'onQueued', 'onDelta', 'onReset', 'onTool', 'onReply', 'onDropped', 'onDone', 'onPaused', 'onError']
+
+/** Stream handlers that build the view on the first event, for a send that may be answered straight away. */
+function lazyHandlers(make) {
+  let view = null
+  const out = {}
+  for (const name of TURN_EVENTS) out[name] = (...a) => (view || (view = make())).handlers[name](...a)
+  return out
+}
+
+/** Send once more if the request never reached the box. The clientId keeps it to one copy. */
+async function sendOnce(convId, text, handlers, body) {
+  try {
+    return await api.streamChat(convId, text, handlers, body)
+  } catch (err) {
+    if (!(err instanceof TypeError)) throw err
+    await new Promise((r) => setTimeout(r, 1500))
+    return api.streamChat(convId, text, handlers, body)
+  }
+}
+
+// Chats with a reply in progress as this page sees it, the follow each has
+// open, and chats a command changed mid-reply (reloaded when the reply ends).
+const followers = new Map()
+const dirty = new Set()
+
 async function send(text, extra = {}) {
   text = (text || '').trim()
   const tray = extra.tray || []
   if (!text && !tray.length) return
-  if (state.running) {
-    note($('composer-note'), 'Still working on the last message. Wait for it, or press Stop.')
-    return
-  }
   note($('composer-note'), '')
   let conv
   try {
@@ -571,131 +861,46 @@ async function send(text, extra = {}) {
     return
   }
   const convId = conv.id
-  const here = () => state.current && state.current.id === convId
-
-  const userMsg = {
-    id: 0,
-    role: 'user',
-    content: text,
-    files: tray.map((a) => (a.kind === 'paste' ? { name: 'pasted-text.txt', kind: 'document', pasted: true, text: a.text } : { name: a.name, kind: a.kind, url: a.url })),
-    buttons: [],
+  const body = { clientId: newClientId() }
+  if (tray.length) {
+    body.attachments = tray.filter((a) => a.kind !== 'paste').map((a) => a.path)
+    body.pastes = tray.filter((a) => a.kind === 'paste').map((a) => a.text)
   }
-  state.messages.push(userMsg)
-  const box = $('messages')
-  const empty = box.querySelector('.empty')
-  if (empty) empty.remove()
-  const userEl = messageEl(userMsg)
-  box.append(userEl)
+  // Mid-reply, a message waits its turn, unless it acts on the reply itself.
+  const midReply = state.busy.has(convId) || state.queue.length > 0
+  if (midReply && !runsNow(text)) return enqueue(convId, text, tray, body)
 
-  const reply = h('div', { class: 'msg assistant' })
-  const body = h('div', { class: 'msg-body' })
-  const status = h('div', { class: 'msg-status' })
-  const dots = () => h('span', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'))
-  const setStatus = (label) => {
-    status.replaceChildren(dots(), label ? h('span', { text: label }) : '')
+  const view = turnView(convId, localMessage(text, tray))
+  if (!midReply) {
+    state.busy.add(convId)
+    updateRunning()
   }
-  setStatus('')
-  reply.append(body, status)
-  box.append(reply)
-  scrollDown(true)
-
-  state.running = convId
-  updateRunning()
-
-  let acc = ''
-  let frame = 0
-  const paint = () => {
-    frame = 0
-    body.innerHTML = renderMarkdown(stripMarkers(acc))
-    scrollDown(false)
-  }
-
-  const finishWith = (msg, cls) => {
-    if (!here()) return
-    if (msg) {
-      state.messages.push(msg)
-      reply.replaceWith(messageEl(msg))
-    } else {
-      reply.remove()
-    }
-    if (cls) {
-      const last = box.lastElementChild
-      if (last) last.classList.add(cls)
-    }
-  }
-
+  let finished = true
   try {
-    const body = tray.length
-      ? { attachments: tray.filter((a) => a.kind !== 'paste').map((a) => a.path), pastes: tray.filter((a) => a.kind === 'paste').map((a) => a.text) }
-      : {}
-    const finished = await api.streamChat(convId, text, {
-      onQueued: (ahead) => setStatus(ahead > 0 ? 'Waiting for ' + ahead + (ahead === 1 ? ' earlier request' : ' earlier requests') : ''),
-      onDelta: (t) => {
-        acc += t
-        setStatus('')
-        if (!frame) frame = requestAnimationFrame(paint)
+    finished = await sendOnce(convId, text, {
+      ...view.handlers,
+      // The box had messages waiting (a restart left them): this one joined them.
+      onItem: (item) => {
+        view.dropUser()
+        view.finishWith(null)
+        if (isHere(convId) && item.state === 'queued') {
+          state.queue.push(item)
+          renderQueue()
+        }
+        follow(convId)
       },
-      onReset: (t) => {
-        acc = t
-        setStatus('')
-        if (!frame) frame = requestAnimationFrame(paint)
-      },
-      onTool: (tool) => setStatus(tool ? 'Working: ' + tool : 'Working'),
-      onReply: (m) => {
-        // A command's answer: each reply is its own message, shown above the
-        // working bubble until the command finishes.
-        if (!here()) return
-        state.messages.push(m)
-        reply.before(messageEl(m))
-        updateReplyButtons()
-        scrollDown(true)
-      },
-      onDropped: () => {
-        // The command deleted the message (it held a key): take it off the page too.
-        userEl.remove()
-        const i = state.messages.indexOf(userMsg)
-        if (i >= 0) state.messages.splice(i, 1)
-      },
-      onDone: (d) => {
-        if (d.command) finishWith(null)
-        else if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
-        else finishWith(d.message)
-      },
-      onPaused: (t) => finishWith({ id: 0, role: 'assistant', content: t, files: [], buttons: [] }, 'paused'),
-      onError: (t) => finishWith({ id: 0, role: 'assistant', content: t || 'Something went wrong with that reply.', files: [], buttons: [] }, 'error'),
     }, body)
-    if (!finished) {
-      // Cut off: the box still finishes and stores the reply. Show it when it lands.
-      if (here()) setStatus('Connection lost. The reply will appear when it is ready.')
-      pollForReply(convId)
-    }
+    if (!finished && view.live()) view.setStatus('Connection lost. The reply will appear when it is ready.')
   } catch (err) {
+    view.finishWith(null)
     if (err.status === 409 && err.code === 'buttons_used') {
       // That card was already answered (another tab, or a stale page).
-      reply.remove()
-      userEl.remove()
-      const i = state.messages.indexOf(userMsg)
-      if (i >= 0) state.messages.splice(i, 1)
+      view.dropUser()
       note($('composer-note'), 'That choice was already made.')
-      if (state.running === convId) state.running = null
-      updateRunning()
-      return
-    }
-    if (err.status === 409) {
-      reply.remove()
-      note($('composer-note'), 'Still working on an earlier message in this chat. Wait for it, or press Stop.')
-      state.running = convId
-      updateRunning()
-      pollForReply(convId)
-      return
-    }
-    if (here()) {
-      reply.remove()
+    } else if (isHere(convId)) {
       if (tray.length) {
         // Nothing was sent: put the message and its attachments back.
-        userEl.remove()
-        const i = state.messages.indexOf(userMsg)
-        if (i >= 0) state.messages.splice(i, 1)
+        view.dropUser()
         if (!$('input').value.trim()) $('input').value = text
         state.attachments = [...tray, ...state.attachments]
         renderTray()
@@ -704,41 +909,151 @@ async function send(text, extra = {}) {
         : err.code === 'attachments_with_command' ? 'Commands and button answers cannot carry attachments. Send the attachment on its own.'
         : friendly(err, 'Could not send that message.'))
     }
-  } finally {
-    if (frame) cancelAnimationFrame(frame)
   }
-  if (state.running === convId && !pollers.has(convId)) state.running = null
+  // A command run mid-reply leaves the reply to its own stream.
+  if (midReply) dirty.add(convId)
+  else afterStream(convId, finished)
+  refreshConversations()
+}
+
+/** Send a message that waits its turn: shown at once as queued, named by the box when it answers. */
+async function enqueue(convId, text, tray, body) {
+  const item = {
+    id: 0,
+    clientId: body.clientId,
+    text,
+    files: tray.map((a) => (a.kind === 'paste' ? { name: 'pasted-text.txt', kind: 'document', pasted: true } : { name: a.name, kind: a.kind })),
+    state: 'sending',
+  }
+  state.queue.push(item)
+  renderQueue()
+  scrollDown(true)
+  let ran = false
+  let finished = true
+  try {
+    // If the reply ended a moment ago, the box answers this one straight away.
+    const lazy = lazyHandlers(() => {
+      ran = true
+      dropQueued(convId, (x) => x === item)
+      return turnView(convId, localMessage(text, tray))
+    })
+    finished = await sendOnce(convId, text, {
+      ...lazy,
+      onItem: (saved) => {
+        Object.assign(item, saved)
+        if (saved.state !== 'queued') dropQueued(convId, (x) => x === item)
+        else if (isHere(convId)) renderQueue()
+        // Nothing on this page is following the chat (a queue a restart left): follow it now.
+        if (!state.busy.has(convId) || saved.state !== 'queued') follow(convId)
+      },
+    }, body)
+  } catch (err) {
+    dropQueued(convId, (x) => x === item)
+    if (isHere(convId)) {
+      if (!$('input').value.trim()) $('input').value = text
+      if (tray.length) {
+        state.attachments = [...tray, ...state.attachments]
+        renderTray()
+      }
+      note($('composer-note'), err.code === 'buttons_used' ? 'That choice was already made.' : friendly(err, 'Could not send that message.'))
+    }
+    return
+  }
+  if (ran) afterStream(convId, finished)
+}
+
+/** A reply this page sent has ended, or its connection dropped: follow whatever comes next. */
+function afterStream(convId, finished) {
+  if (!finished || (isHere(convId) && state.queue.length)) {
+    follow(convId)
+    return
+  }
+  if (!followers.has(convId)) state.busy.delete(convId)
+  if (dirty.delete(convId)) reloadIf(convId)
+  updateRunning()
+}
+
+/** Show the box's own record of the chat: ids, buttons, and what another tab sent. */
+async function reloadIf(convId) {
+  if (!isHere(convId)) return
+  try {
+    const r = await api.get('/api/web/conversations/' + encodeURIComponent(convId) + '/messages')
+    if (!isHere(convId)) return
+    // Keep what this page is still sending: the box has not seen it yet.
+    const sending = state.queue.filter((q) => q.state === 'sending')
+    setCurrent(r.conversation, r.messages || [], [...(r.queue || []), ...sending])
+  } catch {
+    // keep what is shown
+  }
+}
+
+/**
+ * Follow a chat on the box: the reply in progress (what it has said so far,
+ * then live), then each waiting message as it starts, until nothing is left.
+ * Used after a reload, after a dropped connection, and when a reply ends with
+ * messages still waiting.
+ */
+async function follow(convId, tries = 0) {
+  const prev = followers.get(convId)
+  if (prev) prev.abort()
+  const ac = new AbortController()
+  followers.set(convId, ac)
+  state.busy.add(convId)
+  updateRunning()
+
+  let view = null
+  const toView = {}
+  for (const name of TURN_EVENTS) toView[name] = (...a) => view && view.handlers[name](...a)
+  let ended = false
+  try {
+    ended = await api.follow(convId, {
+      ...toView,
+      onStart: (item) => {
+        if (view) view.finishWith(null)
+        dropQueued(convId, (q) => q.id === item.id || (item.clientId && q.clientId === item.clientId))
+        view = isHere(convId) ? turnView(convId, null) : null
+      },
+      onDone: (d) => {
+        if (view) view.handlers.onDone(d)
+        view = null
+      },
+      onPaused: (t) => {
+        if (view) view.handlers.onPaused(t)
+        view = null
+      },
+      onError: (t) => {
+        if (view) view.handlers.onError(t)
+        view = null
+      },
+    }, ac.signal)
+  } catch (err) {
+    // Signed out, or the chat is gone: nothing more to follow.
+    ended = err.status === 401 || err.status === 404
+  }
+  // A cut-off reply is shown again, from the start, by the next follow.
+  if (view) view.finishWith(null)
+  if (followers.get(convId) !== ac) return
+  if (!ended && tries < 60) {
+    if (isHere(convId) && !$('messages').querySelector('.msg.streaming')) {
+      note($('composer-note'), 'Connection lost. Reconnecting...')
+    }
+    setTimeout(() => {
+      if (followers.get(convId) === ac) follow(convId, tries + 1)
+    }, 2500)
+    return
+  }
+  followers.delete(convId)
+  state.busy.delete(convId)
+  dirty.delete(convId)
+  if (tries) note($('composer-note'), '')
+  await reloadIf(convId)
   updateRunning()
   refreshConversations()
 }
 
-const pollers = new Set()
-
-/** After a dropped stream or a busy reply: reload the chat until the last message is the assistant's. */
-function pollForReply(convId, tries = 0) {
-  pollers.add(convId)
-  setTimeout(async () => {
-    let done = tries > 120
-    try {
-      const r = await api.get('/api/web/conversations/' + encodeURIComponent(convId) + '/messages')
-      const last = (r.messages || [])[r.messages.length - 1]
-      if (last && last.role === 'assistant') done = true
-      if (done && state.current && state.current.id === convId) setCurrent(r.conversation, r.messages || [])
-    } catch (err) {
-      if (err.status === 401 || err.status === 404) done = true
-    }
-    if (done) {
-      pollers.delete(convId)
-      if (state.running === convId) state.running = null
-      updateRunning()
-    } else {
-      pollForReply(convId, tries + 1)
-    }
-  }, 2500)
-}
-
 $('stop').addEventListener('click', async () => {
-  const id = state.running
+  // Stops the reply in progress only. Waiting messages stay and run next.
+  const id = state.current && state.busy.has(state.current.id) ? state.current.id : null
   if (!id) return
   $('stop').disabled = true
   try {
@@ -754,7 +1069,7 @@ $('composer').addEventListener('submit', (e) => {
   e.preventDefault()
   const input = $('input')
   const text = input.value
-  if ((!text.trim() && !state.attachments.length) || state.running) return
+  if (!text.trim() && !state.attachments.length) return
   if (state.attachments.some((a) => a.status === 'uploading')) {
     note($('composer-note'), 'Still uploading. It will be ready in a moment.')
     return

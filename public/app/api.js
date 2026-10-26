@@ -78,23 +78,11 @@ export async function exchange(token) {
 }
 
 /**
- * Send a chat message and read the reply as server-sent events. EventSource
- * cannot POST, so this parses the stream from fetch. handlers: onQueued,
- * onDelta, onReset, onTool, onReply, onDropped, onDone, onPaused, onError.
- * A slash command answers with reply events (one stored message each), and
- * dropped when it removed the owner's message (a pasted key). Resolves when the stream ends;
- * resolves to true when a terminal event arrived, false when it was cut off.
+ * Read a server-sent-events response, calling onEvent(name, payload) for each
+ * event. Stops after an event for which isLast(name) is true, and resolves to
+ * true then; false when the stream was cut off first.
  */
-export async function streamChat(conversationId, text, handlers, extra = {}) {
-  const res = await check(
-    await fetch('/api/web/conversations/' + encodeURIComponent(conversationId) + '/chat', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      // extra: { attachments: [upload paths], pastes: [text] } (card #249)
-      body: JSON.stringify({ text, ...extra }),
-    })
-  )
+async function readEvents(res, onEvent, isLast) {
   if (!res.body) return false
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -120,39 +108,8 @@ export async function streamChat(conversationId, text, handlers, extra = {}) {
     } catch {
       return
     }
-    switch (name) {
-      case 'queued':
-        handlers.onQueued?.(payload.ahead || 0)
-        break
-      case 'delta':
-        handlers.onDelta?.(payload.text || '')
-        break
-      case 'reset':
-        // The reply restarted (a retry): replace what was shown so far.
-        handlers.onReset?.(payload.text || '')
-        break
-      case 'tool':
-        handlers.onTool?.(payload.tool || '', payload.status || '')
-        break
-      case 'reply':
-        if (payload.message) handlers.onReply?.(payload.message)
-        break
-      case 'dropped':
-        handlers.onDropped?.()
-        break
-      case 'done':
-        finished = true
-        handlers.onDone?.(payload)
-        break
-      case 'paused':
-        finished = true
-        handlers.onPaused?.(payload.text || '')
-        break
-      case 'error':
-        finished = true
-        handlers.onError?.(payload.message || '')
-        break
-    }
+    if (isLast(name)) finished = true
+    onEvent(name, payload)
   }
 
   try {
@@ -175,4 +132,107 @@ export async function streamChat(conversationId, text, handlers, extra = {}) {
   }
   if (!finished && buffer.trim()) dispatch(buffer)
   return finished
+}
+
+/** One turn's events, to the matching handler. */
+function turnEvent(handlers, name, payload) {
+  switch (name) {
+    case 'start':
+      // A message that waited has started (only when following).
+      if (payload.item) handlers.onStart?.(payload.item)
+      break
+    case 'user':
+      // The owner's message, as stored.
+      if (payload.message) handlers.onUser?.(payload.message)
+      break
+    case 'queued':
+      handlers.onQueued?.(payload.ahead || 0)
+      break
+    case 'delta':
+      handlers.onDelta?.(payload.text || '')
+      break
+    case 'reset':
+      // The reply restarted (a retry): replace what was shown so far.
+      handlers.onReset?.(payload.text || '')
+      break
+    case 'tool':
+      handlers.onTool?.(payload.tool || '', payload.status || '')
+      break
+    case 'reply':
+      if (payload.message) handlers.onReply?.(payload.message)
+      break
+    case 'dropped':
+      // The command removed the owner's message (it held a key).
+      handlers.onDropped?.()
+      break
+    case 'done':
+      handlers.onDone?.(payload)
+      break
+    case 'paused':
+      // The AI limit was reached: the box says when it resumes.
+      handlers.onPaused?.(payload.text || '')
+      break
+    case 'error':
+      handlers.onError?.(payload.message || '')
+      break
+    case 'idle':
+      handlers.onIdle?.()
+      break
+  }
+}
+
+/**
+ * Send a chat message and read the reply as server-sent events. EventSource
+ * cannot POST, so this parses the stream from fetch. handlers: onUser,
+ * onQueued, onDelta, onReset, onTool, onReply, onDropped, onDone, onPaused,
+ * onError, and onItem. A slash command answers with reply events (one stored
+ * message each), and dropped when it removed the owner's message (a pasted key).
+ *
+ * A message sent while a reply is in progress is not answered here: the box
+ * keeps it in the conversation's queue and says so with JSON, which goes to
+ * onItem(item) (card #250). extra.clientId names the message, so sending it
+ * again finds the same one instead of a second copy.
+ *
+ * Resolves to true when a terminal event (or the queued answer) arrived,
+ * false when the stream was cut off.
+ */
+export async function streamChat(conversationId, text, handlers, extra = {}) {
+  const res = await check(
+    await fetch('/api/web/conversations/' + encodeURIComponent(conversationId) + '/chat', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      // extra: { attachments: [upload paths], pastes: [text] } (card #249), clientId (card #250)
+      body: JSON.stringify({ text, ...extra }),
+    })
+  )
+  if ((res.headers.get('content-type') || '').includes('application/json')) {
+    const body = await readBody(res)
+    if (body && body.item) handlers.onItem?.(body.item)
+    return true
+  }
+  return readEvents(res, (name, payload) => turnEvent(handlers, name, payload), (name) => name === 'done' || name === 'paused' || name === 'error')
+}
+
+/**
+ * Follow a conversation: the reply in progress (what it has said so far, then
+ * live), then each waiting message as it starts (onStart), until nothing is
+ * left (onIdle). Resolves to true when it reached the end, false when the
+ * connection dropped or `signal` aborted it.
+ */
+export async function follow(conversationId, handlers, signal) {
+  let res
+  try {
+    res = await check(
+      await fetch('/api/web/conversations/' + encodeURIComponent(conversationId) + '/stream', {
+        credentials: 'same-origin',
+        headers: { Accept: 'text/event-stream' },
+        signal,
+      })
+    )
+  } catch (err) {
+    if (err instanceof ApiError) throw err
+    return false
+  }
+  return readEvents(res, (name, payload) => turnEvent(handlers, name, payload), (name) => name === 'idle')
 }

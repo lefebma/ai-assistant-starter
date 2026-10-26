@@ -5,6 +5,7 @@
 Small improvements to the web app.
 
 - **New: an update icon next to Settings.** When a new version is waiting, a download icon shows beside the Settings link in the web app, in the accent colour. Click it to open Settings at the update, which says which version is ready and how to install it. The icon stays after you dismiss the banner and goes away once the update is installed.
+- **New: send while the assistant is still answering.** The message box stays usable while a reply is being written. What you send waits its turn, marked Queued, and runs as soon as the reply before it is done, in the order you sent it. You can edit or remove a waiting message until it starts. Stop ends only the reply in progress, so the next message still runs. A reload keeps the queue, and nothing is ever sent twice.
 
 ## 1.52.2 - 2026-10-25
 

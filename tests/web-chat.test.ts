@@ -118,7 +118,9 @@ describe('web chat', () => {
     useRuntime().partials = ['hel', 'hello']
     const id = await newConv()
     const evs = await chat(id, 'hi')
-    expect(evs[0]).toEqual({ name: 'queued', data: { ahead: 0 } })
+    expect(evs[0]!.name).toBe('user')
+    expect(evs[0]!.data.message).toMatchObject({ role: 'user', content: 'hi' })
+    expect(evs.find((e) => e.name === 'queued')).toEqual({ name: 'queued', data: { ahead: 0 } })
     expect(evs.filter((e) => e.name === 'delta').map((e) => e.data.text).join('')).toBe('hello')
     const done = evs.at(-1)!
     expect(done.name).toBe('done')
@@ -169,18 +171,20 @@ describe('web chat', () => {
     expect(conv.listMessages(id).map((m) => m.role)).toEqual(['user'])
   })
 
-  it('returns 409 for a second chat while one runs', async () => {
+  it('queues a second message while one runs, then runs it (card #250)', async () => {
     let release!: () => void
     useRuntime().gate = new Promise<void>((r) => (release = r))
     const id = await newConv()
     const p = post(`/api/web/conversations/${id}/chat`, { text: 'first' })
     await vi.waitFor(() => expect(rt.calls).toHaveLength(1))
     const second = await post(`/api/web/conversations/${id}/chat`, { text: 'second' })
-    expect(second.status).toBe(409)
-    expect(await second.json()).toEqual({ error: 'busy' })
+    expect(second.status).toBe(202)
+    expect(((await second.json()) as any).item).toMatchObject({ text: 'second', state: 'queued' })
     release()
     await (await p).text()
-    expect((await post(`/api/web/conversations/${id}/chat`, { text: 'third' })).status).toBe(200)
+    await vi.waitFor(() => expect(rt.calls).toHaveLength(2))
+    await bot.turnsIdle()
+    expect(conv.listMessages(id).map((m) => m.content)).toEqual(['first', 'hello there', 'second', 'hello there'])
   })
 
   it('does not hand over a file the file panel hides', async () => {

@@ -43,6 +43,24 @@ many. You can also sign out from **Settings** in the page.
   in Settings. It stays until the update is installed, even if you dismiss
   the banner.
 
+### Sending while it is still answering
+
+You can keep typing while the assistant is still writing a reply. Press Send
+and your message waits its turn: it shows in the chat marked Queued, and runs
+as soon as the reply before it is done. Send several and they run in the
+order you sent them.
+
+- **Edit or Remove** sit under each waiting message. Once it has started it
+  can no longer be changed.
+- **Stop** ends the reply in progress only. The waiting messages stay and the
+  next one starts.
+- **Commands and buttons** wait their turn like any message, except `/cancel`
+  and `/steer`, which act on the reply in progress straight away.
+- **Reloading the page** loses nothing. The waiting messages are kept on the
+  box, the page picks up the reply where it is, and a message is never sent
+  twice. If you hit the AI limit, the waiting messages hold until you open
+  the chat again or send something.
+
 ### Model and effort
 
 Each conversation has two pickers at the top.
