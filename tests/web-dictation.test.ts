@@ -5,7 +5,7 @@
  * flag that tells the page which path to use.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, extname } from 'node:path'
 
@@ -26,12 +26,15 @@ const engine = {
   seen: [] as Array<{ path: string; ext: string; bytes: string; existed: boolean }>,
   fail: false,
   text: '  hello from the microphone  ',
+  /** When set, transcription waits on it. */
+  gate: null as Promise<void> | null,
 }
 
 const stub: import('../src/web/dictation.js').DictationDeps = {
   canTranscribe: () => engine.can,
   async transcribe(path) {
     engine.seen.push({ path, ext: extname(path), bytes: readFileSync(path, 'utf-8'), existed: existsSync(path) })
+    if (engine.gate) await engine.gate
     if (engine.fail) throw new Error('OpenAI Whisper returned 500')
     return engine.text
   },
@@ -72,6 +75,8 @@ afterEach(() => {
   engine.can = true
   engine.fail = false
   engine.seen = []
+  engine.gate = null
+  stub.timeoutMs = undefined
 })
 
 const base = () => `http://127.0.0.1:${port}`
@@ -197,6 +202,43 @@ describe('POST /api/web/dictation', () => {
   it('caps a recording at a few megabytes and the page at two minutes', () => {
     expect(dictation.MAX_DICTATION_BYTES).toBe(6 * 1024 * 1024)
     expect(dictation.MAX_DICTATION_SECONDS).toBe(120)
+  })
+})
+
+describe('dictation limits (final review m1)', () => {
+  it('takes one recording at a time per chat', async () => {
+    let go!: () => void
+    engine.gate = new Promise<void>((r) => (go = r))
+    const first = send('first')
+    await vi.waitFor(() => expect(engine.seen).toHaveLength(1))
+    const second = await send('second')
+    expect(second.status).toBe(429)
+    expect(await second.json()).toEqual({ error: 'dictation_busy' })
+    go()
+    expect((await first).status).toBe(200)
+    expect((await send('third')).status).toBe(200)
+  })
+
+  it('gives up on a transcription that hangs, and deletes the recording', async () => {
+    stub.timeoutMs = 50
+    engine.gate = new Promise<void>(() => {})
+    const r = await send('hangs')
+    expect(r.status).toBe(504)
+    expect(await r.json()).toEqual({ error: 'transcription_timeout' })
+    expect(leftovers()).toEqual([])
+    engine.gate = null
+    expect((await send('after')).status).toBe(200)
+  })
+
+  it('deletes recordings a restart left behind', async () => {
+    const old = join(TMP, 'dictation-leftover.webm')
+    const fresh = join(TMP, 'dictation-fresh.webm')
+    writeFileSync(old, 'x')
+    writeFileSync(fresh, 'x')
+    const hourAgo = new Date(Date.now() - 3_600_000)
+    utimesSync(old, hourAgo, hourAgo)
+    expect((await send('audio')).status).toBe(200)
+    expect(leftovers()).toEqual(['dictation-fresh.webm'])
   })
 })
 

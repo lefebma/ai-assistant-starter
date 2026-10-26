@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 // @ts-expect-error plain ES module shipped to the browser, no type declarations
-import { voiceCallSupport, callProblem, createVoiceCall, START_TIMEOUT_MS } from '../public/app/voicecall.js'
+import { voiceCallSupport, callProblem, createVoiceCall, START_TIMEOUT_MS, STATUS_POLL_MS, MAX_CALL_MS, SILENCE_MS } from '../public/app/voicecall.js'
 // @ts-expect-error plain ES module shipped to the browser, no type declarations
 import * as api from '../public/app/api.js'
 
@@ -54,7 +54,7 @@ class FakePeer {
   close() { this.closed = true }
 }
 
-function rig(opts: { deny?: string; startFails?: unknown } = {}) {
+function rig(opts: { deny?: string; startFails?: unknown; status?: () => Promise<unknown>; startGate?: Promise<void> } = {}) {
   const track = new FakeTrack()
   const ended: Array<{ why: string; result: unknown }> = []
   const captions: string[] = []
@@ -71,6 +71,7 @@ function rig(opts: { deny?: string; startFails?: unknown } = {}) {
       audio,
       async startSession(sdp: string) {
         box.started.push(sdp)
+        if (opts.startGate) await opts.startGate
         if (opts.startFails) throw opts.startFails
         return { sessionId: 'sess_1', sdp: 'v=0 answer' }
       },
@@ -78,6 +79,7 @@ function rig(opts: { deny?: string; startFails?: unknown } = {}) {
         box.ends.push({ id, opts: o })
         return { ended: true, finished: true, added: 2 }
       },
+      ...(opts.status ? { callStatus: opts.status } : {}),
     },
     {
       live: vi.fn(),
@@ -109,6 +111,7 @@ describe('callProblem', () => {
     expect(callProblem({ status: 503, code: 'not_configured' })).toMatch(/not set up/)
     expect(callProblem({ status: 429 })).toMatch(/already open on this assistant/)
     expect(callProblem({ status: 409, code: 'call_active' })).toMatch(/already open in this chat/)
+    expect(callProblem({ status: 409, code: 'call_ended' })).toMatch(/stopped before it connected/)
     expect(callProblem({ status: 502 })).toMatch(/voice service/)
     expect(callProblem({ name: 'TypeError' })).toMatch(/connection/)
     expect(callProblem(new Error('x'))).toBe('The voice call did not work. Try again.')
@@ -217,6 +220,87 @@ describe('createVoiceCall', () => {
 })
 
 describe('api', () => {
+  it('hangs up when the box says the call is over there (final review I2)', async () => {
+    vi.useFakeTimers()
+    let finished = false
+    const r = rig({ status: async () => ({ finished, added: 0 }) })
+    await r.call.start()
+    const peer = FakePeer.last!
+    peer.channel.event({ type: 'session.started' })
+    await vi.advanceTimersByTimeAsync(STATUS_POLL_MS)
+    expect(r.ended).toEqual([])
+    finished = true
+    await vi.advanceTimersByTimeAsync(STATUS_POLL_MS)
+    expect(r.ended.map((e) => e.why)).toEqual(['closed'])
+    expect(peer.closed).toBe(true)
+    expect(r.track.stopped).toBe(true)
+  })
+
+  it('hangs up when the box no longer knows the call, or this page was signed out', async () => {
+    vi.useFakeTimers()
+    for (const status of [404, 401]) {
+      const r = rig({ status: async () => { throw Object.assign(new Error('x'), { status }) } })
+      await r.call.start()
+      FakePeer.last!.channel.event({ type: 'session.started' })
+      await vi.advanceTimersByTimeAsync(STATUS_POLL_MS)
+      expect(r.ended.map((e) => e.why)).toEqual(['lost'])
+    }
+  })
+
+  it('keeps going when the box is just unreachable for a moment', async () => {
+    vi.useFakeTimers()
+    const r = rig({ status: async () => { throw new TypeError('Failed to fetch') } })
+    await r.call.start()
+    FakePeer.last!.channel.event({ type: 'session.started' })
+    await vi.advanceTimersByTimeAsync(STATUS_POLL_MS * 2)
+    expect(r.ended).toEqual([])
+    await r.call.stop()
+  })
+
+  it('hangs up on its own after the longest call, even if it never hears from the box', async () => {
+    vi.useFakeTimers()
+    const r = rig({ status: async () => ({ finished: false }) })
+    await r.call.start()
+    const ch = FakePeer.last!.channel
+    ch.event({ type: 'session.started' })
+    // Talking the whole time, so only the length limit applies.
+    for (let t = 0; t < MAX_CALL_MS - 60000; t += 60000) {
+      ch.event({ type: 'session.input_transcript.delta', delta: 'still here' })
+      await vi.advanceTimersByTimeAsync(60000)
+    }
+    expect(r.ended).toEqual([])
+    ch.event({ type: 'session.input_transcript.delta', delta: 'still here' })
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(r.ended.map((e) => e.why)).toEqual(['closed'])
+  })
+
+  it('hangs up after a long silence with nothing being looked up', async () => {
+    vi.useFakeTimers()
+    const r = rig()
+    await r.call.start()
+    const ch = FakePeer.last!.channel
+    ch.event({ type: 'session.started' })
+    ch.event({ type: 'session.delegation.created' })
+    await vi.advanceTimersByTimeAsync(SILENCE_MS + STATUS_POLL_MS)
+    expect(r.ended).toEqual([]) // a lookup is running
+    ch.event({ type: 'session.commentary.appended' })
+    await vi.advanceTimersByTimeAsync(SILENCE_MS - STATUS_POLL_MS)
+    expect(r.ended).toEqual([])
+    await vi.advanceTimersByTimeAsync(2 * STATUS_POLL_MS)
+    expect(r.ended.map((e) => e.why)).toEqual(['closed'])
+  })
+
+  it('leaving the page while the box creates the session still ends it (final review m2)', async () => {
+    let go!: () => void
+    const r = rig({ startGate: new Promise<void>((res) => (go = res)) })
+    const starting = r.call.start()
+    await vi.waitFor(() => expect(r.box.started).toHaveLength(1))
+    r.call.leave()
+    go()
+    await starting
+    expect(r.box.ends).toEqual([{ id: 'sess_1', opts: { keepalive: true } }])
+  })
+
   it('starts with the offer and ends with wait or keepalive, as JSON', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ sessionId: 's', sdp: 'a' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
@@ -232,6 +316,10 @@ describe('api', () => {
     expect(JSON.parse(String(i2.body))).toEqual({ sessionId: 's', wait: true })
     expect(await api.endVoiceCall('s', { keepalive: true })).toBeNull()
     expect((fetchMock.mock.calls[2] as unknown as [string, RequestInit])[1].keepalive).toBe(true)
+
+    await api.voiceCallStatus('s 1')
+    expect((fetchMock.mock.calls[3] as unknown as [string])[0]).toBe('/api/web/voice/calls/s%201')
+    expect(js).toContain('callStatus: (id) => api.voiceCallStatus(id)')
   })
 })
 

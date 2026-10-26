@@ -114,8 +114,23 @@ export function revokeOtherWebSessions(chatId: string, keepIdHash: string): numb
   return getDb().prepare('DELETE FROM web_sessions WHERE chat_id = ? AND id_hash != ?').run(chatId, keepIdHash).changes
 }
 
+const revokeListeners = new Set<(chatId: string) => void>()
+
+/** Run something when every web session of a chat is revoked (a voice call its pages opened ends). */
+export function onAllWebSessionsRevoked(fn: (chatId: string) => void): void {
+  revokeListeners.add(fn)
+}
+
 export function revokeAllWebSessions(chatId: string): number {
-  return getDb().prepare('DELETE FROM web_sessions WHERE chat_id = ?').run(chatId).changes
+  const n = getDb().prepare('DELETE FROM web_sessions WHERE chat_id = ?').run(chatId).changes
+  for (const fn of revokeListeners) {
+    try {
+      fn(chatId)
+    } catch {
+      // signing out must not fail because of a listener
+    }
+  }
+  return n
 }
 
 export function webSessionCookie(sessionId: string, secure: boolean, maxAgeMs: number): string {

@@ -27,7 +27,14 @@ export interface DictationDeps {
   transcribe(path: string): Promise<string>
   /** Where a recording waits while it is transcribed. Deleted straight after. */
   tmpDir: string
+  /** Give up on a transcription after this long. */
+  timeoutMs?: number
 }
+
+/** A transcription that takes longer than this is given up on, and its recording deleted. */
+export const DICTATION_TIMEOUT_MS = 60_000
+/** A recording left behind this long (the box stopped mid-transcription) is deleted. */
+export const DICTATION_LEFTOVER_MS = 10 * 60_000
 
 const realDeps: DictationDeps = {
   canTranscribe: () => voiceCapabilities().stt,

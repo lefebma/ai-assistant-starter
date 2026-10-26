@@ -7,7 +7,7 @@
 import { registerWebRoutes, type WebContext } from './http.js'
 import { sendJson, sendError, readJsonCapped, BodyError } from './respond.js'
 import { getConversation } from './conversations.js'
-import { startWebCall, endWebCall, VoiceChatError } from './voice-chat.js'
+import { startWebCall, endWebCall, webCallStatus, VoiceChatError } from './voice-chat.js'
 import { LiveSessionError } from '../voice-live.js'
 import { logger } from '../logger.js'
 
@@ -55,6 +55,19 @@ registerWebRoutes([
       const r = sessionId ? await endWebCall(ctx.chatId, sessionId, b.wait === true ? END_WAIT_MS : 0) : null
       if (!r) return sendError(ctx.res, 404, 'not_found')
       sendJson(ctx.res, 200, { ended: true, finished: r.finished, added: r.added })
+    },
+  },
+  {
+    // Is this call still open? The page asks every few seconds, because the
+    // box can end a call (idle, too long, /cancel, a lost connection to the
+    // voice service) without the page hearing about it.
+    method: 'GET',
+    pattern: /^\/api\/web\/voice\/calls\/([^/]+)$/,
+    auth: true,
+    handler(ctx) {
+      const r = webCallStatus(ctx.chatId, ctx.params[0]!)
+      if (!r) return sendError(ctx.res, 404, 'not_found')
+      sendJson(ctx.res, 200, r)
     },
   },
 ])

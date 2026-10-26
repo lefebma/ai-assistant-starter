@@ -108,6 +108,11 @@ export async function endVoiceCall(sessionId, { wait = false, keepalive = false 
   return readBody(res)
 }
 
+/** Whether a voice call is still open on the box: { finished, added }. */
+export async function voiceCallStatus(sessionId) {
+  return get('/api/web/voice/calls/' + encodeURIComponent(sessionId))
+}
+
 /** Exchange a one-time link token for a session cookie. Never triggers the signed-out handler. */
 export async function exchange(token) {
   const res = await fetch('/api/web/session', {

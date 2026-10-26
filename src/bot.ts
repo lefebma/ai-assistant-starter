@@ -85,6 +85,7 @@ import type { SupportDraft } from './support/index.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
 import { createWebCommandAdapter, WEB_USER_MESSAGE_ID, type WebCommandHooks } from './web/command-adapter.js'
 import { dropQueuedForChat } from './web/queue.js'
+import { cancelVoiceForChat } from './web/voice-chat.js'
 import { MEDIA_MESSAGE_TYPES } from './platform/types.js'
 
 // Non-abort text patterns (OpenClaw v2026.5.18 -- /btw non-abort behavior).
@@ -1822,13 +1823,26 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
   // the scheduled runs and pending retries that deliver here (card #232).
   // Everything in the chat stops, so the messages waiting in its web
   // conversations are dropped too (card #250; the web Stop button keeps them).
+  // A voice call of this chat ends too, with the lookups it handed off.
   if (cmd === '/cancel') {
     const own = turnQueue.cancel(chatId)
-    const webWaiting = dropQueuedForChat(chatId)
+    // A store error here must not stop the rest of the kill switch.
+    let webWaiting = 0
+    try {
+      webWaiting = dropQueuedForChat(chatId)
+    } catch (err) {
+      logger.error({ err, chatId }, '/cancel could not drop the web queue')
+    }
     const web = cancelWebTurnsForChat(chatId)
     const turns = { stoppedActive: own.stoppedActive || web.stoppedActive, droppedQueued: own.droppedQueued + web.droppedQueued + webWaiting }
     const scheduled = cancelScheduledForChat(chatId)
-    await adapter.sendMessage(chatId, describeCancel(turns, scheduled))
+    let voice = { calls: 0, runs: 0 }
+    try {
+      voice = cancelVoiceForChat(chatId)
+    } catch (err) {
+      logger.error({ err, chatId }, '/cancel could not end the voice call')
+    }
+    await adapter.sendMessage(chatId, describeCancel(turns, scheduled, voice))
     return true
   }
 

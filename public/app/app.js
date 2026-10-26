@@ -1340,6 +1340,7 @@ async function startCall() {
       audio: $('call-audio'),
       startSession: (sdp) => api.startVoiceCall(convId, sdp),
       endSession: (id, opts) => api.endVoiceCall(id, opts),
+      callStatus: (id) => api.voiceCallStatus(id),
     },
     {
       live: () => {

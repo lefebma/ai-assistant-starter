@@ -9,6 +9,12 @@
 
 /** How long a started session may take to say it is live. */
 export const START_TIMEOUT_MS = 20000
+/** How often a live call asks the box whether it is still open there. */
+export const STATUS_POLL_MS = 10000
+/** The longest call this page keeps up, whatever the box says (the box stops at 45 minutes too). */
+export const MAX_CALL_MS = 45 * 60000
+/** No one has said anything and nothing is being looked up: the page hangs up (the box does at 5 minutes). */
+export const SILENCE_MS = 6 * 60000
 
 /** '' when this browser can make a call, else why not: 'insecure' or 'unsupported'. */
 export function voiceCallSupport(win = globalThis) {
@@ -32,6 +38,7 @@ export function callProblem(err) {
   const status = (err && err.status) || 0
   if (status === 503) return 'Voice chat is not set up on this assistant.'
   if (status === 429) return 'Two voice calls are already open on this assistant. End one first.'
+  if (code === 'call_ended') return 'The call was stopped before it connected.'
   if (status === 409 || code === 'call_active') return 'A voice call is already open in this chat, maybe in another tab. End it there first.'
   if (status === 502) return 'Could not reach the voice service. Try again in a moment.'
   if (status === 404) return 'That chat is gone. Pick another one and try again.'
@@ -42,7 +49,10 @@ export function callProblem(err) {
 
 /**
  * One call. `deps`: { getUserMedia, RTCPeerConnection, MediaStream, audio,
- * startSession(sdp) -> { sessionId, sdp }, endSession(sessionId, { wait, keepalive }) }.
+ * startSession(sdp) -> { sessionId, sdp }, endSession(sessionId, { wait, keepalive }),
+ * callStatus(sessionId) -> { finished } }. callStatus is optional; with it, a
+ * live call notices when the box ended it (idle, too long, /cancel, or the
+ * box lost its own line to the voice service) and hangs up its side too.
  * `hooks`: { live(), caption(who, delta, startMs, endMs), working(count),
  * ended(why, result) } where why is 'stopped', 'closed' or 'lost', and result
  * is what the box said when it ended (null if it could not be reached).
@@ -55,8 +65,39 @@ export function createVoiceCall(deps, hooks = {}) {
   let events = null
   let over = false
   let stopWanted = false
+  let watch = null
+  let liveAt = 0
+  let heardAt = 0
+  let asking = false
+
+  // The browser holds the call itself, so it must always be able to hang up:
+  // on its own clock, and when the box says the call is over there.
+  function tick(now = Date.now()) {
+    if (call.phase !== 'live') return
+    if (now - liveAt >= MAX_CALL_MS) return finish('closed')
+    if (call.pending === 0 && now - heardAt >= SILENCE_MS) return finish('closed')
+    if (!deps.callStatus || asking) return
+    asking = true
+    Promise.resolve()
+      .then(() => deps.callStatus(call.sessionId))
+      .then(
+        (r) => {
+          if (r && r.finished) finish('closed')
+        },
+        (err) => {
+          // The box no longer knows the call (it restarted) or this page was signed out.
+          const status = (err && err.status) || 0
+          if (status === 404 || status === 401) finish('lost')
+        }
+      )
+      .finally(() => {
+        asking = false
+      })
+  }
 
   function release() {
+    if (watch) clearInterval(watch)
+    watch = null
     if (events) {
       events.onclose = null
       events.onmessage = null
@@ -93,19 +134,26 @@ export function createVoiceCall(deps, hooks = {}) {
       case 'session.started':
         if (call.phase !== 'connecting') break
         call.phase = 'live'
+        liveAt = heardAt = Date.now()
+        watch = setInterval(tick, STATUS_POLL_MS)
+        if (watch && watch.unref) watch.unref()
         if (hooks.live) hooks.live()
         break
       case 'session.input_transcript.delta':
+        heardAt = Date.now()
         if (hooks.caption) hooks.caption('user', String(ev.delta || ''), ev.start_ms || 0, ev.end_ms || 0)
         break
       case 'session.output_transcript.delta':
+        heardAt = Date.now()
         if (hooks.caption) hooks.caption('assistant', String(ev.delta || ''), ev.start_ms || 0, ev.end_ms || 0)
         break
       case 'session.delegation.created':
+        heardAt = Date.now()
         call.pending++
         if (hooks.working) hooks.working(call.pending)
         break
       case 'session.commentary.appended':
+        heardAt = Date.now()
         call.pending = Math.max(0, call.pending - 1)
         if (hooks.working) hooks.working(call.pending)
         break
@@ -167,6 +215,13 @@ export function createVoiceCall(deps, hooks = {}) {
         }
         if (stopWanted) throw Object.assign(new Error('stopped'), { name: 'AbortError', stopped: true })
         const r = await deps.startSession(peer.localDescription.sdp)
+        // The page went away while the box was creating it: end it, or it bills until the idle limit.
+        if (over) {
+          try {
+            deps.endSession(r.sessionId, { keepalive: true })
+          } catch {}
+          return
+        }
         call.sessionId = r.sessionId
         // End pressed while the box was creating it: it bills from now, so end it now.
         if (stopWanted) {

@@ -46,6 +46,12 @@ const live = {
   started: [] as VoiceChatStart[],
   ended: [] as Array<{ sessionId: string; chatId: string }>,
   fail: null as Error | null,
+  /** When set, start waits on it, so two starts can overlap. */
+  gate: null as Promise<void> | null,
+  /** When set, start answers with a session id and no SDP. */
+  noSdp: false,
+  cancelled: [] as string[],
+  runs: 0,
   next: 1,
   /** What the call "said", filed when it is ended. */
   turns: [] as Turn[],
@@ -67,7 +73,9 @@ const stub: VoiceChatDeps = {
     if (live.fail) throw live.fail
     live.started.push(input)
     const id = `sess_live_${live.next++}`
+    if (live.gate) await live.gate
     open.set(id, input)
+    if (live.noSdp) return { session: { id } }
     return {
       session: { id, instructions: 'SECRET INSTRUCTIONS' } as { id: string },
       transport: { sdp: 'v=0 answer' },
@@ -78,6 +86,16 @@ const stub: VoiceChatDeps = {
     // OpenAI closes the session; the sideband sees session.closed a moment later.
     setTimeout(() => finishCall(sessionId), 20)
     return true
+  },
+  cancel(chatId) {
+    live.cancelled.push(chatId)
+    let calls = 0
+    for (const [id, s] of open) {
+      if (s.chatId !== chatId) continue
+      calls++
+      setTimeout(() => finishCall(id), 20)
+    }
+    return { calls, runs: live.runs }
   },
 }
 
@@ -124,6 +142,10 @@ afterEach(async () => {
   live.ended = []
   live.fail = null
   live.turns = []
+  live.gate = null
+  live.noSdp = false
+  live.cancelled = []
+  live.runs = 0
 })
 
 function sessionFor(chatId: string): string {
@@ -235,6 +257,85 @@ describe('POST /api/web/conversations/:id/voice', () => {
     const r = await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })
     expect(r.status).toBe(429)
     expect(await r.json()).toEqual({ error: 'too_many_sessions' })
+  })
+})
+
+describe('final review fixes (I1, I2, I3, m3, m8)', () => {
+  it('two starts at once in a conversation open one call; the other gets 409 (I1)', async () => {
+    const c = conv.createConversation('4242', '')
+    let go!: () => void
+    live.gate = new Promise<void>((r) => (go = r))
+    const a = post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })
+    const b = post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })
+    await vi.waitFor(() => expect(live.started.length).toBeGreaterThan(0))
+    await new Promise((r) => setTimeout(r, 50))
+    go()
+    const statuses = [(await a).status, (await b).status].sort()
+    expect(statuses).toEqual([201, 409])
+    expect(live.started).toHaveLength(1)
+  })
+
+  it('a start that fails gives the conversation back for the next try', async () => {
+    const { LiveSessionError } = await import('../src/voice-live.js')
+    const c = conv.createConversation('4242', '')
+    live.fail = new LiveSessionError(502, 'upstream_failed')
+    expect((await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })).status).toBe(502)
+    live.fail = null
+    expect((await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })).status).toBe(201)
+  })
+
+  it('a session that comes back with no answer is ended on the box (m3)', async () => {
+    const c = conv.createConversation('4242', '')
+    live.noSdp = true
+    const r = await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })
+    expect(r.status).toBe(502)
+    expect(live.ended).toEqual([{ sessionId: 'sess_live_' + (live.next - 1), chatId: '4242' }])
+  })
+
+  it('the page can ask whether its call is still open, and learns when the box ended it (I2)', async () => {
+    const c = conv.createConversation('4242', '')
+    const { sessionId } = (await (await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })).json()) as { sessionId: string }
+    const status = (ck = cookie) => fetch(`${base()}/api/web/voice/calls/${sessionId}`, { headers: ck ? { Cookie: ck } : {} })
+    expect(await (await status()).json()).toEqual({ finished: false, added: 0 })
+    expect((await status(otherCookie)).status).toBe(404)
+    expect((await status('')).status).toBe(401)
+    live.turns = [turn('user', 'Are you still there?', 0)]
+    finishCall(sessionId) // the box ended it: idle, too long, or its line to the voice service dropped
+    expect(await (await status()).json()).toEqual({ finished: true, added: 1 })
+    expect((await fetch(`${base()}/api/web/voice/calls/sess_nope`, { headers: { Cookie: cookie } })).status).toBe(404)
+  })
+
+  it('/cancel typed in the web chat ends the call and stops its lookups (I3)', async () => {
+    const c = conv.createConversation('4242', '')
+    const { sessionId } = (await (await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })).json()) as { sessionId: string }
+    live.runs = 1
+    const said = await (await post(`/api/web/conversations/${c.id}/chat`, { text: '/cancel' })).text()
+    expect(live.cancelled).toEqual(['4242'])
+    expect(said).toContain('Ended the voice call.')
+    expect(said).toContain('Stopped 1 lookup the call started.')
+    await vi.waitFor(() => expect(open.has(sessionId)).toBe(false))
+  })
+
+  it('/cancel during a start ends that call as soon as it exists', async () => {
+    const c = conv.createConversation('4242', '')
+    let go!: () => void
+    live.gate = new Promise<void>((r) => (go = r))
+    const starting = post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })
+    await vi.waitFor(() => expect(live.started).toHaveLength(1))
+    voice.cancelVoiceForChat('4242')
+    go()
+    const r = await starting
+    expect(r.status).toBe(409)
+    expect(await r.json()).toEqual({ error: 'call_ended' })
+    expect(live.ended).toHaveLength(1)
+  })
+
+  it('signing the chat out of the web app ends the calls its pages opened (m8)', async () => {
+    const c = conv.createConversation('4242', '')
+    const { sessionId } = (await (await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer' })).json()) as { sessionId: string }
+    sessions.revokeAllWebSessions('4242')
+    expect(live.ended).toEqual([{ sessionId, chatId: '4242' }])
+    cookie = sessionFor('4242')
   })
 })
 

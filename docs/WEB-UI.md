@@ -58,7 +58,9 @@ order you sent them.
   leaves the next message alone and the page catches up; press it again to
   stop that one.
 - **`/cancel`** stops everything in the chat: the reply in progress, every
-  waiting message in any of your chats, and scheduled runs.
+  waiting message in any of your chats, scheduled runs, and a voice call
+  that is on, along with anything the call asked the assistant to look up
+  or do.
 - **Commands and buttons** wait their turn like any message, except `/cancel`
   and `/steer`, which act straight away.
 - **`/secret`** always runs straight away, and so does the key a `/secret set`
@@ -85,7 +87,9 @@ before you send. Nothing is sent until you press Send yourself.
 - **Who turns speech into text.** If your box can transcribe voice notes
   (it has an OpenAI key, and is not on a managed AI key), the recording goes
   to the box, which sends it to OpenAI for the words and then deletes it. The
-  recording is never kept and never becomes part of the conversation.
+  recording is never kept and never becomes part of the conversation. One
+  recording is transcribed at a time, and one that takes more than a minute
+  is given up on.
   Otherwise your browser's own speech recognition does it, and the words
   show as you speak. That can send your voice to your browser's maker (Apple
   or Google, for example).
@@ -108,6 +112,12 @@ the web app's sign-in is enough.
 - **While a call is on** a red bar above the message box shows a running
   clock, Mute and End call. The waveform turns red too; tapping it again also
   ends the call. What you both say shows in the chat as you go.
+- **What the call sends to OpenAI.** Your voice goes to OpenAI, which runs
+  the call. So that the assistant can follow on from what you were typing,
+  starting a call also sends the chat's 12 latest messages (yours and the
+  assistant's, cut down to about a page of text) to OpenAI along with it. If
+  something in this chat should not go to OpenAI, start the call in a new
+  chat instead.
 - **When the call ends** what was said is added to the chat, each line marked
   Voice call, so the conversation reads in order. The next message you type
   in that chat is told what was said on the call. Longer answers (a list, a
@@ -115,9 +125,11 @@ the web app's sign-in is enough.
   The call is also saved under Calls on the live voice page.
 - **Cost.** Calls are billed by the second to the box's OpenAI account (about
   $0.05 a minute, plus the thinking). A call ends when you press End, open
-  another chat, delete the chat, close or reload the page, or after five
-  minutes in which nobody speaks. Each call is capped at 45 minutes, and at
-  most two can run on a box at once.
+  another chat, delete the chat, close or reload the page, type `/cancel`,
+  sign out, or after five minutes in which nobody speaks. Each call is capped
+  at 45 minutes, and at most two can run on a box at once. If the box loses
+  its own connection to the call, it ends the call and the page hangs up
+  too, and what was said up to then is kept in the chat.
 - **Typing still works** during a call, and messages wait their turn as
   usual. Dictation is off while a call has the microphone.
 - **No waveform button?** The box has no OpenAI key, or uses a managed AI

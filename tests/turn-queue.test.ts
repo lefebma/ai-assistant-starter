@@ -266,4 +266,11 @@ describe('turn-queue', () => {
     expect(describeCancel({ stoppedActive: true, droppedQueued: 2 }, { stopped: ['Briefing'], retriesCleared: ['Triage'], pausedOneShots: ['t1'] }))
       .toBe("Stopping the current reply. Dropped 2 queued messages. Stopping scheduled: Briefing. Cleared pending retry: Triage. One-shot task paused so it doesn't re-fire: t1 (/schedule resume or /schedule delete).")
   })
+
+  it('describeCancel counts a voice call it ended and the lookups it stopped', () => {
+    const none = { stopped: [], retriesCleared: [] }
+    expect(describeCancel({ stoppedActive: false, droppedQueued: 0 }, none, { calls: 1, runs: 0 })).toBe('Ended the voice call.')
+    expect(describeCancel({ stoppedActive: false, droppedQueued: 0 }, none, { calls: 2, runs: 1 })).toBe('Ended 2 voice calls. Stopped 1 lookup the call started.')
+    expect(describeCancel({ stoppedActive: false, droppedQueued: 0 }, none, { calls: 0, runs: 0 })).toBe('Nothing running.')
+  })
 })

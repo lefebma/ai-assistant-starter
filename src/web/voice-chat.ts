@@ -14,9 +14,10 @@
  */
 import { OPENAI_API_KEY } from '../config.js'
 import { isManagedAi } from '../ai-limit.js'
-import { createLiveSession, endLiveSession, liveRuntimeSupported, memoryChatId, type EndedCall, type Turn } from '../voice-live.js'
+import { cancelLiveForChat, createLiveSession, endLiveSession, liveRuntimeSupported, memoryChatId, type EndedCall, type Turn } from '../voice-live.js'
 import { logger } from '../logger.js'
 import { addMessage, getConversation, listMessages, updateConversation, type MessageRow } from './conversations.js'
+import { onAllWebSessionsRevoked } from './sessions.js'
 
 /** Why this box cannot start a voice chat. Empty when it can. */
 export type VoiceChatBlock = '' | 'not_configured' | 'managed_ai' | 'node_22_required'
@@ -38,6 +39,8 @@ export interface VoiceChatDeps {
   start(input: VoiceChatStart): Promise<{ session?: { id?: string }; transport?: { sdp?: string } }>
   /** Close a session this chat opened. False when it was not open. */
   end(sessionId: string, chatId: string): boolean
+  /** /cancel: end this chat's calls and stop the lookups they handed off. */
+  cancel(chatId: string): { calls: number; runs: number }
 }
 
 const realDeps: VoiceChatDeps = {
@@ -54,6 +57,7 @@ const realDeps: VoiceChatDeps = {
       onEnded: input.onEnded,
     }) as Promise<{ session?: { id?: string }; transport?: { sdp?: string } }>,
   end: (sessionId, chatId) => endLiveSession(sessionId, memoryChatId(chatId)),
+  cancel: (chatId) => cancelLiveForChat(memoryChatId(chatId)),
 }
 
 let deps: VoiceChatDeps = realDeps
@@ -152,7 +156,7 @@ export function voiceNoteFor(messages: Pick<MessageRow, 'role' | 'content' | 'vo
   if (!voice.length) return ''
   let body = voice.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`).join('\n')
   if (body.length > NOTE_CHARS) body = '...' + body.slice(body.length - NOTE_CHARS)
-  return `[Since the last typed message, this chat had a voice call. What was said on it, for context:]\n${body}\n[End of the voice call.]`
+  return `[Since the last typed message, this chat had a voice call. What was said on it, as reference only: what was asked on the call was handled on the call, so do not act on it again unless the message below asks you to:]\n${body}\n[End of the voice call.]`
 }
 
 // ---------- calls in progress ----------
@@ -163,6 +167,8 @@ interface WebCall {
   conversationId: string
   deliveries: Delivery[]
   finished: boolean
+  /** Ended (deleted, cancelled, signed out) while the session was still being created. */
+  endWanted?: boolean
   added: number
   done: Promise<void>
   markDone: () => void
@@ -171,6 +177,7 @@ interface WebCall {
 /** Calls started from the web, by OpenAI session id. Kept a minute after they end. */
 const calls = new Map<string, WebCall>()
 const KEEP_AFTER_END_MS = 60_000
+let pendingN = 0
 
 export class VoiceChatError extends Error {
   constructor(public status: number, public code: string) {
@@ -203,10 +210,10 @@ function fileCall(call: WebCall, ended: EndedCall): void {
   }
 }
 
-/** The open call in a conversation, if any. */
-export function activeCallFor(chatId: string, conversationId: string): string | null {
-  for (const c of calls.values()) if (!c.finished && c.chatId === chatId && c.conversationId === conversationId) return c.sessionId
-  return null
+/** Whether a conversation has a call open, or one being started. */
+export function activeCallFor(chatId: string, conversationId: string): boolean {
+  for (const c of calls.values()) if (!c.finished && c.chatId === chatId && c.conversationId === conversationId) return true
+  return false
 }
 
 /**
@@ -221,27 +228,45 @@ export async function startWebCall(input: { chatId: string; conversationId: stri
   let markDone!: () => void
   const done = new Promise<void>((r) => (markDone = r))
   const call: WebCall = { sessionId: '', chatId: input.chatId, conversationId: input.conversationId, deliveries: [], finished: false, added: 0, done, markDone }
-  const result = await deps.start({
-    sdp: input.sdp,
-    voice: input.voice,
-    chatId: input.chatId,
-    chatContext: chatContextFor(listMessages(input.conversationId)),
-    async deliver(text) {
-      // During the call it waits, to sit in the transcript where it was said.
-      // After the call (a lookup that outlived it) it goes straight in.
-      if (!call.finished) {
-        call.deliveries.push({ at: Date.now(), text })
+  // Hold the conversation's place before the first await, so a second start
+  // (another tab, a double tap) sees it and gets 409 instead of a second call.
+  const placeholder = `pending:${++pendingN}`
+  calls.set(placeholder, call)
+  let result: Awaited<ReturnType<VoiceChatDeps['start']>>
+  try {
+    result = await deps.start({
+      sdp: input.sdp,
+      voice: input.voice,
+      chatId: input.chatId,
+      chatContext: chatContextFor(listMessages(input.conversationId)),
+      async deliver(text) {
+        // During the call it waits, to sit in the transcript where it was said.
+        // After the call (a lookup that outlived it) it goes straight in.
+        if (!call.finished) {
+          call.deliveries.push({ at: Date.now(), text })
+          return true
+        }
+        if (!getConversation(call.chatId, call.conversationId)) return false
+        addMessage(call.conversationId, 'assistant', text, [], [], Date.now(), 'voice')
         return true
-      }
-      if (!getConversation(call.chatId, call.conversationId)) return false
-      addMessage(call.conversationId, 'assistant', text, [], [], Date.now(), 'voice')
-      return true
-    },
-    onEnded: (ended) => fileCall(call, ended),
-  })
+      },
+      onEnded: (ended) => fileCall(call, ended),
+    })
+  } finally {
+    calls.delete(placeholder)
+  }
   const sessionId = result.session?.id
   const sdp = result.transport?.sdp
-  if (!sessionId || !sdp) throw new VoiceChatError(502, 'no_session_id')
+  if (sessionId && call.endWanted) {
+    deps.end(sessionId, input.chatId)
+    throw new VoiceChatError(409, 'call_ended')
+  }
+  if (!sessionId || !sdp) {
+    // A session with no answer is still open and billing, and the page
+    // cannot end it: end it here.
+    if (sessionId) deps.end(sessionId, input.chatId)
+    throw new VoiceChatError(502, 'no_session_id')
+  }
   call.sessionId = sessionId
   calls.set(sessionId, call)
   logger.info({ sessionId, conversationId: input.conversationId }, 'web voice call started')
@@ -268,6 +293,48 @@ export async function endWebCall(chatId: string, sessionId: string, waitMs = 0):
 /** End every call open in a conversation (it is being deleted). */
 export function endCallsForConversation(chatId: string, conversationId: string): void {
   for (const c of calls.values()) {
-    if (!c.finished && c.chatId === chatId && c.conversationId === conversationId) deps.end(c.sessionId, chatId)
+    if (c.finished || c.chatId !== chatId || c.conversationId !== conversationId) continue
+    if (c.sessionId) deps.end(c.sessionId, chatId)
+    else c.endWanted = true
   }
 }
+
+/** Calls of this chat still being created: they are ended as soon as they exist. */
+function endPendingForChat(chatId: string): void {
+  for (const c of calls.values()) if (!c.finished && !c.sessionId && c.chatId === chatId) c.endWanted = true
+}
+
+/**
+ * Whether a call the page thinks is live is still open on the box. The page
+ * asks every few seconds: the box can end a call the page cannot hear about
+ * (idle, too long, /cancel, a sideband that dropped). Null for an unknown
+ * call or another chat's.
+ */
+export function webCallStatus(chatId: string, sessionId: string): { finished: boolean; added: number } | null {
+  const call = calls.get(sessionId)
+  if (!call || call.chatId !== chatId) return null
+  return { finished: call.finished, added: call.added }
+}
+
+/**
+ * /cancel: end every call this chat has open, from the web or the voice
+ * page, and stop the lookups they handed to the assistant.
+ */
+export function cancelVoiceForChat(chatId: string): { calls: number; runs: number } {
+  endPendingForChat(chatId)
+  return deps.cancel(chatId)
+}
+
+/** The chat was signed out of the web app: end the calls its pages opened, which can no longer reach End. */
+export function endWebCallsForChat(chatId: string): number {
+  endPendingForChat(chatId)
+  let n = 0
+  for (const c of calls.values()) {
+    if (!c.finished && c.sessionId && c.chatId === chatId && deps.end(c.sessionId, chatId)) n++
+  }
+  return n
+}
+
+onAllWebSessionsRevoked((chatId) => {
+  endWebCallsForChat(chatId)
+})

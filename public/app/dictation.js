@@ -82,6 +82,8 @@ export function micProblem(err) {
   if (name === 'network') return 'Your browser needs an internet connection to turn speech into text. Try again once you are online.'
   if (name === 'language-not-supported') return 'Your browser cannot take dictation in this language.'
   if (status === 413) return 'That recording is too long. Keep it under two minutes.'
+  if (status === 429) return 'Still working on your last recording. Try again in a moment.'
+  if (status === 504) return 'Turning that recording into text took too long. Try again, or type your message.'
   if (status === 503) return 'Your assistant cannot turn speech into text right now. Type your message instead.'
   if (err instanceof TypeError) return 'Cannot reach your assistant. Check your connection.'
   return 'Dictation did not work. Try again, or type your message.'
