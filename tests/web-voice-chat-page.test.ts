@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 // @ts-expect-error plain ES module shipped to the browser, no type declarations
-import { voiceCallSupport, callProblem, createVoiceCall, START_TIMEOUT_MS, STATUS_POLL_MS, MAX_CALL_MS, SILENCE_MS } from '../public/app/voicecall.js'
+import { voiceCallSupport, callProblem, createVoiceCall, START_TIMEOUT_MS, STATUS_POLL_MS, MAX_CALL_MS, SILENCE_MS, END_RETRY_MS, END_RETRY_FOR_MS } from '../public/app/voicecall.js'
 // @ts-expect-error plain ES module shipped to the browser, no type declarations
 import * as api from '../public/app/api.js'
 
@@ -54,9 +54,10 @@ class FakePeer {
   close() { this.closed = true }
 }
 
-function rig(opts: { deny?: string; startFails?: unknown; status?: () => Promise<unknown>; startGate?: Promise<void> } = {}) {
+function rig(opts: { deny?: string; startFails?: unknown; status?: () => Promise<unknown>; startGate?: Promise<void>; end?: () => Promise<unknown> } = {}) {
   const track = new FakeTrack()
   const ended: Array<{ why: string; result: unknown }> = []
+  const caught: unknown[] = []
   const captions: string[] = []
   const box = { started: [] as string[], ends: [] as Array<{ id: string; opts: unknown }> }
   const audio = { srcObject: null as unknown, play: vi.fn(async () => {}) }
@@ -77,6 +78,7 @@ function rig(opts: { deny?: string; startFails?: unknown; status?: () => Promise
       },
       async endSession(id: string, o: unknown) {
         box.ends.push({ id, opts: o })
+        if (opts.end) return opts.end()
         return { ended: true, finished: true, added: 2 }
       },
       ...(opts.status ? { callStatus: opts.status } : {}),
@@ -86,9 +88,10 @@ function rig(opts: { deny?: string; startFails?: unknown; status?: () => Promise
       caption: (who: string, d: string) => captions.push(`${who}:${d}`),
       working: vi.fn(),
       ended: (why: string, result: unknown) => ended.push({ why, result }),
+      caughtUp: (result: unknown) => caught.push(result),
     },
   )
-  return { call, track, ended, captions, box, audio }
+  return { call, track, ended, caught, captions, box, audio }
 }
 
 describe('voiceCallSupport', () => {
@@ -171,6 +174,76 @@ describe('createVoiceCall', () => {
     await vi.waitFor(() => expect(r.ended).toHaveLength(1))
     expect(r.ended[0]!.why).toBe('lost')
     expect(r.box.ends).toEqual([{ id: 'sess_1', opts: { wait: true } }])
+  })
+
+  it('a drop while this page is offline gets the transcript once the box is reachable again', async () => {
+    vi.useFakeTimers()
+    let online = false
+    const r = rig({
+      end: async () => {
+        if (!online) throw new TypeError('Failed to fetch')
+        return { ended: true, finished: true, added: 13 }
+      },
+    })
+    await r.call.start()
+    const peer = FakePeer.last!
+    peer.channel.event({ type: 'session.started' })
+    peer.connectionState = 'disconnected'
+    peer.onconnectionstatechange!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(r.ended).toEqual([{ why: 'lost', result: null }])
+    await vi.advanceTimersByTimeAsync(END_RETRY_MS * 3)
+    expect(r.caught).toEqual([])
+    online = true
+    await vi.advanceTimersByTimeAsync(END_RETRY_MS)
+    expect(r.caught).toEqual([{ ended: true, finished: true, added: 13 }])
+    const asked = r.box.ends.length
+    await vi.advanceTimersByTimeAsync(END_RETRY_MS * 5)
+    expect(r.box.ends).toHaveLength(asked)
+  })
+
+  it('keeps asking while the box is still filing the transcript, and gives up after a while', async () => {
+    vi.useFakeTimers()
+    const r = rig({ end: async () => ({ ended: true, finished: false, added: 0 }) })
+    await r.call.start()
+    FakePeer.last!.channel.event({ type: 'session.started' })
+    await r.call.stop()
+    expect(r.ended).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(END_RETRY_FOR_MS + END_RETRY_MS * 2)
+    expect(r.caught).toEqual([null])
+    const asked = r.box.ends.length
+    expect(asked).toBeGreaterThan(2)
+    await vi.advanceTimersByTimeAsync(END_RETRY_MS * 5)
+    expect(r.box.ends).toHaveLength(asked)
+  })
+
+  it('stops asking when the box no longer knows the call', async () => {
+    vi.useFakeTimers()
+    let n = 0
+    const r = rig({
+      end: async () => {
+        if (n++ === 0) throw new TypeError('Failed to fetch')
+        throw Object.assign(new Error('not_found'), { status: 404 })
+      },
+    })
+    await r.call.start()
+    FakePeer.last!.channel.event({ type: 'session.started' })
+    await r.call.stop()
+    await vi.advanceTimersByTimeAsync(END_RETRY_MS)
+    expect(r.caught).toEqual([null])
+    await vi.advanceTimersByTimeAsync(END_RETRY_MS * 5)
+    expect(r.box.ends).toHaveLength(2)
+  })
+
+  it('a call that ended cleanly is not asked about again', async () => {
+    vi.useFakeTimers()
+    const r = rig()
+    await r.call.start()
+    FakePeer.last!.channel.event({ type: 'session.started' })
+    await r.call.stop()
+    await vi.advanceTimersByTimeAsync(END_RETRY_MS * 5)
+    expect(r.box.ends).toHaveLength(1)
+    expect(r.caught).toEqual([])
   })
 
   it('leaving the page tells the box without waiting', async () => {

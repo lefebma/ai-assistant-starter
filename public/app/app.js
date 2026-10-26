@@ -528,6 +528,7 @@ function renderMessages() {
     box.append($('empty-template').content.cloneNode(true))
   }
   for (const m of state.messages) box.append(messageEl(m))
+  if (vc.leftover && isHere(vc.leftoverConv)) box.append(vc.leftover)
   if (vc.live && isHere(vc.convId)) box.append(vc.live)
   renderQueue()
   scrollDown(true)
@@ -1261,7 +1262,7 @@ $('mic').addEventListener('click', () => {
 // box adds what was said to this chat. Typing and the queue keep working
 // during a call; dictation is off (the call has the microphone).
 
-const vc = { block: '', call: null, convId: '', startedAt: 0, timer: 0, live: null, lines: null, cur: null }
+const vc = { block: '', call: null, convId: '', startedAt: 0, timer: 0, live: null, lines: null, cur: null, leftover: null, leftoverConv: '' }
 
 function setupVoiceCall() {
   // The box says whether it can (an OpenAI key, not a managed-AI box). If it
@@ -1357,6 +1358,7 @@ async function startCall() {
         if (vc.call === call) paintCall()
       },
       ended: (why, result) => callEnded(call, convId, why, result),
+      caughtUp: (result) => callCaughtUp(convId, result),
     }
   )
   vc.call = call
@@ -1384,11 +1386,35 @@ function clearCall() {
 
 function callEnded(call, convId, why, result) {
   if (vc.call !== call) return
-  clearCall()
   const filed = result && result.added > 0
-  if (why === 'lost') note($('composer-note'), filed ? 'The call dropped. What was said is in the chat.' : 'The call dropped.')
+  // Not filed yet (or this page is offline): keep the captions on screen
+  // until the call catches up with the box.
+  const waiting = !(result && result.finished)
+  if (waiting && vc.live) {
+    if (vc.leftover) vc.leftover.remove()
+    vc.leftover = vc.live
+    vc.leftoverConv = convId
+    vc.live = null
+  }
+  clearCall()
+  if (why === 'lost') note($('composer-note'), filed ? 'The call dropped. What was said is in the chat.' : 'The call dropped. What was said will show here once your assistant is reachable again.')
   else if (why === 'closed') note($('composer-note'), 'The call ended.')
-  else if (!result) note($('composer-note'), 'The call has ended, but this page could not get what was said. Reload to see it.')
+  if (waiting) return
+  reloadIf(convId)
+  refreshConversations()
+}
+
+/** The box filed the transcript after all (result), or this page gave up asking (null). */
+function callCaughtUp(convId, result) {
+  if (vc.leftover && result) {
+    vc.leftover.remove()
+    vc.leftover = null
+  }
+  if (result) {
+    if (result.added > 0 && isHere(convId)) note($('composer-note'), 'What was said in the call is in the chat.')
+  } else if (isHere(convId)) {
+    note($('composer-note'), 'Could not get what was said in the call. Reload to see it.')
+  }
   reloadIf(convId)
   refreshConversations()
 }

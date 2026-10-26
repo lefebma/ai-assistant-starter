@@ -16,6 +16,11 @@ export const MAX_CALL_MS = 45 * 60000
 /** No one has said anything and nothing is being looked up: the page hangs up (the box does at 5 minutes). */
 export const SILENCE_MS = 6 * 60000
 
+/** How often a call that ended without the transcript asks the box again. */
+export const END_RETRY_MS = 3000
+/** How long it keeps asking: long enough for a dropped wifi to come back. */
+export const END_RETRY_FOR_MS = 3 * 60000
+
 /** '' when this browser can make a call, else why not: 'insecure' or 'unsupported'. */
 export function voiceCallSupport(win = globalThis) {
   if (!win.isSecureContext) return 'insecure'
@@ -54,9 +59,11 @@ export function callProblem(err) {
  * live call notices when the box ended it (idle, too long, /cancel, or the
  * box lost its own line to the voice service) and hangs up its side too.
  * `hooks`: { live(), caption(who, delta, startMs, endMs), working(count),
- * ended(why, result) } where why is 'stopped', 'closed' or 'lost', and result
- * is what the box said when it ended (null if it could not be reached).
- * ended runs once.
+ * ended(why, result), caughtUp(result) } where why is 'stopped', 'closed' or
+ * 'lost', and result is what the box said when it ended (null if it could not
+ * be reached). ended runs once. When the box could not be reached, or had not
+ * filed the transcript yet, the call keeps asking and runs caughtUp once: with
+ * the box's answer when it has filed it, or null when it gave up.
  */
 export function createVoiceCall(deps, hooks = {}) {
   const call = { phase: '', sessionId: '', pending: 0, muted: false }
@@ -127,6 +134,40 @@ export function createVoiceCall(deps, hooks = {}) {
     call.phase = ''
     call.sessionId = ''
     if (hooks.ended) hooks.ended(why, result)
+    if (sessionId && !(result && result.finished)) catchUp(sessionId)
+  }
+
+  // The call ended while this page could not reach the box (a dropped
+  // connection usually takes this page's network with it), or before the box
+  // had filed the transcript. Asking again also ends the call there if it is
+  // somehow still open.
+  function catchUp(sessionId) {
+    const until = Date.now() + END_RETRY_FOR_MS
+    const again = () => {
+      const t = setTimeout(ask, END_RETRY_MS)
+      if (t && t.unref) t.unref()
+    }
+    const done = (result) => {
+      if (hooks.caughtUp) hooks.caughtUp(result)
+    }
+    const ask = () => {
+      Promise.resolve()
+        .then(() => deps.endSession(sessionId, { wait: true }))
+        .then(
+          (r) => {
+            if (r && r.finished) return done(r)
+            if (Date.now() >= until) return done(null)
+            again()
+          },
+          (err) => {
+            const status = (err && err.status) || 0
+            // The box forgot the call (it restarted) or this page was signed out.
+            if (status === 404 || status === 401 || Date.now() >= until) return done(null)
+            again()
+          }
+        )
+    }
+    again()
   }
 
   function onEvent(ev) {
