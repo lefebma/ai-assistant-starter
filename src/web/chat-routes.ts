@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs'
 import { PROJECT_ROOT } from '../config.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
-import { runWebTurn, cancelWebTurn, webSecretAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
+import { runWebTurn, cancelWebTurn, webSecretAwaited, webSupportAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
@@ -144,7 +144,8 @@ function panelVisible(abs: string): boolean {
  * Commands that act on the reply in progress run at once, even mid-turn, as
  * they do in Telegram. So does /secret (it may carry a key inline), and so
  * does the key a pending /secret set waits for: neither is ever written to
- * the queue. Every other message sent mid-turn waits its turn.
+ * the queue. The answer a pending /support waits for runs at once too (see
+ * the chat route). Every other message sent mid-turn waits its turn.
  */
 const RUNS_NOW = /^\/(cancel|steer|secret)(?:@\S+)?(?:\s|$)/i
 
@@ -529,7 +530,11 @@ registerWebRoutes([
       settleStale(id, running.has(id))
       const busy = running.has(id) || hasQueued(id)
       const secretKey = !text.startsWith('/') && webSecretAwaited(ctx.chatId)
-      if (busy && (RUNS_NOW.test(text) || secretKey)) {
+      // The answer a pending /support waits for also runs at once: a message
+      // that waited is never taken as that answer, so this one must not wait.
+      // A click is never that answer; it waits like any other message.
+      const supportAnswer = !attaching && buttonClickLabel(text) === null && webSupportAwaited(ctx.chatId, text)
+      if (busy && (RUNS_NOW.test(text) || secretKey || supportAnswer)) {
         let attached: Attached[] = []
         try {
           attached = commitAttachments(id, planned.plan)

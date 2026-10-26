@@ -391,6 +391,68 @@ describe('web chat queue', () => {
     await (await first).text()
   })
 
+  it('a waiting message that starts while /support waits for a description is not taken as the description', async () => {
+    useRuntime()
+    const x = await newConv()
+    const y = await newConv()
+    const a = gate()
+    const first = await startHeld(x, 'A', a.promise)
+    await enqueue(x, 'also check the invoice', 'cb')
+    // /support starts in another conversation after the message was queued.
+    const ask = parseSse(await (await post(`/api/web/conversations/${y}/chat`, { text: '/support' })).text())
+    expect(ask.filter((e) => e.name === 'reply').map((e) => e.data.message.content).join('')).toContain("What's going wrong?")
+    a.open()
+    await (await first).text()
+    // The waiting message ran as an ordinary message; no draft was made of it.
+    await untilIdle(x, 4)
+    expect(rt.calls).toEqual(['A', 'also check the invoice'])
+    expect(history(x)).toEqual([['user', 'A'], ['assistant', 're: A'], ['user', 'also check the invoice'], ['assistant', 're: also check the invoice']])
+    // The description typed next still goes to the flow.
+    const draft = parseSse(await (await post(`/api/web/conversations/${y}/chat`, { text: 'the briefing is late' })).text())
+    const card = draft.filter((e) => e.name === 'reply').at(-1)!.data.message
+    expect(card.content).toContain('the briefing is late')
+    expect(card.buttons).toEqual(['Send', 'Edit', 'Discard'])
+    await (await post(`/api/web/conversations/${y}/chat`, { text: '[button_click]: Discard' })).text()
+  })
+
+  it('a waiting "discard" does not resolve a support draft made after it was queued', async () => {
+    useRuntime()
+    const x = await newConv()
+    const y = await newConv()
+    const a = gate()
+    const first = await startHeld(x, 'A', a.promise)
+    await enqueue(x, 'discard', 'cd')
+    await (await post(`/api/web/conversations/${y}/chat`, { text: '/support the inbox sweep stopped' })).text()
+    a.open()
+    await (await first).text()
+    await untilIdle(x, 4)
+    expect(rt.calls).toEqual(['A', 'discard'])
+    // The draft is still there for its own buttons.
+    const done = parseSse(await (await post(`/api/web/conversations/${y}/chat`, { text: '[button_click]: Discard' })).text())
+    expect(done.filter((e) => e.name === 'reply').map((e) => e.data.message.content)).toEqual(['Support request discarded. Nothing was sent.'])
+  })
+
+  it('a description typed while /support waits is still taken, even mid-turn', async () => {
+    useRuntime()
+    const x = await newConv()
+    const y = await newConv()
+    const a = gate()
+    const first = await startHeld(x, 'A', a.promise)
+    await (await post(`/api/web/conversations/${y}/chat`, { text: '/support' })).text()
+    // Typed after the question, in the conversation that is busy.
+    const sent = await post(`/api/web/conversations/${x}/chat`, { text: 'the briefing never arrives', clientId: 'cd' })
+    await sent.text()
+    a.open()
+    await (await first).text()
+    await vi.waitFor(() => expect(JSON.stringify(conv.listMessages(x))).toContain('Send'))
+    await bot.turnsIdle()
+    expect(rt.calls).toEqual(['A'])
+    const card = conv.listMessages(x).find((m) => m.content.includes('the briefing never arrives') && m.role === 'assistant')!
+    expect(card.buttons).toEqual(['Send', 'Edit', 'Discard'])
+    expect(queue.listQueued(x)).toEqual([])
+    await (await post(`/api/web/conversations/${x}/chat`, { text: '[button_click]: Discard' })).text()
+  })
+
   it('editing a waiting message refuses /secret, /cancel and a pending key, and stores none of them', async () => {
     useRuntime()
     const id = await newConv()
@@ -436,6 +498,28 @@ describe('web chat queue', () => {
     await (await first).text()
     await untilIdle(id, 6)
     expect(rt.calls.at(-1)).toBe('[button_click]: Yes')
+  })
+
+  it('a click mid-turn waits its turn even while /support waits for a description', async () => {
+    const r = useRuntime()
+    r.buttons = '\n[[buttons: Yes | No]]'
+    const id = await newConv()
+    const y = await newConv()
+    await (await post(`/api/web/conversations/${id}/chat`, { text: 'ask' })).text()
+    r.buttons = ''
+    const a = gate()
+    const first = await startHeld(id, 'A', a.promise)
+    await (await post(`/api/web/conversations/${y}/chat`, { text: '/support' })).text()
+    const click = await enqueue(id, '[button_click]: Yes', 'k')
+    expect(click.item.state).toBe('queued')
+    a.open()
+    await (await first).text()
+    await untilIdle(id, 6)
+    expect(rt.calls).toEqual(['ask', 'A', '[button_click]: Yes'])
+    // The flow still waits for its description.
+    const draft = parseSse(await (await post(`/api/web/conversations/${y}/chat`, { text: 'the sweep stopped' })).text())
+    expect(draft.filter((e) => e.name === 'reply').at(-1)!.data.message.buttons).toEqual(['Send', 'Edit', 'Discard'])
+    await (await post(`/api/web/conversations/${y}/chat`, { text: '[button_click]: Discard' })).text()
   })
 
   it('deleting a conversation drops what waits in it', async () => {

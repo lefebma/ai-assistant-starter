@@ -794,6 +794,16 @@ export function webSecretAwaited(chatId: string): boolean {
   return secretFlow.isAwaiting(chatId)
 }
 
+/**
+ * True when the support flow is waiting for this text from this chat (see
+ * supportAnswer). The web chat runs it at once instead of queueing it: a
+ * message that waited is never taken as the answer, so the one typed now
+ * must not wait (card #250).
+ */
+export function webSupportAwaited(chatId: string, text: string): boolean {
+  return supportAnswer(chatId, text.trim())
+}
+
 export async function runWebCommand(input: WebCommandInput): Promise<WebCommandResult> {
   const { chatId } = input
   const trimmed = input.text.trim()
@@ -1432,6 +1442,15 @@ const SUPPORT_BUTTONS = ['Send', 'Edit', 'Discard']
 // Chats where a bare /support (or Edit) is waiting for the problem description.
 const awaitingSupportDescription = new Set<string>()
 
+/**
+ * True when the support flow owns this text: the description a bare /support
+ * (or Edit) waits for, or a typed Send/Edit/Discard on a pending draft.
+ */
+function supportAnswer(chatId: string, text: string): boolean {
+  return (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(text))
+    || (awaitingSupportDescription.has(chatId) && !text.startsWith('/'))
+}
+
 async function draftSupportRequest(
   adapter: PlatformAdapter,
   chatId: string,
@@ -1671,13 +1690,17 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
 
   // Support flow: a typed Send/Edit/Discard resolves a pending draft
   // (platforms without buttons), and the message after a bare /support
-  // (or Edit) is the problem description.
-  if (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(trimmed)) {
-    if (await resolveSupportAction(adapter, chatId, trimmed)) return true
-  }
-  if (awaitingSupportDescription.has(chatId) && !trimmed.startsWith('/')) {
-    await draftSupportRequest(adapter, chatId, trimmed)
-    return true
+  // (or Edit) is the problem description. A web message that waited in the
+  // queue skips both, as it skips /secret above: it was sent before the
+  // draft or the question, so it is not the answer (card #250).
+  if (!opts.fromQueue) {
+    if (pendingSupport.has(chatId) && /^(send|edit|discard)$/i.test(trimmed)) {
+      if (await resolveSupportAction(adapter, chatId, trimmed)) return true
+    }
+    if (awaitingSupportDescription.has(chatId) && !trimmed.startsWith('/')) {
+      await draftSupportRequest(adapter, chatId, trimmed)
+      return true
+    }
   }
 
   // Command routing. The log line is the only trace a command leaves at
