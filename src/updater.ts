@@ -30,7 +30,7 @@ import {
   SOURCE_INSTALL_ARGS,
   type InstallEnvironment,
 } from './update/plan.js'
-import { moveAside, moveInto, restoreBackup } from './update/swap.js'
+import { carryOver, moveAside, moveInto, restoreBackup } from './update/swap.js'
 import { ensureFileMarkerSection } from './update/conventions.js'
 import { pruneBackups } from './update/backups.js'
 
@@ -427,6 +427,8 @@ async function applySourceUpdate(currentVersion: string, targetVersion: string):
     logger.info('Applying update files')
     phase = 'apply'
     moveInto(extractedDir, PROJECT_ROOT, ENGINE_PATHS)
+    // docs/ is engine, but a box may keep its own files there: keep them
+    carryOver(backupDir, PROJECT_ROOT, 'docs')
 
     // 6. Copy any new top-level files that aren't preserved
     // (e.g., new config files, README updates)

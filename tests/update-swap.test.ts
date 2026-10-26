@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { movePath, moveAside, moveInto, restoreBackup } from '../src/update/swap.js'
+import { movePath, moveAside, moveInto, restoreBackup, carryOver } from '../src/update/swap.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -273,6 +273,36 @@ function dlopenCopy(dir: string, rel: string): boolean {
     return false // not loadable in this environment; the test degrades to skip
   }
 }
+
+describe('carryOver', () => {
+  it("puts back the box's own files the update did not ship, and never overwrites a shipped one", () => {
+    const dir = fixture()
+    const root = join(dir, 'root')
+    const backup = join(dir, 'backup')
+    write(root, 'docs/WEB-UI.md', 'old shipped')
+    write(root, 'docs/CLIENT-EMAIL-ONBOARDING.md', 'box only')
+    write(root, 'docs/notes/mine.md', 'box only, nested')
+    write(dir, 'payload/docs/WEB-UI.md', 'new shipped')
+    write(dir, 'payload/docs/NEW.md', 'new doc')
+    moveAside(root, backup, ['docs'])
+    moveInto(join(dir, 'payload'), root, ['docs'])
+    carryOver(backup, root, 'docs')
+    expect(read(root, 'docs/WEB-UI.md')).toBe('new shipped')
+    expect(read(root, 'docs/NEW.md')).toBe('new doc')
+    expect(read(root, 'docs/CLIENT-EMAIL-ONBOARDING.md')).toBe('box only')
+    expect(read(root, 'docs/notes/mine.md')).toBe('box only, nested')
+    // The backup stays whole, so a rollback after this still restores the old tree.
+    expect(read(backup, 'docs/WEB-UI.md')).toBe('old shipped')
+    expect(read(backup, 'docs/CLIENT-EMAIL-ONBOARDING.md')).toBe('box only')
+  })
+
+  it('does nothing when there was no such directory before', () => {
+    const dir = fixture()
+    write(dir, 'root/docs/A.md', 'a')
+    carryOver(join(dir, 'backup'), join(dir, 'root'), 'docs')
+    expect(readdirSync(join(dir, 'root/docs'))).toEqual(['A.md'])
+  })
+})
 
 describe.runIf(existsSync(ADDON))('with a real mapped native addon', () => {
   it.runIf(process.platform === 'win32')('issue #27 repro: the mapped addon cannot be unlinked', () => {
