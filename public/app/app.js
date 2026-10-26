@@ -5,6 +5,7 @@ import * as api from './api.js'
 import { renderMarkdown } from './markdown.js'
 import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
+import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -156,6 +157,7 @@ async function start() {
   show($('signin'), false)
   show($('app'))
   renderMessages()
+  setupDictation()
   if (!narrow.matches && window.innerWidth >= 1280) setFilesOpen(true)
   await Promise.all([loadProjects(), loadGoals(), loadStatus(), loadDefaults()])
   $('input').focus()
@@ -1070,6 +1072,12 @@ $('stop').addEventListener('click', async () => {
 
 $('composer').addEventListener('submit', (e) => {
   e.preventDefault()
+  // Send while dictating stops it and leaves the words in the box to review.
+  // It does not send: the owner reads what was heard first.
+  if (dictate.phase) {
+    if (dictate.phase === 'listening') finishDictation()
+    return
+  }
   const input = $('input')
   const text = input.value
   if (!text.trim() && !state.attachments.length) return
@@ -1086,6 +1094,118 @@ $('composer').addEventListener('submit', (e) => {
   renderTray()
   input.value = ''
   send(text, { tray })
+})
+
+// ---------- dictation (card #252) ----------
+//
+// The microphone next to Send. The box transcribes when it can (the words
+// arrive when recording stops); otherwise the browser listens and the words
+// show as they are heard. Either way they land in the box at the cursor, for
+// the owner to read and send. A reply in progress does not stop it.
+
+const dictate = { mode: '', phase: '', session: null, base: null }
+
+function setupDictation() {
+  dictate.mode = dictationMode(state.me)
+  show($('mic'), !!dictate.mode)
+}
+
+function paintDictation(ms) {
+  const mic = $('mic')
+  const status = $('dictate-status')
+  const listening = dictate.phase === 'listening'
+  mic.classList.toggle('recording', listening)
+  mic.classList.toggle('working', dictate.phase === 'starting' || dictate.phase === 'transcribing')
+  mic.setAttribute('aria-pressed', String(listening))
+  const label = listening ? 'Stop dictation' : dictate.phase === 'transcribing' ? 'Turning speech into text' : 'Dictate a message'
+  mic.setAttribute('aria-label', label)
+  mic.title = label
+  status.classList.toggle('recording', listening)
+  if (listening) status.textContent = formatElapsed(ms || 0)
+  else if (dictate.phase === 'transcribing') status.textContent = 'Transcribing...'
+  else status.textContent = ''
+  show(status, !!status.textContent)
+  $('input').readOnly = !!dictate.phase
+}
+
+/** Show `words` where dictation started, keeping what was already typed. */
+function placeWords(words) {
+  const r = insertAtCursor(dictate.base.value, dictate.base.pos, words)
+  $('input').value = r.value
+  return r
+}
+
+async function beginDictation() {
+  const input = $('input')
+  // The cursor, or the end of a selection: what is typed is never replaced.
+  // A textarea keeps its cursor after the microphone takes the focus.
+  const pos = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length
+  dictate.base = { value: input.value, pos }
+  note($('composer-note'), '')
+  dictate.phase = 'starting'
+  paintDictation()
+  const session = createDictation(dictate.mode, {
+    transcribe: (blob) => api.transcribe(blob),
+    heard: (words) => {
+      if (dictate.session === session && dictate.phase === 'listening') placeWords(words)
+    },
+    tick: (ms) => {
+      if (dictate.session === session && dictate.phase === 'listening') paintDictation(ms)
+    },
+    ended: (why) => {
+      if (dictate.session !== session || dictate.phase !== 'listening') return
+      finishDictation(why === 'limit' ? 'Stopped at two minutes. Check the text, then tap the microphone to add more.' : '')
+    },
+  })
+  dictate.session = session
+  try {
+    await session.start()
+  } catch (err) {
+    session.cancel()
+    endDictation()
+    note($('composer-note'), micProblem(err))
+    return
+  }
+  if (dictate.session !== session) return
+  dictate.phase = 'listening'
+  paintDictation(0)
+}
+
+async function finishDictation(message = '') {
+  const session = dictate.session
+  if (!session || dictate.phase !== 'listening') return
+  dictate.phase = 'transcribing'
+  paintDictation()
+  let words = ''
+  let problem = ''
+  try {
+    words = await session.stop()
+  } catch (err) {
+    problem = micProblem(err)
+    // The box said it cannot transcribe after all: use the browser next time, if it can.
+    if (err && err.status === 503) {
+      dictate.mode = dictationMode({ transcribe: false })
+      show($('mic'), !!dictate.mode)
+    }
+  }
+  if (dictate.session !== session) return
+  const r = placeWords(words)
+  endDictation()
+  const input = $('input')
+  input.focus()
+  input.setSelectionRange(r.caret, r.caret)
+  note($('composer-note'), problem || message || (words.trim() ? '' : 'Did not catch any words. Try again a little closer to the microphone.'))
+}
+
+function endDictation() {
+  dictate.session = null
+  dictate.phase = ''
+  paintDictation()
+}
+
+$('mic').addEventListener('click', () => {
+  if (!dictate.phase) beginDictation()
+  else if (dictate.phase === 'listening') finishDictation()
 })
 
 // ---------- command suggestions ----------

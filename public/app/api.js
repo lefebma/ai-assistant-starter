@@ -66,6 +66,23 @@ export async function upload(file) {
   return body && body.path
 }
 
+/**
+ * Send a dictated recording to the box (card #252). Resolves to the words it
+ * heard. The box deletes the recording once it has the words.
+ */
+export async function transcribe(blob) {
+  const res = await check(
+    await fetch('/api/web/dictation', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': blob.type || 'audio/webm', 'X-Havn-Web': '1', Accept: 'application/json' },
+      body: blob,
+    })
+  )
+  const body = await readBody(res)
+  return (body && body.text) || ''
+}
+
 /** Exchange a one-time link token for a session cookie. Never triggers the signed-out handler. */
 export async function exchange(token) {
   const res = await fetch('/api/web/session', {

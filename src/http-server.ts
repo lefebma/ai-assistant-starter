@@ -4,7 +4,7 @@ import { resolve, extname } from 'node:path'
 import { readEnvFile } from './env.js'
 import { PROJECT_ROOT, HTTP_PORT, HTTP_BEARER_TOKEN, OPENAI_API_KEY, PRIMARY_CHAT_ID, PUBLIC_HOSTNAME, SHORTCUT_WAIT_SECONDS } from './config.js'
 import {
-  transcribeAudio, synthesizeSpeechAudio, voiceCapabilities,
+  transcribeAudio, synthesizeSpeechAudio, voiceCapabilities, audioExtension,
   ttsEngine, effectiveVoice, setEffectiveVoice, isOpenAIVoice, OPENAI_VOICES,
 } from './voice.js'
 import { resolveVoiceToken, exchangeVoiceToken } from './voice-links.js'
@@ -503,30 +503,8 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   }
 }
 
-/** Whisper picks its decoder from the filename, so the extension must match
- *  what the browser actually recorded. Safari records MP4, Chrome WebM. */
-export function audioExtension(contentType: string | undefined): string {
-  const base = (contentType ?? '').split(';')[0]!.trim().toLowerCase()
-  const map: Record<string, string> = {
-    'audio/webm': 'webm',
-    'audio/ogg': 'ogg',
-    'audio/oga': 'oga',
-    // Safari records audio-only ISO-BMFF. OpenAI rejects that named .mp4
-    // ("Invalid file format") but accepts the identical bytes as .m4a.
-    'audio/mp4': 'm4a',
-    'audio/x-m4a': 'm4a',
-    'audio/m4a': 'm4a',
-    'audio/aac': 'm4a',
-    'audio/mpeg': 'mp3',
-    'audio/mp3': 'mp3',
-    'audio/wav': 'wav',
-    'audio/x-wav': 'wav',
-    'audio/wave': 'wav',
-    'audio/flac': 'flac',
-    'audio/x-flac': 'flac',
-  }
-  return map[base] ?? 'webm'
-}
+// audioExtension moved to voice.ts so the web dictation route shares it (card #252).
+export { audioExtension }
 
 async function handleTranscribe(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (!requireAuth(req, res)) return

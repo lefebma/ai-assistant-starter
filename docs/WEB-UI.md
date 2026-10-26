@@ -63,6 +63,30 @@ order you sent them.
   twice. If you hit the AI limit, the waiting messages hold until you open
   the chat again or send something.
 
+### Talking instead of typing
+
+The microphone next to Send lets you dictate a message. Tap it, speak, and
+tap it again (or press Send). The words land in the message box where your
+cursor was, after anything you already typed, so you can read and fix them
+before you send. Nothing is sent until you press Send yourself.
+
+- **While it listens** the microphone turns red and pulses, with a timer
+  beside it. It stops by itself at two minutes, keeping what it heard.
+- **Who turns speech into text.** If your box can transcribe voice notes
+  (it has an OpenAI key, and is not on a managed AI key), the recording goes
+  to the box, which sends it to OpenAI for the words and then deletes it. The
+  recording is never kept and never becomes part of the conversation.
+  Otherwise your browser's own speech recognition does it, and the words
+  show as you speak. That can send your voice to your browser's maker (Apple
+  or Google, for example).
+- **No microphone button?** Your browser offers neither way, or the page was
+  opened over plain `http://` on your network (browsers only allow the
+  microphone on secure pages). Use the secure link from `/app`.
+- **The first time**, your browser asks to use the microphone. If you said
+  no, the page tells you how to turn it back on.
+- It works while the assistant is still answering. What you send waits its
+  turn as usual.
+
 ### Model and effort
 
 Each conversation has two pickers at the top.

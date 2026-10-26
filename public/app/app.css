@@ -449,6 +449,18 @@ code { font-family: var(--mono); font-size: 0.9em; }
   flex: none;
 }
 .send-btn:hover:not(:disabled) { filter: brightness(1.08); }
+/* Dictation (card #252): the microphone pulses while it listens. */
+.mic-btn.recording { color: var(--danger); background: var(--danger-soft); }
+.mic-btn.recording:hover { color: var(--danger); background: var(--danger-soft); }
+.mic-btn.recording svg { animation: breathe 1.4s ease-in-out infinite; }
+.mic-btn.working { opacity: 0.6; cursor: progress; }
+.dictate-status {
+  align-self: center; flex: none;
+  font-size: 13px; font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+.dictate-status.recording { color: var(--danger); }
+.composer textarea[readonly] { color: var(--ink-soft); }
 .cmd-menu {
   list-style: none; margin-bottom: 6px; padding: 4px;
   max-height: 260px; overflow-y: auto;

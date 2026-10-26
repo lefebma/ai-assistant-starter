@@ -125,7 +125,7 @@ registerWebRoutes([
   },
 ])
 
-function safeUnlink(p: string): void {
+export function safeUnlink(p: string): void {
   try {
     unlinkSync(p)
   } catch {
@@ -133,7 +133,7 @@ function safeUnlink(p: string): void {
   }
 }
 
-function tooLarge(req: IncomingMessage, res: import('node:http').ServerResponse): void {
+export function tooLarge(req: IncomingMessage, res: import('node:http').ServerResponse): void {
   if (!res.headersSent) {
     res.setHeader('Connection', 'close')
     sendError(res, 413, 'too_large')
@@ -146,12 +146,12 @@ function tooLarge(req: IncomingMessage, res: import('node:http').ServerResponse)
 }
 
 /**
- * Stream the body to `path`. On any failure the temp file is deleted once the
+ * Stream the body to `path`, refusing past `max` bytes. On any failure the temp file is deleted once the
  * write stream has closed: the stream opens asynchronously, so an abort right
  * after the headers would otherwise unlink before the file exists and leave
  * an empty `.part` behind once the open completes.
  */
-export function streamToFile(req: IncomingMessage, path: string): Promise<'ok' | 'too_large' | 'error'> {
+export function streamToFile(req: IncomingMessage, path: string, max: number = MAX_UPLOAD_BYTES): Promise<'ok' | 'too_large' | 'error'> {
   return new Promise((resolveP) => {
     const out = createWriteStream(path, { flags: 'wx', mode: 0o600 })
     let size = 0
@@ -178,7 +178,7 @@ export function streamToFile(req: IncomingMessage, path: string): Promise<'ok' |
     req.on('data', (chunk: Buffer) => {
       if (settled) return
       size += chunk.length
-      if (size > MAX_UPLOAD_BYTES) return fail('too_large')
+      if (size > max) return fail('too_large')
       if (!out.write(chunk)) {
         req.pause()
         out.once('drain', () => req.resume())
