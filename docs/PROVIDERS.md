@@ -16,8 +16,8 @@ AI_MODEL=gpt-5.4            # required for every provider except anthropic
 OPENAI_API_KEY=sk-...       # or put it in the vault, see docs/VAULT.md
 ```
 
-Restart the service. That's the whole migration; conversations, skills, and
-scheduled tasks carry over.
+The next message uses the new engine; no restart needed. Conversations, skills,
+and scheduled tasks carry over.
 
 | Provider | `AI_PROVIDER` | Key variable | `AI_MODEL` example |
 |---|---|---|---|
@@ -61,7 +61,7 @@ is billed through us.
 
 ## Self-hosted models
 
-Any OpenAI-compatible endpoint works — Ollama, vLLM, LM Studio, llama.cpp server,
+Any OpenAI-compatible endpoint works: Ollama, vLLM, LM Studio, llama.cpp server,
 or a gateway:
 
 ```
@@ -72,9 +72,87 @@ AI_MODEL=qwen3:32b
 OPENAI_API_KEY=ollama
 ```
 
-Mind the capability floor: the model must support tool/function calling and a
-32k+ context window. Small local models run, but see certification below for
-what "works" actually means.
+With `AI_BASE_URL` set, the assistant talks to the server over Chat Completions,
+the part of the OpenAI API every compatible server implements. Mind the
+capability floor: the model must support tool/function calling and a 32k+
+context window. Small local models run, but see certification below for what
+"works" actually means.
+
+## Running an open model on your own GPU
+
+For businesses that want no prompt to leave hardware they control. The assistant
+runs as before; only the model moves onto a GPU server you rent or own, running
+[Ollama](https://ollama.com). Expect it to be slower than Claude and weaker at
+long, many-step jobs (see "What you give up" below), so certify it on your own
+work before switching over for good.
+
+### Which model
+
+| Model (Ollama tag) | Download | GPU memory to run it with a 32k context | Use it for |
+|---|---|---|---|
+| `qwen3:14b` | about 9 GB | 16-20 GB (one RTX 4000-class card) | trying it out, light chat |
+| `qwen3:32b` (recommended) | about 20 GB | 32-48 GB (one L40S, RTX 6000 or A6000) | daily use |
+| `qwen3:235b` | about 140 GB | 160 GB or more (two 80 GB H100s) | closest to Claude, at the highest cost |
+
+All three are tagged for tool calling on Ollama. Newer Qwen generations
+(`qwen3.5`, `qwen3.6`, `qwen3.8`) are on Ollama too; treat any of them as a new
+model and certify it before relying on it. Memory figures are for 4-bit
+versions with room for a 32k context. A card with less memory still loads the
+model but spills into system memory and slows to a crawl.
+
+### What the GPU costs
+
+Rough monthly figures from public price lists in October 2026. Check the
+provider's own page before you budget; GPU prices moved several times this year.
+
+| Setup | Where | About |
+|---|---|---|
+| 20 GB card (RTX 4000 SFF Ada), dedicated | Hetzner GEX44, Germany/Finland only | €184-234 a month plus setup |
+| 96 GB card (RTX PRO 6000), dedicated | Hetzner GEX131, Germany/Finland only | €889-1,199 a month plus setup |
+| 48 GB card (L40S), by the hour | RunPod, Lambda and others, US regions | $0.86-0.99 an hour (about $630-720 a month left on) |
+| 80 GB card (H100), by the hour | RunPod, Lambda and others, US regions | $2-4 an hour per card |
+
+Hourly servers bill while they are switched on, so an always-on assistant pays
+the full month. Keep the GPU in the same region as your data rules require.
+
+### Set it up
+
+1. Rent a GPU server running Ubuntu with the NVIDIA driver installed (most GPU
+   providers offer this image).
+2. Install Ollama: `curl -fsSL https://ollama.com/install.sh | sh`
+3. Pull the model: `ollama pull qwen3:32b`
+4. Ollama listens on `localhost:11434` only. If the assistant runs on a different
+   server, do not open that port to the internet: Ollama has no password. Join
+   both servers to a private network (Tailscale, WireGuard, or your provider's
+   private network) and set `OLLAMA_HOST=0.0.0.0:11434` in Ollama's service so
+   it listens there.
+5. Point the assistant at it with the five lines above, using the private
+   address in `AI_BASE_URL`.
+6. Run the certification below against your own work.
+
+Switching models, or between Claude and the open model, takes effect on the
+next message: the assistant re-reads these settings every turn, so there is no
+restart. In the web app's model picker, Haiku and Opus pick `AI_MODEL_CHEAP`
+and `AI_MODEL_STRONG` if you set them, for example a smaller and a larger Qwen.
+
+### What you give up
+
+From our own tests of Qwen models running the assistant's real tasks:
+
+- **Slower.** Two to six times slower than Claude on multi-step work, more on a
+  smaller card.
+- **Arithmetic.** It can drop a carry when adding up a column of numbers. Have
+  it total money with a script or a spreadsheet, never in its head.
+- **Rules need spelling out.** Scheduled tasks that should stay quiet on a
+  normal day need that rule written into the task itself.
+- **Summaries pick up stray detail.** It tends to repeat side facts a summary
+  should drop.
+- **Long jobs.** Short tasks (reading and writing files, shell commands, a few
+  tool calls) pass reliably. Long chains with many tools are where it slips
+  first.
+
+Email drafts, briefings and everyday chat are workable. Anything you would
+check twice from a person, check twice from it.
 
 ## Different engines for chat vs scheduled work
 
@@ -110,7 +188,7 @@ Practical tiers:
 
 ## Switching providers later
 
-Just change `AI_PROVIDER` / `AI_MODEL` and restart. Existing conversation history
+Just change `AI_PROVIDER` / `AI_MODEL`; the next message uses them. Existing conversation history
 is sanitized automatically on the first turn after a switch (provider-specific
 metadata like reasoning signatures is stripped, so replay doesn't break). Your
 memory, skills, and schedules are provider-neutral and unaffected.

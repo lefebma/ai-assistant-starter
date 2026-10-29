@@ -69,7 +69,11 @@ export function buildModel(
     case 'openai':
       // baseURL lets one adapter cover every OpenAI-compatible endpoint
       // (self-hosted Ollama/vLLM/LM Studio, or an OpenAI-compatible gateway).
-      return createOpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL })(modelId)
+      // Those get Chat Completions, the surface every compatible server
+      // implements: LM Studio rejects the Responses API's replayed tool turns
+      // with 400 "Invalid type for 'input'". OpenAI itself keeps Responses.
+      if (opts.baseURL) return createOpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL }).chat(modelId)
+      return createOpenAI({ apiKey: opts.apiKey })(modelId)
     case 'google':
       return createGoogleGenerativeAI({ apiKey: opts.apiKey })(modelId)
     case 'azure': {

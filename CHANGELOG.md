@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.55.0 - 2026-10-29
+
+- **Fixed: self-hosted and compatible AI servers work for tool tasks.** An assistant pointed at its own model server (Ollama, LM Studio, vLLM and similar) failed with "Invalid type for 'input'" whenever it used a tool, such as reading a file or running a command. In our test on LM Studio, half the standard checks failed this way. It now uses the connection every compatible server supports, and the same checks all pass. Assistants on OpenAI itself are unchanged.
+- **New: a guide to running an open model on your own GPU.** For businesses that want no prompt to leave hardware they control. `docs/PROVIDERS.md` now covers which Qwen model to pick for your GPU, what GPU servers cost to rent, the setup steps, how to keep the model server off the internet, and an honest list of what you give up compared with Claude.
+- **Clearer: changing the AI model needs no restart.** The guide used to say to restart after changing the model or provider. The assistant already picks up the change on the next message, and the guide now says so.
+
 ## 1.54.0 - 2026-10-28
 
 - **New: move from a provider-managed AI connection to your own account.** If your provider set up your assistant's AI for you, you can switch to your own Anthropic, OpenAI, Google or Azure account, or any OpenAI-compatible service, whenever you like. Your provider runs one command that removes their key from your assistant, then you add your own key from the chat with `/secret set`. Your chats, memory and scheduled tasks carry over. Once you are on your own account, your provider's monthly allowance and the 80% heads-up stop, because your own AI account sets your limits. Voice and video come back once you add an OpenAI key. The steps are in `docs/PROVIDERS.md` under "Bringing your own AI account".
