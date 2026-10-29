@@ -176,6 +176,14 @@ describe('resolveModel() precedence and env fallback', () => {
     expect(resolveModel().provider).toBe('openai')
   })
 
+  it('picks up a changed AI_MODEL on the next turn, with no restart', () => {
+    const env = { AI_PROVIDER: 'openai', AI_BASE_URL: 'http://localhost:11434/v1', AI_MODEL: 'qwen3:32b', OPENAI_API_KEY: 'ollama' }
+    mockReadEnvFile.mockReturnValue(env)
+    expect(resolveModel().modelId).toBe('qwen3:32b')
+    mockReadEnvFile.mockReturnValue({ ...env, AI_MODEL: 'qwen3:235b' })
+    expect(resolveModel().modelId).toBe('qwen3:235b')
+  })
+
   it('defaults to anthropic when no provider is set anywhere', () => {
     mockReadEnvFile.mockReturnValue({ ANTHROPIC_API_KEY: 'sk-ant-test' })
     expect(resolveModel().provider).toBe('anthropic')
@@ -259,6 +267,18 @@ describe('buildModel() explicit construction (shared by resolveModel + eval/prob
     expect(
       buildModel('openai', 'llama-3.3-70b', { apiKey: 'k', baseURL: 'http://localhost:11434/v1' })
     ).toBeTruthy()
+  })
+
+  it('uses Chat Completions for a self-hosted or compatible endpoint', () => {
+    // LM Studio (and other compatible servers) reject the Responses API's
+    // replayed tool turns with 400 "Invalid type for 'input'".
+    const m = buildModel('openai', 'qwen3:32b', { apiKey: 'k', baseURL: 'http://localhost:11434/v1' }) as { provider: string }
+    expect(m.provider).toBe('openai.chat')
+  })
+
+  it('keeps the Responses API for OpenAI itself', () => {
+    const m = buildModel('openai', 'gpt-5', { apiKey: 'k' }) as { provider: string }
+    expect(m.provider).toBe('openai.responses')
   })
 
   it('builds an azure model from explicit args (resourceName)', () => {
