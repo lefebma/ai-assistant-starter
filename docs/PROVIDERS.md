@@ -30,6 +30,16 @@ scheduled tasks carry over.
 Keys are read from the encrypted vault first, then `.env` (see
 [docs/VAULT.md](VAULT.md)). They are never logged.
 
+## Bringing your own AI account
+
+If your provider set up your assistant's AI for you, you can move it onto your own account at any time: to pay the AI bill directly, or to use a different company's models. Nothing else changes. Your chats, memory, skills and scheduled tasks stay as they are.
+
+1. Ask your provider to switch your assistant over. They turn off the AI connection they manage, which removes their key from your assistant. Until step 2 is done your assistant can't reply, so do both steps together.
+2. Add your own key. In the chat with your assistant, send `/secret set ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `AZURE_API_KEY`). It asks for the key as your next message and stores it encrypted. Your provider then sets the matching `AGENT_RUNTIME`, `AI_PROVIDER` and `AI_MODEL` lines from the Quick start above and restarts the assistant. To use a Claude subscription instead of a key, your provider signs it in for you.
+3. Send your assistant a message to check it answers.
+
+From then on your own AI account sets your limits and your bill. The monthly allowance and the "about 80% used" heads-up from your provider no longer apply.
+
 ## Azure OpenAI
 
 For organizations that want the models billed and governed under their own

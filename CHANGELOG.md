@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.54.0 - 2026-10-28
+
+- **New: move from a provider-managed AI connection to your own account.** If your provider set up your assistant's AI for you, you can switch to your own Anthropic, OpenAI, Google or Azure account, or any OpenAI-compatible service, whenever you like. Your provider runs one command that removes their key from your assistant, then you add your own key from the chat with `/secret set`. Your chats, memory and scheduled tasks carry over. Once you are on your own account, your provider's monthly allowance and the 80% heads-up stop, because your own AI account sets your limits. Voice and video come back once you add an OpenAI key. The steps are in `docs/PROVIDERS.md` under "Bringing your own AI account".
+- **Safer: a box notices when it is no longer on the provider's key.** If the AI key on a managed box is changed by hand, the assistant now notices at its next start and stops applying the provider's allowance to it, so the provider is not alerted about spending that is no longer theirs.
+
 ## 1.53.0 - 2026-10-25
 
 The web app gets an update icon, a queue for messages sent mid-reply, dictation, and live voice chat.

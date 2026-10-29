@@ -88,11 +88,26 @@ In the Console, raise the spend limit on that client's workspace (or wait for th
 3. Confirm the box answers a message.
 4. Archive the old key in the Console.
 
+## When a client brings their own AI account
+
+A client on a managed key may later want their own AI bill, or a different provider. Switch the box over with one command, as `havn-admin`:
+
+```bash
+sudo -u havn bash -lc 'cd ~/havn && node dist/scripts/managed-ai.js byok'
+sudo systemctl restart havn
+```
+
+`byok` turns managed mode off and removes your key from the box, so it never becomes the client's fallback lane. It clears any pause and this month's spend total, so Umi stops alerting on the box. Caps, the 80% heads-up and the limit pause no longer apply: the client's own provider bills and limits them. Voice and video come back once the client adds an OpenAI key.
+
+Until the client adds their own key, the assistant has no AI connection, so line the two steps up. The client (or you, with them) then follows "Bringing your own AI account" in `docs/PROVIDERS.md`. Any provider works: Anthropic, OpenAI, Google, Azure, or any OpenAI-compatible endpoint. Then archive the old key in the Console, or the whole workspace if nothing else uses it.
+
+Swapping the key by hand is not enough on its own. While the box is managed, the vault key wins over `.env`, the client cannot change AI keys from chat, and `AGENT_RUNTIME` is ignored. As a safety net, `set` records a fingerprint of your key (never the key). If the box starts on a different Anthropic key, it leaves managed mode by itself and logs "The AI key is not the managed one; managed mode is off". `status` shows the mismatch before the restart. A box set up before version 1.54.0 records the fingerprint of its current key at its next start.
+
 ## Removing a client
 
 Archive the client's workspace in the Console. This archives its keys within seconds and cannot be undone.
 
-To take a box off managed mode without archiving anything, run `node dist/scripts/managed-ai.js off`. It removes the managed flag and any pause marker, and leaves the stored key where it is.
+To take a box off managed mode without archiving anything, run `node dist/scripts/managed-ai.js off`. It removes the managed flag and any pause marker, and leaves the stored key where it is. To remove the key as well, use `byok` (above) instead.
 
 On a box that is no longer managed, that leftover key becomes the overflow lane: when the client's own subscription window runs out, the assistant carries on billed to your key. If that is not what you want, remove it from the vault:
 

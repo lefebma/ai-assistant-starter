@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { main } from '../src/managed-ai-cli.js'
+import { keyFingerprint, main, reconcileManagedKey } from '../src/managed-ai-cli.js'
 import { isManagedAi, writeAiLimit, readAiLimit } from '../src/ai-limit.js'
 import { readAiUsage, readManagedCap, recordManagedSpend } from '../src/ai-usage.js'
 
@@ -20,6 +20,8 @@ function setup(stdinValue = KEY + '\n', envExists = false) {
     vault: {
       set: (n: string, v: string) => void vaultData.set(n, v),
       has: (n: string) => vaultData.has(n),
+      get: (n: string) => vaultData.get(n),
+      delete: (n: string) => vaultData.delete(n),
     },
     storeDir,
     envExists,
@@ -157,7 +159,123 @@ describe('managed-ai CLI', () => {
   })
 
   it('anything else is a usage error', async () => {
-    await expect(main([], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off>')
-    await expect(main(['bogus'], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off>')
+    await expect(main([], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off|byok>')
+    await expect(main(['bogus'], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off|byok>')
+  })
+
+  it('set records a fingerprint of the key, never the key', async () => {
+    await main(['set'], t.deps)
+    const flag = JSON.parse(readFileSync(join(t.storeDir, 'managed-ai.json'), 'utf8'))
+    expect(flag.keyFingerprint).toBe(keyFingerprint(KEY))
+    expect(flag.keyFingerprint).toMatch(/^[0-9a-f]{16}$/)
+    expect(JSON.stringify(flag)).not.toContain('SECRETVALUE')
+  })
+
+  it('cap keeps the fingerprint', async () => {
+    await main(['set'], t.deps)
+    await main(['cap', '50'], t.deps)
+    const flag = JSON.parse(readFileSync(join(t.storeDir, 'managed-ai.json'), 'utf8'))
+    expect(flag.keyFingerprint).toBe(keyFingerprint(KEY))
+  })
+
+  it('byok removes the provider key, the flag, the pause and the spend total', async () => {
+    await main(['set'], t.deps)
+    await main(['cap', '50'], t.deps)
+    recordManagedSpend(5, { storeDir: t.storeDir })
+    writeAiLimit({ kind: 'spend_limit', since: new Date().toISOString() }, t.storeDir)
+    const out = await main(['byok'], t.deps)
+    expect(out).toBe(
+      "Managed AI is off and your key was removed from this box. The assistant has no AI connection until the owner adds their own (see docs/PROVIDERS.md)."
+    )
+    expect(t.vaultData.has('ANTHROPIC_API_KEY')).toBe(false)
+    expect(isManagedAi(t.storeDir)).toBe(false)
+    expect(readAiLimit(t.storeDir)).toBeNull()
+    expect(readAiUsage(t.storeDir)).toBeNull()
+  })
+
+  it('byok adds the restart line when .env exists', async () => {
+    const s = setup(KEY, true)
+    await main(['set'], s.deps)
+    expect(await main(['byok'], s.deps)).toMatch(/\nRestart the service: sudo systemctl restart havn$/)
+  })
+
+  it("byok leaves a vault key that is not the provider's", async () => {
+    await main(['set'], t.deps)
+    t.vaultData.set('ANTHROPIC_API_KEY', 'sk-ant-api03-CLIENTOWN')
+    const out = await main(['byok'], t.deps)
+    expect(out).toBe("Managed AI is off. The key in the vault is not yours, so it was left for the owner.")
+    expect(t.vaultData.get('ANTHROPIC_API_KEY')).toBe('sk-ant-api03-CLIENTOWN')
+    expect(isManagedAi(t.storeDir)).toBe(false)
+  })
+
+  it('byok on a box set before fingerprints removes the vault key (only the provider could set it)', async () => {
+    await main(['set'], t.deps)
+    const p = join(t.storeDir, 'managed-ai.json')
+    const flag = JSON.parse(readFileSync(p, 'utf8'))
+    delete flag.keyFingerprint
+    writeFileSync(p, JSON.stringify(flag))
+    await main(['byok'], t.deps)
+    expect(t.vaultData.has('ANTHROPIC_API_KEY')).toBe(false)
+  })
+
+  it('byok needs a managed box and takes no arguments', async () => {
+    await expect(main(['byok'], t.deps)).rejects.toThrow('This box is not on a managed key.')
+    await main(['set'], t.deps)
+    await expect(main(['byok', KEY], t.deps)).rejects.toThrow('Usage: managed-ai byok')
+    await expect(main(['byok', KEY], t.deps)).rejects.toSatisfy((e: Error) => !e.message.includes(KEY))
+    expect(isManagedAi(t.storeDir)).toBe(true)
+  })
+
+  it('status says when the key in use is not the managed one', async () => {
+    await main(['set'], t.deps)
+    t.vaultData.set('ANTHROPIC_API_KEY', 'sk-ant-api03-CLIENTOWN')
+    expect(await main(['status'], t.deps)).toBe(
+      "Managed: yes. Key: stored, not the managed key (caps stop at the next restart). Limit: none. Cap: not recorded. Runtime: claude."
+    )
+  })
+})
+
+describe('reconcileManagedKey', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'managed-ai-rec-'))
+  const flagged = (storeDir: string, extra: Record<string, unknown> = {}) =>
+    writeFileSync(join(storeDir, 'managed-ai.json'), JSON.stringify({ since: '2026-10-01T00:00:00.000Z', ...extra }))
+
+  it('not managed: nothing to do', () => {
+    const d = dir()
+    expect(reconcileManagedKey(KEY, d)).toBe('not_managed')
+    expect(isManagedAi(d)).toBe(false)
+  })
+
+  it('managed and the key matches: stays managed', () => {
+    const d = dir()
+    flagged(d, { keyFingerprint: keyFingerprint(KEY) })
+    expect(reconcileManagedKey(KEY, d)).toBe('managed')
+    expect(isManagedAi(d)).toBe(true)
+  })
+
+  it("a different key in use: managed mode drops, with the pause and spend total", () => {
+    const d = dir()
+    flagged(d, { keyFingerprint: keyFingerprint(KEY), capUsd: 50 })
+    writeAiLimit({ kind: 'spend_limit', since: new Date().toISOString() }, d)
+    recordManagedSpend(5, { storeDir: d })
+    expect(reconcileManagedKey('sk-ant-api03-CLIENTOWN', d)).toBe('dropped')
+    expect(isManagedAi(d)).toBe(false)
+    expect(readAiLimit(d)).toBeNull()
+    expect(readAiUsage(d)).toBeNull()
+  })
+
+  it('no key at all: stays managed (the missing-key reply covers it)', () => {
+    const d = dir()
+    flagged(d, { keyFingerprint: keyFingerprint(KEY) })
+    expect(reconcileManagedKey(undefined, d)).toBe('managed')
+    expect(isManagedAi(d)).toBe(true)
+  })
+
+  it('a flag from before fingerprints records the current key, keeping the rest', () => {
+    const d = dir()
+    flagged(d, { capUsd: 40 })
+    expect(reconcileManagedKey(KEY, d)).toBe('recorded')
+    const flag = JSON.parse(readFileSync(join(d, 'managed-ai.json'), 'utf8'))
+    expect(flag).toEqual({ since: '2026-10-01T00:00:00.000Z', capUsd: 40, keyFingerprint: keyFingerprint(KEY) })
   })
 })
