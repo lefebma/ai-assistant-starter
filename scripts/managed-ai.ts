@@ -4,6 +4,7 @@
  *   printf '%s' "$KEY" | node dist/scripts/managed-ai.js set
  *   node dist/scripts/managed-ai.js status
  *   node dist/scripts/managed-ai.js off
+ *   node dist/scripts/managed-ai.js byok   (client brings their own AI account; removes the key)
  *
  * The key is read from stdin only (never argv) and stored in the vault. Logic
  * lives in src/managed-ai-cli.ts. stdout carries the reply; errors go to stderr.

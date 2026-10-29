@@ -11,6 +11,8 @@ import { abortAllRuns, createBot } from './bot.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
 import { AiPausedError } from './ai-limit.js'
 import { startAiRecovery } from './ai-recovery.js'
+import { reconcileManagedKey } from './managed-ai-cli.js'
+import { getSecret } from './vault/index.js'
 import { sendTextWithFiles } from './outbound-delivery.js'
 import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './workspace/service.js'
 import { initUpdateNotice, stopUpdateNotice } from './update/notice-service.js'
@@ -103,6 +105,16 @@ async function main(): Promise<void> {
   // Initialize database
   initDatabase()
   logger.info('Database initialized')
+
+  // Managed box on a key that is not the provider's (card #160): the client
+  // brought their own, so caps and the operator's alerts stop.
+  try {
+    if (reconcileManagedKey(getSecret('ANTHROPIC_API_KEY'), STORE_DIR) === 'dropped') {
+      logger.warn('The AI key is not the managed one; managed mode is off')
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Managed key check at boot failed; continuing')
+  }
 
   // Run initial memory decay sweep + schedule daily
   runDecaySweep()
