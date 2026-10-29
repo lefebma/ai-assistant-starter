@@ -6,6 +6,7 @@ import { renderMarkdown } from './markdown.js'
 import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
 import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
+import { DEFAULT_WIDTH, STEP, clampWidth, widthFromPointer, loadWidth, saveWidth, clearWidth } from './panelwidth.js'
 import { voiceCallSupport, createVoiceCall, callProblem } from './voicecall.js'
 import { readChatGPTExport } from './chatgpt-export.js'
 
@@ -194,6 +195,53 @@ function setFilesOpen(open) {
   $('open-right').setAttribute('aria-pressed', String(open))
   if (open) ensureTree()
 }
+
+// Drag the left edge of the files panel to change its width. The width is
+// remembered per browser. In drawer mode the handle is hidden by CSS.
+const resizer = $('files-resize')
+let filesWidth = DEFAULT_WIDTH
+// The page's CSP blocks inline styles and the static rules ban .style writes,
+// so the width goes in through a constructable stylesheet (CSSOM, allowed).
+const widthSheet = typeof CSSStyleSheet === 'function' && 'adoptedStyleSheets' in document ? new CSSStyleSheet() : null
+if (widthSheet) document.adoptedStyleSheets = [...document.adoptedStyleSheets, widthSheet]
+
+function applyFilesWidth(width, persist) {
+  filesWidth = clampWidth(width, window.innerWidth)
+  if (widthSheet) widthSheet.replaceSync('.shell { --right-w: ' + filesWidth + 'px; }')
+  resizer.setAttribute('aria-valuenow', String(filesWidth))
+  if (persist) saveWidth(localStorage, filesWidth)
+}
+
+applyFilesWidth(loadWidth(localStorage, window.innerWidth), false)
+window.addEventListener('resize', () => applyFilesWidth(filesWidth, false))
+
+resizer.addEventListener('pointerdown', (e) => {
+  if (narrow.matches || e.button !== 0) return
+  e.preventDefault()
+  resizer.setPointerCapture(e.pointerId)
+  $('app').classList.add('resizing')
+})
+resizer.addEventListener('pointermove', (e) => {
+  if (!resizer.hasPointerCapture(e.pointerId)) return
+  applyFilesWidth(widthFromPointer(e.clientX, window.innerWidth), false)
+})
+function endResize(e) {
+  if (!resizer.hasPointerCapture(e.pointerId)) return
+  resizer.releasePointerCapture(e.pointerId)
+  $('app').classList.remove('resizing')
+  saveWidth(localStorage, filesWidth)
+}
+resizer.addEventListener('pointerup', endResize)
+resizer.addEventListener('pointercancel', endResize)
+resizer.addEventListener('dblclick', () => {
+  clearWidth(localStorage)
+  applyFilesWidth(DEFAULT_WIDTH, false)
+})
+resizer.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') { e.preventDefault(); applyFilesWidth(filesWidth + STEP, true) }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); applyFilesWidth(filesWidth - STEP, true) }
+  else if (e.key === 'Home' || e.key === 'Enter') { e.preventDefault(); clearWidth(localStorage); applyFilesWidth(DEFAULT_WIDTH, false) }
+})
 
 $('open-left').addEventListener('click', () => openDrawer('left'))
 $('open-right').addEventListener('click', () => {
