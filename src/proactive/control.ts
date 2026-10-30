@@ -1,9 +1,21 @@
 /**
  * Owner control for proactive messages: the commands the proactive skill
  * runs through scripts/proactive.ts. Every reply is plain owner-facing text.
- * Card #262 adds per-kind switches and quiet hours on top of these.
+ * Settings change through applyChange (settings.ts), the same path the web
+ * app's settings use.
  */
-import { getSettings, recentDecisions, saveSettings, type DecisionRow } from './store.js'
+import { recentDecisions, type DecisionRow } from './store.js'
+import {
+  KINDS,
+  LIMITS,
+  applyChange,
+  getQuietHours,
+  getSettings,
+  kindName,
+  quietText,
+  type MessageKind,
+  type QuietHours,
+} from './settings.js'
 import type { CalendarSource } from './calendar.js'
 
 export interface ControlDeps {
@@ -12,12 +24,20 @@ export interface ControlDeps {
   tz: string
 }
 
-const MIN_LEAD = 5
-const MAX_LEAD = 180
 const DEFAULT_LOG = 10
 const MAX_LOG = 30
 
-const HELP = 'Commands: on, off, status, log [count], lead <minutes, 5 to 180>.'
+const HELP = `Commands: on [kind], off [kind], status, log [count], lead <minutes, ${LIMITS.leadMinutes.min} to ${LIMITS.leadMinutes.max}>, quiet <start> <end>, quiet off. Kinds: ${KINDS.filter((k) => k.available)
+  .map((k) => k.id)
+  .join(', ')}.`
+
+const KIND_WORDS: Record<string, MessageKind> = {
+  briefing: 'briefing',
+  briefings: 'briefing',
+  meetings: 'briefing',
+  travel: 'travel',
+  timing: 'timing',
+}
 
 function stamp(ms: number, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -51,31 +71,39 @@ async function accounts(deps: ControlDeps): Promise<string[]> {
   }
 }
 
+/** `on`/`off` with no kind means every kind this version runs. */
+function kindsFor(arg: string | undefined): MessageKind[] | string {
+  if (!arg) return KINDS.filter((k) => k.available).map((k) => k.id)
+  const k = KIND_WORDS[arg.toLowerCase()]
+  return k ? [k] : `I don't know "${arg}". ${HELP}`
+}
+
 export async function runControl(argv: string[], deps: ControlDeps): Promise<string> {
-  const [cmd = 'status', arg] = argv.map((a) => a.trim())
+  const [cmd = 'status', ...rest] = argv.map((a) => a.trim()).filter(Boolean)
+  const arg = rest[0]
   const s = getSettings()
   switch (cmd.toLowerCase()) {
-    case 'on': {
-      const list = await accounts(deps)
-      if (list.length === 0) {
-        return 'No calendar is connected, so there is nothing to read yet. Connect Google or Outlook first, then turn this on.'
-      }
-      saveSettings({ ...s, enabled: true })
-      return [
-        `Meeting briefings are on. About ${s.leadMinutes} minutes before a meeting with other people, I check recent mail with the attendees and message you only when something needs your attention.`,
-        `I read the calendar and mail of: ${list.join(', ')}. I never reply, send or change anything on my own.`,
-      ].join('\n')
+    case 'on':
+    case 'off': {
+      const kinds = kindsFor(arg)
+      if (typeof kinds === 'string') return kinds
+      const want = cmd.toLowerCase() === 'on'
+      const on = Object.fromEntries(kinds.map((k) => [k, want])) as Partial<Record<MessageKind, boolean>>
+      const r = applyChange(s, { on }, want ? await accounts(deps) : [])
+      if (r.message !== 'Nothing changed.') return r.message
+      return kinds.map((k) => `${kindName(k)} are already ${want ? 'on' : 'off'}.`).join('\n')
     }
-    case 'off':
-      saveSettings({ ...s, enabled: false })
-      return 'Meeting briefings are off.'
     case 'lead': {
-      const n = Number(arg)
-      if (!Number.isInteger(n) || n < MIN_LEAD || n > MAX_LEAD) {
-        return `Give the lead time in minutes, from ${MIN_LEAD} to ${MAX_LEAD}.`
-      }
-      saveSettings({ ...s, leadMinutes: n })
-      return `Briefings now arrive about ${n} minutes before a meeting.`
+      const r = applyChange(s, { leadMinutes: Number(arg) }, [])
+      return r.message === 'Nothing changed.' ? `Briefings already arrive about ${s.briefing.leadMinutes} minutes before a meeting.` : r.message
+    }
+    case 'quiet': {
+      let q: QuietHours | null
+      if (arg?.toLowerCase() === 'off' || arg?.toLowerCase() === 'none') q = null
+      else if (rest.length === 2) q = { start: rest[0]!, end: rest[1]! }
+      else return 'Quiet hours need a start and an end, like 22:00 07:00, or "off".'
+      const r = applyChange(s, { quietHours: q }, [])
+      return r.message === 'Nothing changed.' ? quietText(getQuietHours()) : r.message
     }
     case 'log': {
       const n = arg ? Number(arg) : DEFAULT_LOG
@@ -85,17 +113,24 @@ export async function runControl(argv: string[], deps: ControlDeps): Promise<str
       return rows.map((r) => logLine(r, deps.tz)).join('\n')
     }
     case 'status': {
-      if (!s.enabled) return 'Meeting briefings are off.'
+      const kinds = KINDS.filter((k) => k.available)
+      const lines = kinds.map((k) =>
+        k.id === 'briefing' && s.briefing.on
+          ? `${kindName(k.id)} are on, about ${s.briefing.leadMinutes} minutes before each meeting.`
+          : `${kindName(k.id)} are ${s[k.id].on ? 'on' : 'off'}.`
+      )
+      if (!kinds.some((k) => s[k.id].on)) return lines.join('\n')
       const list = await accounts(deps)
       const since = deps.now().getTime() - 7 * 86_400_000
       const week = recentDecisions(500).filter((r) => r.createdAt >= since)
       const sent = week.filter((r) => r.status === 'sent').length
       const quiet = week.filter((r) => r.status === 'quiet').length
-      return [
-        `Meeting briefings are on, about ${s.leadMinutes} minutes before each meeting.`,
+      lines.push(
+        quietText(getQuietHours()),
         list.length ? `Calendars: ${list.join(', ')}.` : 'No calendar is reachable right now.',
-        `Last 7 days: ${sent} ${sent === 1 ? 'briefing' : 'briefings'} sent, ${quiet} ${quiet === 1 ? 'meeting' : 'meetings'} with nothing worth a message.`,
-      ].join('\n')
+        `Last 7 days: ${sent} ${sent === 1 ? 'briefing' : 'briefings'} sent, ${quiet} ${quiet === 1 ? 'meeting' : 'meetings'} with nothing worth a message.`
+      )
+      return lines.join('\n')
     }
     default:
       return HELP

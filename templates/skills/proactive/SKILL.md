@@ -17,16 +17,25 @@ for them.
 
 | The owner says | Run |
 |---|---|
-| "brief me before my meetings", "turn on meeting briefings" | `on` |
-| "stop the meeting briefings" | `off` |
-| "are meeting briefings on?" | `status` |
+| "brief me before my meetings", "turn on meeting briefings" | `on briefing` |
+| "stop the meeting briefings" | `off briefing` |
+| "turn off all the proactive messages", "stop messaging me about meetings" | `off` |
+| "are meeting briefings on?", "what proactive messages do I get?" | `status` |
 | "brief me an hour before" | `lead 60` |
+| "quiet hours from 10 pm to 7 am", "don't message me before 8" | `quiet 22:00 07:00` (24-hour times; for "before 8" keep the current start and use `08:00` as the end) |
+| "no quiet hours" | `quiet off` |
 | "why didn't I get a briefing for ...?", "what did you decide for my meetings?" | `log` |
+
+Quiet hours are one setting shared with email alerts: changing them here
+changes them there too. Run `status` first when you need the current start.
+The same settings are in the web app, under Settings, Proactive messages.
 
 ### Rules
 
-- Turning briefings on or off, or changing the lead time, is the owner's
-  call. Do not change these settings unless they asked.
+- Turning messages on or off, changing the lead time or quiet hours is the
+  owner's call. Do not change these settings unless they asked.
+- Turning a kind on replies with which calendars and mailboxes it reads.
+  Pass that on; it is how the owner knows what they agreed to.
 - Briefings are read-only. Never reply to, send, accept, decline or change
   anything because of one. If the owner asks to act on a briefing, do it as a
   normal request, with the usual approval for anything that sends.

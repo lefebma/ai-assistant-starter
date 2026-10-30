@@ -10,6 +10,12 @@
  * again. A decision to message is recorded before it is sent, so a failed or
  * interrupted send is retried on the next tick until the meeting starts.
  *
+ * Quiet hours (the owner's one setting, shared with email alerts) hold
+ * everything: a briefing due then is decided once they end, while the
+ * meeting is still ahead, and one whose meeting starts before they end is
+ * recorded as quiet with that reason. Nothing is read by the model in quiet
+ * hours.
+ *
  * Read-only: nothing here replies, sends mail, accepts, declines or edits.
  * The only thing that leaves is the briefing, to the owner's own chat.
  *
@@ -21,10 +27,11 @@ import { upcomingEvents, type CalendarSource, type UpcomingEvent } from './calen
 import type { RelatedThread } from './threads.js'
 import type { DecideOutcome } from './decide.js'
 import { formatBriefing, MAX_SHOWN, type FormatMode } from './format.js'
+import { anyOn, getQuietHours, getSettings, quietUntil } from './settings.js'
 import {
   coveredIds,
+  dropPending,
   expirePending,
-  getSettings,
   isDecided,
   markCovered,
   markSent,
@@ -45,6 +52,7 @@ export const MIN_BEFORE_MS = 5 * 60_000
 export const QUIET_NO_ATTENDEES = 'No one else is invited.'
 export const QUIET_NO_MAIL = 'No recent mail with the attendees.'
 export const QUIET_NOTHING_NEW = 'Nothing new since the last briefing for this series.'
+export const QUIET_HOURS = 'It fell in your quiet hours.'
 
 export interface TickDeps {
   calendars: () => Promise<CalendarSource[]>
@@ -92,9 +100,12 @@ async function sendRow(deps: TickDeps, row: DecisionRow, nowMs: number): Promise
 export async function tick(deps: TickDeps): Promise<TickResult> {
   const result: TickResult = { sent: 0, quiet: 0, decided: 0, failures: 0 }
   const settings = getSettings()
-  if (!settings.enabled) return result
+  if (!anyOn(settings)) return result
   const nowMs = deps.now().getTime()
   const stop = deps.abandoned ?? (() => false)
+  // Set while in quiet hours: when they end.
+  const quietEnd = quietUntil(nowMs, deps.tz, getQuietHours())
+  const tooLateAfterQuiet = (startMs: number): boolean => quietEnd !== null && startMs - MIN_BEFORE_MS <= quietEnd
 
   prune(nowMs)
   // A briefing not out by MIN_BEFORE_MS ahead of its meeting is given up, unsent.
@@ -103,6 +114,10 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
   // 1. Briefings decided earlier whose send failed or was cut short.
   for (const row of pendingDecisions()) {
     if (stop()) return result
+    if (quietEnd !== null) {
+      if (tooLateAfterQuiet(row.startMs)) dropPending(row.id, QUIET_HOURS)
+      continue
+    }
     if (await sendRow(deps, row, nowMs)) result.sent++
     else result.failures++
   }
@@ -120,10 +135,16 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
 
   for (const event of events) {
     if (stop()) break
-    if (!briefingDue(event, nowMs, settings.leadMinutes)) continue
+    if (!settings.briefing.on || !briefingDue(event, nowMs, settings.briefing.leadMinutes)) continue
     const key = eventKey(event)
     if (isDecided(key, 'briefing')) continue
     const base = { eventKey: key, seriesKey: event.seriesKey, kind: 'briefing' as const, title: event.title, startMs: event.startMs, text: '', createdAt: nowMs }
+
+    if (quietEnd !== null) {
+      // Held: still due when quiet hours end, so the next tick after decides it.
+      if (tooLateAfterQuiet(event.startMs) && recordDecision({ ...base, status: 'quiet', reason: QUIET_HOURS })) result.quiet++
+      continue
+    }
 
     if (event.attendees.length === 0) {
       if (recordDecision({ ...base, status: 'quiet', reason: QUIET_NO_ATTENDEES })) result.quiet++

@@ -636,6 +636,20 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .dev-meta { font-size: 13px; color: var(--ink-faint); }
 .dev-tag { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 999px; }
 .dev-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.pro-form { display: grid; gap: 10px; }
+.pro-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.pro-check { display: inline-flex; align-items: center; gap: 8px; font-weight: 550; }
+.pro-check input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.pro-row input[type="number"] { width: 4.5em; }
+.pro-times { display: inline-flex; align-items: center; gap: 8px; }
+.pro-row input[type="number"], .pro-row input[type="time"] {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
+}
+.pro-row input:disabled { opacity: 0.5; }
+.pro-hint { margin: 0; font-size: 13px; color: var(--ink-faint); }
+.pro-note { margin: 0; font-size: 13px; color: var(--ink); white-space: pre-line; padding: 8px 10px; background: var(--bg-deep); border-radius: 6px; }
+.pro-note.warn { color: var(--warn); }
 .settings-version { margin: 24px 0 0; font-size: 12px; color: var(--ink-faint); }
 .muted { color: var(--ink-faint); font-size: 14px; padding: 6px 0; }
 

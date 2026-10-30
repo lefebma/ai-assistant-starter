@@ -33,6 +33,10 @@ for them.
 | "quiet hours from 10 pm to 7 am" | `quiet 22:00 07:00` |
 | "what would have alerted this week?" | `replay 7` |
 
+Quiet hours are one setting for every message the owner did not ask for:
+they also hold meeting briefings. Setting them here or through the meeting
+briefings skill changes the same thing.
+
 ### Loose durations
 
 Map anything that is not exactly 1h, tomorrow, 1d, 1w or off to an exact time

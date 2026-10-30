@@ -12,6 +12,7 @@ vi.mock('../src/logger.js', () => ({ logger: log }))
 type Svc = typeof import('../src/proactive/service.js')
 type Store = typeof import('../src/proactive/store.js')
 type Ctl = typeof import('../src/proactive/control.js')
+type Settings = typeof import('../src/proactive/settings.js')
 type Db = typeof import('../src/db.js')
 type UpcomingEvent = import('../src/proactive/calendar.js').UpcomingEvent
 type CalendarSource = import('../src/proactive/calendar.js').CalendarSource
@@ -21,6 +22,7 @@ type TickDeps = import('../src/proactive/service.js').TickDeps
 let svc: Svc
 let s: Store
 let ctl: Ctl
+let st: Settings
 let dbm: Db
 
 const TZ = 'America/Toronto'
@@ -34,12 +36,18 @@ beforeAll(async () => {
   s = await import('../src/proactive/store.js')
   svc = await import('../src/proactive/service.js')
   ctl = await import('../src/proactive/control.js')
+  st = await import('../src/proactive/settings.js')
 })
+
+function briefings(on: boolean, leadMinutes = 30): void {
+  st.saveSettings({ ...st.defaultSettings(), briefing: { on, leadMinutes } })
+}
 
 beforeEach(() => {
   const d = dbm.getDb()
   for (const t of ['proactive_decisions', 'proactive_covered', 'proactive_calls']) d.exec(`DELETE FROM ${t}`)
-  s.saveSettings({ enabled: true, leadMinutes: 30, windowHours: 24 })
+  briefings(true)
+  st.applyChange(st.getSettings(), { quietHours: null }, [])
   log.info.mockClear()
   log.warn.mockClear()
 })
@@ -113,7 +121,7 @@ function deps(opts: Partial<Omit<TickDeps, 'now'>> & { events?: UpcomingEvent[];
 
 describe('tick', () => {
   it('does nothing while off', async () => {
-    s.saveSettings({ enabled: false, leadMinutes: 30, windowHours: 24 })
+    briefings(false)
     const { d } = deps()
     await svc.tick(d)
     expect(d.threads).not.toHaveBeenCalled()
@@ -246,20 +254,20 @@ describe('control', () => {
   })
 
   it('will not turn on without a calendar, and says what it reads when it does', async () => {
-    s.saveSettings({ enabled: false, leadMinutes: 30, windowHours: 24 })
+    briefings(false)
     expect(await ctl.runControl(['on'], cdeps([]))).toContain('No calendar is connected')
-    expect(s.getSettings().enabled).toBe(false)
+    expect(st.getSettings().briefing.on).toBe(false)
     const reply = await ctl.runControl(['on'], cdeps())
     expect(reply).toContain('me@x.com (Google)')
     expect(reply).toContain('I never reply, send or change anything')
-    expect(s.getSettings().enabled).toBe(true)
+    expect(st.getSettings().briefing.on).toBe(true)
     expect(await ctl.runControl(['off'], cdeps())).toBe('Meeting briefings are off.')
   })
 
   it('sets the lead time within bounds', async () => {
     expect(await ctl.runControl(['lead', '2'], cdeps())).toContain('from 5 to 180')
     expect(await ctl.runControl(['lead', '60'], cdeps())).toContain('60 minutes')
-    expect(s.getSettings().leadMinutes).toBe(60)
+    expect(st.getSettings().briefing.leadMinutes).toBe(60)
   })
 
   it('shows the decision log in plain words', async () => {
@@ -269,5 +277,138 @@ describe('control', () => {
     expect(out).toContain('Southtel cutover: briefing sent (Devon is waiting on an answer)')
     expect(out).toContain(`Southtel cutover: no message: ${svc.QUIET_NO_ATTENDEES}`)
     expect(await ctl.runControl(['status'], cdeps())).toContain('1 briefing sent, 1 meeting with nothing worth a message')
+  })
+})
+
+describe('settings (card #262)', () => {
+  it('starts with every kind off', () => {
+    const d = st.defaultSettings()
+    expect([d.briefing.on, d.travel.on, d.timing.on]).toEqual([false, false, false])
+    expect(st.anyOn(d)).toBe(false)
+  })
+
+  it('reads the 1.56.0 shape, keeping briefings on with their lead time', () => {
+    expect(st.normalize({ enabled: true, leadMinutes: 45, windowHours: 24 }).briefing).toEqual({ on: true, leadMinutes: 45 })
+    expect(st.normalize({ enabled: false }).briefing.on).toBe(false)
+    expect(st.normalize('junk')).toEqual(st.defaultSettings())
+    expect(st.normalize({ briefing: { on: true, leadMinutes: 999 } }).briefing.leadMinutes).toBe(30)
+  })
+
+  it('survives a save and reload', () => {
+    briefings(true, 60)
+    expect(st.getSettings().briefing).toEqual({ on: true, leadMinutes: 60 })
+  })
+
+  it('works out when quiet hours end, across midnight', () => {
+    const q = { start: '22:00', end: '07:00' }
+    const late = Date.parse('2026-10-30T03:30:00Z') // 23:30 Toronto
+    expect(st.quietUntil(late, TZ, q)).toBe(Date.parse('2026-10-30T11:00:00Z')) // 07:00 next morning
+    expect(st.quietUntil(NOW, TZ, q)).toBeNull()
+    expect(st.quietUntil(late, TZ, null)).toBeNull()
+  })
+
+  it('refuses a kind that is not built yet, and turning on with no calendar', () => {
+    briefings(false)
+    expect(st.applyChange(st.getSettings(), { on: { travel: true } }, ['me@x.com (Google)'])).toMatchObject({
+      ok: false,
+      message: 'Travel messages are not available yet.',
+    })
+    const r = st.applyChange(st.getSettings(), { on: { briefing: true }, leadMinutes: 60 }, [])
+    expect(r.ok).toBe(false)
+    expect(st.getSettings().briefing).toEqual({ on: false, leadMinutes: 30 })
+  })
+
+  it('keeps one quiet-hours setting, shared with email alerts', async () => {
+    const alerts = await import('../src/email-alerts/store.js')
+    const r = st.applyChange(st.getSettings(), { quietHours: { start: '21:30', end: '6:45' } }, [])
+    expect(r.message).toContain('Quiet hours are 21:30 to 06:45')
+    expect(alerts.getSettings()).toMatchObject({ quietStart: '21:30', quietEnd: '06:45' })
+    expect(st.applyChange(st.getSettings(), { quietHours: { start: '9', end: '09:00' } }, []).ok).toBe(false)
+    st.applyChange(st.getSettings(), { quietHours: null }, [])
+    expect(st.getQuietHours()).toBeNull()
+    const a = alerts.getSettings()
+    expect(a.quietStart).toBe(a.quietEnd)
+  })
+})
+
+describe('quiet hours in the tick', () => {
+  const quiet = (start: string, end: string) => st.applyChange(st.getSettings(), { quietHours: { start, end } }, [])
+
+  it('holds a briefing until quiet hours end, then sends it', async () => {
+    quiet('13:00', '13:40')
+    const held = deps()
+    await svc.tick(held.d)
+    expect(held.d.threads).not.toHaveBeenCalled()
+    expect(s.recentDecisions(10)).toHaveLength(0)
+    const after = deps({ now: NOW + 10 * MIN })
+    await svc.tick(after.d)
+    expect(after.sent).toHaveLength(1)
+  })
+
+  it('drops a briefing whose meeting starts before quiet hours end, and says why', async () => {
+    quiet('13:00', '14:30')
+    const { d } = deps()
+    await svc.tick(d)
+    expect(d.threads).not.toHaveBeenCalled()
+    expect(d.send).not.toHaveBeenCalled()
+    expect(s.recentDecisions(1)[0]).toMatchObject({ status: 'quiet', reason: svc.QUIET_HOURS })
+  })
+
+  it('does not send a waiting briefing in quiet hours', async () => {
+    await svc.tick(deps({ send: vi.fn(async () => null) }).d)
+    expect(s.recentDecisions(1)[0]!.status).toBe('pending')
+    quiet('13:40', '14:30')
+    const retry = deps({ now: NOW + 10 * MIN })
+    await svc.tick(retry.d)
+    expect(retry.sent).toHaveLength(0)
+    expect(s.recentDecisions(1)[0]).toMatchObject({ status: 'quiet', reason: svc.QUIET_HOURS })
+  })
+
+  it('does nothing with briefings off, whatever else is set', async () => {
+    briefings(false)
+    const { d } = deps()
+    await svc.tick(d)
+    expect(d.threads).not.toHaveBeenCalled()
+  })
+})
+
+describe('control (card #262)', () => {
+  const cdeps = () => ({
+    calendars: async () => [{ id: 'me@x.com', provider: 'google' as const, address: 'me@x.com', events: async () => [] }],
+    now: () => new Date(NOW),
+    tz: TZ,
+  })
+
+  it('turns one kind on or off, and refuses kinds not built yet', async () => {
+    briefings(false)
+    expect(await ctl.runControl(['on', 'travel'], cdeps())).toBe('Travel messages are not available yet.')
+    expect(await ctl.runControl(['on', 'briefings'], cdeps())).toContain('Meeting briefings are on.')
+    expect(await ctl.runControl(['on', 'briefing'], cdeps())).toBe('Meeting briefings are already on.')
+    expect(await ctl.runControl(['off', 'nonsense'], cdeps())).toContain('I don\'t know "nonsense"')
+    expect(await ctl.runControl(['off'], cdeps())).toBe('Meeting briefings are off.')
+  })
+
+  it('sets and clears quiet hours, and shows them in status', async () => {
+    expect(await ctl.runControl(['quiet', '22:00', '07:00'], cdeps())).toContain('Quiet hours are 22:00 to 07:00')
+    expect(await ctl.runControl(['status'], cdeps())).toContain('Quiet hours are 22:00 to 07:00')
+    expect(await ctl.runControl(['quiet', '22:00'], cdeps())).toContain('need a start and an end')
+    expect(await ctl.runControl(['quiet', 'off'], cdeps())).toBe('Quiet hours are off.')
+  })
+})
+
+describe('web settings body', () => {
+  it('takes only known fields of the right type', async () => {
+    const { parseChange } = await import('../src/web/proactive-routes.js')
+    expect(parseChange({ on: { briefing: true }, leadMinutes: 45, quietHours: { start: '22:00', end: '07:00' } })).toEqual({
+      on: { briefing: true },
+      leadMinutes: 45,
+      quietHours: { start: '22:00', end: '07:00' },
+    })
+    expect(parseChange({ quietHours: null })).toEqual({ quietHours: null })
+    expect(parseChange({ on: { email: true } })).toBeNull()
+    expect(parseChange({ on: { briefing: 'yes' } })).toBeNull()
+    expect(parseChange({ leadMinutes: '45' })).toBeNull()
+    expect(parseChange({ quietHours: '22-7' })).toBeNull()
+    expect(parseChange([])).toBeNull()
   })
 })
