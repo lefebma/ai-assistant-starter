@@ -34,6 +34,13 @@ import { startEmailAlerts } from './email-alerts/service.js'
 import { discoverMailboxes } from './email-alerts/sources.js'
 import { triage as triageEmail, withTimeout as withTriageTimeout } from './email-alerts/triage.js'
 import { localDay } from './email-alerts/rules.js'
+import { outlookClient } from './email-alerts/sources.js'
+import { listAuthedAccounts } from './ms/store.js'
+import { startProactive } from './proactive/service.js'
+import { discoverCalendars } from './proactive/calendar.js'
+import { relatedThreads } from './proactive/threads.js'
+import { decide as decideBriefing } from './proactive/decide.js'
+import { bumpCallCount, callCount } from './proactive/store.js'
 import { getAgentRuntime } from './runtime/index.js'
 import { PROJECT_ROOT } from './env.js'
 import { clearRestartNotice, pendingRestartNotice, restartNoticeMessage, shutdownExitCode } from './infra/restart.js'
@@ -291,6 +298,34 @@ async function main(): Promise<void> {
       })
     : () => {}
 
+  // Meeting briefings (cards #258, #259). Off until the owner turns them on
+  // in chat; the tick is a no-op while disabled. Same rule as email alerts:
+  // no owner chat, nobody to brief, so it does not start.
+  const stopProactive = PRIMARY_CHAT_ID
+    ? startProactive({
+        calendars: () => discoverCalendars({ msAccounts: () => listAuthedAccounts(), client: outlookClient }),
+        threads: (event, own, nowMs) => relatedThreads(event, own, nowMs, { client: outlookClient }),
+        decide: (event, threads) =>
+          decideBriefing(event, threads, {
+            run: withTriageTimeout(async (message, signal) => {
+              const r = await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })
+              if (r.aiPaused) throw new AiPausedError(r.aiPaused)
+              return r.text
+            }),
+            tz: emailAlertsTz,
+            count: () => callCount(localDay(new Date(), emailAlertsTz)),
+            bump: () => bumpCallCount(localDay(new Date(), emailAlertsTz)),
+          }),
+        send: async (text) => {
+          const messageId = await adapter.sendMessage(PRIMARY_CHAT_ID, text)
+          return { chatId: PRIMARY_CHAT_ID, messageId }
+        },
+        now: () => new Date(),
+        tz: emailAlertsTz,
+        format: adapter.name === 'telegram' ? 'plain' : 'markdown',
+      })
+    : () => {}
+
   // Managed box only: the single background recovery probe while the AI
   // allowance is used up. Not started anywhere else.
   const stopAiRecovery = startAiRecovery()
@@ -328,6 +363,7 @@ async function main(): Promise<void> {
     stopWitness()
     stopWitnessChecks()
     stopEmailAlerts()
+    stopProactive()
     stopAiRecovery()
 
     // The listener closes first, and the order is load-bearing on a hosted box.
