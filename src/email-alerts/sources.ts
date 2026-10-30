@@ -308,18 +308,22 @@ export function outlookMailbox(account: string, client: GraphLike, address?: str
  * `gog auth list --plain` is TSV: the account first, then client, services
  * (comma separated), and dates. Columns are not pinned by position past the
  * first: a line counts when its first column is an address and any later
- * column lists gmail.
+ * column lists the service.
  */
-export function parseGmailAccounts(stdout: string): string[] {
+export function parseGogAccounts(stdout: string, service: string): string[] {
   const seen: string[] = []
   for (const line of stdout.split('\n')) {
     const cols = line.split('\t')
     const acct = (cols[0] ?? '').trim()
     if (!/^[^\s@]+@[^\s@]+$/.test(acct)) continue
-    const services = cols.slice(1).some((c) => c.split(/[,\s]+/).some((s) => s.trim().toLowerCase() === 'gmail'))
-    if (services && !seen.includes(acct)) seen.push(acct)
+    const listed = cols.slice(1).some((c) => c.split(/[,\s]+/).some((s) => s.trim().toLowerCase() === service))
+    if (listed && !seen.includes(acct)) seen.push(acct)
   }
   return seen
+}
+
+export function parseGmailAccounts(stdout: string): string[] {
+  return parseGogAccounts(stdout, 'gmail')
 }
 
 export interface DiscoverDeps {
@@ -329,7 +333,8 @@ export interface DiscoverDeps {
   client?: (account: string) => GraphLike
 }
 
-function realGraph(account: string): GraphLike {
+/** A Graph client for a connected Outlook account, with the scopes it signed in with. */
+export function outlookClient(account: string): GraphLike {
   return new GraphClient({
     config: resolveMsConfig({ ...process.env, ...readEnvFile(['MS_CLIENT_ID', 'MS_TENANT_ID']) }),
     account,
@@ -343,7 +348,7 @@ export async function discoverMailboxes(
 ): Promise<{ boxes: Mailbox[]; broken: { id: string; why: string }[] }> {
   const exec = deps.exec ?? defaultExec
   const msAccounts = deps.msAccounts ?? (() => listAuthedAccounts())
-  const clientFor = deps.client ?? realGraph
+  const clientFor = deps.client ?? outlookClient
 
   const candidates: Mailbox[] = []
   const boxes: Mailbox[] = []

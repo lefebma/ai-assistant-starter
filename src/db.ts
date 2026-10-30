@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs'
 import { STORE_DIR } from './config.js'
 import { installTimezone } from './env.js'
 import { initEmailAlertTables } from './email-alerts/store.js'
+import { initProactiveTables } from './proactive/store.js'
 import { initEffectJournalTables } from './assurance/effect-journal.js'
 import { initRunStateTables } from './assurance/run-state.js'
 
@@ -278,6 +279,7 @@ export function initDatabase(): void {
   }
 
   initEmailAlertTables(d)
+  initProactiveTables(d)
   initEffectJournalTables(d)
   initRunStateTables(d)
 }

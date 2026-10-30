@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.56.0 - 2026-10-30
+
+- **New: a heads-up before your meetings.** About 30 minutes before a meeting with other people, your assistant checks your recent email with the people attending and, when something needs your attention, sends you a short message: which threads to read first, with a one-line reason each, and anything you owe them, like an unanswered question or a document you said you would send. It names at most five threads, links each one, and stays quiet when there is nothing useful to say. Declined, cancelled and all-day events are skipped, and a weekly meeting is only briefed on mail its last briefing did not cover. It works with Google and Outlook calendars and mail. It is off until you turn it on: say "brief me before my meetings". You can change how far ahead it arrives ("brief me an hour before"), and ask why a meeting got no message ("what did you decide for my meetings?"). It only reads. It never replies, sends, accepts, declines or changes anything. To decide, the assistant's AI reads the meeting details and the newest message of each related thread, at most 40 times a day.
+
 ## 1.55.0 - 2026-10-29
 
 - **Fixed: self-hosted and compatible AI servers work for tool tasks.** An assistant pointed at its own model server (Ollama, LM Studio, vLLM and similar) failed with "Invalid type for 'input'" whenever it used a tool, such as reading a file or running a command. In our test on LM Studio, half the standard checks failed this way. It now uses the connection every compatible server supports, and the same checks all pass. Assistants on OpenAI itself are unchanged.

@@ -1,0 +1,9 @@
+{
+  "id": "proactive",
+  "name": "Meeting Briefings",
+  "description": "Short heads-up before a meeting when recent mail with its attendees needs attention: turn on or off, lead time, status and log.",
+  "enabled": true,
+  "triggers": ["meeting briefing", "meeting briefings", "briefing before", "heads-up before", "before my meetings", "proactive", "prep for meetings"],
+  "priority": 60,
+  "context": "Run node {{PROJECT_PATH}}/dist/scripts/proactive.js <command> (on, off, status, log [count], lead <minutes 5 to 180>). Relay its reply as is. See SKILL.md."
+}
