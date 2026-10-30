@@ -17,6 +17,8 @@ export interface AiUsage {
   /** UTC month, `YYYY-MM`. */
   month: string
   usd: number
+  /** The part of `usd` that was maps calls through Havn's proxy (card #266). */
+  mapsUsd?: number
   /** Copied from managed-ai.json on each write, so one read tells the whole story. */
   capUsd?: number
   /** When the owner was told about 80% this month, at the cap below. */
@@ -86,6 +88,33 @@ export function recordManagedSpend(usd: unknown, opts: { storeDir?: string; now?
     writeAiUsage(next, storeDir)
   } catch (err) {
     logger.warn({ err: String(err) }, 'Could not record AI spend')
+  }
+}
+
+/**
+ * Add one maps proxy call's cost (card #266). It goes into the same monthly
+ * total as AI spend, so the 80% heads-up and the operator's spend line (#163,
+ * which reads this file) include it, and is also kept apart as `mapsUsd`. The
+ * hard stop for maps is the Worker's per-box quota, not the Anthropic limit.
+ * Never throws; a non-managed box records nothing, as for AI spend.
+ */
+export function recordMapsSpend(usd: unknown, opts: { storeDir?: string; now?: Date } = {}): void {
+  const storeDir = opts.storeDir ?? STORE_DIR
+  try {
+    if (typeof usd !== 'number' || !Number.isFinite(usd) || usd <= 0) return
+    if (!isManagedAi(storeDir)) return
+    const u = currentUsage(storeDir, opts.now ?? new Date())
+    const cap = readManagedCap(storeDir)
+    const next: AiUsage = {
+      ...u,
+      usd: Math.round((u.usd + usd) * 1e6) / 1e6,
+      mapsUsd: Math.round(((u.mapsUsd ?? 0) + usd) * 1e6) / 1e6,
+    }
+    if (cap !== undefined) next.capUsd = cap
+    else delete next.capUsd
+    writeAiUsage(next, storeDir)
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'Could not record maps spend')
   }
 }
 

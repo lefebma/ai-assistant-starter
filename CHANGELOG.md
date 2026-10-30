@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.57.0 - 2026-10-30
+
+Groundwork for travel times: a way for assistants to look up places and journeys on Google Maps.
+
+- **New: maps for hosted assistants, without a Google key on the box.** Your provider runs a small maps service that holds the Google key. Each hosted assistant gets its own access token in its encrypted vault, so the key cannot leak from a box, and your provider can switch off one box's access without touching any other. The service only ever looks up an address, a journey time (with traffic for a given departure time, or by transit or on foot) or a business by name. It keeps no record of what was looked up, only how many lookups each box made and what they cost.
+- **Maps lookups count toward your monthly allowance.** Their cost is added to the same monthly total as AI use, so the 80% heads-up includes them. Each box also has a monthly lookup limit. Past it, or if Google or the service is down, the assistant says "travel time not available" within five seconds and gives the location on its own instead of failing.
+- **Self-installed assistants can use their own Google Maps key.** Add it with `/secret set GOOGLE_MAPS_API_KEY` (restricted to the Routes, Geocoding and Places APIs). With no key, travel times are simply off.
+- For providers: `deploy/maps-proxy/README.md` covers deploying the service, the Google Cloud console steps, and issuing, revoking and limiting box tokens (`npm run maps-token`). `npm run provision` gives a new box its token when the service is set up.
+
 ## 1.56.0 - 2026-10-30
 
 - **New: a heads-up before your meetings.** About 30 minutes before a meeting with other people, your assistant checks your recent email with the people attending and, when something needs your attention, sends you a short message: which threads to read first, with a one-line reason each, and anything you owe them, like an unanswered question or a document you said you would send. It names at most five threads, links each one, and stays quiet when there is nothing useful to say. Declined, cancelled and all-day events are skipped, and a weekly meeting is only briefed on mail its last briefing did not cover. It works with Google and Outlook calendars and mail. It is off until you turn it on: say "brief me before my meetings". You can change how far ahead it arrives ("brief me an hour before"), and ask why a meeting got no message ("what did you decide for my meetings?"). It only reads. It never replies, sends, accepts, declines or changes anything. To decide, the assistant's AI reads the meeting details and the newest message of each related thread, at most 40 times a day.

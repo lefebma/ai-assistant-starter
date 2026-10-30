@@ -12,6 +12,8 @@
  *   VULTR_API_KEY          Vultr API key
  *   CLOUDFLARE_API_TOKEN   DNS:Edit on the gethavn.ai zone
  *   CLOUDFLARE_ZONE_ID     that zone's id
+ *   HAVN_MAPS_URL, HAVN_MAPS_ADMIN_TOKEN   optional: give the box its own maps
+ *                          proxy token (card #266, deploy/maps-proxy)
  *
  * --dry-run checks the inputs, renders the user-data and confirms the name is
  * free on Vultr and in DNS, without creating anything.
@@ -36,6 +38,7 @@ import {
   type SshUser,
 } from '../../src/deploy/provision.js'
 import { resolveSshKey } from '../make-cloud-init.js'
+import { connectBox, mapsAdminFromEnv } from './maps-token.js'
 
 const USAGE = `Usage: npm run provision -- --client <name> --country <us|ca> --ssh-key <key-or-.pub-path> [options]
 
@@ -133,8 +136,10 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  const maps = mapsAdminFromEnv()
   const deps: ProvisionDeps = {
     fetch,
+    ...(maps ? { connectMaps: (box: string, host: string) => connectBox(maps, box, host) } : {}),
     vultrApiKey: env('VULTR_API_KEY'),
     cloudflareToken: env('CLOUDFLARE_API_TOKEN'),
     cloudflareZoneId: env('CLOUDFLARE_ZONE_ID'),

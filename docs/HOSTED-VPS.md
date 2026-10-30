@@ -240,6 +240,46 @@ New boxes get the store from cloud-init. For a box built earlier, update it to
 a release with the audit log, then run `npm run enable-audit -- <ip>` from your
 machine. The assistant starts recording at its next restart.
 
+### Maps proxy (travel times)
+
+Hosted boxes reach Google Maps through a Havn-run Cloudflare Worker,
+`deploy/maps-proxy` (card #266), so Havn's Google key is never on a box. Each
+box has its own token in its vault (`MAPS_PROXY_TOKEN`) and the Worker's
+address in `.env` (`MAPS_PROXY_URL`). The Worker answers three calls only:
+geocode, route (traffic-aware, with a departure time; driving, transit or
+walking) and place search. It keeps a monthly request quota and a cost record
+per box, and caches geocodes per box for up to 30 days. Its logs hold box,
+call, status and cost, never an address or place name. If the Worker or
+Google is down, or the box is over its quota, the box answers within 5 seconds
+with "travel time not available" and gives the location alone.
+
+Each call's cost is added to the box's `ai-usage.json` (as `usd`, with the
+maps part also in `mapsUsd`), so it counts toward the monthly allowance, the
+80% heads-up and your hosted spend line. The Worker's quota is the hard stop
+for maps; the Anthropic limit only stops AI calls.
+
+**Set up once.** Deploy the Worker and set its two secrets, and do the Google
+Cloud console steps: `deploy/maps-proxy/README.md`.
+
+**New boxes.** With `HAVN_MAPS_URL` and `HAVN_MAPS_ADMIN_TOKEN` in your
+environment, `npm run provision` issues the box its token and writes it to the
+box's vault after first boot. Without them, or if that step fails, the box is
+built anyway with travel times off, and the run prints the command to fix it.
+
+**Existing boxes, revoking, quotas.** From your machine, with the same two
+variables set (no restart needed, the box reads both on each call):
+
+```bash
+npm run maps-token -- issue havn-leif 66.55.159.70   # new token; any earlier one stops working
+npm run maps-token -- revoke havn-leif               # that box only; others carry on
+npm run maps-token -- quota havn-leif 2000           # requests per UTC month (default 1000)
+npm run maps-token -- usage 2026-11                  # requests and cost per box
+```
+
+A box can read its own month-to-date total from the Worker (`GET /v1/usage`
+with its own token). Self-installed assistants do not use the proxy: the
+owner adds their own key with `/secret set GOOGLE_MAPS_API_KEY`.
+
 ### Egress allowlist
 
 The assistant's tools (shell commands, web fetches, the browser, its mail and

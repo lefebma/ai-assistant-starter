@@ -159,6 +159,21 @@ describe('provision', () => {
     expect(w.sshUsers.slice(0, -1).every((u) => u === 'havn')).toBe(true)
   })
 
+  it('gives the box its own maps token after install, and a maps failure does not stop provisioning (card #266)', async () => {
+    const w = world()
+    const connected: string[] = []
+    w.deps.connectMaps = async (box, host) => void connected.push(`${box}@${host}`)
+    await provision(spec(), w.deps)
+    expect(connected).toEqual(['havn-leif@45.77.1.2'])
+    expect(w.log).toContain('Maps: havn-leif has its own maps proxy token.')
+
+    const w2 = world()
+    w2.deps.connectMaps = async () => { throw new Error('proxy refused (401)') }
+    const r = await provision(spec(), w2.deps)
+    expect(r.link).toContain('/setup?token=')
+    expect(w2.log.some((l) => l.includes('npm run maps-token -- issue havn-leif 45.77.1.2'))).toBe(true)
+  })
+
   it('puts Canadian clients in Toronto', async () => {
     const w = world()
     const r = await provision(spec({ country: 'ca', timezone: 'America/Toronto' }), w.deps)
