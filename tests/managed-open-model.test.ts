@@ -8,7 +8,7 @@
  * own key (BYOK) records nothing. The model is MockLanguageModelV3: offline.
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const h = vi.hoisted(() => {
@@ -44,9 +44,13 @@ function spend(usd: number, month = new Date().toISOString().slice(0, 7)): void 
   writeFileSync(join(STORE, AI_USAGE_FILE), JSON.stringify({ month, usd }))
 }
 
+// The store's SQLite file stays open for the whole file, and Windows refuses to
+// unlink an open file, so reset clears everything but the database.
 function reset(): void {
-  rmSync(STORE, { recursive: true, force: true })
   mkdirSync(STORE, { recursive: true })
+  for (const name of readdirSync(STORE)) {
+    if (!name.startsWith('assistant.db')) rmSync(join(STORE, name), { recursive: true, force: true })
+  }
 }
 
 beforeEach(() => {
@@ -56,7 +60,9 @@ beforeEach(() => {
   process.env.AI_BASE_URL = 'https://host.example/v1'
   process.env.AI_MODEL = 'open-model-test'
 })
-afterAll(() => rmSync(STORE, { recursive: true, force: true }))
+afterAll(() => {
+  try { rmSync(STORE, { recursive: true, force: true }) } catch { /* Windows: database still open */ }
+})
 
 class FakeDb {
   private rows = new Map<string, string>()
