@@ -84,7 +84,10 @@ moment the vault is actually protecting you.
 
 Everything the engine reads via its secret resolver: `TELEGRAM_BOT_TOKEN`,
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `HTTP_BEARER_TOKEN`,
-`ELEVENLABS_API_KEY`. Non-secret config (chat ids, ports, model names, flags)
+`ELEVENLABS_API_KEY`, and the optional maps keys `GOOGLE_MAPS_API_KEY`
+(a self-installed assistant's own Google Maps key, restricted to the Routes,
+Geocoding and Places APIs) and `MAPS_PROXY_TOKEN` (a hosted box's token for
+Havn's maps proxy). Non-secret config (chat ids, ports, model names, flags)
 stays in `.env` on purpose — it's not sensitive, and keeping it visible makes
 setups debuggable.
 

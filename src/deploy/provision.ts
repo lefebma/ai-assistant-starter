@@ -70,6 +70,12 @@ export interface ProvisionDeps {
   now: () => number
   log: (message: string) => void
   templates: { cloudInit: string; unit: string }
+  /**
+   * Give the box its own maps proxy token (card #266), stored in its vault.
+   * Set when the operator has the proxy configured; a failure here leaves
+   * travel times off but does not stop provisioning.
+   */
+  connectMaps?: (box: string, host: string) => Promise<void>
 }
 
 export interface ProvisionResult {
@@ -270,6 +276,18 @@ export async function provision(spec: ProvisionSpec, deps: ProvisionDeps): Promi
       return null
     })
     deps.log('Install finished.')
+
+    if (deps.connectMaps) {
+      try {
+        await deps.connectMaps(hostName, ip)
+        deps.log(`Maps: ${hostName} has its own maps proxy token.`)
+      } catch (err) {
+        deps.log(`Maps: not connected (${err instanceof Error ? err.message : String(err)}). ` +
+          `Travel times stay off until you run: npm run maps-token -- issue ${hostName} ${ip}`)
+      }
+    } else {
+      deps.log('Maps: HAVN_MAPS_URL not set, so travel times are off on this box for now.')
+    }
 
     deps.log(`Turning on web setup at https://${address}/setup ...`)
     const installDir = DEFAULT_INSTALL_DIR

@@ -1,0 +1,22 @@
+# Google Maps proxy for hosted boxes (card #266). Deploy: deploy/maps-proxy/README.md.
+# Secrets (wrangler secret put): GOOGLE_MAPS_API_KEY, ADMIN_TOKEN_SHA256.
+name = "havn-maps"
+main = "worker.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+# Requests a box may send to Google per UTC month until you set its own quota.
+DEFAULT_MONTHLY_REQUESTS = "1000"
+
+[[durable_objects.bindings]]
+name = "MAPS"
+class_name = "BoxMaps"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BoxMaps"]
+
+# Daily at 08:00 UTC: drop geocode cache entries older than 30 days.
+[triggers]
+crons = ["0 8 * * *"]

@@ -22,6 +22,12 @@ export const KNOWN_SECRET_NAMES = [
 ] as const
 
 /**
+ * Optional keys the engine reads when present (card #266). Never reported as
+ * missing: most installs run without maps.
+ */
+const OPTIONAL_SECRET_NAMES: readonly string[] = ['GOOGLE_MAPS_API_KEY', 'MAPS_PROXY_TOKEN']
+
+/**
  * Families of names the engine reads under a per-account suffix. The IMAP
  * skill reads IMAP_PASSWORD_<MAILBOX>, one per connected mailbox, so no fixed
  * list can name them all.
@@ -32,6 +38,7 @@ const KNOWN_SECRET_PREFIXES = ['IMAP_PASSWORD_'] as const
 export function isEngineSecret(name: string): boolean {
   return (
     (KNOWN_SECRET_NAMES as readonly string[]).includes(name) ||
+    OPTIONAL_SECRET_NAMES.includes(name) ||
     KNOWN_SECRET_PREFIXES.some((p) => name.startsWith(p) && name.length > p.length)
   )
 }
