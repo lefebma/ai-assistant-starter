@@ -2059,6 +2059,13 @@ function renderProactive(v) {
       ? 'The trip starts at your previous meeting when you come straight from one, else at this address. It stays on this assistant.'
       : 'Travel times are not set up on this assistant, so travel messages give the place only.'
   }
+  show(document.querySelector('.pro-timing'), Boolean(v.timing))
+  if (v.timing) {
+    const ahead = $('pro-ahead')
+    ahead.min = v.limits.aheadHours.min
+    ahead.max = v.limits.aheadHours.max
+    ahead.value = v.timing.aheadHours
+  }
   $('pro-quiet').checked = Boolean(v.quietHours)
   $('pro-quiet-start').value = v.quietHours ? v.quietHours.start : '22:00'
   $('pro-quiet-end').value = v.quietHours ? v.quietHours.end : '07:00'
@@ -2095,8 +2102,10 @@ $('pro-form').addEventListener('submit', async (e) => {
   const travel = document.querySelector('.pro-travel').hidden
     ? {}
     : { bufferMinutes: Number($('pro-buffer').value), mode: $('pro-mode').value, origin: $('pro-origin').value }
+  const timing = document.querySelector('.pro-timing').hidden ? {} : { aheadHours: Number($('pro-ahead').value) }
   const change = {
     ...travel,
+    ...timing,
     on,
     leadMinutes: Number($('pro-lead').value),
     quietHours: $('pro-quiet').checked ? { start: $('pro-quiet-start').value, end: $('pro-quiet-end').value } : null,

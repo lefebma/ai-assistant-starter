@@ -7,7 +7,7 @@ import { getDb } from '../db.js'
  * got no message. `pending` is a message decided but not yet accepted by the
  * chat; `failed` gave up after MAX_SEND_ATTEMPTS or once the meeting started.
  */
-export type Kind = 'briefing' | 'travel'
+export type Kind = 'briefing' | 'travel' | 'timing'
 export type DecisionStatus = 'quiet' | 'pending' | 'sent' | 'failed'
 
 export const MAX_SEND_ATTEMPTS = 3
@@ -63,6 +63,13 @@ export function initProactiveTables(db: Database.Database): void {
       computed_at INTEGER NOT NULL,
       refreshed INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS proactive_seen (
+      event_id TEXT NOT NULL,
+      decision_id INTEGER NOT NULL,
+      start_ms INTEGER NOT NULL,
+      location TEXT NOT NULL,
+      PRIMARY KEY (event_id, decision_id)
+    );
     CREATE TABLE IF NOT EXISTS proactive_calls (
       day TEXT PRIMARY KEY,
       count INTEGER NOT NULL DEFAULT 0
@@ -108,6 +115,11 @@ function toRow(r: RawRow): DecisionRow {
 
 export function isDecided(eventKey: string, kind: Kind): boolean {
   return !!getDb().prepare('SELECT 1 FROM proactive_decisions WHERE event_key = ? AND kind = ?').get(eventKey, kind)
+}
+
+export function getDecision(eventKey: string, kind: Kind): DecisionRow | null {
+  const r = getDb().prepare('SELECT * FROM proactive_decisions WHERE event_key = ? AND kind = ?').get(eventKey, kind) as RawRow | undefined
+  return r ? toRow(r) : null
 }
 
 /** Records a decision. False when one already exists for this meeting and kind (another tick got there first). */
@@ -187,6 +199,34 @@ export function prune(nowMs: number): void {
   db.prepare('DELETE FROM proactive_decisions WHERE start_ms < ?').run(nowMs - KEEP_MS)
   db.prepare('DELETE FROM proactive_covered WHERE covered_at < ?').run(nowMs - 4 * KEEP_MS)
   db.prepare('DELETE FROM proactive_trips WHERE computed_at < ?').run(nowMs - 2 * 86_400_000)
+  db.prepare('DELETE FROM proactive_seen WHERE decision_id NOT IN (SELECT id FROM proactive_decisions)').run()
+}
+
+/**
+ * What a meeting looked like when a message about it was decided (card
+ * #261), so a later move or new place can be pointed out. Kept per message:
+ * only messages the chat accepted count as seen by the owner.
+ */
+export interface Seen {
+  startMs: number
+  location: string
+}
+
+export function recordSeen(eventId: string, decisionId: number, startMs: number, location: string): void {
+  getDb()
+    .prepare('INSERT OR REPLACE INTO proactive_seen (event_id, decision_id, start_ms, location) VALUES (?, ?, ?, ?)')
+    .run(eventId, decisionId, startMs, location)
+}
+
+/** How the meeting looked in the newest message about it that was sent; null when none was. */
+export function lastSeen(eventId: string): Seen | null {
+  const row = getDb()
+    .prepare(
+      `SELECT s.start_ms, s.location FROM proactive_seen s JOIN proactive_decisions d ON d.id = s.decision_id
+       WHERE s.event_id = ? AND d.status = 'sent' ORDER BY d.sent_at DESC, d.id DESC LIMIT 1`
+    )
+    .get(eventId) as { start_ms: number; location: string } | undefined
+  return row ? { startMs: row.start_ms, location: row.location } : null
 }
 
 /**

@@ -22,6 +22,12 @@
  * the message goes bufferMinutes before leave-by. They follow the same quiet
  * hours, decided-once rule and send retries as briefings.
  *
+ * Timing warnings (card #261) ride it too: overlaps, back-to-back meetings
+ * in different places without time to get between them, and meetings that
+ * moved since the owner's last message about them, in the next aheadHours.
+ * Every problem found in a pass goes in one message. A tight back-to-back
+ * costs one route lookup per pair of meetings, cached like a trip.
+ *
  * Read-only: nothing here replies, sends mail, accepts, declines or edits.
  * The only thing that leaves is the message, to the owner's own chat, and
  * the place and starting point sent to the maps source for a travel time.
@@ -48,6 +54,23 @@ import {
   type Trip,
 } from './travel.js'
 import {
+  REMIND_BEFORE_MS,
+  REASON_MOVED,
+  REASON_TIGHT,
+  asReminder,
+  decisionKey,
+  describeBackToBack,
+  describeMoved,
+  describeOverlap,
+  eventId,
+  findBackToBacks,
+  findMoved,
+  findOverlaps,
+  formatTiming,
+  noGapBetweenAddresses,
+  type Found,
+} from './timing.js'
+import {
   coveredIds,
   dropPending,
   expirePending,
@@ -55,8 +78,11 @@ import {
   markCovered,
   markSent,
   pendingDecisions,
+  getDecision,
   getTrip,
+  lastSeen,
   prune,
+  recordSeen,
   recordDecision,
   saveTrip,
   recordSendFailure,
@@ -75,7 +101,7 @@ export const QUIET_NO_MAIL = 'No recent mail with the attendees.'
 export const QUIET_NOTHING_NEW = 'Nothing new since the last briefing for this series.'
 export const QUIET_HOURS = 'It fell in your quiet hours.'
 export const QUIET_TOO_LATE = 'Seen too late to be any use.'
-/** How far back the calendar is read when travel messages are on, to know where the owner comes from. */
+/** How far back the calendar is read when travel or timing is on, to know where the owner comes from and what is under way. */
 const LOOKBACK_MS = 8 * 3_600_000
 
 export interface TickDeps {
@@ -139,31 +165,53 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
   // A briefing not out by MIN_BEFORE_MS ahead of its meeting is given up, unsent.
   expirePending(nowMs + MIN_BEFORE_MS)
 
-  // 1. Briefings decided earlier whose send failed or was cut short.
+  // 1. Messages decided earlier whose send failed or was cut short. Timing
+  // warnings still waiting go together, as they were meant to.
+  const waitingTiming: DecisionRow[] = []
   for (const row of pendingDecisions()) {
     if (stop()) return result
     if (quietEnd !== null) {
       if (tooLateAfterQuiet(row.startMs)) dropPending(row.id, QUIET_HOURS)
       continue
     }
+    if (row.kind === 'timing') {
+      waitingTiming.push(row)
+      continue
+    }
     if (await sendRow(deps, row, nowMs)) result.sent++
+    else result.failures++
+  }
+  if (waitingTiming.length > 0) {
+    const maps = (deps.maps ?? (() => createMapsClient()))()
+    if (await sendTiming(deps, waitingTiming, maps.attribution, nowMs)) result.sent++
     else result.failures++
   }
 
   // 2. Deciding needs the model; while the AI allowance is used up, briefings
-  // wait. Travel messages need no model and go on, without arrival notes.
+  // wait. Travel messages and timing warnings need no model and go on (travel
+  // without arrival notes).
   const paused = aiPausedForBackground()
-  if (paused && !settings.travel.on) {
+  if (paused && !settings.travel.on && !settings.timing.on) {
     logger.info('AI allowance used up, proactive scan not run')
     return result
   }
 
   const sources = await deps.calendars()
   const own = new Map(sources.map((s) => [s.id, s.address]))
-  const from = settings.travel.on ? nowMs - LOOKBACK_MS : nowMs
-  const { events, failures } = await upcomingEvents(sources, from, nowMs + settings.windowHours * 3_600_000)
+  const from = settings.travel.on || settings.timing.on ? nowMs - LOOKBACK_MS : nowMs
+  const hours = Math.max(settings.windowHours, settings.timing.on ? settings.timing.aheadHours : 0)
+  const { events, failures } = await upcomingEvents(sources, from, nowMs + hours * 3_600_000)
   result.failures += failures
 
+  // Timing first: a moved meeting is pointed out before a briefing or travel
+  // message about its new time counts as the owner having seen it.
+  if (settings.timing.on) {
+    if (stop()) return result
+    const r = await timingPass(deps, settings, events, nowMs, quietEnd)
+    result.sent += r.sent
+    result.quiet += r.quiet
+    result.failures += r.failures
+  }
   if (settings.travel.on) {
     const r = await travelPass(paused ? { ...deps, notes: undefined } : deps, settings, events, own, nowMs, quietEnd, stop)
     result.sent += r.sent
@@ -225,6 +273,7 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
     const text = formatBriefing(event, d, deps.tz, deps.format)
     const id = recordDecision({ ...base, status: 'pending', reason: d.reason, text })
     if (id === null) continue // another tick decided it first
+    recordSeen(eventId(event), id, event.startMs, event.location)
     const shownIds = [...d.picks.slice(0, MAX_SHOWN).map((p) => p.thread), ...d.owed.map((o) => o.thread)].flatMap(
       (t) => t.messageIds
     )
@@ -329,11 +378,100 @@ async function travelPass(
     const reason = trip.ok ? `About ${trip.minutes} min of travel.` : trip.why
     const id = recordDecision({ ...base, status: 'pending', reason, text })
     if (id === null) continue
+    recordSeen(eventId(event), id, event.startMs, event.location)
     const row: DecisionRow = { ...base, id, status: 'pending', reason, text, attempts: 0, sentAt: null, chatId: null, chatMessageId: null }
     if (await sendRow(deps, row, nowMs)) out.sent++
     else out.failures++
   }
   return out
+}
+
+/**
+ * Timing problems in the next aheadHours. Each is decided once per
+ * signature (decisionKey) and once more as a reminder when it is about to
+ * start, if the first report went out earlier than that. Every problem
+ * decided in the pass goes in one message.
+ */
+async function timingPass(
+  deps: TickDeps,
+  settings: ProactiveSettings,
+  events: UpcomingEvent[],
+  nowMs: number,
+  quietEnd: number | null
+): Promise<{ sent: number; quiet: number; failures: number }> {
+  const out = { sent: 0, quiet: 0, failures: 0 }
+  const until = nowMs + settings.timing.aheadHours * 3_600_000
+  const maps = (deps.maps ?? (() => createMapsClient()))()
+  const mapsOn = maps.mode !== 'off'
+  const words = { tz: deps.tz, nowMs, mode: settings.travel.mode, format: deps.format }
+
+  const found: Found[] = findOverlaps(events, nowMs, until).map((p) => describeOverlap(p, words))
+  for (const p of findBackToBacks(events, nowMs, until, mapsOn)) {
+    let minutes: number | null = null
+    if (mapsOn) {
+      // One lookup per pair of meetings, kept with the trips; a move makes a new pair.
+      const key = `gap:${eventKey(p.a)}>${eventKey(p.b)}`
+      let stored = getTrip<Trip>(key)
+      if (!stored) {
+        const from = { text: p.from, label: '', notBeforeMs: p.a.endMs }
+        const trip = await planTrip(p.b, p.to, from, settings.travel.mode, maps, nowMs)
+        saveTrip(key, trip, nowMs, true)
+        stored = { trip, computedAt: nowMs, refreshed: true }
+      }
+      if (stored.trip.ok) minutes = stored.trip.minutes
+    }
+    if (minutes !== null ? minutes > p.gapMinutes : noGapBetweenAddresses(p)) found.push(describeBackToBack(p, minutes, words))
+  }
+  found.push(...findMoved(events, nowMs, until, lastSeen).map((p) => describeMoved(p, words)))
+
+  const rows: DecisionRow[] = []
+  for (const f of found) {
+    if (nowMs >= f.bitesMs - MIN_BEFORE_MS) continue // too close to fix
+    const first = getDecision(decisionKey(f), 'timing')
+    let item = f
+    let key = decisionKey(f)
+    if (first) {
+      // Reported already: once more as it comes up, if that report was well before.
+      const remind = f.bitesMs - REMIND_BEFORE_MS
+      const due = f.reason !== REASON_MOVED && first.status === 'sent' && (first.sentAt ?? nowMs) < remind && nowMs >= remind
+      if (!due) continue
+      key = decisionKey(f, true)
+      if (getDecision(key, 'timing')) continue
+      item = asReminder(f)
+    }
+    const base = { eventKey: key, seriesKey: f.key, kind: 'timing' as const, title: item.title, startMs: f.bitesMs, createdAt: nowMs }
+    if (quietEnd !== null) {
+      // Held until quiet hours end, unless it starts before then.
+      if (quietEnd >= f.bitesMs - MIN_BEFORE_MS && recordDecision({ ...base, status: 'quiet', reason: QUIET_HOURS, text: '' })) out.quiet++
+      continue
+    }
+    const id = recordDecision({ ...base, status: 'pending', reason: item.reason, text: item.text })
+    if (id === null) continue
+    for (const e of f.events) recordSeen(eventId(e), id, e.startMs, e.location)
+    rows.push({ ...base, id, status: 'pending', reason: item.reason, text: item.text, attempts: 0, sentAt: null, chatId: null, chatMessageId: null })
+  }
+  if (rows.length > 0) {
+    if (await sendTiming(deps, rows, maps.attribution, nowMs)) out.sent++
+    else out.failures++
+  }
+  return out
+}
+
+/** Timing warnings go out as one message; each row is marked by how that send went. */
+async function sendTiming(deps: TickDeps, rows: DecisionRow[], attribution: string | null, nowMs: number): Promise<boolean> {
+  // A travel time from the maps source is credited, as in travel messages.
+  const credit = rows.some((r) => r.reason.endsWith(REASON_TIGHT)) ? attribution : null
+  let res: { chatId: string; messageId: string } | null = null
+  try {
+    res = await deps.send(formatTiming(rows.map((r) => r.text), credit))
+  } catch {
+    res = null
+  }
+  for (const row of rows) {
+    if (res) markSent(row.id, res.chatId, res.messageId, deps.now().getTime())
+    else recordSendFailure(row.id, nowMs >= row.startMs - MIN_BEFORE_MS)
+  }
+  return res !== null
 }
 
 /**

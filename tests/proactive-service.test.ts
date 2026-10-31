@@ -45,7 +45,7 @@ function briefings(on: boolean, leadMinutes = 30): void {
 
 beforeEach(() => {
   const d = dbm.getDb()
-  for (const t of ['proactive_decisions', 'proactive_covered', 'proactive_calls', 'proactive_trips']) d.exec(`DELETE FROM ${t}`)
+  for (const t of ['proactive_decisions', 'proactive_covered', 'proactive_calls', 'proactive_trips', 'proactive_seen']) d.exec(`DELETE FROM ${t}`)
   briefings(true)
   st.applyChange(st.getSettings(), { quietHours: null }, [])
   log.info.mockClear()
@@ -262,7 +262,8 @@ describe('control', () => {
     expect(reply).toContain('I never reply, send or change anything')
     expect(st.getSettings().briefing.on).toBe(true)
     expect(st.getSettings().travel.on).toBe(true)
-    expect(await ctl.runControl(['off'], cdeps())).toBe('Meeting briefings are off.\nTravel messages are off.')
+    expect(st.getSettings().timing.on).toBe(true)
+    expect(await ctl.runControl(['off'], cdeps())).toBe('Meeting briefings are off.\nTravel messages are off.\nTiming warnings are off.')
   })
 
   it('sets the lead time within bounds', async () => {
@@ -310,10 +311,16 @@ describe('settings (card #262)', () => {
 
   it('refuses a kind that is not built yet, and turning on with no calendar', () => {
     briefings(false)
-    expect(st.applyChange(st.getSettings(), { on: { timing: true } }, ['me@x.com (Google)'])).toMatchObject({
-      ok: false,
-      message: 'Timing warnings are not available yet.',
-    })
+    const timing = st.KINDS.find((k) => k.id === 'timing')!
+    timing.available = false
+    try {
+      expect(st.applyChange(st.getSettings(), { on: { timing: true } }, ['me@x.com (Google)'])).toMatchObject({
+        ok: false,
+        message: 'Timing warnings are not available yet.',
+      })
+    } finally {
+      timing.available = true
+    }
     const r = st.applyChange(st.getSettings(), { on: { briefing: true }, leadMinutes: 60 }, [])
     expect(r.ok).toBe(false)
     expect(st.getSettings().briefing).toEqual({ on: false, leadMinutes: 30 })
@@ -380,9 +387,10 @@ describe('control (card #262)', () => {
     tz: TZ,
   })
 
-  it('turns one kind on or off, and refuses kinds not built yet', async () => {
+  it('turns one kind on or off', async () => {
     briefings(false)
-    expect(await ctl.runControl(['on', 'timing'], cdeps())).toBe('Timing warnings are not available yet.')
+    expect(await ctl.runControl(['on', 'timing'], cdeps())).toContain('Timing warnings are on. I check the next 24 hours')
+    expect(await ctl.runControl(['off', 'warnings'], cdeps())).toBe('Timing warnings are off.')
     expect(await ctl.runControl(['on', 'briefings'], cdeps())).toContain('Meeting briefings are on.')
     expect(await ctl.runControl(['on', 'briefing'], cdeps())).toBe('Meeting briefings are already on.')
     expect(await ctl.runControl(['off', 'nonsense'], cdeps())).toContain('I don\'t know "nonsense"')
@@ -565,5 +573,185 @@ describe('travel messages (card #260)', () => {
     const r = st.applyChange(st.getSettings(), { on: { travel: true } }, { calendars: ['me@x.com (Google)'], mapsReady: false })
     expect(r.ok).toBe(true)
     expect(r.message).toContain('give the place only')
+  })
+})
+
+describe('timing warnings (card #261)', () => {
+  type MapsClient = import('../src/maps/client.js').MapsClient
+  const HOUR = 60 * MIN
+  const A = '100 King St W, Toronto'
+  const B = '1 Yonge St, Toronto'
+
+  function timing(over: Partial<import('../src/proactive/settings.js').ProactiveSettings> = {}): void {
+    st.saveSettings({ ...st.defaultSettings(), timing: { on: true, aheadHours: 24 }, ...over })
+  }
+
+  function maps(minutes: number | null): MapsClient {
+    return {
+      mode: 'proxy',
+      attribution: 'Travel data from Google Maps',
+      geocode: vi.fn(async () => ({ ok: false as const, reason: 'not_found' as const })),
+      route: vi.fn(async () =>
+        minutes === null
+          ? { ok: false as const, reason: 'upstream' as const }
+          : { ok: true as const, value: { mode: 'DRIVE' as const, durationSeconds: minutes * 60, distanceMeters: 5000 } }
+      ),
+      placeSearch: vi.fn(async () => ({ ok: true as const, value: [] })),
+      usage: vi.fn(async () => ({ ok: false as const, reason: 'not_configured' as const })),
+    }
+  }
+  const noMaps = (): MapsClient => ({ ...maps(null), mode: 'off', attribution: null })
+
+  // 18:00 to 19:00 and 18:30 to 19:30 Toronto, well ahead of NOW (13:35).
+  const LATER = START + 4 * HOUR
+  const first = (over: Partial<UpcomingEvent> = {}) => event({ id: 'a', title: 'Silverts demo', startMs: LATER, endMs: LATER + HOUR, ...over })
+  const second = (over: Partial<UpcomingEvent> = {}) =>
+    event({ id: 'b', seriesKey: 'series-2', title: 'Dojo board', startMs: LATER + 30 * MIN, endMs: LATER + 90 * MIN, ...over })
+
+  beforeEach(() => timing())
+
+  it('reports an overlap once, in one or two lines, and again only when it changes', async () => {
+    const { d, sent } = deps({ events: [first(), second()], maps: noMaps })
+    await svc.tick(d)
+    expect(sent).toEqual(['Calendar check: Silverts demo (18:00 to 19:00) overlaps Dojo board (18:30 to 19:30).'])
+    await svc.tick(deps({ events: [first(), second()], maps: noMaps, now: NOW + 10 * MIN }).d)
+    expect(s.recentDecisions(10).filter((r) => r.kind === 'timing')).toHaveLength(1)
+    const moved = deps({ events: [first(), second({ startMs: LATER + 45 * MIN })], maps: noMaps, now: NOW + 20 * MIN })
+    await svc.tick(moved.d)
+    expect(moved.sent).toHaveLength(1)
+    expect(moved.sent[0]).toContain('overlaps Dojo board (18:45 to 19:30)')
+  })
+
+  it('leaves free time, back-to-back meetings at one place and declined meetings alone', async () => {
+    const { d, sent } = deps({ events: [first(), second({ free: true }), event({ id: 'c', startMs: LATER + HOUR, endMs: LATER + 2 * HOUR })], maps: noMaps })
+    await svc.tick(d)
+    expect(sent).toEqual([])
+  })
+
+  it('reminds once as the problem comes up, when the first report was well before', async () => {
+    await svc.tick(deps({ events: [first(), second()], maps: noMaps }).d)
+    const soon = LATER + 30 * MIN - 2 * HOUR + MIN
+    const r = deps({ events: [first(), second()], maps: noMaps, now: soon })
+    await svc.tick(r.d)
+    expect(r.sent).toEqual(['Calendar check: Starting soon, still a problem: Silverts demo (18:00 to 19:00) overlaps Dojo board (18:30 to 19:30).'])
+    const again = deps({ events: [first(), second()], maps: noMaps, now: soon + 10 * MIN })
+    await svc.tick(again.d)
+    expect(again.sent).toEqual([])
+  })
+
+  it('does not remind when the first report was already close', async () => {
+    const close = LATER + 30 * MIN - HOUR
+    await svc.tick(deps({ events: [first(), second()], maps: noMaps, now: close }).d)
+    const r = deps({ events: [first(), second()], maps: noMaps, now: close + 10 * MIN })
+    await svc.tick(r.d)
+    expect(r.sent).toEqual([])
+  })
+
+  it('warns when the trip between two places is longer than the gap, looking it up once', async () => {
+    const m = maps(35)
+    const evs = () => [first({ location: A }), event({ id: 'b', title: 'Dojo board', location: B, startMs: LATER + 75 * MIN, endMs: LATER + 2 * HOUR })]
+    const { d, sent } = deps({ events: evs(), maps: () => m })
+    await svc.tick(d)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('Silverts demo ends at 19:00 and Dojo board starts 15 min later, but the trip takes about 35 min by car.')
+    expect(sent[0]).toContain(`From ${A} to ${B}.`)
+    expect(sent[0]).toContain('Travel data from Google Maps')
+    expect(m.route).toHaveBeenCalledWith(expect.objectContaining({ origin: A, destination: B }))
+    await svc.tick(deps({ events: evs(), maps: () => m, now: NOW + 10 * MIN }).d)
+    expect(m.route).toHaveBeenCalledTimes(1)
+  })
+
+  it('says nothing when the trip fits the gap', async () => {
+    const m = maps(10)
+    const { d, sent } = deps({
+      events: [first({ location: A }), event({ id: 'b', location: B, startMs: LATER + 75 * MIN, endMs: LATER + 2 * HOUR })],
+      maps: () => m,
+    })
+    await svc.tick(d)
+    expect(sent).toEqual([])
+  })
+
+  it('without a travel time, flags only two addresses with no gap', async () => {
+    const noGap = deps({ events: [first({ location: A }), event({ id: 'b', title: 'Dojo board', location: B, startMs: LATER + HOUR, endMs: LATER + 2 * HOUR })], maps: noMaps })
+    await svc.tick(noGap.d)
+    expect(noGap.sent).toEqual([`Calendar check: Silverts demo ends at 19:00 and Dojo board starts with no gap, at a different address.\nFrom ${A} to ${B}.`])
+    dbm.getDb().exec('DELETE FROM proactive_decisions')
+    const gap = deps({ events: [first({ location: A }), event({ id: 'b', location: B, startMs: LATER + 75 * MIN, endMs: LATER + 2 * HOUR })], maps: noMaps })
+    await svc.tick(gap.d)
+    expect(gap.sent).toEqual([])
+  })
+
+  it('points out a meeting that moved since its last message, and not one never messaged', async () => {
+    st.saveSettings({ ...st.defaultSettings(), briefing: { on: true, leadMinutes: 30 }, timing: { on: true, aheadHours: 24 } })
+    const b1 = deps({ events: [event()], maps: noMaps })
+    await svc.tick(b1.d)
+    expect(b1.sent[0]).toContain('Before Southtel cutover at 14:00')
+    const later = deps({ events: [event({ startMs: START + HOUR, endMs: START + 2 * HOUR }), first()], maps: noMaps, now: NOW + 10 * MIN })
+    await svc.tick(later.d)
+    expect(later.sent).toEqual(['Calendar check: Southtel cutover moved to 15:00 (was 14:00).'])
+    const place = deps({ events: [event({ startMs: START + HOUR, endMs: START + 2 * HOUR, location: A })], maps: noMaps, now: NOW + 20 * MIN })
+    await svc.tick(place.d)
+    expect(place.sent).toEqual([`Calendar check: Southtel cutover at 15:00 is now at ${A} (was no place set).`])
+  })
+
+  it('puts every problem from one pass in one message', async () => {
+    const { d, sent } = deps({
+      events: [first(), second(), event({ id: 'c', seriesKey: 's-c', title: 'Gus call', startMs: LATER + 3 * HOUR, endMs: LATER + 4 * HOUR }), event({ id: 'd', seriesKey: 's-d', title: 'Leif check-in', startMs: LATER + 3 * HOUR, endMs: LATER + 4 * HOUR })],
+      maps: noMaps,
+    })
+    await svc.tick(d)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.split('\n')).toEqual([
+      'Calendar check:',
+      '- Silverts demo (18:00 to 19:00) overlaps Dojo board (18:30 to 19:30).',
+      '- Gus call (21:00 to 22:00) overlaps Leif check-in (21:00 to 22:00).',
+    ])
+  })
+
+  it('retries a failed send with the others still waiting', async () => {
+    const failing = deps({ events: [first(), second()], maps: noMaps, send: vi.fn(async () => null) })
+    await svc.tick(failing.d)
+    expect(s.recentDecisions(5)[0]).toMatchObject({ kind: 'timing', status: 'pending' })
+    const ok = deps({ events: [first(), second()], maps: noMaps, now: NOW + 10 * MIN })
+    await svc.tick(ok.d)
+    expect(ok.sent).toHaveLength(1)
+    expect(s.recentDecisions(5)[0]).toMatchObject({ kind: 'timing', status: 'sent' })
+  })
+
+  it('holds a warning in quiet hours, and drops one that starts first', async () => {
+    st.applyChange(st.getSettings(), { quietHours: { start: '13:00', end: '18:30' } }, [])
+    const { d, sent } = deps({ events: [first(), second(), event({ id: 'c', seriesKey: 's-c', title: 'Late', startMs: LATER + 4 * HOUR, endMs: LATER + 5 * HOUR }), event({ id: 'd', seriesKey: 's-d', title: 'Later', startMs: LATER + 4 * HOUR, endMs: LATER + 5 * HOUR })], maps: noMaps })
+    await svc.tick(d)
+    expect(sent).toEqual([])
+    const rows = s.recentDecisions(5).filter((r) => r.kind === 'timing')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ status: 'quiet', reason: svc.QUIET_HOURS })
+  })
+
+  it('never logs a title or a place', async () => {
+    await svc.tick(deps({ events: [first({ location: A }), second({ location: B })], maps: () => maps(30) }).d)
+    const logged = JSON.stringify([...log.info.mock.calls, ...log.warn.mock.calls])
+    for (const word of ['Silverts', 'Dojo', 'King St', 'Yonge']) expect(logged).not.toContain(word)
+  })
+
+  it('chat and the web set how far ahead to look, within bounds', async () => {
+    const cd = { calendars: async () => [], now: () => new Date(NOW), tz: TZ }
+    expect(await ctl.runControl(['ahead', '48'], cd)).toBe('Timing warnings now look 48 hours ahead.')
+    expect(await ctl.runControl(['ahead', '48'], cd)).toBe('Timing warnings already look 48 hours ahead.')
+    expect(await ctl.runControl(['ahead', '100'], cd)).toBe('Give how far ahead to look in hours, from 1 to 72.')
+    expect(await ctl.runControl(['status'], cd)).toContain('Timing warnings are on, looking 48 hours ahead.')
+    const { parseChange } = await import('../src/web/proactive-routes.js')
+    expect(parseChange({ aheadHours: 12 })).toEqual({ aheadHours: 12 })
+    expect(parseChange({ aheadHours: '12' })).toBeNull()
+  })
+
+  it('reads far enough ahead for the setting', async () => {
+    timing({ timing: { on: true, aheadHours: 48 } })
+    const calls: [number, number][] = []
+    const { d } = deps({ maps: noMaps })
+    d.calendars = async () => [{ id: 'me@x.com', provider: 'google', address: 'me@x.com', events: async (f, t) => (calls.push([f, t]), []) }]
+    await svc.tick(d)
+    expect(calls[0]![1] - NOW).toBe(48 * HOUR)
+    expect(NOW - calls[0]![0]).toBe(8 * HOUR)
   })
 })

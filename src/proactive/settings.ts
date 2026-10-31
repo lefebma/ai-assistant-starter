@@ -47,7 +47,7 @@ export interface KindInfo {
 export const KINDS: KindInfo[] = [
   { id: 'briefing', label: 'Meeting briefings', available: true },
   { id: 'travel', label: 'Travel messages', available: true },
-  { id: 'timing', label: 'Timing problems', available: false },
+  { id: 'timing', label: 'Timing problems', available: true },
 ]
 
 export const LIMITS = {
@@ -187,6 +187,8 @@ export interface SettingsChange {
   mode?: string
   /** Home or office address; '' clears it. Stays on this box. */
   origin?: string
+  /** Timing warnings (card #261): how many hours ahead to look. */
+  aheadHours?: number
 }
 
 export interface ChangeContext {
@@ -220,7 +222,7 @@ function onText(k: MessageKind, s: ProactiveSettings): string {
     case 'travel':
       return `${KIND_NAMES.travel} are on. For a meeting at a physical address, I message you about ${s.travel.bufferMinutes} minutes before you need to leave, with the place, the travel time (${MODE_WORDS[s.travel.mode]}) and anything in your mail about parking, the room or someone running late.`
     case 'timing':
-      return `${KIND_NAMES.timing} are on.`
+      return `${KIND_NAMES.timing} are on. I check the next ${s.timing.aheadHours} hours of your calendar for meetings that overlap, back-to-back meetings in different places without time to get between them, and meetings that moved since I last messaged you about them. I point them out once, and again if they change or are about to start. I never move or decline anything.`
   }
 }
 
@@ -266,6 +268,13 @@ export function applyChange(current: ProactiveSettings, change: SettingsChange, 
     next.travel.origin = o
   }
 
+  if (change.aheadHours !== undefined) {
+    const n = change.aheadHours
+    const { min, max } = LIMITS.aheadHours
+    if (!Number.isInteger(n) || n < min || n > max) return fail(`Give how far ahead to look in hours, from ${min} to ${max}.`)
+    next.timing.aheadHours = n
+  }
+
   const quietBefore = getQuietHours()
   let quietAfter = quietBefore
   if (change.quietHours !== undefined) {
@@ -308,6 +317,9 @@ export function applyChange(current: ProactiveSettings, change: SettingsChange, 
   if (next.travel.on && (travelNow || next.travel.origin !== current.travel.origin)) {
     if (!mapsReady) lines.push('Travel times are not set up on this assistant, so travel messages give the place only, about an hour before.')
     else if (!next.travel.origin) lines.push('Tell me where you usually start from (home or office) so I can work out when to leave. Until then I use your previous meeting when there is one.')
+  }
+  if (!turnedOn.includes('timing') && next.timing.aheadHours !== current.timing.aheadHours) {
+    lines.push(`Timing warnings now look ${next.timing.aheadHours} hours ahead.`)
   }
   const quietChanged = JSON.stringify(quietAfter) !== JSON.stringify(quietBefore)
   if (quietChanged) lines.push(quietAfter ? quietText(quietAfter) : 'Quiet hours are off.')

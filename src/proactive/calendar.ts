@@ -36,6 +36,8 @@ export interface UpcomingEvent {
   /** The owner organises it (alone or with others). */
   organizer: boolean
   link: string
+  /** Marked free (Google "transparent", Outlook "free"): does not clash with anything. */
+  free?: boolean
 }
 
 const MAX_ATTENDEES = 12
@@ -62,6 +64,7 @@ interface GoogleEvent {
   location?: string
   htmlLink?: string
   eventType?: string
+  transparency?: string
   start?: { dateTime?: string; date?: string }
   end?: { dateTime?: string; date?: string }
   attendees?: GoogleAttendee[]
@@ -98,6 +101,7 @@ export function parseGoogleEvents(stdout: string, account: string): UpcomingEven
       attendees,
       organizer: e.organizer?.self === true || e.organizer?.email?.toLowerCase() === own,
       link: e.htmlLink ?? '',
+      ...(e.transparency === 'transparent' ? { free: true } : {}),
     })
   }
   return out
@@ -174,6 +178,7 @@ export function parseOutlookEvents(rows: GraphEvent[], account: string, own: str
       attendees,
       organizer: e.isOrganizer === true,
       link: e.webLink ?? '',
+      ...(e.showAs === 'free' ? { free: true } : {}),
     })
   }
   return out

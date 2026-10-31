@@ -21,13 +21,15 @@ const mapsReady = (): boolean => createMapsClient().mode !== 'off'
 function view() {
   const s = getSettings()
   const travel = KINDS.some((k) => k.id === 'travel' && k.available)
+  const timing = KINDS.some((k) => k.id === 'timing' && k.available)
   return {
     kinds: KINDS.filter((k) => k.available).map((k) => ({ id: k.id, label: k.label, on: s[k.id].on })),
     leadMinutes: s.briefing.leadMinutes,
     quietHours: getQuietHours(),
     // The starting address is the owner's own, shown only to the primary chat (the route checks).
     travel: travel ? { bufferMinutes: s.travel.bufferMinutes, mode: s.travel.mode, origin: s.travel.origin, mapsReady: mapsReady() } : null,
-    limits: { leadMinutes: LIMITS.leadMinutes, bufferMinutes: LIMITS.bufferMinutes },
+    timing: timing ? { aheadHours: s.timing.aheadHours } : null,
+    limits: { leadMinutes: LIMITS.leadMinutes, bufferMinutes: LIMITS.bufferMinutes, aheadHours: LIMITS.aheadHours },
   }
 }
 
@@ -49,7 +51,7 @@ export function parseChange(b: unknown): SettingsChange | null {
     if (typeof r['leadMinutes'] !== 'number') return null
     change.leadMinutes = r['leadMinutes']
   }
-  for (const f of ['bufferMinutes'] as const) {
+  for (const f of ['bufferMinutes', 'aheadHours'] as const) {
     if (r[f] === undefined) continue
     if (typeof r[f] !== 'number') return null
     change[f] = r[f] as number
