@@ -2046,6 +2046,19 @@ function renderProactive(v) {
   lead.min = v.limits.leadMinutes.min
   lead.max = v.limits.leadMinutes.max
   lead.value = v.leadMinutes
+  const t = v.travel
+  show(document.querySelector('.pro-travel'), Boolean(t))
+  if (t) {
+    const buffer = $('pro-buffer')
+    buffer.min = v.limits.bufferMinutes.min
+    buffer.max = v.limits.bufferMinutes.max
+    buffer.value = t.bufferMinutes
+    $('pro-mode').value = t.mode
+    $('pro-origin').value = t.origin
+    $('pro-maps-hint').textContent = t.mapsReady
+      ? 'The trip starts at your previous meeting when you come straight from one, else at this address. It stays on this assistant.'
+      : 'Travel times are not set up on this assistant, so travel messages give the place only.'
+  }
   $('pro-quiet').checked = Boolean(v.quietHours)
   $('pro-quiet-start').value = v.quietHours ? v.quietHours.start : '22:00'
   $('pro-quiet-end').value = v.quietHours ? v.quietHours.end : '07:00'
@@ -2079,7 +2092,11 @@ $('pro-form').addEventListener('submit', async (e) => {
   e.preventDefault()
   const on = {}
   for (const c of $('pro-kinds').querySelectorAll('input[data-kind]')) on[c.dataset.kind] = c.checked
+  const travel = document.querySelector('.pro-travel').hidden
+    ? {}
+    : { bufferMinutes: Number($('pro-buffer').value), mode: $('pro-mode').value, origin: $('pro-origin').value }
   const change = {
+    ...travel,
     on,
     leadMinutes: Number($('pro-lead').value),
     quietHours: $('pro-quiet').checked ? { start: $('pro-quiet-start').value, end: $('pro-quiet-end').value } : null,

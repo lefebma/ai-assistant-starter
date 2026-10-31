@@ -14,14 +14,20 @@ import { KINDS, LIMITS, applyChange, getQuietHours, getSettings, type MessageKin
 import { discoverCalendars } from '../proactive/calendar.js'
 import { listAuthedAccounts } from '../ms/store.js'
 import { outlookClient } from '../email-alerts/sources.js'
+import { createMapsClient } from '../maps/client.js'
+
+const mapsReady = (): boolean => createMapsClient().mode !== 'off'
 
 function view() {
   const s = getSettings()
+  const travel = KINDS.some((k) => k.id === 'travel' && k.available)
   return {
     kinds: KINDS.filter((k) => k.available).map((k) => ({ id: k.id, label: k.label, on: s[k.id].on })),
     leadMinutes: s.briefing.leadMinutes,
     quietHours: getQuietHours(),
-    limits: { leadMinutes: LIMITS.leadMinutes },
+    // The starting address is the owner's own, shown only to the primary chat (the route checks).
+    travel: travel ? { bufferMinutes: s.travel.bufferMinutes, mode: s.travel.mode, origin: s.travel.origin, mapsReady: mapsReady() } : null,
+    limits: { leadMinutes: LIMITS.leadMinutes, bufferMinutes: LIMITS.bufferMinutes },
   }
 }
 
@@ -42,6 +48,16 @@ export function parseChange(b: unknown): SettingsChange | null {
   if (r['leadMinutes'] !== undefined) {
     if (typeof r['leadMinutes'] !== 'number') return null
     change.leadMinutes = r['leadMinutes']
+  }
+  for (const f of ['bufferMinutes'] as const) {
+    if (r[f] === undefined) continue
+    if (typeof r[f] !== 'number') return null
+    change[f] = r[f] as number
+  }
+  for (const f of ['mode', 'origin'] as const) {
+    if (r[f] === undefined) continue
+    if (typeof r[f] !== 'string') return null
+    change[f] = r[f] as string
   }
   if (r['quietHours'] !== undefined) {
     const q = r['quietHours']
@@ -90,7 +106,7 @@ registerWebRoutes([
       if (!change) return sendError(ctx.res, 400, 'bad_request')
       // Calendars are looked up only when something is being turned on.
       const turningOn = Object.values(change.on ?? {}).some(Boolean)
-      const r = applyChange(getSettings(), change, turningOn ? await calendarNames() : [])
+      const r = applyChange(getSettings(), change, { calendars: turningOn ? await calendarNames() : [], mapsReady: mapsReady() })
       sendJson(ctx.res, 200, { ok: r.ok, message: r.message, ...view() })
     },
   },

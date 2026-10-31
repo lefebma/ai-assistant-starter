@@ -11,6 +11,7 @@ import { listAuthedAccounts } from '../ms/store.js'
 import { outlookClient } from '../email-alerts/sources.js'
 import { discoverCalendars } from './calendar.js'
 import { runControl } from './control.js'
+import { createMapsClient } from '../maps/client.js'
 
 export async function main(argv: string[]): Promise<string> {
   initDatabase()
@@ -21,5 +22,6 @@ export async function main(argv: string[]): Promise<string> {
     calendars: () => discoverCalendars({ msAccounts: () => listAuthedAccounts(), client: outlookClient }),
     now: () => new Date(),
     tz,
+    mapsReady: () => createMapsClient().mode !== 'off',
   })
 }

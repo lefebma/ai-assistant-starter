@@ -16,8 +16,15 @@
  * recorded as quiet with that reason. Nothing is read by the model in quiet
  * hours.
  *
+ * Travel messages (card #260) ride the same tick: for a meeting at a
+ * physical address, the trip is planned once when the meeting is within
+ * PLAN_HORIZON_MS (and once more just before the message, for traffic), and
+ * the message goes bufferMinutes before leave-by. They follow the same quiet
+ * hours, decided-once rule and send retries as briefings.
+ *
  * Read-only: nothing here replies, sends mail, accepts, declines or edits.
- * The only thing that leaves is the briefing, to the owner's own chat.
+ * The only thing that leaves is the message, to the owner's own chat, and
+ * the place and starting point sent to the maps source for a travel time.
  *
  * Log lines carry counts only, never a title, an attendee or a subject.
  */
@@ -27,7 +34,19 @@ import { upcomingEvents, type CalendarSource, type UpcomingEvent } from './calen
 import type { RelatedThread } from './threads.js'
 import type { DecideOutcome } from './decide.js'
 import { formatBriefing, MAX_SHOWN, type FormatMode } from './format.js'
-import { anyOn, getQuietHours, getSettings, quietUntil } from './settings.js'
+import { anyOn, getQuietHours, getSettings, quietUntil, type ProactiveSettings } from './settings.js'
+import { createMapsClient, type MapsClient } from '../maps/client.js'
+import {
+  PLAN_HORIZON_MS,
+  REFRESH_BEFORE_MS,
+  formatTravel,
+  inPersonPlace,
+  planTrip,
+  startingPoint,
+  travelSendAt,
+  type NotesOutcome,
+  type Trip,
+} from './travel.js'
 import {
   coveredIds,
   dropPending,
@@ -36,8 +55,10 @@ import {
   markCovered,
   markSent,
   pendingDecisions,
+  getTrip,
   prune,
   recordDecision,
+  saveTrip,
   recordSendFailure,
   type DecisionRow,
 } from './store.js'
@@ -53,6 +74,9 @@ export const QUIET_NO_ATTENDEES = 'No one else is invited.'
 export const QUIET_NO_MAIL = 'No recent mail with the attendees.'
 export const QUIET_NOTHING_NEW = 'Nothing new since the last briefing for this series.'
 export const QUIET_HOURS = 'It fell in your quiet hours.'
+export const QUIET_TOO_LATE = 'Seen too late to be any use.'
+/** How far back the calendar is read when travel messages are on, to know where the owner comes from. */
+const LOOKBACK_MS = 8 * 3_600_000
 
 export interface TickDeps {
   calendars: () => Promise<CalendarSource[]>
@@ -64,6 +88,10 @@ export interface TickDeps {
   format?: FormatMode
   /** Stops the tick between meetings once true (the run ceiling passed). */
   abandoned?: () => boolean
+  /** Travel times (card #260). Defaults to the box's maps client, read fresh each tick. */
+  maps?: () => MapsClient
+  /** Arrival notes from mail for a travel message. Without it, travel messages carry none. */
+  notes?: (event: UpcomingEvent, place: string, threads: RelatedThread[]) => Promise<NotesOutcome>
 }
 
 export interface TickResult {
@@ -122,16 +150,31 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
     else result.failures++
   }
 
-  // 2. Deciding needs the model; while the AI allowance is used up, wait.
-  if (aiPausedForBackground()) {
+  // 2. Deciding needs the model; while the AI allowance is used up, briefings
+  // wait. Travel messages need no model and go on, without arrival notes.
+  const paused = aiPausedForBackground()
+  if (paused && !settings.travel.on) {
     logger.info('AI allowance used up, proactive scan not run')
     return result
   }
 
   const sources = await deps.calendars()
   const own = new Map(sources.map((s) => [s.id, s.address]))
-  const { events, failures } = await upcomingEvents(sources, nowMs, nowMs + settings.windowHours * 3_600_000)
+  const from = settings.travel.on ? nowMs - LOOKBACK_MS : nowMs
+  const { events, failures } = await upcomingEvents(sources, from, nowMs + settings.windowHours * 3_600_000)
   result.failures += failures
+
+  if (settings.travel.on) {
+    const r = await travelPass(paused ? { ...deps, notes: undefined } : deps, settings, events, own, nowMs, quietEnd, stop)
+    result.sent += r.sent
+    result.quiet += r.quiet
+    result.failures += r.failures
+    if (r.stopped) return result
+  }
+  if (paused) {
+    logger.info('AI allowance used up, briefings not decided')
+    return result
+  }
 
   for (const event of events) {
     if (stop()) break
@@ -208,6 +251,89 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
     logger.info({ ...result }, 'proactive tick')
   }
   return result
+}
+
+/**
+ * Travel messages for in-person meetings. A trip is planned once the meeting
+ * is within PLAN_HORIZON_MS, then looked up again once, close to the
+ * message, for current traffic. The message goes at travelSendAt; one seen
+ * after the meeting is nearly under way is recorded as too late.
+ */
+async function travelPass(
+  deps: TickDeps,
+  settings: ProactiveSettings,
+  events: UpcomingEvent[],
+  own: Map<string, string>,
+  nowMs: number,
+  quietEnd: number | null,
+  stop: () => boolean
+): Promise<{ sent: number; quiet: number; failures: number; stopped: boolean }> {
+  const out = { sent: 0, quiet: 0, failures: 0, stopped: false }
+  const maps = (deps.maps ?? (() => createMapsClient()))()
+  const mapsOn = maps.mode !== 'off'
+  for (const event of events) {
+    if (stop()) {
+      out.stopped = true
+      return out
+    }
+    if (event.startMs <= nowMs || event.startMs - nowMs > PLAN_HORIZON_MS) continue
+    const place = inPersonPlace(event, mapsOn)
+    if (!place) continue
+    const key = eventKey(event)
+    if (isDecided(key, 'travel')) continue
+    const base = { eventKey: key, seriesKey: event.seriesKey, kind: 'travel' as const, title: event.title, startMs: event.startMs, text: '', createdAt: nowMs }
+    if (nowMs >= event.startMs - MIN_BEFORE_MS) {
+      if (recordDecision({ ...base, status: 'quiet', reason: QUIET_TOO_LATE })) out.quiet++
+      continue
+    }
+
+    const start = startingPoint(event, events, settings.travel.origin, mapsOn)
+    let stored = getTrip<Trip>(key)
+    if (!stored) {
+      const trip = await planTrip(event, place, start, settings.travel.mode, maps, nowMs)
+      saveTrip(key, trip, nowMs, false)
+      stored = { trip, computedAt: nowMs, refreshed: false }
+    } else if (!stored.refreshed && nowMs >= travelSendAt(event, stored.trip, settings.travel.bufferMinutes) - REFRESH_BEFORE_MS) {
+      // Closer to the time, once: current traffic, or a second try (a starting
+      // address set since, a maps hiccup). A failed lookup keeps the first answer.
+      const fresh = await planTrip(event, place, start, settings.travel.mode, maps, nowMs)
+      const trip = fresh.ok ? fresh : stored.trip
+      saveTrip(key, trip, nowMs, true)
+      stored = { trip, computedAt: nowMs, refreshed: true }
+    }
+    const trip = stored.trip
+    if (nowMs < travelSendAt(event, trip, settings.travel.bufferMinutes)) continue
+
+    if (quietEnd !== null) {
+      if (quietEnd >= event.startMs - MIN_BEFORE_MS && recordDecision({ ...base, status: 'quiet', reason: QUIET_HOURS })) out.quiet++
+      continue
+    }
+
+    let notes: string[] = []
+    if (deps.notes && event.attendees.length > 0) {
+      try {
+        const threads = await deps.threads(event, own.get(event.account) ?? '', nowMs)
+        const n = await deps.notes(event, place, threads)
+        if (n.kind === 'notes') notes = n.notes
+      } catch {
+        // Notes are extra; the message goes without them.
+      }
+    }
+    const text = formatTravel(event, place, trip, notes, {
+      tz: deps.tz,
+      mode: settings.travel.mode,
+      nowMs,
+      attribution: maps.attribution,
+      format: deps.format,
+    })
+    const reason = trip.ok ? `About ${trip.minutes} min of travel.` : trip.why
+    const id = recordDecision({ ...base, status: 'pending', reason, text })
+    if (id === null) continue
+    const row: DecisionRow = { ...base, id, status: 'pending', reason, text, attempts: 0, sentAt: null, chatId: null, chatMessageId: null }
+    if (await sendRow(deps, row, nowMs)) out.sent++
+    else out.failures++
+  }
+  return out
 }
 
 /**

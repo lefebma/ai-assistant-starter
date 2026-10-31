@@ -46,7 +46,7 @@ export interface KindInfo {
 
 export const KINDS: KindInfo[] = [
   { id: 'briefing', label: 'Meeting briefings', available: true },
-  { id: 'travel', label: 'Travel messages', available: false },
+  { id: 'travel', label: 'Travel messages', available: true },
   { id: 'timing', label: 'Timing problems', available: false },
 ]
 
@@ -59,8 +59,8 @@ export const LIMITS = {
 export const DEFAULT_LEAD_MINUTES = 30
 export const DEFAULT_WINDOW_HOURS = 24
 const SETTINGS_KEY = 'proactive.settings'
-const TRAVEL_MODES: TravelMode[] = ['drive', 'transit', 'walk']
-const MAX_ORIGIN = 200
+export const TRAVEL_MODES: TravelMode[] = ['drive', 'transit', 'walk']
+export const MAX_ORIGIN = 200
 
 export function defaultSettings(): ProactiveSettings {
   return {
@@ -182,6 +182,24 @@ export interface SettingsChange {
   on?: Partial<Record<MessageKind, boolean>>
   leadMinutes?: number
   quietHours?: QuietHours | null
+  /** Travel messages (card #260): minutes before leave-by, how the owner travels, where they start. */
+  bufferMinutes?: number
+  mode?: string
+  /** Home or office address; '' clears it. Stays on this box. */
+  origin?: string
+}
+
+export interface ChangeContext {
+  /** Calendars that would be read, like "me@x.com (Google)". */
+  calendars: string[]
+  /** A maps source is set up, so travel times can be worked out. */
+  mapsReady?: boolean
+}
+
+const MODE_WORDS: Record<TravelMode, string> = { drive: 'driving', transit: 'transit', walk: 'walking' }
+
+export function modeName(m: TravelMode): string {
+  return MODE_WORDS[m]
 }
 
 const KIND_NAMES: Record<MessageKind, string> = {
@@ -200,7 +218,7 @@ function onText(k: MessageKind, s: ProactiveSettings): string {
     case 'briefing':
       return `${KIND_NAMES.briefing} are on. About ${s.briefing.leadMinutes} minutes before a meeting with other people, I check recent mail with the attendees and message you only when something needs your attention.`
     case 'travel':
-      return `${KIND_NAMES.travel} are on.`
+      return `${KIND_NAMES.travel} are on. For a meeting at a physical address, I message you about ${s.travel.bufferMinutes} minutes before you need to leave, with the place, the travel time (${MODE_WORDS[s.travel.mode]}) and anything in your mail about parking, the room or someone running late.`
     case 'timing':
       return `${KIND_NAMES.timing} are on.`
   }
@@ -217,7 +235,8 @@ export function quietText(q: QuietHours | null): string {
  * example "me@x.com (Google)"); turning a kind on with none connected is
  * refused, and turning one on says what it will read.
  */
-export function applyChange(current: ProactiveSettings, change: SettingsChange, calendars: string[]): ChangeResult {
+export function applyChange(current: ProactiveSettings, change: SettingsChange, ctx: string[] | ChangeContext): ChangeResult {
+  const { calendars, mapsReady = false } = Array.isArray(ctx) ? { calendars: ctx } : ctx
   const next = normalize(JSON.parse(JSON.stringify(current)))
   const lines: string[] = []
   const fail = (message: string): ChangeResult => ({ ok: false, message, settings: current })
@@ -227,6 +246,24 @@ export function applyChange(current: ProactiveSettings, change: SettingsChange, 
     const { min, max } = LIMITS.leadMinutes
     if (!Number.isInteger(n) || n < min || n > max) return fail(`Give the lead time in minutes, from ${min} to ${max}.`)
     next.briefing.leadMinutes = n
+  }
+
+  if (change.bufferMinutes !== undefined) {
+    const n = change.bufferMinutes
+    const { min, max } = LIMITS.bufferMinutes
+    if (!Number.isInteger(n) || n < min || n > max) return fail(`Give the buffer in minutes, from ${min} to ${max}.`)
+    next.travel.bufferMinutes = n
+  }
+  if (change.mode !== undefined) {
+    const m = change.mode.trim().toLowerCase()
+    const mode = (({ car: 'drive', driving: 'drive', drive: 'drive', transit: 'transit', bus: 'transit', subway: 'transit', train: 'transit', walk: 'walk', walking: 'walk', foot: 'walk' }) as Record<string, TravelMode>)[m]
+    if (!mode) return fail('Travel can be by drive, transit or walk.')
+    next.travel.mode = mode
+  }
+  if (change.origin !== undefined) {
+    const o = change.origin.replace(/\s+/g, ' ').trim()
+    if (o.length > MAX_ORIGIN) return fail(`Keep the starting address under ${MAX_ORIGIN} characters.`)
+    next.travel.origin = o
   }
 
   const quietBefore = getQuietHours()
@@ -259,6 +296,18 @@ export function applyChange(current: ProactiveSettings, change: SettingsChange, 
 
   if (change.leadMinutes !== undefined && !turnedOn.includes('briefing') && change.leadMinutes !== current.briefing.leadMinutes) {
     lines.push(`Briefings now arrive about ${next.briefing.leadMinutes} minutes before a meeting.`)
+  }
+  const travelNow = turnedOn.includes('travel')
+  if (!travelNow && next.travel.bufferMinutes !== current.travel.bufferMinutes) {
+    lines.push(`Travel messages now arrive about ${next.travel.bufferMinutes} minutes before you need to leave.`)
+  }
+  if (!travelNow && next.travel.mode !== current.travel.mode) lines.push(`Travel times are now worked out for ${MODE_WORDS[next.travel.mode]}.`)
+  if (next.travel.origin !== current.travel.origin) {
+    lines.push(next.travel.origin ? `Starting address saved: ${next.travel.origin}. It stays on this assistant.` : 'Starting address cleared.')
+  }
+  if (next.travel.on && (travelNow || next.travel.origin !== current.travel.origin)) {
+    if (!mapsReady) lines.push('Travel times are not set up on this assistant, so travel messages give the place only, about an hour before.')
+    else if (!next.travel.origin) lines.push('Tell me where you usually start from (home or office) so I can work out when to leave. Until then I use your previous meeting when there is one.')
   }
   const quietChanged = JSON.stringify(quietAfter) !== JSON.stringify(quietBefore)
   if (quietChanged) lines.push(quietAfter ? quietText(quietAfter) : 'Quiet hours are off.')

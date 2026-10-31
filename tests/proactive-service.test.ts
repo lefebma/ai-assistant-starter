@@ -45,7 +45,7 @@ function briefings(on: boolean, leadMinutes = 30): void {
 
 beforeEach(() => {
   const d = dbm.getDb()
-  for (const t of ['proactive_decisions', 'proactive_covered', 'proactive_calls']) d.exec(`DELETE FROM ${t}`)
+  for (const t of ['proactive_decisions', 'proactive_covered', 'proactive_calls', 'proactive_trips']) d.exec(`DELETE FROM ${t}`)
   briefings(true)
   st.applyChange(st.getSettings(), { quietHours: null }, [])
   log.info.mockClear()
@@ -261,7 +261,8 @@ describe('control', () => {
     expect(reply).toContain('me@x.com (Google)')
     expect(reply).toContain('I never reply, send or change anything')
     expect(st.getSettings().briefing.on).toBe(true)
-    expect(await ctl.runControl(['off'], cdeps())).toBe('Meeting briefings are off.')
+    expect(st.getSettings().travel.on).toBe(true)
+    expect(await ctl.runControl(['off'], cdeps())).toBe('Meeting briefings are off.\nTravel messages are off.')
   })
 
   it('sets the lead time within bounds', async () => {
@@ -275,7 +276,7 @@ describe('control', () => {
     await svc.tick(deps({ events: [event({ id: 'e2', attendees: [] })] }).d)
     const out = await ctl.runControl(['log'], cdeps())
     expect(out).toContain('Southtel cutover: briefing sent (Devon is waiting on an answer)')
-    expect(out).toContain(`Southtel cutover: no message: ${svc.QUIET_NO_ATTENDEES}`)
+    expect(out).toContain(`Southtel cutover: no briefing: ${svc.QUIET_NO_ATTENDEES}`)
     expect(await ctl.runControl(['status'], cdeps())).toContain('1 briefing sent, 1 meeting with nothing worth a message')
   })
 })
@@ -309,9 +310,9 @@ describe('settings (card #262)', () => {
 
   it('refuses a kind that is not built yet, and turning on with no calendar', () => {
     briefings(false)
-    expect(st.applyChange(st.getSettings(), { on: { travel: true } }, ['me@x.com (Google)'])).toMatchObject({
+    expect(st.applyChange(st.getSettings(), { on: { timing: true } }, ['me@x.com (Google)'])).toMatchObject({
       ok: false,
-      message: 'Travel messages are not available yet.',
+      message: 'Timing warnings are not available yet.',
     })
     const r = st.applyChange(st.getSettings(), { on: { briefing: true }, leadMinutes: 60 }, [])
     expect(r.ok).toBe(false)
@@ -381,7 +382,7 @@ describe('control (card #262)', () => {
 
   it('turns one kind on or off, and refuses kinds not built yet', async () => {
     briefings(false)
-    expect(await ctl.runControl(['on', 'travel'], cdeps())).toBe('Travel messages are not available yet.')
+    expect(await ctl.runControl(['on', 'timing'], cdeps())).toBe('Timing warnings are not available yet.')
     expect(await ctl.runControl(['on', 'briefings'], cdeps())).toContain('Meeting briefings are on.')
     expect(await ctl.runControl(['on', 'briefing'], cdeps())).toBe('Meeting briefings are already on.')
     expect(await ctl.runControl(['off', 'nonsense'], cdeps())).toContain('I don\'t know "nonsense"')
@@ -410,5 +411,159 @@ describe('web settings body', () => {
     expect(parseChange({ leadMinutes: '45' })).toBeNull()
     expect(parseChange({ quietHours: '22-7' })).toBeNull()
     expect(parseChange([])).toBeNull()
+    expect(parseChange({ bufferMinutes: 20, mode: 'walk', origin: '1 Home Rd' })).toEqual({ bufferMinutes: 20, mode: 'walk', origin: '1 Home Rd' })
+    expect(parseChange({ bufferMinutes: '20' })).toBeNull()
+    expect(parseChange({ origin: 5 })).toBeNull()
+  })
+})
+
+describe('travel messages (card #260)', () => {
+  type MapsClient = import('../src/maps/client.js').MapsClient
+  const PLACE = '100 King St W, Toronto'
+  const HOME = '1 Home Rd, Toronto'
+
+  function travel(over: Partial<import('../src/proactive/settings.js').ProactiveSettings['travel']> = {}): void {
+    st.saveSettings({
+      ...st.defaultSettings(),
+      travel: { on: true, bufferMinutes: 15, mode: 'drive', origin: HOME, ...over },
+    })
+  }
+
+  function maps(minutes: number | null, mode: MapsClient['mode'] = 'proxy'): MapsClient {
+    return {
+      mode,
+      attribution: mode === 'off' ? null : 'Travel data from Google Maps',
+      geocode: vi.fn(async () => ({ ok: false as const, reason: 'not_found' as const })),
+      route: vi.fn(async () =>
+        minutes === null
+          ? { ok: false as const, reason: 'upstream' as const }
+          : { ok: true as const, value: { mode: 'DRIVE' as const, durationSeconds: minutes * 60, distanceMeters: 5000 } }
+      ),
+      placeSearch: vi.fn(async () => ({ ok: true as const, value: [] })),
+      usage: vi.fn(async () => ({ ok: false as const, reason: 'not_configured' as const })),
+    }
+  }
+
+  const inPerson = (over: Partial<UpcomingEvent> = {}) => event({ location: PLACE, ...over })
+
+  beforeEach(() => travel())
+
+  it('sends the place, travel time and leave-by, a buffer before leave-by', async () => {
+    const m = maps(20) // leave by 13:40, message due 13:25; it is 13:35
+    const { d, sent } = deps({ events: [inPerson()], maps: () => m })
+    await svc.tick(d)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain(`Southtel cutover at 14:00, in person: ${PLACE}`)
+    expect(sent[0]).toContain('Leave by 13:40. About 20 min by car from your starting address.')
+    expect(sent[0]).toContain('Travel data from Google Maps')
+    expect(m.route).toHaveBeenCalledTimes(1)
+    expect(m.route).toHaveBeenCalledWith(expect.objectContaining({ origin: HOME, destination: PLACE, mode: 'DRIVE' }))
+    expect(s.recentDecisions(1)[0]).toMatchObject({ kind: 'travel', status: 'sent' })
+    expect(d.decide).not.toHaveBeenCalled()
+  })
+
+  it('plans the trip early, looks it up once more for traffic, and waits for its time', async () => {
+    const m = maps(5) // leave by 13:55, message due 13:40
+    const first = deps({ events: [inPerson()], maps: () => m })
+    await svc.tick(first.d)
+    expect(first.sent).toHaveLength(0)
+    expect(m.route).toHaveBeenCalledTimes(1)
+    const due = deps({ events: [inPerson()], maps: () => m, now: NOW + 5 * MIN })
+    await svc.tick(due.d)
+    expect(m.route).toHaveBeenCalledTimes(2)
+    expect(due.sent).toHaveLength(1)
+    await svc.tick(deps({ events: [inPerson()], maps: () => m, now: NOW + 10 * MIN }).d)
+    expect(m.route).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves video calls and blank locations alone', async () => {
+    const m = maps(20)
+    const { d, sent } = deps({
+      events: [event({ location: 'https://zoom.us/j/123' }), event({ id: 'e2', location: '' }), event({ id: 'e3', location: 'Microsoft Teams Meeting' })],
+      maps: () => m,
+    })
+    await svc.tick(d)
+    expect(sent.filter((t) => t.includes('in person'))).toHaveLength(0)
+    expect(m.route).not.toHaveBeenCalled()
+  })
+
+  it('without maps, gives the place an hour ahead and never guesses a time', async () => {
+    const m = maps(20, 'off')
+    const { d, sent } = deps({ events: [inPerson()], maps: () => m })
+    await svc.tick(d)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('Travel time not available.')
+    expect(sent[0]).not.toMatch(/Leave by|min by/)
+    expect(sent[0]).not.toContain('Google')
+    expect(m.route).not.toHaveBeenCalled()
+  })
+
+  it('says so when the route lookup fails, and asks for a starting address when none is set', async () => {
+    const failed = deps({ events: [inPerson()], maps: () => maps(null) })
+    await svc.tick(failed.d)
+    expect(failed.sent[0]).toContain('Travel time not available.')
+    dbm.getDb().exec('DELETE FROM proactive_decisions; DELETE FROM proactive_trips')
+    travel({ origin: '' })
+    const none = deps({ events: [inPerson()], maps: () => maps(20) })
+    await svc.tick(none.d)
+    expect(none.sent[0]).toContain('set a starting address')
+  })
+
+  it('starts the trip at the previous in-person meeting, leaving when it ends', async () => {
+    const m = maps(20)
+    const prev = event({ id: 'e0', title: 'Site walk', location: '50 Bay St, Toronto', startMs: START - 90 * MIN, endMs: START - 20 * MIN })
+    const { d, sent } = deps({ events: [prev, inPerson()], maps: () => m })
+    await svc.tick(d)
+    expect(m.route).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: '50 Bay St, Toronto', departAt: new Date(START - 20 * MIN).toISOString() })
+    )
+    expect(sent[0]).toContain('from Site walk')
+  })
+
+  it('adds arrival notes from mail, and still sends when they fail', async () => {
+    const notes = vi.fn(async () => ({ kind: 'notes' as const, notes: ['Park in the P2 visitor lot'] }))
+    const { d, sent } = deps({ events: [inPerson()], maps: () => maps(20), notes })
+    await svc.tick(d)
+    expect(sent[0]).toContain('Before you go:\n- Park in the P2 visitor lot')
+    dbm.getDb().exec('DELETE FROM proactive_decisions; DELETE FROM proactive_trips')
+    const broken = deps({ events: [inPerson()], maps: () => maps(20), notes: vi.fn(async () => ({ kind: 'failed' as const })) })
+    await svc.tick(broken.d)
+    expect(broken.sent).toHaveLength(1)
+    expect(broken.sent[0]).not.toContain('Before you go')
+  })
+
+  it('holds a travel message in quiet hours and drops it when the meeting starts first', async () => {
+    st.applyChange(st.getSettings(), { quietHours: { start: '13:00', end: '14:30' } }, [])
+    const { d, sent } = deps({ events: [inPerson()], maps: () => maps(20) })
+    await svc.tick(d)
+    expect(sent).toHaveLength(0)
+    expect(s.recentDecisions(1)[0]).toMatchObject({ kind: 'travel', status: 'quiet', reason: svc.QUIET_HOURS })
+  })
+
+  it('sends a briefing and a travel message for the same meeting when both are on', async () => {
+    st.saveSettings({ ...st.getSettings(), briefing: { on: true, leadMinutes: 30 } })
+    const { d, sent } = deps({ events: [inPerson()], maps: () => maps(20) })
+    await svc.tick(d)
+    expect(sent).toHaveLength(2)
+    expect(s.recentDecisions(5).map((r) => r.kind).sort()).toEqual(['briefing', 'travel'])
+  })
+
+  it('chat commands set the buffer, the mode and the starting address', async () => {
+    const c = { calendars: async () => [], now: () => new Date(NOW), tz: TZ, mapsReady: () => true }
+    expect(await ctl.runControl(['buffer', '20'], c)).toBe('Travel messages now arrive about 20 minutes before you need to leave.')
+    expect(await ctl.runControl(['buffer', '90'], c)).toBe('Give the buffer in minutes, from 0 to 60.')
+    expect(await ctl.runControl(['mode', 'transit'], c)).toBe('Travel times are now worked out for transit.')
+    expect(await ctl.runControl(['mode', 'boat'], c)).toBe('Travel can be by drive, transit or walk.')
+    expect(await ctl.runControl(['from', '200', 'Bay', 'St,', 'Toronto'], c)).toContain('Starting address saved: 200 Bay St, Toronto.')
+    expect(st.getSettings().travel).toMatchObject({ bufferMinutes: 20, mode: 'transit', origin: '200 Bay St, Toronto' })
+    expect(await ctl.runControl(['status'], c)).toContain('about 20 minutes before you need to leave, with travel times for transit from 200 Bay St, Toronto.')
+    expect(await ctl.runControl(['from', 'off'], c)).toContain('Starting address cleared.')
+  })
+
+  it('says travel messages give the place only when no maps source is set up', () => {
+    st.saveSettings(st.defaultSettings())
+    const r = st.applyChange(st.getSettings(), { on: { travel: true } }, { calendars: ['me@x.com (Google)'], mapsReady: false })
+    expect(r.ok).toBe(true)
+    expect(r.message).toContain('give the place only')
   })
 })
