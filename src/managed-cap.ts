@@ -10,11 +10,19 @@
  * scheduler skip and the operator's monitor all work unchanged.
  */
 import { STORE_DIR } from './config.js'
+import { readEnvFile } from './env.js'
 import { clearAiLimit, isManagedAi, readAiLimit, writeAiLimit, type AiLimitKind } from './ai-limit.js'
 import { capReached, nextUtcMonthStart, readManagedCap, readManagedPrices, recordManagedSpend, tokenCostUsd, type StepTokens } from './ai-usage.js'
 import { logger } from './logger.js'
 
 export type CapGate = { ok: true } | { paused: AiLimitKind } | { notSetUp: true }
+
+/** The host the box talks to is named in .env. Without AI_BASE_URL the key would go to OpenAI itself. */
+function hostConfigured(): boolean {
+  const env = readEnvFile(['AI_BASE_URL', 'AI_MODEL'])
+  const read = (k: 'AI_BASE_URL' | 'AI_MODEL') => env[k]?.trim() || process.env[k]?.trim()
+  return Boolean(read('AI_BASE_URL') && read('AI_MODEL'))
+}
 
 /** Write the cap pause unless one is already set (keeps since and what the owner was told). */
 export function markCapPause(storeDir: string = STORE_DIR, now: Date = new Date()): void {
@@ -35,13 +43,17 @@ export function markCapPause(storeDir: string = STORE_DIR, now: Date = new Date(
  */
 export function capGate(storeDir: string = STORE_DIR, now: Date = new Date()): CapGate {
   if (!isManagedAi(storeDir)) return { ok: true }
-  if (!readManagedPrices(storeDir) || readManagedCap(storeDir) === undefined) {
-    logger.error('Managed open-model box has no prices or no cap recorded; not calling the model (managed-ai price, managed-ai cap)')
+  if (!readManagedPrices(storeDir) || readManagedCap(storeDir) === undefined || !hostConfigured()) {
+    logger.error('Managed open-model box is missing prices, a cap, AI_BASE_URL or AI_MODEL; not calling the model')
     return { notSetUp: true }
   }
   if (capReached(storeDir, now)) {
     markCapPause(storeDir, now)
-    return { paused: readAiLimit(storeDir)?.kind ?? 'spend_limit' }
+    // Stamp the check, so the recovery timer waits its full interval instead
+    // of asking every minute (no model call happens either way).
+    const marker = readAiLimit(storeDir)
+    if (marker) writeAiLimit({ ...marker, lastProbeAt: now.toISOString() }, storeDir)
+    return { paused: marker?.kind ?? 'spend_limit' }
   }
   if (readAiLimit(storeDir)) {
     clearAiLimit(storeDir)

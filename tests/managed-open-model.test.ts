@@ -53,6 +53,8 @@ beforeEach(() => {
   reset()
   vi.clearAllMocks()
   setAgentRuntime(null)
+  process.env.AI_BASE_URL = 'https://host.example/v1'
+  process.env.AI_MODEL = 'open-model-test'
 })
 afterAll(() => rmSync(STORE, { recursive: true, force: true }))
 
@@ -153,6 +155,23 @@ describe('capGate', () => {
     expect(capGate(STORE)).toEqual({ notSetUp: true })
   })
 
+  it('fails closed without AI_BASE_URL (the host key would go to OpenAI) or AI_MODEL', () => {
+    flag({ prices: PRICES, capUsd: 25 })
+    delete process.env.AI_BASE_URL
+    expect(capGate(STORE)).toEqual({ notSetUp: true })
+    process.env.AI_BASE_URL = 'https://host.example/v1'
+    delete process.env.AI_MODEL
+    expect(capGate(STORE)).toEqual({ notSetUp: true })
+  })
+
+  it('stamps the check while paused, so the recovery timer waits its interval', async () => {
+    flag({ prices: PRICES, capUsd: 25 })
+    spend(25)
+    capGate(STORE)
+    const { recoveryDue } = await import('../src/ai-limit.js')
+    expect(recoveryDue(readAiLimit(STORE)!, new Date())).toBe(false)
+  })
+
   it('pauses at the cap until the start of next month, marked as a cap pause', () => {
     flag({ prices: PRICES, capUsd: 25 })
     spend(25)
@@ -232,7 +251,7 @@ describe('engine selection', () => {
     expect(managedEngine(STORE)).toBe('claude')
     expect(getAgentRuntime('chat').id).toBe('claude')
     expect(managedKeyName('claude')).toBe('ANTHROPIC_API_KEY')
-    expect(managedKeyName('open-model')).toBe('OPENAI_API_KEY')
+    expect(managedKeyName('open-model')).toBe('OPEN_MODEL_API_KEY')
   })
 })
 
@@ -303,10 +322,58 @@ describe('ai-sdk runtime on a managed open-model box', () => {
     expect(readAiUsage(STORE)!.usd).toBeGreaterThan(0)
   })
 
+  it('charges a step the loop guard cut short, which the host bills but never reports', async () => {
+    flag({ prices: PRICES, capUsd: 25 })
+    const { simulateReadableStream } = await import('ai')
+    const { MockLanguageModelV3 } = await import('ai/test')
+    const call = (id: string) => ({ type: 'tool-call' as const, toolCallId: id, toolName: 'read_file', input: JSON.stringify({ path: 'README.md' }) })
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        // Three identical calls in one step trip the guard before the step finishes.
+        stream: simulateReadableStream({ chunks: [{ type: 'stream-start' as const, warnings: [] }, call('a'), call('b'), call('c')] }),
+      }),
+    })
+    const rt = await runtimeWith(model)
+    const res = await rt.run({ message: 'loop' })
+    expect(res.text).toContain('Loop detected')
+    expect(readAiUsage(STORE)!.usd).toBeGreaterThan(0)
+  })
+
+  it('does not charge a step refused before any output (a retried 429 is not billed twice)', async () => {
+    flag({ prices: PRICES, capUsd: 25 })
+    const { simulateReadableStream } = await import('ai')
+    const { MockLanguageModelV3 } = await import('ai/test')
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({ chunks: [{ type: 'stream-start' as const, warnings: [] }, { type: 'error' as const, error: new Error('invalid key') }] }),
+      }),
+    })
+    const rt = await runtimeWith(model)
+    expect((await rt.run({ message: 'hi' })).text).toContain("couldn't finish")
+    expect(existsSync(join(STORE, AI_USAGE_FILE))).toBe(false)
+  })
+
   it('a BYOK box (not managed) records no spend', async () => {
     const rt = await runtimeWith(await scriptedModel([{ text: 'hello', input: 1_000_000, output: 0 }]))
     expect((await rt.run({ message: 'hi' })).text).toBe('hello')
     expect(existsSync(join(STORE, AI_USAGE_FILE))).toBe(false)
+  })
+})
+
+describe('provider on a managed open-model box', () => {
+  it('uses AI_MODEL for every tier and refuses to run without AI_BASE_URL', async () => {
+    flag({ prices: PRICES, capUsd: 25 })
+    const { resolveModel, configuredProvider } = await import('../src/runtime/ai-sdk/provider.js')
+    process.env.AI_PROVIDER = 'anthropic'
+    process.env.AI_MODEL_CHEAP = 'some-cheaper-model'
+    try {
+      expect(configuredProvider()).toBe('openai')
+      delete process.env.AI_BASE_URL
+      expect(() => resolveModel('haiku')).toThrow('AI_BASE_URL')
+    } finally {
+      delete process.env.AI_PROVIDER
+      delete process.env.AI_MODEL_CHEAP
+    }
   })
 })
 
@@ -323,10 +390,12 @@ describe('managed-ai CLI, open-model engine', () => {
   }
   const readFlag = () => JSON.parse(readFileSync(join(STORE, MANAGED_AI_FILE), 'utf8'))
 
-  it('set --open-model stores the host key under OPENAI_API_KEY and names what is missing', async () => {
+  it('set --open-model stores the host key under its own name and names what is missing', async () => {
     const { secrets, d } = deps(HOST_KEY)
     const out = await main(['set', '--open-model'], d)
-    expect(secrets.get('OPENAI_API_KEY')).toBe(HOST_KEY)
+    expect(secrets.get('OPEN_MODEL_API_KEY')).toBe(HOST_KEY)
+    // Voice and any .env openai lane read OPENAI_API_KEY; the host key must never be there.
+    expect(secrets.has('OPENAI_API_KEY')).toBe(false)
     expect(secrets.has('ANTHROPIC_API_KEY')).toBe(false)
     expect(readFlag()).toMatchObject({ engine: 'open-model' })
     expect(out).toContain('managed-ai price')
@@ -351,7 +420,7 @@ describe('managed-ai CLI, open-model engine', () => {
     expect(readFlag()).toMatchObject({ engine: 'open-model', capUsd: 25, prices: PRICES })
     d.stdin = async () => ANTHROPIC_KEY
     await main(['set'], d)
-    expect(secrets.has('OPENAI_API_KEY')).toBe(false)
+    expect(secrets.has('OPEN_MODEL_API_KEY')).toBe(false)
     expect(readFlag().engine).toBeUndefined()
     expect(readFlag()).toMatchObject({ capUsd: 25, prices: PRICES })
   })
@@ -399,7 +468,7 @@ describe('managed-ai CLI, open-model engine', () => {
     expect(reconcileManagedKey('the-clients-own-key', STORE)).toBe('dropped')
     await main(['set', '--open-model'], d)
     await main(['byok'], d)
-    expect(secrets.has('OPENAI_API_KEY')).toBe(false)
+    expect(secrets.has('OPEN_MODEL_API_KEY')).toBe(false)
     expect(existsSync(join(STORE, MANAGED_AI_FILE))).toBe(false)
   })
 })

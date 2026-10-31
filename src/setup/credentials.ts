@@ -33,6 +33,8 @@ export interface CredentialInputs {
   signInDetail?: string
   /** A provider-run box: the key is in the vault and nobody signs in. */
   managed?: boolean
+  /** The provider's key name on a managed open-model box (card #268), checked in place of AI_PROVIDER's. */
+  managedKeyName?: string
 }
 
 export interface CredentialStatus {
@@ -45,6 +47,11 @@ export interface CredentialStatus {
 
 export function checkCredentials(io: CredentialInputs): CredentialStatus {
   const has = (name: string) => Boolean(io.env(name)?.trim())
+
+  if (io.managed && io.managedKeyName) {
+    if (has(io.managedKeyName)) return { ok: true, detail: 'managed AI key configured (open model)' }
+    return { ok: false, detail: 'managed box has no AI key', remedy: 'Ask your provider to put the AI key on this assistant again.' }
+  }
 
   if (io.runtime === 'ai-sdk') {
     const provider = io.provider?.trim() || 'anthropic'

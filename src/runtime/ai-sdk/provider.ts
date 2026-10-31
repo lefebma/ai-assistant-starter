@@ -28,6 +28,7 @@ import { createAzure } from '@ai-sdk/azure'
 import type { LanguageModel } from 'ai'
 import { readEnvFile } from '../../env.js'
 import { getSecret } from '../../vault/index.js'
+import { OPEN_MODEL_KEY_NAME, isManagedAi, managedEngine } from '../../ai-limit.js'
 
 const DEFAULT_PROVIDER = 'anthropic'
 /** Only anthropic gets a default model; other providers must set AI_MODEL. */
@@ -110,6 +111,7 @@ export function buildModel(
  * Used by the session-store provider stamp (history sanitizer).
  */
 export function configuredProvider(): string {
+  if (managedOpenModel()) return 'openai'
   const env = readEnvFile()
   return env['AI_PROVIDER']?.trim() || process.env.AI_PROVIDER?.trim() || DEFAULT_PROVIDER
 }
@@ -134,10 +136,32 @@ export function modelIdForTier(
   return t
 }
 
+/** A managed box on the open-model engine (card #268). */
+function managedOpenModel(): boolean {
+  return isManagedAi() && managedEngine() === 'open-model'
+}
+
+/**
+ * Managed open model (card #268): always the OpenAI-compatible connection to
+ * the host in AI_BASE_URL, on the provider's host key, and always AI_MODEL.
+ * Tier aliases are ignored because the box holds one set of prices; a cheaper
+ * or dearer tier model would be priced wrong. Without AI_BASE_URL the host
+ * key would go to OpenAI itself, so that throws.
+ */
+function resolveManagedOpenModel(read: (key: string) => string | undefined): ResolvedModel {
+  const modelId = read('AI_MODEL')
+  const baseURL = read('AI_BASE_URL')
+  if (!modelId || !baseURL) throw new Error('Managed open model: AI_MODEL and AI_BASE_URL must be set in .env.')
+  const apiKey = getSecret(OPEN_MODEL_KEY_NAME)
+  if (!apiKey) throw new Error('Managed open model: no host key stored (managed-ai set --open-model).')
+  return { provider: 'openai', modelId, model: buildModel('openai', modelId, { apiKey, baseURL }) }
+}
+
 export function resolveModel(tier?: string): ResolvedModel {
   const env = readEnvFile()
   const read = (key: string): string | undefined =>
     env[key]?.trim() || process.env[key]?.trim() || undefined
+  if (managedOpenModel()) return resolveManagedOpenModel(read)
 
   const provider = read('AI_PROVIDER') || DEFAULT_PROVIDER
   const defaultModelId = read('AI_MODEL') || (provider === 'anthropic' ? ANTHROPIC_DEFAULT_MODEL : '')

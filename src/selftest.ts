@@ -71,7 +71,7 @@ export async function credentialStatus(
   const { resolveBundledClaude } = await import('./infra/claude-bin.js')
   const { checkClaudeAuth, checkClaudeAuthAsync, spawnClaude } = await import('./infra/claude-auth.js')
   const { checkCredentials } = await import('./setup/credentials.js')
-  const { isManagedAi, managedEngine } = await import('./ai-limit.js')
+  const { isManagedAi, managedEngine, managedKeyName } = await import('./ai-limit.js')
   const { join } = await import('node:path')
 
   const env = readEnvFile()
@@ -93,7 +93,7 @@ export async function credentialStatus(
         ? await checkClaudeAuthAsync(resolveBundledClaude(process.env, PROJECT_ROOT), runAsync)
         : checkClaudeAuth(resolveBundledClaude(process.env, PROJECT_ROOT), spawnClaude)
 
-  return checkCredentials({ runtime, provider, env: read, signedIn: auth.loggedIn, signInDetail: auth.detail, managed })
+  return checkCredentials({ runtime, provider, env: read, signedIn: auth.loggedIn, signInDetail: auth.detail, managed, ...(managed && runtime === 'ai-sdk' ? { managedKeyName: managedKeyName('open-model') } : {}) })
 }
 
 export function defaultChecks(opts: SelfTestOptions = {}): Check[] {

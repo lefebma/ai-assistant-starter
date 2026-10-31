@@ -132,7 +132,7 @@ export async function main(argv: string[], deps: ManagedAiDeps): Promise<string>
           ...(readManagedCap(deps.storeDir) ? [] : ['managed-ai cap <dollars>']),
         ]
         if (missing.length) lines.push(`The assistant will not call the model until you run: ${missing.join(' and ')}`)
-        lines.push('Set AI_PROVIDER=openai, AI_BASE_URL and AI_MODEL in .env for the host (docs/PROVIDERS.md).')
+        lines.push('Set AI_BASE_URL and AI_MODEL in .env for the host (docs/MANAGED-AI-KEY.md).')
       }
       if (deps.envExists) lines.push('Restart the service to use it: sudo systemctl restart havn')
       return lines.join('\n')

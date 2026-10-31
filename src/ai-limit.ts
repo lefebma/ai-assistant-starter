@@ -57,7 +57,7 @@ export const VOICE_OFF_REPLY = "Voice messages aren't available on this assistan
 export const VIDEO_OFF_HINT = "Video analysis isn't available on this assistant. Tell the owner that plainly."
 export const MANAGED_SECRET_REPLY = "This assistant's AI connection is managed for you, so that key can't be changed here."
 /** Keys a managed box gets from its provider, never from the client. */
-export const MANAGED_SECRET_NAMES: readonly string[] = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY']
+export const MANAGED_SECRET_NAMES: readonly string[] = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'OPEN_MODEL_API_KEY']
 
 export function isManagedAi(storeDir: string = STORE_DIR): boolean {
   return existsSync(join(storeDir, MANAGED_AI_FILE))
@@ -80,9 +80,14 @@ export function managedEngine(storeDir: string = STORE_DIR): ManagedEngine {
   }
 }
 
-/** The vault name of the provider's key for this engine. */
+/**
+ * The vault name of the provider's key for this engine. The open-model host
+ * key has its own name so nothing that reads OPENAI_API_KEY (voice, an .env
+ * openai lane) can pick it up and send it, or spend on it, outside the cap.
+ */
+export const OPEN_MODEL_KEY_NAME = 'OPEN_MODEL_API_KEY'
 export function managedKeyName(engine: ManagedEngine): string {
-  return engine === 'open-model' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'
+  return engine === 'open-model' ? OPEN_MODEL_KEY_NAME : 'ANTHROPIC_API_KEY'
 }
 
 export function readAiLimit(storeDir: string = STORE_DIR): AiLimitMarker | null {

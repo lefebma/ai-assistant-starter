@@ -66,7 +66,7 @@ For each client, as `havn-admin`, on a box that has already been set up (it has 
    sudo -u havn bash -lc 'cd ~/havn && node dist/scripts/managed-ai.js set --open-model'
    ```
 
-   The key is stored in the vault as `OPENAI_API_KEY`. If the box was on a managed Claude key, that key is removed, so only one AI connection is left.
+   The key is stored in the vault as `OPEN_MODEL_API_KEY`, a name only the open-model engine reads, so voice and other OpenAI features never pick it up. If the box was on a managed Claude key, that key is removed, so only one AI connection is left.
 3. Record the host's prices, in US dollars per million tokens: input, output, and optionally cached input. Take them from the host's price page for the model you use:
 
    ```bash
@@ -77,16 +77,15 @@ For each client, as `havn-admin`, on a box that has already been set up (it has 
 5. In `.env`, point the assistant at the host:
 
    ```
-   AI_PROVIDER=openai
    AI_BASE_URL=https://api.together.xyz/v1
    AI_MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
    ```
 
 6. Restart (`sudo systemctl restart havn`) and send a message. Run the certification from the box before handing it over (see `docs/PROVIDERS.md`).
 
-Until both the prices and the cap are recorded, the box does not call the model and the client is told "The AI connection for this assistant is not set up yet." `status` shows the engine, the host and model from `.env`, the prices, the cap and this month's spend.
+The box always uses the OpenAI-compatible connection to `AI_BASE_URL` with `AI_MODEL`, whatever `AI_PROVIDER` says, and ignores `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`, because it holds one set of prices. Until the prices, the cap, `AI_BASE_URL` and `AI_MODEL` are all in place, the box does not call the model and the client is told "The AI connection for this assistant is not set up yet." `status` shows the engine, the host and model from `.env`, the prices, the cap and this month's spend.
 
-When the host changes its prices, run `price` again. The spend total is an estimate from the token counts the host reports, so check it against the host's own usage page now and then. When a turn reaches the cap in the middle of a tool loop, the loop stops at the next step, so a month can end slightly over the cap: by up to one model call for each conversation or task running at that moment.
+When the host changes its prices, run `price` again. The spend total is an estimate from the token counts the host reports, so check it against the host's own usage page now and then. When a turn reaches the cap in the middle of a tool loop, the loop stops at the next step, so a month can end slightly over the cap: by up to one model call for each conversation, task or helper agent running at that moment. A call cut short (the client presses Stop, or the loop guard ends it) is charged an estimate, since the host bills it even though it never reports the tokens.
 
 `byok` and `off` work the same on this engine. `byok` removes the host key.
 
