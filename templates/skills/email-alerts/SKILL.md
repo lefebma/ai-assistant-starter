@@ -34,7 +34,7 @@ for them.
 | "what would have alerted this week?" | `replay 7` |
 
 Quiet hours are one setting for every message the owner did not ask for:
-they also hold meeting briefings. Setting them here or through the meeting
+they also hold meeting briefings and travel messages. Setting them here or through the meeting
 briefings skill changes the same thing.
 
 ### Loose durations

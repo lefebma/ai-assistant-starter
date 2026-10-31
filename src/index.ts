@@ -39,7 +39,8 @@ import { listAuthedAccounts } from './ms/store.js'
 import { startProactive } from './proactive/service.js'
 import { discoverCalendars } from './proactive/calendar.js'
 import { relatedThreads } from './proactive/threads.js'
-import { decide as decideBriefing } from './proactive/decide.js'
+import { DAILY_DECISION_CAP, decide as decideBriefing } from './proactive/decide.js'
+import { arrivalNotes } from './proactive/travel.js'
 import { bumpCallCount, callCount } from './proactive/store.js'
 import { getAgentRuntime } from './runtime/index.js'
 import { PROJECT_ROOT } from './env.js'
@@ -298,23 +299,33 @@ async function main(): Promise<void> {
       })
     : () => {}
 
-  // Meeting briefings (cards #258, #259). Off until the owner turns them on
-  // in chat; the tick is a no-op while disabled. Same rule as email alerts:
+  // Meeting briefings and travel messages (cards #258, #259, #260). Off until
+  // the owner turns them on; the tick is a no-op while disabled. Same rule as email alerts:
   // no owner chat, nobody to brief, so it does not start.
+  const proactiveRun = withTriageTimeout(async (message, signal) => {
+    const r = await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })
+    if (r.aiPaused) throw new AiPausedError(r.aiPaused)
+    return r.text
+  })
   const stopProactive = PRIMARY_CHAT_ID
     ? startProactive({
         calendars: () => discoverCalendars({ msAccounts: () => listAuthedAccounts(), client: outlookClient }),
         threads: (event, own, nowMs) => relatedThreads(event, own, nowMs, { client: outlookClient }),
         decide: (event, threads) =>
           decideBriefing(event, threads, {
-            run: withTriageTimeout(async (message, signal) => {
-              const r = await getAgentRuntime('cron').run({ message, model: 'haiku', isolated: true, signal })
-              if (r.aiPaused) throw new AiPausedError(r.aiPaused)
-              return r.text
-            }),
+            run: proactiveRun,
             tz: emailAlertsTz,
             count: () => callCount(localDay(new Date(), emailAlertsTz)),
             bump: () => bumpCallCount(localDay(new Date(), emailAlertsTz)),
+          }),
+        // Arrival notes share the briefings' daily cap of model reads.
+        notes: (event, place, threads) =>
+          arrivalNotes(event, place, threads, {
+            run: proactiveRun,
+            tz: emailAlertsTz,
+            count: () => callCount(localDay(new Date(), emailAlertsTz)),
+            bump: () => bumpCallCount(localDay(new Date(), emailAlertsTz)),
+            cap: DAILY_DECISION_CAP,
           }),
         send: async (text) => {
           const messageId = await adapter.sendMessage(PRIMARY_CHAT_ID, text)

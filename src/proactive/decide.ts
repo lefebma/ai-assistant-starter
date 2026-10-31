@@ -43,15 +43,15 @@ const REASON_LIMIT = 120
 const LINE_LIMIT = 140
 const FIELD_LIMIT = 200
 
-function clean(s: string): string {
+export function clean(s: string): string {
   return s.replace(/</g, '＜').replace(/>/g, '＞')
 }
 
-function cleanLine(s: string, limit = FIELD_LIMIT): string {
+export function cleanLine(s: string, limit = FIELD_LIMIT): string {
   return clean(s.replace(/\s+/g, ' ').trim().slice(0, limit))
 }
 
-function when(ms: number, tz: string): string {
+export function when(ms: number, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
     weekday: 'short',
