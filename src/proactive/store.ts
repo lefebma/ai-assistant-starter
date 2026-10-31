@@ -7,7 +7,7 @@ import { getDb } from '../db.js'
  * got no message. `pending` is a message decided but not yet accepted by the
  * chat; `failed` gave up after MAX_SEND_ATTEMPTS or once the meeting started.
  */
-export type Kind = 'briefing'
+export type Kind = 'briefing' | 'travel'
 export type DecisionStatus = 'quiet' | 'pending' | 'sent' | 'failed'
 
 export const MAX_SEND_ATTEMPTS = 3
@@ -56,6 +56,12 @@ export function initProactiveTables(db: Database.Database): void {
       msg_id TEXT NOT NULL,
       covered_at INTEGER NOT NULL,
       PRIMARY KEY (series_key, msg_id)
+    );
+    CREATE TABLE IF NOT EXISTS proactive_trips (
+      event_key TEXT PRIMARY KEY,
+      trip TEXT NOT NULL,
+      computed_at INTEGER NOT NULL,
+      refreshed INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS proactive_calls (
       day TEXT PRIMARY KEY,
@@ -180,6 +186,40 @@ export function prune(nowMs: number): void {
   const db = getDb()
   db.prepare('DELETE FROM proactive_decisions WHERE start_ms < ?').run(nowMs - KEEP_MS)
   db.prepare('DELETE FROM proactive_covered WHERE covered_at < ?').run(nowMs - 4 * KEEP_MS)
+  db.prepare('DELETE FROM proactive_trips WHERE computed_at < ?').run(nowMs - 2 * 86_400_000)
+}
+
+/**
+ * A meeting's planned trip (card #260), kept so the route is looked up once
+ * when the meeting comes into view and once more for traffic, not every
+ * tick. The trip holds the travel time and where it starts, never more than
+ * the decision row's own title; the meeting's key changes when it moves.
+ */
+export interface StoredTrip<T> {
+  trip: T
+  computedAt: number
+  refreshed: boolean
+}
+
+export function getTrip<T>(eventKey: string): StoredTrip<T> | null {
+  const row = getDb().prepare('SELECT trip, computed_at, refreshed FROM proactive_trips WHERE event_key = ?').get(eventKey) as
+    | { trip: string; computed_at: number; refreshed: number }
+    | undefined
+  if (!row) return null
+  try {
+    return { trip: JSON.parse(row.trip) as T, computedAt: row.computed_at, refreshed: row.refreshed === 1 }
+  } catch {
+    return null
+  }
+}
+
+export function saveTrip(eventKey: string, trip: unknown, at: number, refreshed: boolean): void {
+  getDb()
+    .prepare(
+      `INSERT INTO proactive_trips (event_key, trip, computed_at, refreshed) VALUES (?, ?, ?, ?)
+       ON CONFLICT(event_key) DO UPDATE SET trip = excluded.trip, computed_at = excluded.computed_at, refreshed = excluded.refreshed`
+    )
+    .run(eventKey, JSON.stringify(trip), at, refreshed ? 1 : 0)
 }
 
 /** Message ids a recurring meeting's earlier briefing already covered. */

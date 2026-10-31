@@ -208,6 +208,26 @@
           <input type="number" id="pro-lead" inputmode="numeric" step="1" required>
           <span>minutes before a meeting</span>
         </label>
+        <div class="pro-travel">
+          <label class="pro-row" for="pro-buffer">
+            <span>Travel messages arrive</span>
+            <input type="number" id="pro-buffer" inputmode="numeric" step="1" required>
+            <span>minutes before I need to leave</span>
+          </label>
+          <label class="pro-row" for="pro-mode">
+            <span>I travel</span>
+            <select id="pro-mode">
+              <option value="drive">by car</option>
+              <option value="transit">by transit</option>
+              <option value="walk">on foot</option>
+            </select>
+          </label>
+          <label class="pro-row pro-origin" for="pro-origin">
+            <span>Starting address</span>
+            <input type="text" id="pro-origin" autocomplete="street-address" maxlength="200" placeholder="Home or office">
+          </label>
+          <p id="pro-maps-hint" class="pro-hint"></p>
+        </div>
         <div class="pro-row">
           <label class="pro-check"><input type="checkbox" id="pro-quiet"> Quiet hours</label>
           <span class="pro-times">

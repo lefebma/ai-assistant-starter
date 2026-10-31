@@ -642,7 +642,9 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .pro-check input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .pro-row input[type="number"] { width: 4.5em; }
 .pro-times { display: inline-flex; align-items: center; gap: 8px; }
-.pro-row input[type="number"], .pro-row input[type="time"] {
+#pro-kinds, .pro-travel { display: grid; gap: 10px; }
+.pro-origin input { flex: 1 1 14em; min-width: 0; }
+.pro-row input[type="number"], .pro-row input[type="time"], .pro-row input[type="text"], .pro-row select {
   font: inherit; color: var(--ink); background: var(--surface);
   border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
 }

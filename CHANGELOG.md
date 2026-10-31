@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.59.0 - 2026-10-31
+
+- **New: travel messages for in-person meetings.** For a meeting at a physical address, your assistant tells you where it is, how long it takes to get there and when to leave, about 15 minutes before you need to go. It also passes on anything in your mail about parking, the entrance, a changed room or someone running late. Turn it on by saying "tell me when to leave for meetings", or in the web app under Settings, Proactive messages.
+- **Your trip starts where you will be.** Coming straight from another in-person meeting, the travel time is worked out from there. Otherwise it starts at the address you give (home or office), which stays on your assistant.
+- **Choose how you travel and how much warning you want.** Car, transit or on foot (car unless you change it), and a warning from 0 to 60 minutes before you need to leave.
+- **Never a guessed time.** When travel times are not set up or a lookup fails, the message gives the place and says the travel time is not available. Hosted assistants get travel times once your provider turns on maps; self-installed ones use their own Google Maps key.
+- Travel messages follow your quiet hours, like briefings and email alerts.
+
 ## 1.58.0 - 2026-10-30
 
 - **New: settings for the messages your assistant sends on its own.** Meeting briefings, and the travel and timing messages coming next, each have their own on and off switch. Set them by asking ("stop the meeting briefings", "brief me an hour before") or in the web app under Settings, Proactive messages. Everything starts off, and turning something on tells you which calendars and mailboxes it will read. Your settings are kept through updates and restarts. If you had meeting briefings on, they stay on.
