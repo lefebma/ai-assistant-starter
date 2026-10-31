@@ -13,6 +13,11 @@ export interface AiLimitMarker {
   lastProbeAt?: string
   lastToldAt?: string
   toldFull?: boolean
+  /**
+   * 'cap': the box paused itself at the recorded cap (open-model engine, card
+   * #268). It lifts on its own once the month turns over or the cap is raised.
+   */
+  source?: 'cap'
 }
 
 export const AI_LIMIT_FILE = 'ai-limit.json'
@@ -56,6 +61,28 @@ export const MANAGED_SECRET_NAMES: readonly string[] = ['ANTHROPIC_API_KEY', 'OP
 
 export function isManagedAi(storeDir: string = STORE_DIR): boolean {
   return existsSync(join(storeDir, MANAGED_AI_FILE))
+}
+
+/**
+ * Which engine a managed box runs (card #268). 'claude' is the Anthropic key
+ * on the claude runtime; 'open-model' is an OpenAI-compatible host key on the
+ * ai-sdk runtime, with the cap enforced on the box. A flag without an engine
+ * predates the open-model engine and is claude.
+ */
+export type ManagedEngine = 'claude' | 'open-model'
+
+export function managedEngine(storeDir: string = STORE_DIR): ManagedEngine {
+  try {
+    const raw = JSON.parse(readFileSync(join(storeDir, MANAGED_AI_FILE), 'utf8'))
+    return raw?.engine === 'open-model' ? 'open-model' : 'claude'
+  } catch {
+    return 'claude'
+  }
+}
+
+/** The vault name of the provider's key for this engine. */
+export function managedKeyName(engine: ManagedEngine): string {
+  return engine === 'open-model' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'
 }
 
 export function readAiLimit(storeDir: string = STORE_DIR): AiLimitMarker | null {
