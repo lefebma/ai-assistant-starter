@@ -13,6 +13,11 @@ export interface AiLimitMarker {
   lastProbeAt?: string
   lastToldAt?: string
   toldFull?: boolean
+  /**
+   * 'cap': the box paused itself at the recorded cap (open-model engine, card
+   * #268). It lifts on its own once the month turns over or the cap is raised.
+   */
+  source?: 'cap'
 }
 
 export const AI_LIMIT_FILE = 'ai-limit.json'
@@ -52,10 +57,37 @@ export const VOICE_OFF_REPLY = "Voice messages aren't available on this assistan
 export const VIDEO_OFF_HINT = "Video analysis isn't available on this assistant. Tell the owner that plainly."
 export const MANAGED_SECRET_REPLY = "This assistant's AI connection is managed for you, so that key can't be changed here."
 /** Keys a managed box gets from its provider, never from the client. */
-export const MANAGED_SECRET_NAMES: readonly string[] = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY']
+export const MANAGED_SECRET_NAMES: readonly string[] = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'OPEN_MODEL_API_KEY']
 
 export function isManagedAi(storeDir: string = STORE_DIR): boolean {
   return existsSync(join(storeDir, MANAGED_AI_FILE))
+}
+
+/**
+ * Which engine a managed box runs (card #268). 'claude' is the Anthropic key
+ * on the claude runtime; 'open-model' is an OpenAI-compatible host key on the
+ * ai-sdk runtime, with the cap enforced on the box. A flag without an engine
+ * predates the open-model engine and is claude.
+ */
+export type ManagedEngine = 'claude' | 'open-model'
+
+export function managedEngine(storeDir: string = STORE_DIR): ManagedEngine {
+  try {
+    const raw = JSON.parse(readFileSync(join(storeDir, MANAGED_AI_FILE), 'utf8'))
+    return raw?.engine === 'open-model' ? 'open-model' : 'claude'
+  } catch {
+    return 'claude'
+  }
+}
+
+/**
+ * The vault name of the provider's key for this engine. The open-model host
+ * key has its own name so nothing that reads OPENAI_API_KEY (voice, an .env
+ * openai lane) can pick it up and send it, or spend on it, outside the cap.
+ */
+export const OPEN_MODEL_KEY_NAME = 'OPEN_MODEL_API_KEY'
+export function managedKeyName(engine: ManagedEngine): string {
+  return engine === 'open-model' ? OPEN_MODEL_KEY_NAME : 'ANTHROPIC_API_KEY'
 }
 
 export function readAiLimit(storeDir: string = STORE_DIR): AiLimitMarker | null {

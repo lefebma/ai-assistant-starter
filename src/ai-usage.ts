@@ -165,3 +165,60 @@ export function markUsageWarned(storeDir: string = STORE_DIR, now: Date = new Da
     logger.warn({ err: String(err) }, 'Could not record the usage heads-up')
   }
 }
+
+/**
+ * Per-million-token prices for the open-model engine (card #268), recorded by
+ * `managed-ai price`. The claude runtime gets a dollar figure from the CLI;
+ * the ai-sdk runtime gets only token counts, so the box prices them itself.
+ */
+export interface TokenPrices {
+  inputPerMTok: number
+  outputPerMTok: number
+  /** Cache reads. Unset means cache reads are billed as ordinary input. */
+  cachedInputPerMTok?: number
+}
+
+function price(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined
+}
+
+export function readManagedPrices(storeDir: string = STORE_DIR): TokenPrices | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(join(storeDir, MANAGED_AI_FILE), 'utf8'))?.prices
+    const input = price(raw?.inputPerMTok)
+    const output = price(raw?.outputPerMTok)
+    if (input === undefined || output === undefined) return undefined
+    const cached = price(raw?.cachedInputPerMTok)
+    return { inputPerMTok: input, outputPerMTok: output, ...(cached !== undefined ? { cachedInputPerMTok: cached } : {}) }
+  } catch {
+    return undefined
+  }
+}
+
+export interface StepTokens {
+  /** All input tokens, cache reads included (the AI SDK's inputTokens). */
+  inputTokens?: number
+  outputTokens?: number
+  cachedInputTokens?: number
+}
+
+function count(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
+}
+
+/** Dollar cost of one model call. Reasoning tokens are already in outputTokens. */
+export function tokenCostUsd(t: StepTokens, p: TokenPrices): number {
+  const input = count(t.inputTokens)
+  const cached = Math.min(count(t.cachedInputTokens), input)
+  const cachedPrice = p.cachedInputPerMTok ?? p.inputPerMTok
+  return ((input - cached) * p.inputPerMTok + cached * cachedPrice + count(t.outputTokens) * p.outputPerMTok) / 1e6
+}
+
+/** True on a managed box whose spend this month has reached the recorded cap. */
+export function capReached(storeDir: string = STORE_DIR, now: Date = new Date()): boolean {
+  if (!isManagedAi(storeDir)) return false
+  const cap = readManagedCap(storeDir)
+  if (cap === undefined) return false
+  const u = readAiUsage(storeDir)
+  return !!u && u.month === utcMonth(now) && u.usd >= cap
+}

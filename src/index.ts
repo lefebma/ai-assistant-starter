@@ -9,7 +9,7 @@ import { runDecaySweep } from './memory.js'
 import { cleanupOldUploads } from './media.js'
 import { abortAllRuns, createBot } from './bot.js'
 import { initScheduler, stopScheduler } from './scheduler.js'
-import { AiPausedError } from './ai-limit.js'
+import { AiPausedError, managedEngine, managedKeyName } from './ai-limit.js'
 import { startAiRecovery } from './ai-recovery.js'
 import { reconcileManagedKey } from './managed-ai-cli.js'
 import { getSecret } from './vault/index.js'
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
   // Managed box on a key that is not the provider's (card #160): the client
   // brought their own, so caps and the operator's alerts stop.
   try {
-    if (reconcileManagedKey(getSecret('ANTHROPIC_API_KEY'), STORE_DIR) === 'dropped') {
+    if (reconcileManagedKey(getSecret(managedKeyName(managedEngine(STORE_DIR))), STORE_DIR) === 'dropped') {
       logger.warn('The AI key is not the managed one; managed mode is off')
     }
   } catch (err) {

@@ -159,8 +159,8 @@ describe('managed-ai CLI', () => {
   })
 
   it('anything else is a usage error', async () => {
-    await expect(main([], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off|byok>')
-    await expect(main(['bogus'], t.deps)).rejects.toThrow('Usage: managed-ai <set|cap <dollars>|status|off|byok>')
+    await expect(main([], t.deps)).rejects.toThrow('Usage: managed-ai <set [--open-model]|cap <dollars>|price <input> <output> [cached]|status|off|byok>')
+    await expect(main(['bogus'], t.deps)).rejects.toThrow('Usage: managed-ai <set [--open-model]|cap <dollars>|price <input> <output> [cached]|status|off|byok>')
   })
 
   it('set records a fingerprint of the key, never the key', async () => {

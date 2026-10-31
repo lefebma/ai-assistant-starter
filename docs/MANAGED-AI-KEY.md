@@ -49,7 +49,45 @@ API keys cannot be created by any API, and workspace spend limits are set only i
    No restart is needed. `cap 0` turns the heads-up off. Without a cap the box still pauses at the limit; it just gives no early warning.
 7. Record in your private notes: the box, the workspace id, the key name and the limit. Never the key. Keep amounts out of this repo.
 
-Check the state at any time with `node dist/scripts/managed-ai.js status`. It says whether the box is managed, whether a key is stored, whether a limit is in force, the cap and this month's spend, and which runtime the assistant uses. It never prints the key. A managed box always runs on the claude runtime: an `AGENT_RUNTIME` line in `.env` is ignored while the box is managed, and `status` says so.
+Check the state at any time with `node dist/scripts/managed-ai.js status`. It says whether the box is managed, whether a key is stored, whether a limit is in force, the cap and this month's spend, and which runtime the assistant uses. It never prints the key. A managed box always runs on its engine's runtime (claude, or ai-sdk for an open model, below): an `AGENT_RUNTIME` line in `.env` is ignored while the box is managed, and `status` says so.
+
+## Open model through a US host
+
+The same managed setup, with an open model from an OpenAI-compatible host (for example Together) in place of Claude. The client still gets one bill and no AI account. Their prompts go to that host instead of Anthropic.
+
+The difference that matters: you cannot count on the host to stop spend at a monthly limit the way an Anthropic workspace does. So on this engine the box is the stop. It prices every model call from the token counts, adds it to the month, ends a turn at the next step once the cap is reached, and starts no new turn until the month turns over or you raise the cap. The client sees the same messages as on Claude (the heads-up at 80%, then the pause), and Umi gets the same alerts. If your host does offer a spend limit or prepaid credit on the key, use it as well.
+
+For each client, as `havn-admin`, on a box that has already been set up (it has a `.env`):
+
+1. Create one key at the host for this box.
+2. Put it on the box. Same stdin rules as above:
+
+   ```bash
+   sudo -u havn bash -lc 'cd ~/havn && node dist/scripts/managed-ai.js set --open-model'
+   ```
+
+   The key is stored in the vault as `OPEN_MODEL_API_KEY`, a name only the open-model engine reads, so voice and other OpenAI features never pick it up. If the box was on a managed Claude key, that key is removed, so only one AI connection is left.
+3. Record the host's prices, in US dollars per million tokens: input, output, and optionally cached input. Take them from the host's price page for the model you use:
+
+   ```bash
+   sudo -u havn bash -lc 'cd ~/havn && node dist/scripts/managed-ai.js price 0.30 1.20'
+   ```
+
+4. Record the monthly cap in dollars (`managed-ai cap <dollars>`). On this engine the cap is required and `cap 0` is refused, because nothing else stops spend.
+5. In `.env`, point the assistant at the host:
+
+   ```
+   AI_BASE_URL=https://api.together.xyz/v1
+   AI_MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
+   ```
+
+6. Restart (`sudo systemctl restart havn`) and send a message. Run the certification from the box before handing it over (see `docs/PROVIDERS.md`).
+
+The box always uses the OpenAI-compatible connection to `AI_BASE_URL` with `AI_MODEL`, whatever `AI_PROVIDER` says, and ignores `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`, because it holds one set of prices. Until the prices, the cap, `AI_BASE_URL` and `AI_MODEL` are all in place, the box does not call the model and the client is told "The AI connection for this assistant is not set up yet." `status` shows the engine, the host and model from `.env`, the prices, the cap and this month's spend.
+
+When the host changes its prices, run `price` again. The spend total is an estimate from the token counts the host reports, so check it against the host's own usage page now and then. When a turn reaches the cap in the middle of a tool loop, the loop stops at the next step, so a month can end slightly over the cap: by up to one model call for each conversation, task or helper agent running at that moment. A call cut short (the client presses Stop, or the loop guard ends it) is charged an estimate, since the host bills it even though it never reports the tokens.
+
+`byok` and `off` work the same on this engine. `byok` removes the host key.
 
 ## What a managed box does differently
 

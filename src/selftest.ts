@@ -71,12 +71,17 @@ export async function credentialStatus(
   const { resolveBundledClaude } = await import('./infra/claude-bin.js')
   const { checkClaudeAuth, checkClaudeAuthAsync, spawnClaude } = await import('./infra/claude-auth.js')
   const { checkCredentials } = await import('./setup/credentials.js')
-  const { isManagedAi } = await import('./ai-limit.js')
+  const { isManagedAi, managedEngine, managedKeyName } = await import('./ai-limit.js')
   const { join } = await import('node:path')
 
   const env = readEnvFile()
   const read = (name: string) => getSecret(name) ?? env[name] ?? process.env[name]
-  const runtime = env.AGENT_RUNTIME?.trim() || process.env.AGENT_RUNTIME?.trim() || 'claude'
+  const store = join(PROJECT_ROOT, 'store')
+  const managed = isManagedAi(store)
+  // A managed box runs its engine's runtime whatever .env says (card #268).
+  const runtime = managed
+    ? managedEngine(store) === 'open-model' ? 'ai-sdk' : 'claude'
+    : env.AGENT_RUNTIME?.trim() || process.env.AGENT_RUNTIME?.trim() || 'claude'
   const provider = env.AI_PROVIDER?.trim() || process.env.AI_PROVIDER?.trim()
 
   // Only the claude runtime can use an interactive sign-in, and asking costs a
@@ -88,7 +93,7 @@ export async function credentialStatus(
         ? await checkClaudeAuthAsync(resolveBundledClaude(process.env, PROJECT_ROOT), runAsync)
         : checkClaudeAuth(resolveBundledClaude(process.env, PROJECT_ROOT), spawnClaude)
 
-  return checkCredentials({ runtime, provider, env: read, signedIn: auth.loggedIn, signInDetail: auth.detail, managed: isManagedAi(join(PROJECT_ROOT, 'store')) })
+  return checkCredentials({ runtime, provider, env: read, signedIn: auth.loggedIn, signInDetail: auth.detail, managed, ...(managed && runtime === 'ai-sdk' ? { managedKeyName: managedKeyName('open-model') } : {}) })
 }
 
 export function defaultChecks(opts: SelfTestOptions = {}): Check[] {

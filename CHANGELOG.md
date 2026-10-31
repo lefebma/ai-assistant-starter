@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.60.0 - 2026-10-31
+
+- **New: a provider-managed AI connection can run on an open model.** Until now a managed box always ran on Claude. Your provider can now supply an open model from a US host (for example DeepSeek through Together) in its place, with the same single bill and no AI account for you. Your messages go to that host instead of Anthropic.
+- **The monthly allowance holds on the open model too.** The host has no spending stop your provider can rely on, so your assistant keeps the count itself: it adds up the cost of every AI call, tells you at 80% of the allowance as before, and pauses when the allowance is used up, until the month renews or your provider raises it. Scheduled tasks wait while it is paused. If the allowance runs out in the middle of a long task, the task stops at its next step.
+- **For providers:** `managed-ai set --open-model` stores the host key, `managed-ai price` records the host's prices per million tokens, and the cap is required on this engine. The assistant does not call the model until both are recorded. Setup steps are in `docs/MANAGED-AI-KEY.md` under "Open model through a US host". A box on the client's own AI account is not affected.
+
 ## 1.59.0 - 2026-10-31
 
 - **New: travel messages for in-person meetings.** For a meeting at a physical address, your assistant tells you where it is, how long it takes to get there and when to leave, about 15 minutes before you need to go. It also passes on anything in your mail about parking, the entrance, a changed room or someone running late. Turn it on by saying "tell me when to leave for meetings", or in the web app under Settings, Proactive messages.
