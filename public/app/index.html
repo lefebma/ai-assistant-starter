@@ -197,6 +197,32 @@
       </div>
       <ul id="connections" class="conn-list"></ul>
     </section>
+    <section id="pro-section" aria-labelledby="pro-title" hidden>
+      <div class="settings-row-head">
+        <h3 id="pro-title">Proactive messages</h3>
+      </div>
+      <form id="pro-form" class="pro-form">
+        <div id="pro-kinds"></div>
+        <label class="pro-row" for="pro-lead">
+          <span>Briefings arrive</span>
+          <input type="number" id="pro-lead" inputmode="numeric" step="1" required>
+          <span>minutes before a meeting</span>
+        </label>
+        <div class="pro-row">
+          <label class="pro-check"><input type="checkbox" id="pro-quiet"> Quiet hours</label>
+          <span class="pro-times">
+            <input type="time" id="pro-quiet-start" aria-label="Quiet hours start">
+            <span>to</span>
+            <input type="time" id="pro-quiet-end" aria-label="Quiet hours end">
+          </span>
+        </div>
+        <p class="pro-hint">Quiet hours also hold email alerts. A message due then waits until they end.</p>
+        <div class="dev-actions">
+          <button type="submit" id="pro-save" class="small-btn">Save</button>
+        </div>
+        <p id="pro-note" class="pro-note" hidden></p>
+      </form>
+    </section>
     <section aria-labelledby="dev-title">
       <div class="settings-row-head">
         <h3 id="dev-title">Signed-in devices</h3>

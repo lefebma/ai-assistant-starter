@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { getDb, getAppState, setAppState } from '../db.js'
+import { getDb } from '../db.js'
 
 /**
  * One row per meeting and kind of message, decided once. `quiet` rows record
@@ -30,18 +30,6 @@ export interface DecisionRow {
   chatId: string | null
   chatMessageId: string | null
 }
-
-export interface ProactiveSettings {
-  enabled: boolean
-  /** How long before a meeting its briefing arrives. */
-  leadMinutes: number
-  /** How far ahead the calendar is read. */
-  windowHours: number
-}
-
-const SETTINGS_KEY = 'proactive.settings'
-export const DEFAULT_LEAD_MINUTES = 30
-export const DEFAULT_WINDOW_HOURS = 24
 
 export function initProactiveTables(db: Database.Database): void {
   db.exec(`
@@ -169,6 +157,11 @@ export function recordSendFailure(id: number, giveUp = false): DecisionStatus {
   return row.status as DecisionStatus
 }
 
+/** A pending message quiet hours held past its use: kept in the log as quiet, with the reason. */
+export function dropPending(id: number, reason: string): void {
+  getDb().prepare(`UPDATE proactive_decisions SET status = 'quiet', reason = ? WHERE id = ? AND status = 'pending'`).run(reason, id)
+}
+
 /** Pending rows whose meeting starts before `cutoffMs` are given up without a send. */
 export function expirePending(cutoffMs: number): number {
   return getDb()
@@ -215,22 +208,4 @@ export function bumpCallCount(day: string): void {
     .prepare('INSERT INTO proactive_calls (day, count) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET count = count + 1')
     .run(day)
   getDb().prepare('DELETE FROM proactive_calls WHERE day < ?').run(day.slice(0, 8) + '00')
-}
-
-function defaultSettings(): ProactiveSettings {
-  return { enabled: false, leadMinutes: DEFAULT_LEAD_MINUTES, windowHours: DEFAULT_WINDOW_HOURS }
-}
-
-export function getSettings(): ProactiveSettings {
-  const raw = getAppState(SETTINGS_KEY)
-  if (!raw) return defaultSettings()
-  try {
-    return { ...defaultSettings(), ...(JSON.parse(raw) as Partial<ProactiveSettings>) }
-  } catch {
-    return defaultSettings()
-  }
-}
-
-export function saveSettings(s: ProactiveSettings): void {
-  setAppState(SETTINGS_KEY, JSON.stringify(s))
 }

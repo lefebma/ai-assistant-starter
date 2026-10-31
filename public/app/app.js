@@ -2033,6 +2033,69 @@ async function loadDevices() {
   }
 }
 
+// Proactive messages (card #262). Primary chat only; the server says 403 otherwise.
+function renderProactive(v) {
+  const box = $('pro-kinds')
+  box.replaceChildren()
+  for (const k of v.kinds) {
+    box.append(
+      h('label', { class: 'pro-check pro-row' }, h('input', { type: 'checkbox', 'data-kind': k.id, checked: k.on }), k.label)
+    )
+  }
+  const lead = $('pro-lead')
+  lead.min = v.limits.leadMinutes.min
+  lead.max = v.limits.leadMinutes.max
+  lead.value = v.leadMinutes
+  $('pro-quiet').checked = Boolean(v.quietHours)
+  $('pro-quiet-start').value = v.quietHours ? v.quietHours.start : '22:00'
+  $('pro-quiet-end').value = v.quietHours ? v.quietHours.end : '07:00'
+  syncQuiet()
+}
+
+function syncQuiet() {
+  const on = $('pro-quiet').checked
+  $('pro-quiet-start').disabled = !on
+  $('pro-quiet-end').disabled = !on
+}
+
+function proNote(text, warn) {
+  note($('pro-note'), text)
+  $('pro-note').classList.toggle('warn', Boolean(warn))
+}
+
+async function loadProactive() {
+  proNote('')
+  if (!state.me || !state.me.isPrimary) return show($('pro-section'), false)
+  try {
+    renderProactive(await api.get('/api/web/proactive'))
+    show($('pro-section'), true)
+  } catch {
+    show($('pro-section'), false)
+  }
+}
+
+$('pro-quiet').addEventListener('change', syncQuiet)
+$('pro-form').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const on = {}
+  for (const c of $('pro-kinds').querySelectorAll('input[data-kind]')) on[c.dataset.kind] = c.checked
+  const change = {
+    on,
+    leadMinutes: Number($('pro-lead').value),
+    quietHours: $('pro-quiet').checked ? { start: $('pro-quiet-start').value, end: $('pro-quiet-end').value } : null,
+  }
+  $('pro-save').disabled = true
+  try {
+    const r = await api.post('/api/web/proactive', change)
+    renderProactive(r)
+    proNote(r.message, !r.ok)
+  } catch (err) {
+    proNote(friendly(err, 'Could not save.'), true)
+  } finally {
+    $('pro-save').disabled = false
+  }
+})
+
 function openSettings() {
   closeDrawers()
   note($('dev-note'), '')
@@ -2040,6 +2103,7 @@ function openSettings() {
   $('settings-version').textContent = s && s.version ? 'Version ' + s.version : ''
   $('settings').showModal()
   loadConnections(false)
+  loadProactive()
   loadDevices()
 }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.58.0 - 2026-10-30
+
+- **New: settings for the messages your assistant sends on its own.** Meeting briefings, and the travel and timing messages coming next, each have their own on and off switch. Set them by asking ("stop the meeting briefings", "brief me an hour before") or in the web app under Settings, Proactive messages. Everything starts off, and turning something on tells you which calendars and mailboxes it will read. Your settings are kept through updates and restarts. If you had meeting briefings on, they stay on.
+- **Quiet hours now cover meeting briefings too.** You have one set of quiet hours for everything your assistant sends without being asked (10 pm to 7 am unless you changed it). A briefing due during quiet hours waits until they end. If the meeting starts before then, no message is sent, and "what did you decide for my meetings?" says it fell in your quiet hours. Change them in chat ("quiet hours from 11 pm to 6:30 am", "no quiet hours") or in the web app.
+
 ## 1.57.0 - 2026-10-30
 
 Groundwork for travel times: a way for assistants to look up places and journeys on Google Maps.
