@@ -87,18 +87,24 @@ export interface StartPoint {
   notBeforeMs?: number
 }
 
-/**
- * Where the owner will be before `e`: the place of the meeting just before
- * it, when that was in person and ends within CHAIN_GAP_MS, else their saved
- * starting address, else nowhere known.
- */
-export function startingPoint(e: UpcomingEvent, all: UpcomingEvent[], origin: string, mapsOn: boolean): StartPoint | null {
+/** The meeting that ends last before `e` starts, within CHAIN_GAP_MS of it. */
+export function previousMeeting(e: UpcomingEvent, all: UpcomingEvent[]): UpcomingEvent | undefined {
   let prev: UpcomingEvent | undefined
   for (const x of all) {
     if (x === e || x.startMs >= e.startMs || x.endMs > e.startMs) continue
     if (e.startMs - x.endMs > CHAIN_GAP_MS) continue
     if (!prev || x.endMs > prev.endMs) prev = x
   }
+  return prev
+}
+
+/**
+ * Where the owner will be before `e`: the place of the meeting just before
+ * it, when that was in person and ends within CHAIN_GAP_MS, else their saved
+ * starting address, else nowhere known.
+ */
+export function startingPoint(e: UpcomingEvent, all: UpcomingEvent[], origin: string, mapsOn: boolean): StartPoint | null {
+  const prev = previousMeeting(e, all)
   const prevPlace = prev ? inPersonPlace(prev, mapsOn) : null
   if (prev && prevPlace && prevPlace.toLowerCase() !== inPersonPlace(e, mapsOn)?.toLowerCase()) {
     return { text: prevPlace, label: `from ${cleanLine(prev.title, 80)}`, notBeforeMs: prev.endMs }
@@ -242,9 +248,9 @@ function time(ms: number, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms))
 }
 
-const BY: Record<TravelMode, string> = { drive: 'by car', transit: 'by transit', walk: 'on foot' }
+export const BY: Record<TravelMode, string> = { drive: 'by car', transit: 'by transit', walk: 'on foot' }
 
-function md(s: string): string {
+export function md(s: string): string {
   return s.replace(/([\\`*_[\]()#])/g, '\\$1')
 }
 

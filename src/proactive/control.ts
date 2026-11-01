@@ -30,7 +30,7 @@ export interface ControlDeps {
 const DEFAULT_LOG = 10
 const MAX_LOG = 30
 
-const HELP = `Commands: on [kind], off [kind], status, log [count], lead <minutes, ${LIMITS.leadMinutes.min} to ${LIMITS.leadMinutes.max}>, buffer <minutes, ${LIMITS.bufferMinutes.min} to ${LIMITS.bufferMinutes.max}>, mode drive|transit|walk, from <starting address>, from off, quiet <start> <end>, quiet off. Kinds: ${KINDS.filter((k) => k.available)
+const HELP = `Commands: on [kind], off [kind], status, log [count], lead <minutes, ${LIMITS.leadMinutes.min} to ${LIMITS.leadMinutes.max}>, buffer <minutes, ${LIMITS.bufferMinutes.min} to ${LIMITS.bufferMinutes.max}>, mode drive|transit|walk, from <starting address>, from off, ahead <hours, ${LIMITS.aheadHours.min} to ${LIMITS.aheadHours.max}>, quiet <start> <end>, quiet off. Kinds: ${KINDS.filter((k) => k.available)
   .map((k) => k.id)
   .join(', ')}.`
 
@@ -40,6 +40,8 @@ const KIND_WORDS: Record<string, MessageKind> = {
   meetings: 'briefing',
   travel: 'travel',
   timing: 'timing',
+  warnings: 'timing',
+  problems: 'timing',
 }
 
 function stamp(ms: number, tz: string): string {
@@ -55,7 +57,7 @@ function stamp(ms: number, tz: string): string {
 }
 
 function logLine(r: DecisionRow, tz: string): string {
-  const name = r.kind === 'travel' ? 'travel message' : 'briefing'
+  const name = r.kind === 'travel' ? 'travel message' : r.kind === 'timing' ? 'timing warning' : 'briefing'
   const what =
     r.status === 'sent'
       ? `${name} sent${r.reason ? ` (${r.reason})` : ''}`
@@ -113,6 +115,8 @@ export async function runControl(argv: string[], deps: ControlDeps): Promise<str
       const off = rest.length === 1 && ['off', 'none', 'clear'].includes(arg!.toLowerCase())
       return same(applyChange(s, { origin: off ? '' : rest.join(' ') }, { calendars: [], mapsReady }), off ? 'No starting address is set.' : `That is already your starting address.`)
     }
+    case 'ahead':
+      return same(applyChange(s, { aheadHours: Number(arg) }, { calendars: [], mapsReady }), `Timing warnings already look ${s.timing.aheadHours} hours ahead.`)
     case 'quiet': {
       let q: QuietHours | null
       if (arg?.toLowerCase() === 'off' || arg?.toLowerCase() === 'none') q = null
@@ -137,6 +141,7 @@ export async function runControl(argv: string[], deps: ControlDeps): Promise<str
           const times = mapsReady ? `travel times for ${modeName(s.travel.mode)} ${from}` : 'the place only, since travel times are not set up'
           return `${kindName(k.id)} are on, about ${s.travel.bufferMinutes} minutes before you need to leave, with ${times}.`
         }
+        if (k.id === 'timing' && s.timing.on) return `${kindName(k.id)} are on, looking ${s.timing.aheadHours} hours ahead.`
         return `${kindName(k.id)} are ${s[k.id].on ? 'on' : 'off'}.`
       })
       if (!kinds.some((k) => s[k.id].on)) return lines.join('\n')
@@ -146,10 +151,11 @@ export async function runControl(argv: string[], deps: ControlDeps): Promise<str
       const sent = week.filter((r) => r.status === 'sent' && r.kind === 'briefing').length
       const trips = week.filter((r) => r.status === 'sent' && r.kind === 'travel').length
       const quiet = week.filter((r) => r.status === 'quiet' && r.kind === 'briefing').length
+      const warnings = week.filter((r) => r.status === 'sent' && r.kind === 'timing').length
       lines.push(
         quietText(getQuietHours()),
         list.length ? `Calendars: ${list.join(', ')}.` : 'No calendar is reachable right now.',
-        `Last 7 days: ${sent} ${sent === 1 ? 'briefing' : 'briefings'} sent, ${quiet} ${quiet === 1 ? 'meeting' : 'meetings'} with nothing worth a message${s.travel.on ? `, ${trips} travel ${trips === 1 ? 'message' : 'messages'}` : ''}.`
+        `Last 7 days: ${sent} ${sent === 1 ? 'briefing' : 'briefings'} sent, ${quiet} ${quiet === 1 ? 'meeting' : 'meetings'} with nothing worth a message${s.travel.on ? `, ${trips} travel ${trips === 1 ? 'message' : 'messages'}` : ''}${s.timing.on ? `, ${warnings} timing ${warnings === 1 ? 'warning' : 'warnings'}` : ''}.`
       )
       return lines.join('\n')
     }

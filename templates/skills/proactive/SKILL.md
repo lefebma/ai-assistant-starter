@@ -1,4 +1,4 @@
-## Meeting Briefings and Travel Messages
+## Meeting Briefings, Travel Messages and Timing Warnings
 
 Before a meeting with other people, the assistant can check recent mail with
 the attendees and send the owner a short heads-up: which threads to read
@@ -12,7 +12,13 @@ the previous meeting when the owner comes straight from one in person, else
 at the starting address they set. Without a maps source the message gives
 the place only and says travel time is not available.
 
-Both are off until the owner turns them on, and they are set here, in
+Timing warnings point out what in the calendar will bite: meetings that
+overlap, back-to-back meetings in different places with less time between
+them than the trip takes, and meetings that moved or changed place since the
+last message about them. Each is reported once, again if it changes, and
+once more when it is about to start.
+
+All three are off until the owner turns them on, and they are set here, in
 conversation.
 
 Every command is one line:
@@ -33,6 +39,9 @@ for them.
 | "brief me an hour before" | `lead 60` |
 | "tell me when to leave for meetings", "turn on travel messages" | `on travel` |
 | "stop the travel messages" | `off travel` |
+| "warn me about calendar clashes", "tell me when meetings overlap" | `on timing` |
+| "stop the timing warnings" | `off timing` |
+| "check the next two days for clashes" | `ahead 48` (hours, 1 to 72) |
 | "give me 20 minutes before I have to leave" | `buffer 20` |
 | "I take transit", "I walk to meetings", "I drive" | `mode transit` (or `walk`, `drive`) |
 | "I start from home, 12 Elm St, Toronto", "my office is at ..." | `from 12 Elm St, Toronto` |
@@ -54,6 +63,6 @@ The same settings are in the web app, under Settings, Proactive messages.
 - The starting address is personal. It stays on this assistant and is only
   sent to the maps source to work out a travel time. Never repeat it to
   anyone but the owner.
-- Briefings and travel messages are read-only. Never reply to, send, accept, decline or change
-  anything because of one. If the owner asks to act on a briefing, do it as a
+- Briefings, travel messages and timing warnings are read-only. Never reply
+  to, send, accept, decline, move or change anything because of one. If the owner asks to act on a briefing, do it as a
   normal request, with the usual approval for anything that sends.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.61.0 - 2026-10-31
+
+- **New: timing warnings for your calendar.** Your assistant looks at the next 24 hours and tells you about meetings that overlap, back-to-back meetings in different places without enough time to get from one to the other, and meetings that moved or changed place since it last messaged you about them. Each warning names the two meetings in a line or two, and everything found at once comes in one message. Turn it on by saying "warn me about calendar clashes", or in the web app under Settings, Proactive messages. Say "check the next two days for clashes" to look further ahead (up to 72 hours).
+- **Told once, reminded once.** A problem is reported once. It is reported again if it changes, and once more about two hours before it starts if you heard about it earlier than that. Meetings marked free never count as a clash.
+- **Travel times when you have them.** With travel times set up, a back-to-back is checked against the real trip, looked up once per pair of meetings. Without them, only two different street addresses with no gap at all are flagged.
+- It only points things out. It never moves, declines or messages anyone, and it follows your quiet hours.
+
 ## 1.60.0 - 2026-10-31
 
 - **New: a provider-managed AI connection can run on an open model.** Until now a managed box always ran on Claude. Your provider can now supply an open model from a US host (for example DeepSeek through Together) in its place, with the same single bill and no AI account for you. Your messages go to that host instead of Anthropic.
