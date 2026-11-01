@@ -374,6 +374,13 @@ describe('api', () => {
     expect(r.box.ends).toEqual([{ id: 'sess_1', opts: { keepalive: true } }])
   })
 
+  it('sends the chosen voice with the offer (card #257)', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ sessionId: 's', sdp: 'a' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await api.startVoiceCall('c1', 'v=0', 'willow')
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toEqual({ sdp: 'v=0', voice: 'willow' })
+  })
+
   it('starts with the offer and ends with wait or keepalive, as JSON', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ sessionId: 's', sdp: 'a' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)

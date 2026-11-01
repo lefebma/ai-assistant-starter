@@ -483,6 +483,8 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .call-bar.connecting .call-dot { background: var(--ink-faint); }
 .call-state { font-weight: 600; min-width: 0; }
 .call-clock { font-variant-numeric: tabular-nums; margin-right: auto; }
+.call-voice { font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); text-transform: capitalize; }
+.call-voice option { text-transform: capitalize; }
 .call-bar .small-btn { background: var(--surface); }
 #call-mute[aria-pressed="true"] { border-color: var(--warn); color: var(--warn); }
 /* What is being said, while the call is on. Replaced by the stored messages when it ends. */

@@ -184,6 +184,28 @@ describe('voice chat capability flag', () => {
   })
 })
 
+describe('voice dropdown (card #257)', () => {
+  it('/api/web/me lists LIVE_VOICES and a default that is one of them', async () => {
+    const { LIVE_VOICES } = await import('../src/voice-live.js')
+    const m = await me()
+    expect(m.voices).toEqual([...LIVE_VOICES])
+    expect(LIVE_VOICES as readonly string[]).toContain(m.defaultVoice)
+  })
+
+  it('passes a listed voice through and refuses an unlisted one', async () => {
+    const c = conv.createConversation('4242', '')
+    const bad = await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer', voice: 'nope' })
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ error: 'invalid_voice' })
+    expect(live.started).toHaveLength(0)
+    const num = await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer', voice: 7 })
+    expect(num.status).toBe(400)
+    const ok = await post(`/api/web/conversations/${c.id}/voice`, { sdp: 'v=0 offer', voice: 'willow' })
+    expect(ok.status).toBe(201)
+    expect(live.started[0]!.voice).toBe('willow')
+  })
+})
+
 describe('POST /api/web/conversations/:id/voice', () => {
   it('refuses a caller with no session', async () => {
     const c = conv.createConversation('4242', '')

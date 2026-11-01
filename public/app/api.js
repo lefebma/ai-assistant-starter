@@ -87,8 +87,8 @@ export async function transcribe(blob) {
  * Start a voice call in a conversation (card #248): the browser's WebRTC
  * offer goes to the box, which creates the session. Resolves to { sessionId, sdp }.
  */
-export async function startVoiceCall(conversationId, sdp) {
-  return post('/api/web/conversations/' + encodeURIComponent(conversationId) + '/voice', { sdp })
+export async function startVoiceCall(conversationId, sdp, voice) {
+  return post('/api/web/conversations/' + encodeURIComponent(conversationId) + '/voice', voice ? { sdp, voice } : { sdp })
 }
 
 /**

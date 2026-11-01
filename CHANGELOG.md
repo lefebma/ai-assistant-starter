@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.63.0 - 2026-11-01
+
+- **New: pick your assistant's voice during a web app voice call.** The red call bar now has a voice list next to the clock. Choose a voice before you start, or change it mid-call: the call reconnects in the new voice a moment later, and what was said so far stays in the chat. Your pick is remembered for the next call, and it is the same choice as on the voice page.
+
 ## 1.62.1 - 2026-10-31
 
 - **New: run your assistant on an open model hosted in the US.** `docs/PROVIDERS.md` now shows how to point your assistant at DeepSeek V4.1 Flash on Together, a US host, with five settings and no server of your own. In our tests it passed every standard check and every everyday job we gave it, at about Claude's speed. Your prompts go to Together instead of Anthropic or OpenAI, and the guide says so plainly.
