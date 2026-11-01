@@ -29,6 +29,8 @@ export interface DecisionRow {
   sentAt: number | null
   chatId: string | null
   chatMessageId: string | null
+  /** What the message was about, for a reply or a follow-up button (card #263). JSON, '' for none. */
+  context: string
 }
 
 export function initProactiveTables(db: Database.Database): void {
@@ -75,6 +77,9 @@ export function initProactiveTables(db: Database.Database): void {
       count INTEGER NOT NULL DEFAULT 0
     );
   `)
+  const cols = db.prepare('PRAGMA table_info(proactive_decisions)').all() as { name: string }[]
+  if (!cols.some((c) => c.name === 'context')) db.exec("ALTER TABLE proactive_decisions ADD COLUMN context TEXT NOT NULL DEFAULT ''")
+  db.exec('CREATE INDEX IF NOT EXISTS idx_proactive_decisions_chat ON proactive_decisions(chat_id, chat_message_id)')
 }
 
 interface RawRow {
@@ -92,6 +97,7 @@ interface RawRow {
   sent_at: number | null
   chat_id: string | null
   chat_message_id: string | null
+  context: string | null
 }
 
 function toRow(r: RawRow): DecisionRow {
@@ -110,6 +116,7 @@ function toRow(r: RawRow): DecisionRow {
     sentAt: r.sent_at,
     chatId: r.chat_id,
     chatMessageId: r.chat_message_id,
+    context: r.context ?? '',
   }
 }
 
@@ -133,14 +140,15 @@ export function recordDecision(row: {
   reason: string
   text: string
   createdAt: number
+  context?: string
 }): number | null {
   const res = getDb()
     .prepare(
       `INSERT OR IGNORE INTO proactive_decisions
-        (event_key, series_key, kind, title, start_ms, status, reason, text, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (event_key, series_key, kind, title, start_ms, status, reason, text, created_at, context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(row.eventKey, row.seriesKey, row.kind, row.title, row.startMs, row.status, row.reason, row.text, row.createdAt)
+    .run(row.eventKey, row.seriesKey, row.kind, row.title, row.startMs, row.status, row.reason, row.text, row.createdAt, row.context ?? '')
   return res.changes > 0 ? Number(res.lastInsertRowid) : null
 }
 
@@ -185,6 +193,27 @@ export function expirePending(cutoffMs: number): number {
   return getDb()
     .prepare(`UPDATE proactive_decisions SET status = 'failed' WHERE status = 'pending' AND start_ms <= ?`)
     .run(cutoffMs).changes
+}
+
+/** The decisions a chat message carried: one for a briefing or travel message, one per problem for timing warnings. */
+export function decisionsForChatMessage(chatId: string, chatMessageId: string): DecisionRow[] {
+  const rows = getDb()
+    .prepare(`SELECT * FROM proactive_decisions WHERE chat_id = ? AND chat_message_id = ? AND status = 'sent' ORDER BY id`)
+    .all(chatId, chatMessageId) as RawRow[]
+  return rows.map(toRow)
+}
+
+export function getDecisionById(id: number): DecisionRow | null {
+  const r = getDb().prepare('SELECT * FROM proactive_decisions WHERE id = ?').get(id) as RawRow | undefined
+  return r ? toRow(r) : null
+}
+
+/** Messages the chat accepted, newest first. */
+export function recentSent(limit: number): DecisionRow[] {
+  const rows = getDb()
+    .prepare(`SELECT * FROM proactive_decisions WHERE status = 'sent' ORDER BY sent_at DESC, id DESC LIMIT ?`)
+    .all(limit) as RawRow[]
+  return rows.map(toRow)
 }
 
 export function recentDecisions(limit: number): DecisionRow[] {

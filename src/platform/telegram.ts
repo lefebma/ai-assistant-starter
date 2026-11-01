@@ -14,6 +14,7 @@ import type { ReplyContext } from '../prompt-safety.js'
 /** Minimal shape of the Telegram fields we read for reply / quote / forward context. */
 export type TelegramReplySource = {
   reply_to_message?: {
+    message_id?: number
     from?: { id?: number; first_name?: string }
     text?: string
     caption?: string
@@ -40,7 +41,8 @@ export function telegramReplyContext(message: TelegramReplySource, botId?: numbe
   if (text) {
     const from = message.reply_to_message?.from
     const fromSelf = botId != null && from?.id === botId
-    ctx.replyTo = { text, fromSelf, ...(fromSelf ? {} : { fromName: from?.first_name }) }
+    const id = message.reply_to_message?.message_id
+    ctx.replyTo = { text, fromSelf, ...(fromSelf ? {} : { fromName: from?.first_name }), ...(id != null ? { messageId: String(id) } : {}) }
   }
 
   const origin = message.forward_origin
@@ -154,6 +156,7 @@ export class TelegramAdapter implements PlatformAdapter {
           text: '',
           type: 'voice',
           filePath: localPath,
+          replyContext: telegramReplyContext(ctx.message, ctx.me.id),
           updateId: ctx.update.update_id,
         })
       } catch (err) {

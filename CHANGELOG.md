@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.62.0 - 2026-10-31
+
+- **New: reply to a briefing to act on it.** Reply to a meeting briefing, a travel message or a timing warning and your assistant knows which meeting and which email threads it was about. Ask it to open a thread, sum one up, sum up everything for the meeting, or draft an answer, without saying again which meeting you mean. Voice replies work too.
+- **Two buttons on every briefing.** "Summarise threads" gives you a few lines on each thread the briefing named. "Draft reply" writes an answer to the thread you owe a reply on, and asks which one when it cannot tell. Tap them as often as you like.
+- **Nothing goes out without your Send.** A draft is shown in full with Send, Edit and Discard, and is sent only after you tap Send.
+- **In the web app chat too.** Ask about "the briefing for my 2 pm" and your assistant looks up the messages it sent you and picks up from there.
+
 ## 1.61.0 - 2026-10-31
 
 - **New: timing warnings for your calendar.** Your assistant looks at the next 24 hours and tells you about meetings that overlap, back-to-back meetings in different places without enough time to get from one to the other, and meetings that moved or changed place since it last messaged you about them. Each warning names the two meetings in a line or two, and everything found at once comes in one message. Turn it on by saying "warn me about calendar clashes", or in the web app under Settings, Proactive messages. Say "check the next two days for clashes" to look further ahead (up to 72 hours).

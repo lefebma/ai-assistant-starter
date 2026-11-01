@@ -30,7 +30,7 @@ import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js
 import { mintWebLink, revokeAllWebSessions, webAppUrl } from './web/sessions.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
 import { buildPhotoMessage, buildDocumentMessage, buildVideoMessage, buildAttachmentMessage, UPLOADS_DIR } from './media.js'
-import { applyReplyContext } from './prompt-safety.js'
+import { applyReplyContext, type ReplyContext } from './prompt-safety.js'
 import { extractFileMarkers } from './outbound-files.js'
 import { deliverFiles, sendTextWithFiles } from './outbound-delivery.js'
 import { mintShortcutToken, revokeShortcutToken, shortcutTokenInfo } from './shortcut-tokens.js'
@@ -58,6 +58,7 @@ import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
 import { PROJECT_ROOT, installTimezone } from './env.js'
 import { handleAlertClick } from './email-alerts/buttons.js'
+import { clickFollowUp, replyFollowUp } from './proactive/followup.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { NO_RESTART_MESSAGE, noteWelcomeTurn, shouldWelcome, takeRestartAfterReply, welcomeNudge } from './onboarding/welcome.js'
 import { loadSetupAnswers } from './setup/saved.js'
@@ -1966,6 +1967,18 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
 
 // --- Bot creation ---
 
+/**
+ * Reply, quote and forward context for the turn, and, when the owner answers
+ * one of the assistant's proactive messages, what that message was about
+ * (card #263).
+ */
+function withReplyContext(chatId: string, ctx: ReplyContext | undefined, text: string): string {
+  const base = applyReplyContext(ctx, text)
+  const id = ctx?.replyTo?.fromSelf ? ctx.replyTo.messageId : undefined
+  const followUp = id ? replyFollowUp(chatId, id, installTimezone()) : null
+  return followUp ? `${followUp}\n\n${base}` : base
+}
+
 export interface BotCore {
   registerCommands(): Promise<void>
 }
@@ -2010,6 +2023,15 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           tz: installTimezone(),
         }))
       ) {
+        return
+      }
+      // A briefing's follow-up buttons (card #263) are reusable too: each tap
+      // is a turn about that briefing, and nothing it drafts goes out without
+      // the draft's own Send. The tap is not saved to memory: its prompt is
+      // the briefing's mail details, not the owner's words.
+      const followUp = msg.messageId ? clickFollowUp(chatId, msg.messageId, label, installTimezone()) : null
+      if (followUp) {
+        await handleMessage(adapter, chatId, followUp, false, { skipMemory: true })
         return
       }
       // Claim the card's one allowed click BEFORE doing anything with it.
@@ -2062,7 +2084,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
           await adapter.sendMessage(chatId, 'Could not transcribe audio.')
           return
         }
-        await handleMessage(adapter, chatId, `[Voice message transcription]: ${transcript}`, true)
+        await handleMessage(adapter, chatId, withReplyContext(chatId, msg.replyContext, `[Voice message transcription]: ${transcript}`), true)
       } catch (err) {
         logger.error({ err }, 'Voice transcription failed')
         await adapter.sendMessage(chatId, 'Failed to transcribe voice message.')
@@ -2072,25 +2094,25 @@ export function createBot(adapter: PlatformAdapter): BotCore {
 
     if (type === 'photo' && msg.filePath) {
       const message = buildPhotoMessage(msg.filePath, msg.caption)
-      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
+      await handleMessage(adapter, chatId, withReplyContext(chatId, msg.replyContext, message))
       return
     }
 
     if (type === 'document' && msg.filePath) {
       const message = buildDocumentMessage(msg.filePath, msg.fileName ?? 'document', msg.caption)
-      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
+      await handleMessage(adapter, chatId, withReplyContext(chatId, msg.replyContext, message))
       return
     }
 
     if (type === 'video' && msg.filePath) {
       const message = buildVideoMessage(msg.filePath, msg.caption)
-      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
+      await handleMessage(adapter, chatId, withReplyContext(chatId, msg.replyContext, message))
       return
     }
 
     if ((type === 'audio' || type === 'animation' || type === 'sticker' || type === 'video_note') && msg.filePath) {
       const message = buildAttachmentMessage(type, msg.filePath, msg.caption, msg.fileName)
-      await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, message))
+      await handleMessage(adapter, chatId, withReplyContext(chatId, msg.replyContext, message))
       return
     }
 
@@ -2099,7 +2121,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
 
     // Regular text message -> agent. Reply / quote / forward context rides
     // along as clearly-bounded untrusted text.
-    await handleMessage(adapter, chatId, applyReplyContext(msg.replyContext, text))
+    await handleMessage(adapter, chatId, withReplyContext(chatId, msg.replyContext, text))
   })
 
   return {

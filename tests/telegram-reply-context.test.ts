@@ -23,6 +23,11 @@ describe('telegramReplyContext', () => {
       .toEqual({ replyTo: { text: 'earlier', fromSelf: true } })
   })
 
+  it('carries the replied message id, so a reply to a proactive message can find it', () => {
+    expect(telegramReplyContext({ reply_to_message: { message_id: 314, from: { id: BOT }, text: 'Before Southtel cutover' } }, BOT))
+      .toEqual({ replyTo: { text: 'Before Southtel cutover', fromSelf: true, messageId: '314' } })
+  })
+
   it('carries the sender first name for a reply to a person', () => {
     expect(telegramReplyContext({ reply_to_message: { from: { id: 7, first_name: 'Marc' }, text: 'orig' } }, BOT))
       .toEqual({ replyTo: { text: 'orig', fromSelf: false, fromName: 'Marc' } })

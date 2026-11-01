@@ -4,7 +4,8 @@
  * Settings change through applyChange (settings.ts), the same path the web
  * app's settings use.
  */
-import { recentDecisions, type DecisionRow } from './store.js'
+import { decisionsForChatMessage, getDecisionById, recentDecisions, recentSent, type DecisionRow } from './store.js'
+import { aboutText } from './followup.js'
 import {
   KINDS,
   LIMITS,
@@ -30,7 +31,7 @@ export interface ControlDeps {
 const DEFAULT_LOG = 10
 const MAX_LOG = 30
 
-const HELP = `Commands: on [kind], off [kind], status, log [count], lead <minutes, ${LIMITS.leadMinutes.min} to ${LIMITS.leadMinutes.max}>, buffer <minutes, ${LIMITS.bufferMinutes.min} to ${LIMITS.bufferMinutes.max}>, mode drive|transit|walk, from <starting address>, from off, ahead <hours, ${LIMITS.aheadHours.min} to ${LIMITS.aheadHours.max}>, quiet <start> <end>, quiet off. Kinds: ${KINDS.filter((k) => k.available)
+const HELP = `Commands: on [kind], off [kind], status, log [count], lead <minutes, ${LIMITS.leadMinutes.min} to ${LIMITS.leadMinutes.max}>, buffer <minutes, ${LIMITS.bufferMinutes.min} to ${LIMITS.bufferMinutes.max}>, mode drive|transit|walk, from <starting address>, from off, ahead <hours, ${LIMITS.aheadHours.min} to ${LIMITS.aheadHours.max}>, quiet <start> <end>, quiet off, sent [count], about <message number>. Kinds: ${KINDS.filter((k) => k.available)
   .map((k) => k.id)
   .join(', ')}.`
 
@@ -56,8 +57,12 @@ function stamp(ms: number, tz: string): string {
   }).format(new Date(ms))
 }
 
+function kindLabel(r: DecisionRow): string {
+  return r.kind === 'travel' ? 'travel message' : r.kind === 'timing' ? 'timing warning' : 'briefing'
+}
+
 function logLine(r: DecisionRow, tz: string): string {
-  const name = r.kind === 'travel' ? 'travel message' : r.kind === 'timing' ? 'timing warning' : 'briefing'
+  const name = kindLabel(r)
   const what =
     r.status === 'sent'
       ? `${name} sent${r.reason ? ` (${r.reason})` : ''}`
@@ -67,6 +72,19 @@ function logLine(r: DecisionRow, tz: string): string {
           ? `${name} waiting to send`
           : `${name} could not be sent`
   return `${stamp(r.startMs, tz)}  ${r.title}: ${what}`
+}
+
+/** One line per message the chat accepted; a timing message's problems share one line. */
+function sentLines(rows: DecisionRow[], tz: string): string[] {
+  const out: string[] = []
+  const done = new Set<string>()
+  for (const r of rows) {
+    const msg = r.chatId && r.chatMessageId ? `${r.chatId}:${r.chatMessageId}` : `#${r.id}`
+    if (done.has(msg)) continue
+    done.add(msg)
+    out.push(`${r.id}  ${stamp(r.sentAt ?? r.createdAt, tz)}  ${kindLabel(r)}: ${r.title}`)
+  }
+  return out
 }
 
 async function accounts(deps: ControlDeps): Promise<string[]> {
@@ -131,6 +149,21 @@ export async function runControl(argv: string[], deps: ControlDeps): Promise<str
       const rows = recentDecisions(count)
       if (rows.length === 0) return 'Nothing decided yet.'
       return rows.map((r) => logLine(r, deps.tz)).join('\n')
+    }
+    case 'sent': {
+      const n = arg ? Number(arg) : DEFAULT_LOG
+      const count = Number.isInteger(n) && n > 0 ? Math.min(n, MAX_LOG) : DEFAULT_LOG
+      const lines = sentLines(recentSent(count * 4), deps.tz).slice(0, count)
+      return lines.length ? lines.join('\n') : 'No proactive message sent yet.'
+    }
+    case 'about': {
+      if (!arg) return 'Give the message number, from sent.'
+      const id = Number(arg.replace(/^#/, ''))
+      const row = Number.isInteger(id) && id > 0 ? getDecisionById(id) : null
+      if (!row || row.status !== 'sent') return `No sent proactive message numbered ${arg}. Run sent to list them.`
+      // A timing message carries every problem decided with it.
+      const rows = row.chatId && row.chatMessageId ? decisionsForChatMessage(row.chatId, row.chatMessageId) : [row]
+      return aboutText(rows.length ? rows : [row], deps.tz)
     }
     case 'status': {
       const kinds = KINDS.filter((k) => k.available)

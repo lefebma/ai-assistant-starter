@@ -327,8 +327,13 @@ async function main(): Promise<void> {
             bump: () => bumpCallCount(localDay(new Date(), emailAlertsTz)),
             cap: DAILY_DECISION_CAP,
           }),
-        send: async (text) => {
-          const messageId = await adapter.sendMessage(PRIMARY_CHAT_ID, text)
+        // A briefing carries follow-up buttons (card #263); see proactive/followup.ts.
+        send: async (text, buttons) => {
+          const messageId = await adapter.sendMessage(
+            PRIMARY_CHAT_ID,
+            text,
+            buttons && adapter.supportsButtons ? { buttons } : undefined
+          )
           return { chatId: PRIMARY_CHAT_ID, messageId }
         },
         now: () => new Date(),

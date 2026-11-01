@@ -318,7 +318,9 @@ export class SlackAdapter implements PlatformAdapter {
       const text: string = parent?.text ?? ''
       if (!text) return undefined
       const fromSelf = Boolean(parent.bot_id) || (this.botUserId != null && parent.user === this.botUserId)
-      return { replyTo: { text, fromSelf, ...(fromSelf ? {} : { fromName: parent.user ? `<@${parent.user}>` : undefined }) } }
+      return {
+        replyTo: { text, fromSelf, messageId: threadTs, ...(fromSelf ? {} : { fromName: parent.user ? `<@${parent.user}>` : undefined }) },
+      }
     } catch (err) {
       logger.debug({ err }, 'Could not fetch Slack thread parent for reply context')
       return undefined
