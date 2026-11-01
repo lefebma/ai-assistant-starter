@@ -28,6 +28,9 @@
  * Every problem found in a pass goes in one message. A tight back-to-back
  * costs one route lookup per pair of meetings, cached like a trip.
  *
+ * Each message keeps what it was about (followup.ts, card #263), so a reply
+ * to it or a tap on a briefing's buttons knows the meeting and threads.
+ *
  * Read-only: nothing here replies, sends mail, accepts, declines or edits.
  * The only thing that leaves is the message, to the owner's own chat, and
  * the place and starting point sent to the maps source for a travel time.
@@ -40,6 +43,7 @@ import { upcomingEvents, type CalendarSource, type UpcomingEvent } from './calen
 import type { RelatedThread } from './threads.js'
 import type { DecideOutcome } from './decide.js'
 import { formatBriefing, MAX_SHOWN, type FormatMode } from './format.js'
+import { briefingContext, buttonsFor, meetingsContext } from './followup.js'
 import { anyOn, getQuietHours, getSettings, quietUntil, type ProactiveSettings } from './settings.js'
 import { createMapsClient, type MapsClient } from '../maps/client.js'
 import {
@@ -108,7 +112,7 @@ export interface TickDeps {
   calendars: () => Promise<CalendarSource[]>
   threads: (event: UpcomingEvent, ownAddress: string, nowMs: number) => Promise<RelatedThread[]>
   decide: (event: UpcomingEvent, threads: RelatedThread[]) => Promise<DecideOutcome>
-  send: (text: string) => Promise<{ chatId: string; messageId: string } | null>
+  send: (text: string, buttons?: string[]) => Promise<{ chatId: string; messageId: string } | null>
   now: () => Date
   tz: string
   format?: FormatMode
@@ -139,7 +143,7 @@ export function briefingDue(e: UpcomingEvent, nowMs: number, leadMinutes: number
 async function sendRow(deps: TickDeps, row: DecisionRow, nowMs: number): Promise<boolean> {
   let res: { chatId: string; messageId: string } | null = null
   try {
-    res = await deps.send(row.text)
+    res = await deps.send(row.text, buttonsFor(row))
   } catch {
     res = null
   }
@@ -271,7 +275,8 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
       continue
     }
     const text = formatBriefing(event, d, deps.tz, deps.format)
-    const id = recordDecision({ ...base, status: 'pending', reason: d.reason, text })
+    const context = briefingContext(event, d)
+    const id = recordDecision({ ...base, status: 'pending', reason: d.reason, text, context })
     if (id === null) continue // another tick decided it first
     recordSeen(eventId(event), id, event.startMs, event.location)
     const shownIds = [...d.picks.slice(0, MAX_SHOWN).map((p) => p.thread), ...d.owed.map((o) => o.thread)].flatMap(
@@ -287,6 +292,7 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
       sentAt: null,
       chatId: null,
       chatMessageId: null,
+      context,
     }
     if (await sendRow(deps, row, nowMs)) {
       markCovered(event.seriesKey, shownIds, nowMs)
@@ -376,10 +382,11 @@ async function travelPass(
       format: deps.format,
     })
     const reason = trip.ok ? `About ${trip.minutes} min of travel.` : trip.why
-    const id = recordDecision({ ...base, status: 'pending', reason, text })
+    const context = meetingsContext([event])
+    const id = recordDecision({ ...base, status: 'pending', reason, text, context })
     if (id === null) continue
     recordSeen(eventId(event), id, event.startMs, event.location)
-    const row: DecisionRow = { ...base, id, status: 'pending', reason, text, attempts: 0, sentAt: null, chatId: null, chatMessageId: null }
+    const row: DecisionRow = { ...base, id, status: 'pending', reason, text, attempts: 0, sentAt: null, chatId: null, chatMessageId: null, context }
     if (await sendRow(deps, row, nowMs)) out.sent++
     else out.failures++
   }
@@ -445,10 +452,11 @@ async function timingPass(
       if (quietEnd >= f.bitesMs - MIN_BEFORE_MS && recordDecision({ ...base, status: 'quiet', reason: QUIET_HOURS, text: '' })) out.quiet++
       continue
     }
-    const id = recordDecision({ ...base, status: 'pending', reason: item.reason, text: item.text })
+    const context = meetingsContext(f.events)
+    const id = recordDecision({ ...base, status: 'pending', reason: item.reason, text: item.text, context })
     if (id === null) continue
     for (const e of f.events) recordSeen(eventId(e), id, e.startMs, e.location)
-    rows.push({ ...base, id, status: 'pending', reason: item.reason, text: item.text, attempts: 0, sentAt: null, chatId: null, chatMessageId: null })
+    rows.push({ ...base, id, status: 'pending', reason: item.reason, text: item.text, attempts: 0, sentAt: null, chatId: null, chatMessageId: null, context })
   }
   if (rows.length > 0) {
     if (await sendTiming(deps, rows, maps.attribution, nowMs)) out.sent++

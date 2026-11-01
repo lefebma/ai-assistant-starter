@@ -26,7 +26,7 @@ export interface RelatedThread {
   /** Newest message from someone other than the owner. */
   lastInbound: { from: string; at: number; excerpt: string } | null
   messages: number
-  /** Provider message ids in this thread, so a recurring meeting can skip what it already covered. */
+  /** Provider message ids in this thread, newest first, so a recurring meeting can skip what it already covered and a follow-up can open the latest. */
   messageIds: string[]
   link: string
 }
@@ -110,7 +110,7 @@ export function groupGmail(rows: GogMessage[], account: string, sinceMs: number)
         ? { from: (inbound.m.from ?? '').trim(), at: inbound.at, excerpt: excerpt(inbound.m.body ?? '') }
         : null,
       messages: msgs.length,
-      messageIds: msgs.map((m) => m.id!),
+      messageIds: timed.map((t) => t.m.id!),
       link: `https://mail.google.com/mail/u/${encodeURIComponent(account)}/#all/${threadId}`,
     })
   }

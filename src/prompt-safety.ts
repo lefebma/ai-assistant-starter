@@ -30,6 +30,8 @@ export type ReplyContext = {
     fromSelf: boolean
     /** Display name of the original sender, when known and not the assistant. */
     fromName?: string
+    /** The platform's id for the original message, when known: how a reply to a proactive message finds what it was about. */
+    messageId?: string
   }
   /** Display name of the origin when the message was forwarded from elsewhere. */
   forwardedFrom?: string
