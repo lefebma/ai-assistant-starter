@@ -26,6 +26,7 @@ and scheduled tasks carry over.
 | Google | `google` | `GOOGLE_API_KEY` | `gemini-2.5-pro` |
 | Azure OpenAI | `azure` | `AZURE_API_KEY` | your *deployment name* |
 | Self-hosted / compatible | `openai` + `AI_BASE_URL` | `OPENAI_API_KEY` (any value some servers ignore) | whatever your server hosts |
+| Open model on Together (US) | `openai` + `AI_BASE_URL` | `OPENAI_API_KEY` (your Together key) | `deepseek-ai/DeepSeek-V4.1-Flash-1017` |
 
 Keys are read from the encrypted vault first, then `.env` (see
 [docs/VAULT.md](VAULT.md)). They are never logged.
@@ -78,6 +79,39 @@ capability floor: the model must support tool/function calling and a 32k+
 context window. Small local models run, but see certification below for what
 "works" actually means.
 
+## Open model through a US host
+
+For businesses that want an open model instead of Claude, OpenAI or Google, without
+running a GPU server. [Together](https://www.together.ai) hosts open models in the
+US and speaks the same API as OpenAI, so the assistant points at it with the
+self-hosted settings:
+
+```
+AGENT_RUNTIME=ai-sdk
+AI_PROVIDER=openai
+AI_BASE_URL=https://api.together.xyz/v1
+AI_MODEL=deepseek-ai/DeepSeek-V4.1-Flash-1017
+OPENAI_API_KEY=...          # your Together key; better, /secret set OPENAI_API_KEY
+```
+
+In our tests in October 2026, DeepSeek V4.1 Flash passed every task in the full
+certification set and every one of the assistant's everyday jobs (inbox
+briefings, project notes, expense matching, quiet heartbeats), at about Claude's
+speed. The full certification set passed again with exactly the settings
+above, straight to Together. Together charged $0.30 per million input tokens
+and $1.20 per million output tokens at the time.
+
+**Where your prompts go.** To Together, a US company, and nowhere else. That is
+a different company from Anthropic or OpenAI, not a private setup: if no prompt
+may leave hardware you control, use the next section instead. Read Together's
+own terms on how it keeps and uses data before you switch.
+
+**Voice features.** Voice notes, dictation, spoken replies and voice calls use
+OpenAI and read `OPENAI_API_KEY`. With your Together key in that slot they turn
+on, then send that key to OpenAI, which refuses it. Leave them unused on this
+setup, or ask your provider about the managed open-model option, which keeps
+the host key under its own name.
+
 ## Running an open model on your own GPU
 
 For businesses that want no prompt to leave hardware they control. The assistant
@@ -96,7 +130,10 @@ work before switching over for good.
 
 All three are tagged for tool calling on Ollama. Newer Qwen generations
 (`qwen3.5`, `qwen3.6`, `qwen3.8`) are on Ollama too; treat any of them as a new
-model and certify it before relying on it. Memory figures are for 4-bit
+model and certify it before relying on it. Larger open models do better on the
+assistant's long jobs (DeepSeek V4.1 Flash passed everything in our tests, see
+the section above), but it needs about 300 GB of GPU memory, four 80 GB cards,
+which puts it out of reach for most businesses. Memory figures are for 4-bit
 versions with room for a 32k context. A card with less memory still loads the
 model but spills into system memory and slows to a crawl.
 
@@ -109,7 +146,7 @@ provider's own page before you budget; GPU prices moved several times this year.
 |---|---|---|
 | 20 GB card (RTX 4000 SFF Ada), dedicated | Hetzner GEX44, Germany/Finland only | €184-234 a month plus setup |
 | 96 GB card (RTX PRO 6000), dedicated | Hetzner GEX131, Germany/Finland only | €889-1,199 a month plus setup |
-| 48 GB card (L40S), by the hour | RunPod, Lambda and others, US regions | $0.86-0.99 an hour (about $630-720 a month left on) |
+| 48 GB card (L40S), by the hour | RunPod, Lambda and others, US regions | $0.86-1.09 an hour (about $630-800 a month left on); RunPod's Secure Cloud charged $1.09 on Oct 29 |
 | 80 GB card (H100), by the hour | RunPod, Lambda and others, US regions | $2-4 an hour per card |
 
 Hourly servers bill while they are switched on, so an always-on assistant pays
@@ -137,7 +174,8 @@ and `AI_MODEL_STRONG` if you set them, for example a smaller and a larger Qwen.
 
 ### What you give up
 
-From our own tests of Qwen models running the assistant's real tasks:
+From our own tests of Qwen models running the assistant's real tasks. (A large
+hosted open model such as DeepSeek V4.1 Flash, above, did not show these gaps.)
 
 - **Slower.** Two to six times slower than Claude on multi-step work, more on a
   smaller card.

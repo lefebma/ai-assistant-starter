@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.62.1 - 2026-10-31
+
+- **New: run your assistant on an open model hosted in the US.** `docs/PROVIDERS.md` now shows how to point your assistant at DeepSeek V4.1 Flash on Together, a US host, with five settings and no server of your own. In our tests it passed every standard check and every everyday job we gave it, at about Claude's speed. Your prompts go to Together instead of Anthropic or OpenAI, and the guide says so plainly.
+- **Updated: GPU prices.** The L40S hourly price in the self-hosting guide now matches what we were charged in October.
+
 ## 1.62.0 - 2026-10-31
 
 - **New: reply to a briefing to act on it.** Reply to a meeting briefing, a travel message or a timing warning and your assistant knows which meeting and which email threads it was about. Ask it to open a thread, sum one up, sum up everything for the meeting, or draft an answer, without saying again which meeting you mean. Voice replies work too.
