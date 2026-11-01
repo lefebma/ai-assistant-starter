@@ -1262,7 +1262,9 @@ $('mic').addEventListener('click', () => {
 // box adds what was said to this chat. Typing and the queue keep working
 // during a call; dictation is off (the call has the microphone).
 
-const vc = { block: '', call: null, convId: '', startedAt: 0, timer: 0, live: null, lines: null, cur: null, leftover: null, leftoverConv: '' }
+const vc = { block: '', call: null, convId: '', startedAt: 0, timer: 0, live: null, lines: null, cur: null, leftover: null, leftoverConv: '', voice: '', restart: false }
+// Same key as the voice page (voice-live.html), so a pick on either carries over.
+const VOICE_KEY = 'havn_live_voice'
 
 function setupVoiceCall() {
   // The box says whether it can (an OpenAI key, not a managed-AI box). If it
@@ -1270,7 +1272,21 @@ function setupVoiceCall() {
   // and says why when it is tapped.
   show($('call'), Boolean(state.me && state.me.voiceChat))
   vc.block = voiceCallSupport(window)
+  fillVoices()
   paintCall()
+}
+
+/** The voice dropdown in the call bar (card #257): the box's list, last pick remembered. */
+function fillVoices() {
+  const sel = $('call-voice')
+  const voices = (state.me && state.me.voices) || []
+  const def = (state.me && state.me.defaultVoice) || voices[0] || ''
+  let saved = ''
+  try { saved = localStorage.getItem(VOICE_KEY) || '' } catch {}
+  vc.voice = voices.includes(saved) ? saved : def
+  sel.replaceChildren(...voices.map((v) => h('option', { value: v, text: v })))
+  sel.value = vc.voice
+  sel.hidden = voices.length === 0
 }
 
 function paintCall() {
@@ -1292,6 +1308,7 @@ function paintCall() {
     phase === 'connecting' ? 'Connecting...' : phase === 'ending' ? 'Ending the call...' : vc.call && vc.call.pending > 0 ? 'Voice chat · working on it' : 'Voice chat'
   $('call-clock').textContent = on ? formatElapsed(Date.now() - vc.startedAt) : ''
   $('call-mute').disabled = !on
+  $('call-voice').disabled = phase === 'ending'
   $('call-end').disabled = phase === 'ending'
   const muted = Boolean(vc.call && vc.call.muted)
   $('call-mute').setAttribute('aria-pressed', String(muted))
@@ -1339,7 +1356,7 @@ async function startCall() {
       RTCPeerConnection: window.RTCPeerConnection,
       MediaStream: window.MediaStream,
       audio: $('call-audio'),
-      startSession: (sdp) => api.startVoiceCall(convId, sdp),
+      startSession: (sdp) => api.startVoiceCall(convId, sdp, vc.voice),
       endSession: (id, opts) => api.endVoiceCall(id, opts),
       callStatus: (id) => api.voiceCallStatus(id),
     },
@@ -1369,6 +1386,7 @@ async function startCall() {
     if (vc.call !== call) return
     clearCall()
     if (!(err && err.stopped)) note($('composer-note'), callProblem(err))
+    else if (vc.restart) restartCall()
     return
   }
   paintCall()
@@ -1397,6 +1415,14 @@ function callEnded(call, convId, why, result) {
     vc.live = null
   }
   clearCall()
+  if (vc.restart) {
+    // A voice change mid-call: the old call is over, start one in the new voice.
+    if (!waiting) {
+      reloadIf(convId)
+      refreshConversations()
+    }
+    return restartCall()
+  }
   if (why === 'lost') note($('composer-note'), filed ? 'The call dropped. What was said is in the chat.' : 'The call dropped. What was said will show here once your assistant is reachable again.')
   else if (why === 'closed') note($('composer-note'), 'The call ended.')
   if (waiting) return
@@ -1419,6 +1445,12 @@ function callCaughtUp(convId, result) {
   refreshConversations()
 }
 
+function restartCall() {
+  vc.restart = false
+  note($('composer-note'), '')
+  startCall()
+}
+
 /** End pressed, or the page moved to another chat. */
 function endCall() {
   const call = vc.call
@@ -1430,6 +1462,7 @@ function endCall() {
 /** The page is closing: tell the box, without waiting for an answer. */
 function leaveCall() {
   const call = vc.call
+  vc.restart = false
   if (!call) return
   call.leave()
   clearCall()
@@ -1440,6 +1473,16 @@ $('call').addEventListener('click', () => {
   else startCall()
 })
 $('call-end').addEventListener('click', endCall)
+$('call-voice').addEventListener('change', () => {
+  vc.voice = $('call-voice').value
+  try { localStorage.setItem(VOICE_KEY, vc.voice) } catch {}
+  // A live call keeps its voice for good, so a change reconnects: hang up and call again.
+  if (vc.call && (vc.call.phase === 'live' || vc.call.phase === 'connecting')) {
+    vc.restart = true
+    note($('composer-note'), 'Switching voice. The call reconnects in a moment.')
+    endCall()
+  }
+})
 $('call-mute').addEventListener('click', () => {
   if (!vc.call) return
   vc.call.mute(!vc.call.muted)

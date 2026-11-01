@@ -112,6 +112,11 @@ the web app's sign-in is enough.
 - **While a call is on** a red bar above the message box shows a running
   clock, Mute and End call. The waveform turns red too; tapping it again also
   ends the call. What you both say shows in the chat as you go.
+- **Choosing the voice.** The bar has a voice list. Pick one before you
+  start or during the call; changing it mid-call hangs up and reconnects in
+  the new voice a moment later, and what was said so far stays in the chat.
+  The last pick is remembered on that browser, and it is the same choice as
+  on the voice page. Until you pick, the box's `LIVE_VOICE` is used.
 - **What the call sends to OpenAI.** Your voice goes to OpenAI, which runs
   the call. So that the assistant can follow on from what you were typing,
   starting a call also sends the chat's 12 latest messages (yours and the

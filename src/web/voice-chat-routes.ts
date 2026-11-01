@@ -8,7 +8,7 @@ import { registerWebRoutes, type WebContext } from './http.js'
 import { sendJson, sendError, readJsonCapped, BodyError } from './respond.js'
 import { getConversation } from './conversations.js'
 import { startWebCall, endWebCall, webCallStatus, VoiceChatError } from './voice-chat.js'
-import { LiveSessionError } from '../voice-live.js'
+import { LiveSessionError, LIVE_VOICES } from '../voice-live.js'
 import { logger } from '../logger.js'
 
 /** An SDP offer is a few kilobytes. */
@@ -33,8 +33,15 @@ registerWebRoutes([
       if (!getConversation(ctx.chatId, id)) return sendError(ctx.res, 404, 'not_found')
       const b = await jsonBody(ctx, MAX_OFFER_BODY)
       if (typeof b.sdp !== 'string' || !b.sdp.trim()) return sendError(ctx.res, 400, 'sdp_required')
+      // Card #257: an optional voice from the call bar's dropdown. Anything
+      // that is not one of LIVE_VOICES is refused, not quietly swapped.
+      let voice: string | undefined
+      if (b.voice !== undefined && b.voice !== null && b.voice !== '') {
+        if (typeof b.voice !== 'string' || !(LIVE_VOICES as readonly string[]).includes(b.voice)) return sendError(ctx.res, 400, 'invalid_voice')
+        voice = b.voice
+      }
       try {
-        const r = await startWebCall({ chatId: ctx.chatId, conversationId: id, sdp: b.sdp, voice: typeof b.voice === 'string' ? b.voice : undefined })
+        const r = await startWebCall({ chatId: ctx.chatId, conversationId: id, sdp: b.sdp, voice })
         sendJson(ctx.res, 201, r)
       } catch (err) {
         if (err instanceof VoiceChatError || err instanceof LiveSessionError) return sendError(ctx.res, err.status, err.code)
