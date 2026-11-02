@@ -20,12 +20,22 @@ class_name = "RelayStore"
 tag = "v1"
 new_sqlite_classes = ["RelayStore"]
 
-# Per client address and route: 30 requests a minute. A person signing in
-# needs three; a box renewing Gmail needs one an hour.
+# Sign-in routes, per client address and route: 30 requests a minute. A person
+# signing in needs four.
 [[ratelimits]]
 name = "RATE_LIMITER"
 namespace_id = "2061"
 
   [ratelimits.simple]
   limit = 30
+  period = 60
+
+# Box routes (/refresh, /revoke), per address: each box renews about once an
+# hour, and boxes behind one address (a shared host, an office) share this.
+[[ratelimits]]
+name = "BOX_RATE_LIMITER"
+namespace_id = "2062"
+
+  [ratelimits.simple]
+  limit = 600
   period = 60

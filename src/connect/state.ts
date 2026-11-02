@@ -15,6 +15,8 @@ export interface StatePayload {
   box: string
   provider: string
   nonce: string
+  /** SHA-256 of the browser cookie set when the sign-in was confirmed; the callback must carry it. */
+  bind?: string
 }
 
 export type VerifyResult =
@@ -43,7 +45,7 @@ function mac(secret: string, body: string): Buffer {
 
 export function signState(secret: string, p: StatePayload, now: number = Date.now()): string {
   if (secret.length < MIN_SECRET_LEN) throw new Error('relay signing secret must be at least 32 characters')
-  const body = Buffer.from(JSON.stringify({ box: p.box, provider: p.provider, nonce: p.nonce, exp: now + STATE_TTL_MS })).toString('base64url')
+  const body = Buffer.from(JSON.stringify({ box: p.box, provider: p.provider, nonce: p.nonce, ...(p.bind ? { bind: p.bind } : {}), exp: now + STATE_TTL_MS })).toString('base64url')
   return `${body}.${mac(secret, body).toString('base64url')}`
 }
 
@@ -65,5 +67,5 @@ export async function verifyState(secret: string, state: string, used: UsedStore
   }
   if (now > p.exp) return { ok: false, reason: 'expired' }
   if (!(await used.markUsed(`${p.box}:${p.nonce}`, p.exp, now))) return { ok: false, reason: 'replayed' }
-  return { ok: true, payload: { box: p.box, provider: p.provider, nonce: p.nonce, exp: p.exp } }
+  return { ok: true, payload: { box: p.box, provider: p.provider, nonce: p.nonce, ...(typeof p.bind === 'string' ? { bind: p.bind } : {}), exp: p.exp } }
 }

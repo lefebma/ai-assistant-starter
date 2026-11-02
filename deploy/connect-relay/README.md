@@ -3,8 +3,9 @@
 `/connect gmail` and `/connect outlook` send the owner to
 `https://connect.gethavn.ai/start`. That page names the assistant the sign-in
 is for (the label you give the box when you register it) and warns not to go
-on with a link someone else sent; only its button continues, so a forwarded
-link cannot skip it. The relay then sends them on to Google or Microsoft, takes the result at `/callback`, and posts the tokens to that box
+on with a link someone else sent. Its button sets a ten-minute cookie in that
+browser, and the sign-in only completes in a browser carrying it, so a provider
+link minted by a script and sent to someone else fails at the end. The relay then sends them on to Google or Microsoft, takes the result at `/callback`, and posts the tokens to that box
 over https, signed with the box's own hand-off key. Code: `src/connect/`
 (shared with the box), `deploy/connect-relay/worker.ts` (the Worker).
 
@@ -49,11 +50,20 @@ npx wrangler@4 secret put GOOGLE_CLIENT_SECRET   # paste from the Web client
 
 A provider whose settings are missing is simply not offered: its `/start`
 answers "not valid". Changing `SIGNING_SECRET` voids any link in flight, nothing
-else. Changing `SEALING_SECRET` disconnects every relay-connected Gmail account
-(each owner runs `/connect gmail` again), so only do it if it may have leaked.
+else. To change `SEALING_SECRET` (only if it may have leaked), put the current
+value in `SEALING_SECRET_OLD` first, then set the new one. Old tokens keep
+opening, and each box's token is resealed with the new secret at its next
+renewal (within the hour). After a day, delete `SEALING_SECRET_OLD`. Dropping
+the old secret without that step strands every relay-connected Gmail account:
+it can no longer be renewed or revoked through the relay, so each owner would
+have to remove Havn at https://myaccount.google.com/permissions and connect
+again.
 
-Every public route allows 30 requests a minute per client address and route
-(the `RATE_LIMITER` binding in `wrangler.toml`).
+Sign-in routes allow 30 requests a minute per client address and route
+(`RATE_LIMITER`); `/refresh` and `/revoke` allow 600 (`BOX_RATE_LIMITER`), since
+many boxes can share one address. Cloudflare's limiter is per location and
+approximate, so it slows a flood rather than capping it; the used-state store
+also clears expired entries in bounded batches.
 
 ## Connect a box
 

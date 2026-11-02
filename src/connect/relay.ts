@@ -11,9 +11,11 @@
  *    Microsoft needs none: the Havn app is a public client and the code is
  *    bound to the sign-in by PKCE instead.
  *  - A sign-in link opens a page naming the assistant it connects to, and only
- *    a click on that page (a same-origin POST, from a page that cannot be
- *    framed) goes on to the provider. A link forwarded by someone else's box
- *    cannot skip the page, so the person signing in sees whose it is.
+ *    a click on that page goes on to the provider. The click sets a short-lived
+ *    cookie in that browser and the state carries its hash; /callback refuses
+ *    a state whose cookie is not in the browser that comes back. So a provider
+ *    link minted by someone else (a script can fake the click's headers) fails
+ *    in the victim's browser: whoever signs in must have seen the page.
  *  - Every sign-in uses PKCE (S256). The verifier is derived from the signing
  *    secret and the state's box and nonce, so the relay keeps nothing between
  *    /start and /callback and the verifier never travels in a URL.
@@ -80,8 +82,10 @@ export interface BoxRecord {
 export interface RelayOpts {
   publicUrl: string
   signingSecret: string
-  /** Seals refresh tokens to their box. Changing it disconnects every relay-renewed account. */
+  /** Seals refresh tokens to their box. */
   sealingSecret: string
+  /** Earlier sealing secrets, still accepted for opening (renewals reseal with the current one). */
+  oldSealingSecrets?: string[]
   boxes: { get(id: string): BoxRecord | undefined | Promise<BoxRecord | undefined> }
   providers: Record<string, RelayProvider>
   used: UsedStore
@@ -132,6 +136,15 @@ export async function seal(secret: string, box: string, provider: string, token:
   return SEAL_PREFIX + Buffer.concat([Buffer.from(iv), Buffer.from(ct)]).toString('base64url')
 }
 
+/** Opens with the current secret, then any older ones; `stale` says it needs resealing. */
+async function unsealAny(secrets: string[], box: string, provider: string, sealed: string): Promise<{ token: string; stale: boolean } | null> {
+  for (let i = 0; i < secrets.length; i++) {
+    const token = await unseal(secrets[i], box, provider, sealed)
+    if (token !== null) return { token, stale: i > 0 }
+  }
+  return null
+}
+
 /** The token, or null if it was not sealed by this relay for this box and provider. */
 export async function unseal(secret: string, box: string, provider: string, sealed: string): Promise<string | null> {
   if (!sealed.startsWith(SEAL_PREFIX)) return null
@@ -153,7 +166,7 @@ export async function unseal(secret: string, box: string, provider: string, seal
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
-function html(status: number, body: string, formAction = "'none'"): Response {
+function html(status: number, body: string, formAction = "'none'", referrer = 'no-referrer'): Response {
   return new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Havn</title>` +
       `<body style="font-family:sans-serif;padding:2rem;max-width:32rem;line-height:1.5">${body}`,
@@ -162,10 +175,15 @@ function html(status: number, body: string, formAction = "'none'"): Response {
       headers: {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
-        'referrer-policy': 'no-referrer',
+        // The confirmation page needs same-origin: under no-referrer a browser
+        // sends `Origin: null` on the form POST, and the click would be refused.
+        'referrer-policy': referrer,
         'x-frame-options': 'DENY',
         'x-content-type-options': 'nosniff',
-        // form-action covers the redirect after the POST too (Chrome enforces it there).
+        // form-action also governs every redirect after the POST in Chromium, and
+        // providers hop on (Microsoft to login.live.com or a company's own sign-in),
+        // so the confirmation page allows any https target. Nothing on it is
+        // user-controlled markup, so that loses nothing.
         'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action ${formAction}`,
       },
     },
@@ -173,6 +191,18 @@ function html(status: number, body: string, formAction = "'none'"): Response {
 }
 
 const page = (status: number, msg: string) => html(status, `<p>${esc(msg)}</p>`)
+
+const BIND_COOKIE = (provider: string) => `__Host-havn-connect-${provider}`
+
+function cookieValue(req: Request, name: string): string | null {
+  for (const part of (req.headers.get('cookie') ?? '').split(';')) {
+    const i = part.indexOf('=')
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim()
+  }
+  return null
+}
+
+const sha = (v: string) => createHash('sha256').update(v).digest('base64url')
 
 /** Reads a body up to `max` bytes, or null if it is longer (checked before and while reading). */
 export async function readCapped(req: Request, max = MAX_BODY): Promise<string | null> {
@@ -228,7 +258,8 @@ export function createRelay(opts: RelayOpts) {
         `If someone sent it to you, close this page. Continuing would give them your mail.</p>` +
         `<form method="post" action="/start">${hidden('provider', provider)}${hidden('box', box)}${hidden('nonce', nonce)}` +
         `<button type="submit" style="font-size:1rem;padding:.6rem 1.2rem">Continue to ${esc(ok.p.label)}</button></form>`,
-      `'self' ${ok.p.authOrigin}`,
+      "'self' https:",
+      'same-origin',
     )
   }
 
@@ -250,12 +281,22 @@ export function createRelay(opts: RelayOpts) {
     const nonce = f.get('nonce') ?? ''
     const ok = await checkStart(provider, box, nonce)
     if (!ok) return notValid()
-    const state = signState(opts.signingSecret, { box, provider, nonce }, now())
+    // Binds the sign-in to this browser. SameSite=Lax still rides the top-level
+    // navigation back from the provider.
+    const cookie = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
+    const state = signState(opts.signingSecret, { box, provider, nonce, bind: sha(cookie) }, now())
     const challenge = pkceChallenge(pkceVerifier(opts.signingSecret, box, nonce))
-    return new Response(null, { status: 303, headers: { location: ok.p.authUrl(state, redirectUri, challenge), 'cache-control': 'no-store' } })
+    return new Response(null, {
+      status: 303,
+      headers: {
+        location: ok.p.authUrl(state, redirectUri, challenge),
+        'cache-control': 'no-store',
+        'set-cookie': `${BIND_COOKIE(provider)}=${cookie}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`,
+      },
+    })
   }
 
-  async function callback(url: URL): Promise<Response> {
+  async function callback(req: Request, url: URL): Promise<Response> {
     const state = url.searchParams.get('state') ?? ''
     // Verify (and consume) first, so even a denial or a replay spends the state.
     const v = await verifyState(opts.signingSecret, state, opts.used, now())
@@ -267,6 +308,13 @@ export function createRelay(opts: RelayOpts) {
     if (url.searchParams.get('error') || !url.searchParams.get('code')) {
       log({ event: 'denied', box, provider })
       return page(400, 'Sign-in was not completed. Nothing was connected.')
+    }
+    const cookie = cookieValue(req, BIND_COOKIE(provider))
+    const want = v.payload.bind ? Buffer.from(v.payload.bind) : Buffer.alloc(0)
+    const got = cookie ? Buffer.from(sha(cookie)) : Buffer.alloc(0)
+    if (!want.length || got.length !== want.length || !timingSafeEqual(got, want)) {
+      log({ event: 'refused', box, provider, reason: 'other_browser' })
+      return page(400, 'This sign-in has to finish in the browser where you pressed Continue. Ask your assistant for a new link and open it on this device.')
     }
     const rec = await opts.boxes.get(box)
     const p = providerOf(provider)
@@ -287,7 +335,9 @@ export function createRelay(opts: RelayOpts) {
       })
       if (!res.ok) throw new Error(`box answered ${res.status}`)
       log({ event: 'handoff', box, provider, ok: true })
-      return page(200, `Connected to ${rec.label || box}. You can close this tab and go back to your chat.`)
+      const done = page(200, `Connected to ${rec.label || box}. You can close this tab and go back to your chat.`)
+      done.headers.append('set-cookie', `${BIND_COOKIE(provider)}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`)
+      return done
     } catch (err) {
       // Message only: never the error object, which could echo a request body.
       log({ event: 'handoff_failed', box, provider, reason: err instanceof Error ? err.message.slice(0, 80) : 'error' })
@@ -303,7 +353,7 @@ export function createRelay(opts: RelayOpts) {
    * signed with that box's hand-off key, recent, for a provider the relay
    * renews, carrying a token sealed to that same box.
    */
-  async function boxRequest(req: Request, event: string): Promise<{ box: string; provider: string; p: RelayProvider; token: string } | Response> {
+  async function boxRequest(req: Request, event: string): Promise<{ box: string; provider: string; p: RelayProvider; token: string; stale: boolean } | Response> {
     const raw = await readCapped(req)
     if (raw === null) return answer(413, { error: 'too_large' })
     let b: Record<string, unknown>
@@ -330,12 +380,12 @@ export function createRelay(opts: RelayOpts) {
     }
     const p = providerOf(provider)
     if (!p?.refresh) return answer(400, { error: 'no_refresh_for_provider' })
-    const token = await unseal(opts.sealingSecret, box, provider, refreshToken)
-    if (token === null) {
+    const opened = await unsealAny([opts.sealingSecret, ...(opts.oldSealingSecrets ?? [])], box, provider, refreshToken)
+    if (opened === null) {
       log({ event: `${event}_refused`, box, provider, reason: 'not_sealed_for_box' })
       return answer(401, { error: 'not_yours' })
     }
-    return { box, provider, p, token }
+    return { box, provider, p, token: opened.token, stale: opened.stale }
   }
 
   async function refresh(req: Request): Promise<Response> {
@@ -344,7 +394,9 @@ export function createRelay(opts: RelayOpts) {
     try {
       const t = await r.p.refresh!(r.token)
       const out: RenewedTokens = { accessToken: t.accessToken, expiresAt: t.expiresAt }
-      if (t.refreshToken) out.refreshToken = await seal(opts.sealingSecret, r.box, r.provider, t.refreshToken)
+      // Reseal a rotated token, and one still sealed with a retired secret.
+      const keep = t.refreshToken ?? (r.stale ? r.token : undefined)
+      if (keep) out.refreshToken = await seal(opts.sealingSecret, r.box, r.provider, keep)
       log({ event: 'refresh', box: r.box, provider: r.provider, ok: true })
       return answer(200, out)
     } catch (err) {
@@ -382,7 +434,7 @@ export function createRelay(opts: RelayOpts) {
       }
       if (req.method !== 'GET') return new Response('method not allowed', { status: 405 })
       if (url.pathname === '/start') return confirm(url)
-      if (url.pathname === '/callback') return callback(url)
+      if (url.pathname === '/callback') return callback(req, url)
       return new Response('not found', { status: 404 })
     },
   }

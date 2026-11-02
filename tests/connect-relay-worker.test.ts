@@ -100,7 +100,7 @@ describe('relay through the Worker', () => {
     const html = await page.text()
     expect(html).toContain('Sam&#39;s assistant')
     expect(html).toContain('Continue to Microsoft')
-    expect(page.headers.get('content-security-policy')).toContain('form-action \'self\' https://login.microsoftonline.com')
+    expect(page.headers.get('content-security-policy')).toContain("form-action 'self' https:")
     const res = await click(env, q)
     expect(res.status).toBe(303)
     const loc = new URL(res.headers.get('location')!)
@@ -157,6 +157,20 @@ describe('durable used store', () => {
   })
 })
 
+describe('expiry index', () => {
+  it('does not let an old index entry delete a key marked again later', async () => {
+    const env = makeEnv()
+    const used = durableUsedStore(env)
+    await used.markUsed('k', 100, 0)
+    // Past its expiry, before any prune reached it, the same key is marked again.
+    env.data.set('used:k', 5_000)
+    env.data.set('exp:000000000005000:k', { key: 'used:k', exp: 5_000 })
+    await used.markUsed('other', 9_000, 200) // prunes the old index entry
+    expect(env.data.get('used:k')).toBe(5_000)
+    expect(await used.markUsed('k', 5_000, 300)).toBe(false)
+  })
+})
+
 describe('rate limit', () => {
   it('answers 429 once the limiter says no, keyed by client address and route', async () => {
     const seen: string[] = []
@@ -168,6 +182,16 @@ describe('rate limit', () => {
     allow = false
     expect((await worker.fetch(req(), env)).status).toBe(429)
     expect(seen[0]).toBe('203.0.113.9:/start')
+  })
+  it('gives box routes their own, looser limiter', async () => {
+    const used: string[] = []
+    const env = makeEnv({
+      RATE_LIMITER: { limit: async () => { used.push('signin'); return { success: false } } },
+      BOX_RATE_LIMITER: { limit: async () => { used.push('box'); return { success: true } } },
+    })
+    const res = await worker.fetch(new Request('https://connect.gethavn.ai/refresh', { method: 'POST', body: '{}' }), env)
+    expect(res.status).toBe(400)
+    expect(used).toEqual(['box'])
   })
 })
 

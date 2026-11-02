@@ -13,8 +13,8 @@
  *
  * No token is ever stored here. Google's client secret and the sealing secret
  * are Worker secrets; Microsoft needs none (public client with PKCE). Every
- * public route is rate limited per client address when the RATE_LIMITER
- * binding exists.
+ * public route is rate limited per client address: sign-in routes by
+ * RATE_LIMITER, the box routes by the looser BOX_RATE_LIMITER.
  *
  * Public routes (from createRelay): GET /start (confirmation page), POST /start
  * (its button), GET /callback, and POST /refresh and /revoke (Gmail, signed
@@ -53,9 +53,13 @@ interface RateLimit { limit(opts: { key: string }): Promise<{ success: boolean }
 export interface Env {
   STORE: DurableObjectNamespace
   RATE_LIMITER?: RateLimit
+  /** Box routes (/refresh, /revoke): signed by the box, and many boxes can share one address. */
+  BOX_RATE_LIMITER?: RateLimit
   PUBLIC_URL: string
   SIGNING_SECRET: string
   SEALING_SECRET: string
+  /** A retired sealing secret, accepted while boxes' tokens are resealed on renewal. */
+  SEALING_SECRET_OLD?: string
   ADMIN_TOKEN_SHA256: string
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string
@@ -131,15 +135,16 @@ export class RelayStore {
       const id = String(body.key)
       const now = Number(body.now)
       const exp = Number(body.expiresAt)
-      for (const [k, usedKey] of await s.list<string>({ prefix: 'exp:', end: expKey(now, ''), limit: PRUNE_BATCH })) {
+      for (const [k, entry] of await s.list<{ key: string; exp: number }>({ prefix: 'exp:', end: expKey(now, ''), limit: PRUNE_BATCH })) {
         await s.delete(k)
-        await s.delete(usedKey)
+        // A key marked again later has a newer expiry and its own index entry: leave it.
+        if ((await s.get<number>(entry.key)) === entry.exp) await s.delete(entry.key)
       }
       const usedKey = `used:${id}`
       const seen = await s.get<number>(usedKey)
       if (seen !== undefined && seen >= now) return json({ fresh: false })
       await s.put(usedKey, exp)
-      await s.put(expKey(exp, id), usedKey)
+      await s.put(expKey(exp, id), { key: usedKey, exp })
       return json({ fresh: true })
     }
     if (path === '/box/get') return json((await s.get<StoredBox>(`box:${String(body.box)}`)) ?? null)
@@ -204,15 +209,17 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url)
     if (url.pathname.startsWith('/admin/')) return admin(req, env, url)
-    if (env.RATE_LIMITER) {
+    const limiter = url.pathname === '/refresh' || url.pathname === '/revoke' ? env.BOX_RATE_LIMITER : env.RATE_LIMITER
+    if (limiter) {
       const who = req.headers.get('cf-connecting-ip') ?? 'unknown'
-      const { success } = await env.RATE_LIMITER.limit({ key: `${who}:${url.pathname}` })
+      const { success } = await limiter.limit({ key: `${who}:${url.pathname}` })
       if (!success) return new Response('Too many requests. Wait a minute and try again.', { status: 429, headers: { 'retry-after': '60' } })
     }
     const relay = createRelay({
       publicUrl: env.PUBLIC_URL,
       signingSecret: env.SIGNING_SECRET,
       sealingSecret: env.SEALING_SECRET,
+      oldSealingSecrets: env.SEALING_SECRET_OLD ? [env.SEALING_SECRET_OLD] : [],
       boxes: {
         async get(id) {
           if (!BOX_ID.test(id)) return undefined

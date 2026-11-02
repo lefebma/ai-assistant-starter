@@ -53,12 +53,28 @@ function setup(opts: { now?: () => number; boxOrigin?: string; exchangeFails?: b
       return new Response('ok', { status: opts.handoffStatus ?? 200 })
     }) as unknown as typeof fetch,
   })
-  return { relay, logs, posts, exchanged, verifiers, revoked, advance: (ms: number) => (t += ms), clock: () => t }
+  // A one-browser cookie jar: what the click sets, the callback sends back.
+  const jar = new Map<string, string>()
+  return { relay, logs, posts, exchanged, verifiers, revoked, jar, advance: (ms: number) => (t += ms), clock: () => t }
 }
 
 /** The click on the confirmation page: a same-origin form POST. */
-const start = (r: ReturnType<typeof setup>, q = `provider=fake&box=box-1&nonce=${NONCE}`, headers: Record<string, string> = { origin: 'https://connect.gethavn.ai', 'sec-fetch-site': 'same-origin' }) =>
-  r.relay.handle(new Request('https://connect.gethavn.ai/start', { method: 'POST', body: q, headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers } }))
+async function start(r: ReturnType<typeof setup>, q = `provider=fake&box=box-1&nonce=${NONCE}`, headers: Record<string, string> = { origin: 'https://connect.gethavn.ai', 'sec-fetch-site': 'same-origin' }) {
+  const res = await r.relay.handle(new Request('https://connect.gethavn.ai/start', { method: 'POST', body: q, headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers } }))
+  const set = res.headers.get('set-cookie')
+  if (set) {
+    const [pair] = set.split(';')
+    const i = pair.indexOf('=')
+    r.jar.set(pair.slice(0, i), pair.slice(i + 1))
+  }
+  return res
+}
+
+/** The provider sending the browser back. `jar: false` is a different browser. */
+const cb = (r: ReturnType<typeof setup>, query: string, jar = true) =>
+  r.relay.handle(new Request(`https://connect.gethavn.ai/callback?${query}`, {
+    headers: jar ? { cookie: [...r.jar].map(([k, v]) => `${k}=${v}`).join('; ') } : {},
+  }))
 
 const confirmPage = (r: ReturnType<typeof setup>, q = `provider=fake&box=box-1&nonce=${NONCE}`) =>
   r.relay.handle(new Request(`https://connect.gethavn.ai/start?${q}`))
@@ -84,7 +100,10 @@ describe('relay confirmation page', () => {
     expect(res.headers.get('x-frame-options')).toBe('DENY')
     const csp = res.headers.get('content-security-policy')!
     expect(csp).toContain("frame-ancestors 'none'")
-    expect(csp).toContain("form-action 'self' https://fake-idp.test")
+    // Providers redirect on (login.live.com, company sign-in), and Chromium checks each hop.
+    expect(csp).toContain("form-action 'self' https:")
+    // Under no-referrer the browser would send Origin: null and the click would be refused.
+    expect(res.headers.get('referrer-policy')).toBe('same-origin')
     expect(csp).toContain("default-src 'none'")
   })
   it('escapes the label and the link fields', async () => {
@@ -102,6 +121,41 @@ describe('relay confirmation page', () => {
     expect((await start(r, undefined, { origin: 'https://evil.example' })).status).toBe(400)
     expect((await start(r, undefined, { origin: 'https://connect.gethavn.ai', 'sec-fetch-site': 'cross-site' })).status).toBe(400)
     expect(JSON.stringify(r.logs)).toContain('cross_site')
+  })
+})
+
+describe('browser binding', () => {
+  it('sets a host-only, secure, http-only cookie on the click', async () => {
+    const res = await start(setup())
+    const c = res.headers.get('set-cookie')!
+    expect(c).toMatch(/^__Host-havn-connect-fake=[A-Za-z0-9_-]{43}; /)
+    for (const attr of ['Path=/', 'Secure', 'HttpOnly', 'SameSite=Lax', 'Max-Age=600']) expect(c).toContain(attr)
+  })
+  it('refuses a provider link minted by a script and opened in someone else\'s browser', async () => {
+    const r = setup()
+    // The attacker's script fakes the click headers and keeps the cookie it is given.
+    const minted = await stateFrom(await start(r))
+    // The victim opens the provider link and is sent back without that cookie.
+    const res = await cb(r, `code=C&state=${encodeURIComponent(minted)}`, false)
+    expect(res.status).toBe(400)
+    expect(await res.text()).toContain('the browser where you pressed Continue')
+    expect(r.exchanged).toEqual([])
+    expect(r.posts).toEqual([])
+    expect(JSON.stringify(r.logs)).toContain('other_browser')
+  })
+  it('refuses a cookie from another sign-in', async () => {
+    const r = setup()
+    await start(r) // cookie for sign-in A
+    const other = setup()
+    const stateB = await stateFrom(await start(other))
+    expect((await cb(r, `code=C&state=${encodeURIComponent(stateB)}`)).status).toBe(400)
+  })
+  it('clears the cookie once connected', async () => {
+    const r = setup()
+    const state = await stateFrom(await start(r))
+    const res = await cb(r, `code=C&state=${encodeURIComponent(state)}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0')
   })
 })
 
@@ -133,7 +187,7 @@ describe('relay PKCE', () => {
     const challenge = loc.searchParams.get('code_challenge')!
     expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/)
     const state = encodeURIComponent(loc.searchParams.get('state')!)
-    await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${state}`))
+    await cb(r, `code=C&state=${state}`)
     expect(r.verifiers).toHaveLength(1)
     expect(r.verifiers[0]).toMatch(/^[A-Za-z0-9_-]{43}$/)
     expect(pkceChallenge(r.verifiers[0])).toBe(challenge)
@@ -151,7 +205,7 @@ describe('relay /callback', () => {
   it('hands the result to the registered box over TLS, signed, without storing or logging the token', async () => {
     const r = setup()
     const state = await stateFrom(await start(r))
-    const res = await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=CODE1&state=${encodeURIComponent(state)}`))
+    const res = await cb(r, `code=CODE1&state=${encodeURIComponent(state)}`)
     expect(res.status).toBe(200)
     expect(r.exchanged).toEqual(['CODE1'])
     expect(r.posts).toHaveLength(1)
@@ -169,8 +223,8 @@ describe('relay /callback', () => {
   it('refuses a replayed state without calling the provider again', async () => {
     const r = setup()
     const state = encodeURIComponent(await stateFrom(await start(r)))
-    await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${state}`))
-    const again = await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C2&state=${state}`))
+    await cb(r, `code=C&state=${state}`)
+    const again = await cb(r, `code=C2&state=${state}`)
     expect(again.status).toBe(400)
     expect(r.exchanged).toEqual(['C'])
     expect(r.posts).toHaveLength(1)
@@ -179,7 +233,7 @@ describe('relay /callback', () => {
     const r = setup()
     const state = encodeURIComponent(await stateFrom(await start(r)))
     r.advance(10 * 60_000 + 1)
-    const res = await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${state}`))
+    const res = await cb(r, `code=C&state=${state}`)
     expect(res.status).toBe(400)
     expect(r.exchanged).toHaveLength(0)
     expect(r.posts).toHaveLength(0)
@@ -187,21 +241,21 @@ describe('relay /callback', () => {
   it('refuses a forged state', async () => {
     const r = setup()
     const forged = signState('another-secret-another-secret-another-secret', { box: 'box-1', provider: 'fake', nonce: NONCE }, r.clock())
-    const res = await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${encodeURIComponent(forged)}`))
+    const res = await cb(r, `code=C&state=${encodeURIComponent(forged)}`)
     expect(res.status).toBe(400)
     expect(r.posts).toHaveLength(0)
   })
   it('never hands off to a non-https box origin', async () => {
     const r = setup({ boxOrigin: 'http://box1.example.com' })
     const state = encodeURIComponent(await stateFrom(await start(r)))
-    const res = await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${state}`))
+    const res = await cb(r, `code=C&state=${state}`)
     expect(res.status).toBe(502)
     expect(r.posts).toHaveLength(0)
   })
   it('treats a user denial as a refusal with no exchange or hand-off', async () => {
     const r = setup()
     const state = encodeURIComponent(await stateFrom(await start(r)))
-    const res = await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?error=access_denied&state=${state}`))
+    const res = await cb(r, `error=access_denied&state=${state}`)
     expect(res.status).toBe(400)
     expect(r.exchanged).toHaveLength(0)
     expect(r.posts).toHaveLength(0)
@@ -209,10 +263,10 @@ describe('relay /callback', () => {
   it('reports a failed exchange or box rejection without leaking detail', async () => {
     const a = setup({ exchangeFails: true })
     const sa = encodeURIComponent(await stateFrom(await start(a)))
-    expect((await a.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${sa}`))).status).toBe(502)
+    expect((await cb(a, `code=C&state=${sa}`)).status).toBe(502)
     const b = setup({ handoffStatus: 401 })
     const sb = encodeURIComponent(await stateFrom(await start(b)))
-    expect((await b.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${sb}`))).status).toBe(502)
+    expect((await cb(b, `code=C&state=${sb}`)).status).toBe(502)
     expect(JSON.stringify(b.logs)).not.toContain(TOKEN)
   })
 })
@@ -220,7 +274,7 @@ describe('relay /callback', () => {
 describe('sealed refresh tokens', () => {
   async function connectRenewed(r: ReturnType<typeof setup>, box = 'box-1') {
     const state = await stateFrom(await start(r, `provider=renewed&box=${box}&nonce=${NONCE}`))
-    await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${encodeURIComponent(state)}`))
+    await cb(r, `code=C&state=${encodeURIComponent(state)}`)
     return JSON.parse(r.posts.at(-1)!.init.body as string) as { refreshToken: string }
   }
   const boxPost = (r: ReturnType<typeof setup>, path: string, b: Record<string, unknown>, key = HKEY) => {
@@ -240,7 +294,7 @@ describe('sealed refresh tokens', () => {
   it('leaves tokens the box renews itself unsealed', async () => {
     const r = setup()
     const state = await stateFrom(await start(r))
-    await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${encodeURIComponent(state)}`))
+    await cb(r, `code=C&state=${encodeURIComponent(state)}`)
     expect(JSON.parse(r.posts[0].init.body as string).refreshToken).toBe(TOKEN)
   })
   it('renews only for the box the token was sealed to', async () => {
@@ -302,5 +356,21 @@ describe('readCapped', () => {
     expect(await readCapped(new Request('https://x', { method: 'POST', body: 'x'.repeat(11) }), 10)).toBeNull()
     const lying = new Request('https://x', { method: 'POST', body: 'x'.repeat(50), headers: { 'content-length': '5' } })
     expect(await readCapped(lying, 10)).toBeNull()
+  })
+})
+
+describe('retired sealing secret', () => {
+  it('still opens tokens sealed with it, and reseals them with the current one', async () => {
+    const OLD = 'old-sealing-secret-for-tests-0123456789ab'
+    const relay = createRelay({
+      publicUrl: 'https://connect.gethavn.ai', signingSecret: SECRET, sealingSecret: SEAL, oldSealingSecrets: [OLD],
+      boxes: { get: () => ({ origin: 'https://b', handoffKey: HKEY }) },
+      providers: { g: { label: 'G', authOrigin: 'https://g', authUrl: () => '', exchange: async () => { throw new Error() }, refresh: async () => ({ accessToken: 'a', expiresAt: 1 }) } },
+      used: new MemoryUsedStore(), now: () => 5,
+    })
+    const raw = JSON.stringify({ box: 'box-1', provider: 'g', refreshToken: await seal(OLD, 'box-1', 'g', 'RT'), ts: 5 })
+    const res = await relay.handle(new Request('https://x/refresh', { method: 'POST', body: raw, headers: { 'x-connect-signature': signHandoff(HKEY, raw) } }))
+    const out = (await res.json()) as { refreshToken: string }
+    expect(await unseal(SEAL, 'box-1', 'g', out.refreshToken)).toBe('RT')
   })
 })
