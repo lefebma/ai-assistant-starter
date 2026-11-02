@@ -89,6 +89,13 @@ never stays in chat history:
 
 and restart the service. `/connect` answers "not set up" until all three exist.
 
+A hosted box's Caddy must pass `POST /connect/handoff` to the app. Edge configs
+written from 1.64.1 on do; an older box needs its edge written again with the
+same flags it was enabled with, e.g.
+`sudo node dist/scripts/hosted/enable-teams.js <hostname> --voice --web`.
+Check from outside: `curl -X POST https://<hostname>/connect/handoff -d '{}'`
+answers 401 (the app refusing an unsigned call). A 404 means Caddy dropped it.
+
 List boxes (never shows keys): `GET /admin/boxes`. Remove one:
 `DELETE /admin/boxes/<box>`. Registering a box again replaces its key, so the
 box needs the new one.

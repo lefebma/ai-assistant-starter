@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.64.1 - 2026-11-01
+
+- Fix: on hosted assistants, `/connect gmail` and `/connect outlook` could never finish, because the assistant's web front door turned away the sign-in service's reply. It now lets that reply through. Hosted assistants that were set up before this version need their web front door set up again once (your Havn operator does this).
+
 ## 1.64.0 - 2026-11-01
 
 - **New: connect Gmail or Outlook with one link.** Send `/connect gmail` or `/connect outlook` and your assistant replies with a sign-in link. Open it on your phone, check the page names your assistant, press Continue, sign in and tap Allow. Your assistant confirms in the chat. No codes to copy, nothing that expires while you look for your password. It runs through Havn's sign-in service at connect.gethavn.ai, which passes the result straight to your assistant and keeps no copy. Your assistant needs to be set up with that service first, so on most assistants this command says it is not set up yet.

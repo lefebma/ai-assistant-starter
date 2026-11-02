@@ -3,6 +3,8 @@
  * and (optionally) the voice UI to the app, hostname checks around it.
  * scripts/hosted/enable-teams.ts does the apt/ufw/systemctl work.
  */
+import { HANDOFF_PATH } from '../connect/relay.js'
+
 export const TEAMS_WEBHOOK_PREFIX = '/api/teams/*'
 
 /**
@@ -73,6 +75,12 @@ export interface CaddyfileOptions {
    * cookie the app issues from a one-time link (src/web/sessions.ts).
    */
   web?: boolean
+  /**
+   * Pass the sign-in relay's hand-off to the app (default: true). The app
+   * refuses anything not signed with this box's hand-off key, and answers 404
+   * on a box without /connect configured (src/connect/wiring.ts).
+   */
+  connect?: boolean
 }
 
 /**
@@ -106,13 +114,14 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
   const shortcuts = options?.shortcuts !== false
   const setup = options?.setup === true
   const web = options?.web === true
+  const connect = options?.connect !== false
   const bufferStyle = bufferStyleFor(options?.caddyVersion)
 
   const lines: string[] = [
     `# Havn edge config. Written by scripts/hosted/enable-teams.ts or enable-setup.ts.`,
     // Global options must come first, and only exist here to let a retried
     // webhook be re-sent with its body (see BufferStyle).
-    ...((teams || shortcuts) && bufferStyle === 'global'
+    ...((teams || shortcuts || connect) && bufferStyle === 'global'
       ? ['{', '\tservers {', '\t\trequest_buffers 1MB', '\t}', '}', '']
       : []),
     `${hostname} {`,
@@ -216,6 +225,22 @@ export function buildCaddyfile(hostname: string, options?: CaddyfileOptions): st
       '',
       '\t# Apple Shortcuts (the app checks the per-chat key)',
       '\thandle /api/shortcut {',
+      `\t\treverse_proxy ${APP_UPSTREAM} {`,
+      ...(bufferStyle === 'directive' ? ['\t\t\tbuffer_requests'] : []),
+      '\t\t\tlb_try_duration 10s',
+      '\t\t\tlb_try_interval 500ms',
+      '\t\t}',
+      '\t}',
+    )
+  }
+
+  // Sign-in relay hand-off (/connect). Held across a restart for the same
+  // reason as Shortcuts: the relay posts once, and a 502 loses the sign-in.
+  if (connect) {
+    lines.push(
+      '',
+      '\t# Sign-in relay hand-off (the app checks the relay signature)',
+      `\thandle ${HANDOFF_PATH} {`,
       `\t\treverse_proxy ${APP_UPSTREAM} {`,
       ...(bufferStyle === 'directive' ? ['\t\t\tbuffer_requests'] : []),
       '\t\t\tlb_try_duration 10s',

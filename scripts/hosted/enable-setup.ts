@@ -89,7 +89,7 @@ function main(): void {
   }
   writeFileSync(
     '/etc/caddy/Caddyfile',
-    buildCaddyfile(hostname, { teams: false, shortcuts: false, voice: false, setup: true, caddyVersion: caddyVersion() })
+    buildCaddyfile(hostname, { teams: false, shortcuts: false, voice: false, connect: false, setup: true, caddyVersion: caddyVersion() })
   )
   run('caddy', ['validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
   run('ufw', ['allow', '80/tcp'])
