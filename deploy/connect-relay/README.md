@@ -38,15 +38,14 @@ none, because the Havn app is a public client and every sign-in uses PKCE.
 ## Deploy (once, from your machine)
 
 ```bash
-cd deploy/connect-relay
-npx wrangler@4 deploy
-openssl rand -hex 32 | npx wrangler@4 secret put SIGNING_SECRET
-openssl rand -hex 32 | npx wrangler@4 secret put SEALING_SECRET
-ADMIN=$(openssl rand -hex 32)          # store this in your own secrets store
-printf %s "$ADMIN" | shasum -a 256 | cut -d' ' -f1 | npx wrangler@4 secret put ADMIN_TOKEN_SHA256
-npx wrangler@4 secret put GOOGLE_CLIENT_ID       # paste from the Web client
-npx wrangler@4 secret put GOOGLE_CLIENT_SECRET   # paste from the Web client
+deploy/connect-relay/setup.sh                                   # deploy + signing, sealing, admin secrets
+deploy/connect-relay/setup.sh <secrets>/havn-google-web-client.json   # again, once the Google Web client exists
 ```
+
+It prints no secret and is safe to re-run: it only generates what is missing.
+The admin token lands in `havn-connect-admin-token` in the operator secrets
+folder; the Worker keeps only its SHA-256. Google's values come from the Web
+client JSON you download at creation.
 
 A provider whose settings are missing is simply not offered: its `/start`
 answers "not valid". Changing `SIGNING_SECRET` voids any link in flight, nothing
@@ -72,6 +71,7 @@ Register it with a label the owner will recognise, since it is what the
 sign-in page shows. The answer carries the box's hand-off key, shown this once:
 
 ```bash
+ADMIN=$(cat "<secrets>/havn-connect-admin-token")
 curl -s -X POST https://connect.gethavn.ai/admin/boxes/havn-test \
   -H "authorization: Bearer $ADMIN" -H 'content-type: application/json' \
   -d '{"origin":"https://<box hostname>","label":"Havn assistant for Sam"}'
