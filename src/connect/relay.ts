@@ -331,7 +331,9 @@ export function createRelay(opts: RelayOpts) {
         method: 'POST',
         headers: { 'content-type': 'application/json', [SIGNATURE_HEADER]: signHandoff(rec.handoffKey, body) },
         body,
-        redirect: 'error',
+        // Workers support only 'follow' and 'manual' ('error' throws there).
+        // Manual: a redirect is not followed, and its 3xx fails the check below.
+        redirect: 'manual',
       })
       if (!res.ok) throw new Error(`box answered ${res.status}`)
       log({ event: 'handoff', box, provider, ok: true })

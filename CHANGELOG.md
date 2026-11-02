@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.64.2 - 2026-11-02
+
+- Fix: `/connect outlook` and `/connect gmail` stopped at "Could not finish connecting" after you signed in. The sign-in service now passes the result on to your assistant. Nothing changes on your assistant itself.
+
 ## 1.64.1 - 2026-11-01
 
 - Fix: on hosted assistants, `/connect gmail` and `/connect outlook` could never finish, because the assistant's web front door turned away the sign-in service's reply. It now lets that reply through. Hosted assistants that were set up before this version need their web front door set up again once (your Havn operator does this).
