@@ -16,6 +16,7 @@ import { isManagedAi } from '../ai-limit.js'
 import { readAiUsage } from '../ai-usage.js'
 import { spawnClaudeAsync } from '../infra/claude-auth.js'
 import { parseGmailAccounts } from '../email-alerts/sources.js'
+import { withRelayGmail } from '../connect/gmail-token.js'
 
 export interface Connection {
   id: string
@@ -123,7 +124,12 @@ export function resetConnectionCache(): void {
 export const defaultConnectionDeps: ConnectionDeps = {
   model: () => modelCheck.get(),
   telegramConfigured: () => TELEGRAM_BOT_TOKEN.trim() !== '',
-  gmailAccounts: () => gmailCheck.get(),
+  // A relay-connected Gmail account counts even where gog has no stored sign-in.
+  gmailAccounts: async () => {
+    const list = await gmailCheck.get()
+    const all = withRelayGmail(list ?? [])
+    return list === null && all.length === 0 ? null : all
+  },
   outlookAccounts: () => listAuthedAccounts(),
   imapAccounts: () => listImapAccounts().map((a) => a.address),
   voice: () => voiceCapabilities(),

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
+import { registerConnectRoute } from './connect/wiring.js'
 import { resolve } from 'node:path'
 import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, AUDIT_DIR, AUDIT_WITNESS_URL, AUDIT_WITNESS_TOKEN } from './config.js'
 import { getAuditTrail } from './assurance/audit-trail.js'
@@ -417,6 +418,7 @@ async function main(): Promise<void> {
   installEpipeGuard()
 
   // Start HTTP server (voice / custom-LLM endpoint)
+  registerConnectRoute()
   startHttpServer()
   try {
     pruneVoiceTranscripts()

@@ -23,6 +23,7 @@ import { GraphClient } from '../ms/graph.js'
 import { cleanBody, listInbox, readMail, type GraphLike } from '../ms/mail.js'
 import { resolveMsConfig } from '../ms/auth.js'
 import { listAuthedAccounts, loadTokens } from '../ms/store.js'
+import { withRelayGmail } from '../connect/gmail-token.js'
 import type { MailHeaders } from './rules.js'
 
 export interface NewMail {
@@ -358,7 +359,8 @@ export async function discoverMailboxes(
   // marks that side broken and leaves the other working.
   try {
     const auth = await exec(gogBin(), ['auth', 'list', '--plain'])
-    if (auth.ok) for (const a of parseGmailAccounts(auth.stdout)) candidates.push(gmailMailbox(a, exec))
+    // gog lists only its own stored sign-ins; a relay-connected account runs on GOG_ACCESS_TOKEN.
+    for (const a of withRelayGmail(auth.ok ? parseGmailAccounts(auth.stdout) : [])) candidates.push(gmailMailbox(a, exec))
   } catch {
     broken.push({ id: 'gmail', why: 'Gmail needs reconnecting.' })
   }

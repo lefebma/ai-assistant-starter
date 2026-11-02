@@ -1,0 +1,41 @@
+# Sign-in relay (card #206). Deploy: deploy/connect-relay/README.md.
+name = "havn-connect"
+main = "worker.ts"
+compatibility_date = "2026-09-01"
+# relay.ts and state.ts use node:crypto and Buffer.
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+routes = [{ pattern = "connect.gethavn.ai", custom_domain = true }]
+
+[vars]
+PUBLIC_URL = "https://connect.gethavn.ai"
+# The Havn Microsoft app (public client, no secret). Same id as DEFAULT_MS_CLIENT_ID in src/ms/auth.ts.
+MS_CLIENT_ID = "a67bec40-964d-4ea9-99bb-6a1301f217db"
+
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "RelayStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayStore"]
+
+# Sign-in routes, per client address and route: 30 requests a minute. A person
+# signing in needs four.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "2061"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+# Box routes (/refresh, /revoke), per address: each box renews about once an
+# hour, and boxes behind one address (a shared host, an office) share this.
+[[ratelimits]]
+name = "BOX_RATE_LIMITER"
+namespace_id = "2062"
+
+  [ratelimits.simple]
+  limit = 600
+  period = 60

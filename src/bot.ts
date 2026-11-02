@@ -56,6 +56,7 @@ import { canSelfRestart } from './service/supervisor.js'
 import { requestRestart, rememberRestartNotice } from './infra/restart.js'
 import { workingPhrase } from './working-indicator.js'
 import { SecretFlow } from './secrets/flow.js'
+import { getConnectFlow } from './connect/instance.js'
 import { PROJECT_ROOT, installTimezone } from './env.js'
 import { handleAlertClick } from './email-alerts/buttons.js'
 import { clickFollowUp, replyFollowUp } from './proactive/followup.js'
@@ -1878,6 +1879,17 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     })
     return true
   }
+  if (cmd === '/connect') {
+    // Handled in code, never by the model: the reply holds a sign-in link.
+    if (!isPrimaryChat(chatId)) {
+      await adapter.sendMessage(chatId, 'Only the primary chat can connect accounts.')
+      return true
+    }
+    const f = getConnectFlow()
+    const out = f ? await f.handleCommandAsync(chatId, trimmed) : { reply: 'Account sign-in is not set up on this box yet.' }
+    await adapter.sendMessage(chatId, out.reply)
+    return true
+  }
   if (cmd === '/authorize') {
     await handleAuthorizeCommand(adapter, chatId, trimmed)
     return true
@@ -1955,6 +1967,7 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'steer', description: 'Inject mid-run steering message' },
   { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
   { command: 'secret', description: 'Manage API keys in the encrypted vault' },
+  { command: 'connect', description: 'Connect Gmail or Outlook (sign-in link)' },
   { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
   { command: 'workspace', description: 'Shared workspaces (primary only)' },
   { command: 'audit', description: 'Review how you have been using the assistant' },
