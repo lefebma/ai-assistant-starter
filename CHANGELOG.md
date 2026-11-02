@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.65.0 - 2026-11-02
+
+- **New: connect more than one Gmail account.** Send `/connect gmail` again for each Google account. Each one you sign in with is added, and your assistant reads, sends and checks the calendar on whichever account you name. Gmail accounts connected the older way keep working beside them, so you can move them over one at a time.
+- `/connect list` shows every connected account, and marks one that needs a fresh sign-in. `/connect remove gmail <account>` disconnects just that one; if Google withdraws access to one account, the others keep working.
+
 ## 1.64.3 - 2026-11-02
 
 - Fix: on assistants you talk to in Teams, connecting Gmail or Outlook worked but your assistant never said so in the chat. It now confirms on whichever app you use, and the same goes for the notice when Google withdraws Gmail access.

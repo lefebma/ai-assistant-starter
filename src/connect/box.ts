@@ -14,10 +14,11 @@
  * entry per mailbox, the same place a device-code sign-in puts them. So the
  * Outlook tools, ms-auth status and the web Connections page all see the new
  * mailbox, and the box refreshes it with the public client id alone. Gmail
- * tokens go to CONNECT_GMAIL, which the relay renews and GmailTokenKeeper
- * (gmail-token.ts) hands to gog.
+ * tokens go to CONNECT_GMAIL, one entry per account (card #271), which the
+ * relay renews and GmailTokenKeeper (gmail-token.ts) hands to gog.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { dropGmailEntry, readGmailEntries, saveGmailEntry } from './gmail-token.js'
 
 export interface ConnectTokenVault {
   get(name: string): string | undefined
@@ -75,22 +76,14 @@ interface Pending {
 
 const PROVIDERS = ['gmail', 'outlook'] as const
 const APP_PASSWORD = ['yahoo', 'icloud']
-const vaultName = (p: string) => `CONNECT_${p.toUpperCase()}`
 
-function accountOf(raw: string): string | undefined {
-  try {
-    return (JSON.parse(raw) as { account?: string }).account
-  } catch {
-    return undefined
-  }
-}
 const USAGE = [
   'Connect your mail and calendar:',
-  '/connect gmail - sign in with Google',
+  '/connect gmail - sign in with Google (again for each Gmail account)',
   '/connect outlook - sign in with Microsoft',
   '/connect yahoo - uses an app password via /secret',
   '/connect list - what is connected',
-  '/connect remove gmail - revoke at the provider and delete here',
+  '/connect remove gmail <account> - revoke at the provider and delete here',
   '/connect remove outlook <account> - delete one Outlook mailbox here',
 ].join('\n')
 
@@ -111,8 +104,7 @@ export class ConnectFlow {
     if (sub === 'remove') return { reply: 'Use handleCommandAsync for remove.' }
     if (sub === 'list') {
       const on: string[] = []
-      const gmail = this.o.vault.get(vaultName('gmail'))
-      if (gmail) on.push(`gmail: ${accountOf(gmail) ?? 'connected'}`)
+      for (const e of readGmailEntries(this.o.vault).values()) on.push(`gmail: ${e.account}${e.revoked ? ' (needs /connect gmail again)' : ''}`)
       for (const a of this.o.msTokens.list()) on.push(`outlook: ${a}`)
       return { reply: on.length ? on.join('\n') : 'Nothing connected yet.' }
     }
@@ -139,16 +131,16 @@ export class ConnectFlow {
     const localOnly = parts.includes('--local-only')
     const rest = parts.slice(3).filter((x) => x !== '--local-only')
     if (provider === 'gmail') {
-      const raw = this.o.vault.get(vaultName('gmail'))
-      if (!raw) return { reply: 'Nothing connected for gmail.' }
-      let t: { refreshToken?: string; accessToken?: string } = {}
-      try {
-        t = JSON.parse(raw)
-      } catch {
-        /* corrupt entry: nothing to revoke, fall through to delete */
+      const entries = readGmailEntries(this.o.vault)
+      const accounts = [...entries.values()].map((e) => e.account)
+      const asked = rest[0]
+      const e = asked ? entries.get(asked.trim().toLowerCase()) : entries.size === 1 ? [...entries.values()][0] : undefined
+      if (!e) {
+        if (asked && accounts.length) return { reply: `Nothing connected for gmail ${asked}. Connected: ${accounts.join(', ')}` }
+        return { reply: accounts.length ? `Which account? /connect remove gmail <${accounts.join('|')}>` : 'Nothing connected for gmail.' }
       }
-      const out = await this.remove('gmail', 'gmail', t, localOnly, () => this.o.vault.delete(vaultName('gmail')))
-      if (!this.o.vault.get(vaultName('gmail'))) await this.o.onChange?.('gmail')
+      const out = await this.remove('gmail', `gmail ${e.account}`, e, localOnly, () => dropGmailEntry(this.o.vault, e.account))
+      if (!readGmailEntries(this.o.vault).has(e.account.toLowerCase())) await this.o.onChange?.('gmail')
       return out
     }
     if (provider === 'outlook') {
@@ -164,7 +156,7 @@ export class ConnectFlow {
       await this.o.onChange?.('outlook')
       return { reply: `Removed outlook ${account} from this box. ${OUTLOOK_WITHDRAW}` }
     }
-    return { reply: 'Usage: /connect remove gmail, or /connect remove outlook <account>' }
+    return { reply: 'Usage: /connect remove gmail <account>, or /connect remove outlook <account>' }
   }
 
   private async remove(
@@ -211,7 +203,7 @@ export class ConnectFlow {
       // The relay stamps milliseconds; the Microsoft store keeps seconds.
       this.o.msTokens.save(account, { accessToken, refreshToken, expiresAt: Math.floor(expiresAt / 1000) })
     } else {
-      this.o.vault.set(vaultName(provider), JSON.stringify({ account, accessToken, refreshToken, expiresAt }))
+      saveGmailEntry(this.o.vault, { account, accessToken, refreshToken, expiresAt })
     }
     await this.o.onChange?.(provider)
     return { status: 200, chatId: p.chatId, message: `Connected ${account}, mail and calendar working.` }

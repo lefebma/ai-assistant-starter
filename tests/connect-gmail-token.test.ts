@@ -4,7 +4,7 @@
  * signature, the skew check and the error codes are the production ones.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { GmailTokenKeeper, GMAIL_ENTRY, RENEW_BEFORE_MS, relayGmailAccount, resetRelayGmailForTests, setRelayGmailForTests, withRelayGmail } from '../src/connect/gmail-token.js'
+import { GmailTokenKeeper, GMAIL_ENTRY, RELAY_TOKENS_ENV, readGmailEntries, RENEW_BEFORE_MS, relayGmailAccounts, resetRelayGmailForTests, setRelayGmailForTests, withRelayGmail } from '../src/connect/gmail-token.js'
 import { createRelay, GrantRevokedError, seal, unseal, signHandoff, type RelayProvider } from '../src/connect/relay.js'
 import { MemoryUsedStore } from '../src/connect/state.js'
 import type { ConnectTokenVault } from '../src/connect/box.js'
@@ -22,7 +22,7 @@ function memVault(): ConnectTokenVault & { data: Map<string, string> } {
   return { data, get: (n) => data.get(n), set: (n, v) => void data.set(n, v), delete: (n) => data.delete(n) }
 }
 
-function setup(opts: { refresh?: RelayProvider['refresh']; relayDown?: boolean; handoffKey?: string } = {}) {
+function setup(opts: { refresh?: RelayProvider['refresh']; relayDown?: boolean; handoffKey?: string; shim?: boolean } = {}) {
   let t = 10 * HOUR
   const vault = memVault()
   const env: Record<string, string | undefined> = {}
@@ -56,14 +56,15 @@ function setup(opts: { refresh?: RelayProvider['refresh']; relayDown?: boolean; 
   }) as unknown as typeof fetch
   const keeper = new GmailTokenKeeper({
     relayUrl: 'https://connect.gethavn.ai', boxId: 'box-1', handoffKey: opts.handoffKey ?? HKEY,
-    vault, env, fetchImpl, now: () => t, onRevoked: (a) => void revoked.push(a),
+    vault, env, fetchImpl, now: () => t, shim: opts.shim, onRevoked: (a) => void revoked.push(a),
   })
   // What a hand-off leaves on the box: the refresh token sealed to box-1.
+  // The #206 single-account shape, which the keeper still reads.
   const connect = async (expiresIn: number, rt = 'RT-1') =>
     vault.set(GMAIL_ENTRY, JSON.stringify({ account: 'me@gmail.com', accessToken: 'AT-0', refreshToken: await seal(SEAL, 'box-1', 'gmail', rt), expiresAt: t + expiresIn }))
-  const entry = () => JSON.parse(vault.data.get(GMAIL_ENTRY)!) as Record<string, unknown>
+  const entry = (a = 'me@gmail.com') => readGmailEntries(vault).get(a) as unknown as Record<string, unknown>
   const heldToken = async () => unseal(SEAL, 'box-1', 'gmail', entry().refreshToken as string)
-  return { keeper, vault, env, refreshed, logs, revoked, connect, entry, heldToken, advance: (ms: number) => (t += ms) }
+  return { keeper, vault, env, refreshed, logs, revoked, connect, entry, heldToken, now: () => t, advance: (ms: number) => (t += ms) }
 }
 
 describe('GmailTokenKeeper', () => {
@@ -72,7 +73,7 @@ describe('GmailTokenKeeper', () => {
     s.env.GOG_ACCESS_TOKEN = 'left over'
     expect(await s.keeper.tick()).toBe('none')
     expect(s.env.GOG_ACCESS_TOKEN).toBeUndefined()
-    expect(relayGmailAccount()).toBeUndefined()
+    expect(relayGmailAccounts()).toEqual([])
   })
 
   it('puts a token with time left straight into the environment, without asking the relay', async () => {
@@ -80,7 +81,7 @@ describe('GmailTokenKeeper', () => {
     await s.connect(HOUR)
     expect(await s.keeper.tick()).toBe('fresh')
     expect(s.env.GOG_ACCESS_TOKEN).toBe('AT-0')
-    expect(relayGmailAccount()).toBe('me@gmail.com')
+    expect(relayGmailAccounts()).toEqual(['me@gmail.com'])
     expect(s.refreshed).toEqual([])
   })
 
@@ -120,7 +121,7 @@ describe('GmailTokenKeeper', () => {
     await s.connect(0)
     expect(await s.keeper.tick()).toBe('expired')
     expect(s.env.GOG_ACCESS_TOKEN).toBeUndefined()
-    expect(relayGmailAccount()).toBeUndefined()
+    expect(relayGmailAccounts()).toEqual([])
     expect(s.entry()).toMatchObject({ account: 'me@gmail.com', revoked: true })
     expect(s.revoked).toEqual(['me@gmail.com'])
     expect(await s.keeper.tick()).toBe('expired')
@@ -184,17 +185,68 @@ describe('relay /refresh', () => {
   })
 })
 
-describe('relay-connected account in discovery', () => {
-  it('is the only Google account while its token is live, since gog uses it for every call', () => {
-    expect(withRelayGmail(['a@x.com'])).toEqual(['a@x.com'])
-    setRelayGmailForTests('me@gmail.com')
-    expect(withRelayGmail(['a@x.com', 'b@x.com'])).toEqual(['me@gmail.com'])
+describe('several relay accounts (card #271)', () => {
+  async function two(s: ReturnType<typeof setup>, aIn: number, bIn: number) {
+    const e = async (account: string, rt: string, expiresIn: number) =>
+      ({ account, accessToken: `AT-${account[0]}`, refreshToken: await seal(SEAL, 'box-1', 'gmail', rt), expiresAt: s.now() + expiresIn })
+    s.vault.set(GMAIL_ENTRY, JSON.stringify({ accounts: { 'a@gmail.com': await e('a@gmail.com', 'RT-A', aIn), 'b@gmail.com': await e('b@gmail.com', 'RT-B', bIn) } }))
+  }
+
+  it('renews each account on its own schedule and hands gog every live token by account', async () => {
+    const s = setup({ shim: true })
+    await two(s, 0, HOUR)
+    expect(await s.keeper.tick()).toBe('renewed')
+    expect(s.refreshed).toEqual(['RT-A'])
+    expect(JSON.parse(s.env[RELAY_TOKENS_ENV]!)).toEqual({ 'a@gmail.com': 'AT-1', 'b@gmail.com': 'AT-b' })
+    expect(relayGmailAccounts()).toEqual(['a@gmail.com', 'b@gmail.com'])
   })
 
-  it('shows up as a Google calendar even though gog has no stored sign-in for it', async () => {
-    setRelayGmailForTests('me@gmail.com')
+  it('never sets the global token while the wrapper is in place, even for one account', async () => {
+    const s = setup({ shim: true })
+    s.env.GOG_ACCESS_TOKEN = 'left over'
+    await s.connect(HOUR)
+    await s.keeper.tick()
+    expect(s.env.GOG_ACCESS_TOKEN).toBeUndefined()
+    expect(JSON.parse(s.env[RELAY_TOKENS_ENV]!)).toEqual({ 'me@gmail.com': 'AT-0' })
+  })
+
+  it('without the wrapper, sets no global token once there are two accounts', async () => {
+    const s = setup()
+    await two(s, HOUR, HOUR)
+    await s.keeper.tick()
+    expect(s.env.GOG_ACCESS_TOKEN).toBeUndefined()
+    expect(Object.keys(JSON.parse(s.env[RELAY_TOKENS_ENV]!))).toEqual(['a@gmail.com', 'b@gmail.com'])
+  })
+
+  it('a withdrawn grant on one account leaves the other working', async () => {
+    const s = setup({ shim: true, refresh: async (rt) => { s.refreshed.push(rt); if (rt === 'RT-A') throw new GrantRevokedError(); return { accessToken: 'B2', expiresAt: s.now() + HOUR } } })
+    await two(s, 0, 0)
+    expect(await s.keeper.tick()).toBe('renewed')
+    expect(s.revoked).toEqual(['a@gmail.com'])
+    expect(s.entry('a@gmail.com')).toMatchObject({ revoked: true })
+    expect(JSON.parse(s.env[RELAY_TOKENS_ENV]!)).toEqual({ 'b@gmail.com': 'B2' })
+    expect(relayGmailAccounts()).toEqual(['b@gmail.com'])
+  })
+
+  it('clears the tokens once nothing is connected', async () => {
+    const s = setup({ shim: true })
+    s.env[RELAY_TOKENS_ENV] = '{"x@y.com":"old"}'
+    expect(await s.keeper.tick()).toBe('none')
+    expect(s.env[RELAY_TOKENS_ENV]).toBeUndefined()
+  })
+})
+
+describe('relay-connected accounts in discovery', () => {
+  it("are added to gog's own accounts, once each", () => {
+    expect(withRelayGmail(['a@x.com'])).toEqual(['a@x.com'])
+    setRelayGmailForTests(['me@gmail.com', 'A@x.com'])
+    expect(withRelayGmail(['a@x.com', 'b@x.com'])).toEqual(['a@x.com', 'b@x.com', 'me@gmail.com'])
+  })
+
+  it('show up as Google calendars even though gog has no stored sign-in for them', async () => {
+    setRelayGmailForTests(['me@gmail.com'])
     const exec = async () => ({ ok: true, stdout: 'old@x.com\tdefault\tcalendar,gmail\t2026' })
     const sources = await discoverCalendars({ exec, msAccounts: () => [] })
-    expect(sources.map((s) => [s.id, s.provider])).toEqual([['me@gmail.com', 'google']])
+    expect(sources.map((s) => [s.id, s.provider])).toEqual([['old@x.com', 'google'], ['me@gmail.com', 'google']])
   })
 })

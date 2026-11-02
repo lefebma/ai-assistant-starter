@@ -7,6 +7,12 @@ import { ConnectFlow } from './box.js'
 import { GmailTokenKeeper, relayRevoker } from './gmail-token.js'
 import { getSecret, defaultVault } from '../vault/index.js'
 import { saveTokens, loadTokens, clearTokens, listAuthedAccounts } from '../ms/store.js'
+import { installGogShim, resolveReal } from './gog-shim.js'
+import { resolveGogBin, setGogShim } from '../infra/gog-bin.js'
+import { readEnvFile } from '../env.js'
+import { STORE_DIR } from '../config.js'
+import { logger } from '../logger.js'
+import { delimiter, dirname, join } from 'node:path'
 
 let flow: ConnectFlow | null | undefined
 let keeper: GmailTokenKeeper | null = null
@@ -29,8 +35,9 @@ export function getConnectFlow(): ConnectFlow | null {
   const boxId = getSecret('CONNECT_BOX_ID') ?? ''
   const handoffKey = getSecret('CONNECT_HANDOFF_KEY') ?? ''
   if (!relayUrl.startsWith('https://') || !boxId || handoffKey.length < 32) return (flow = null)
+  const shim = setUpGogShim()
   const vault = { get: (n: string) => defaultVault().get(n), set: (n: string, v: string) => defaultVault().set(n, v), delete: (n: string) => defaultVault().delete(n) }
-  const k = new GmailTokenKeeper({ relayUrl, boxId, handoffKey, vault, onRevoked: (a) => onRevoked?.(a) })
+  const k = new GmailTokenKeeper({ relayUrl, boxId, handoffKey, vault, shim, onRevoked: (a) => onRevoked?.(a) })
   keeper = k
   flow = new ConnectFlow({
     relayUrl, boxId, handoffKey,
@@ -44,7 +51,32 @@ export function getConnectFlow(): ConnectFlow | null {
   return flow
 }
 
+/**
+ * Put the gog wrapper first: on PATH for the agent's shell, and through
+ * resolveGogBin for the box's own calls. The real gog is resolved before the
+ * wrapper exists, so the wrapper can never find itself. False if it could not
+ * be installed (Windows, no gog): the keeper then uses the single-token
+ * fallback.
+ */
+function setUpGogShim(): boolean {
+  try {
+    const real = resolveReal(resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) }), process.env.PATH ?? '')
+    if (!real) return false
+    const path = installGogShim(join(STORE_DIR, 'connect-bin'), real, process.execPath)
+    if (!path) return false
+    setGogShim(path)
+    const dir = dirname(path)
+    const rest = (process.env.PATH ?? '').split(delimiter).filter((d) => d && d !== dir)
+    process.env.PATH = [dir, ...rest].join(delimiter)
+    return true
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : 'error' }, 'connect: could not install the gog wrapper')
+    return false
+  }
+}
+
 export function resetConnectFlowForTests(): void {
+  setGogShim(undefined)
   flow = undefined
   keeper = null
 }

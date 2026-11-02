@@ -71,7 +71,7 @@ describe('hand-off acceptance', () => {
     const r = await s.send(s.body(nonce))
     expect(r).toMatchObject({ status: 200, chatId: 'chat1' })
     expect(r.message).toBe('Connected x@y.com, mail and calendar working.')
-    expect(JSON.parse(s.vault.data.get('CONNECT_GMAIL')!)).toMatchObject({ account: 'x@y.com', refreshToken: 'RT' })
+    expect(JSON.parse(s.vault.data.get('CONNECT_GMAIL')!).accounts['x@y.com']).toMatchObject({ account: 'x@y.com', refreshToken: 'RT' })
     expect(r.message).not.toContain('RT')
   })
   it('tells the keeper after a connect and after a removal, never after a refusal', async () => {
@@ -185,5 +185,56 @@ describe('/connect remove', () => {
   it('says so when nothing is connected', async () => {
     const r = await setup().flow.handleCommandAsync('c', '/connect remove gmail')
     expect(r.reply).toContain('Nothing connected')
+  })
+})
+
+describe('several Gmail accounts (card #271)', () => {
+  async function connect(s: ReturnType<typeof setup>, account: string, rt: string) {
+    const nonce = s.nonceOf(s.flow.handleCommand('c', '/connect gmail').reply)
+    return s.send(s.body(nonce, { account, refreshToken: rt }))
+  }
+  const stored = (s: ReturnType<typeof setup>) => Object.keys(JSON.parse(s.vault.data.get('CONNECT_GMAIL')!).accounts)
+
+  it('adds a second account instead of replacing the first, and lists both', async () => {
+    const s = setup()
+    await connect(s, 'a@gmail.com', 'RT-A')
+    await connect(s, 'b@gmail.com', 'RT-B')
+    expect(stored(s)).toEqual(['a@gmail.com', 'b@gmail.com'])
+    expect(s.flow.handleCommand('c', '/connect list').reply).toBe('gmail: a@gmail.com\ngmail: b@gmail.com')
+  })
+
+  it('replaces an account that signs in again, matching the address without case', async () => {
+    const s = setup()
+    await connect(s, 'a@gmail.com', 'RT-A')
+    await connect(s, 'A@Gmail.com', 'RT-A2')
+    expect(stored(s)).toEqual(['a@gmail.com'])
+    expect(JSON.parse(s.vault.data.get('CONNECT_GMAIL')!).accounts['a@gmail.com'].refreshToken).toBe('RT-A2')
+  })
+
+  it('asks which account to remove, then revokes and deletes only that one', async () => {
+    const s = setup()
+    await connect(s, 'a@gmail.com', 'RT-A')
+    await connect(s, 'b@gmail.com', 'RT-B')
+    expect((await s.flow.handleCommandAsync('c', '/connect remove gmail')).reply).toContain('Which account?')
+    expect(s.revoked).toEqual([])
+    expect((await s.flow.handleCommandAsync('c', '/connect remove gmail nope@x.com')).reply).toContain('Nothing connected for gmail nope@x.com')
+    const r = await s.flow.handleCommandAsync('c', '/connect remove gmail B@gmail.com')
+    expect(r.reply).toContain('Removed gmail b@gmail.com')
+    expect(s.revoked).toEqual(['RT-B'])
+    expect(stored(s)).toEqual(['a@gmail.com'])
+  })
+
+  it('reads a box connected before #271 (one account, old shape) and keeps it when adding another', async () => {
+    const s = setup()
+    s.vault.data.set('CONNECT_GMAIL', JSON.stringify({ account: 'old@gmail.com', accessToken: 'AT', refreshToken: 'RT-OLD', expiresAt: 1 }))
+    expect(s.flow.handleCommand('c', '/connect list').reply).toBe('gmail: old@gmail.com')
+    await connect(s, 'new@gmail.com', 'RT-NEW')
+    expect(stored(s)).toEqual(['old@gmail.com', 'new@gmail.com'])
+  })
+
+  it('marks an account whose grant was withdrawn', () => {
+    const s = setup()
+    s.vault.data.set('CONNECT_GMAIL', JSON.stringify({ accounts: { 'a@gmail.com': { account: 'a@gmail.com', accessToken: 'x', refreshToken: 'y', expiresAt: 1, revoked: true } } }))
+    expect(s.flow.handleCommand('c', '/connect list').reply).toBe('gmail: a@gmail.com (needs /connect gmail again)')
   })
 })

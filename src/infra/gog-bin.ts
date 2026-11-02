@@ -40,9 +40,20 @@ function bareName(platform: string): string {
   return platform === 'win32' ? 'gog.exe' : 'gog'
 }
 
+let shim: string | undefined
+
 /**
- * Resolve the gog executable. `GOG_BIN` in the environment always wins, so an
- * unusual install is one line in .env rather than a code change.
+ * Route every gog call through the relay wrapper (src/connect/gog-shim.ts),
+ * so a relay-connected Gmail account gets its own token. Undefined turns it off.
+ */
+export function setGogShim(path: string | undefined): void {
+  shim = path
+}
+
+/**
+ * Resolve the gog executable. The relay wrapper, once installed, comes first:
+ * it runs the real gog itself. Otherwise `GOG_BIN` in the environment always
+ * wins, so an unusual install is one line in .env rather than a code change.
  */
 export function resolveGogBin(
   env: Record<string, string | undefined>,
@@ -50,6 +61,7 @@ export function resolveGogBin(
   home: string = homedir(),
   exists: Exists = existsSync,
 ): string {
+  if (shim) return shim
   const override = env['GOG_BIN']?.trim()
   if (override) return override
 
