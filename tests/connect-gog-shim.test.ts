@@ -19,7 +19,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 const fake = join(dir, 'real-gog')
 writeFileSync(fake, `#!${process.execPath}
 const a = process.argv.slice(2)
-if (a[0] === 'auth' && a[1] === 'list') { process.stdout.write(process.env.FAKE_OWN || ''); process.exit(0) }
+if (a[0] === 'auth' && a[1] === 'list') { if (process.env.FAKE_AUTH_FAIL) process.exit(1); process.stdout.write(process.env.FAKE_OWN || ''); process.exit(0) }
 process.stdout.write(JSON.stringify({ token: process.env.GOG_ACCESS_TOKEN ?? null, tokens: process.env.GOG_RELAY_TOKENS ?? null, args: a }))
 `)
 chmodSync(fake, 0o755)
@@ -37,7 +37,7 @@ function gog(args: string[], env: Record<string, string> = {}) {
 // The wrapper is a shebang script and is never installed on Windows.
 describe.skipIf(process.platform === 'win32')('gog wrapper', () => {
   it('gives a named relay account its own token, whichever way the account is named', () => {
-    for (const args of [['gmail', 'search', 'x', '--account', 'b@gmail.com'], ['--account=B@Gmail.com', 'gmail', 'search'], ['-a', 'b@gmail.com', 'gmail'], ['-ab@gmail.com', 'gmail']]) {
+    for (const args of [['gmail', 'search', 'x', '--account', 'b@gmail.com'], ['--account=B@Gmail.com', 'gmail', 'search'], ['-a', 'b@gmail.com', 'gmail'], ['-ab@gmail.com', 'gmail'], ['gmail', '--acct', 'b@gmail.com'], ['gmail', '--acct=b@gmail.com']]) {
       const r = gog(args, { GOG_RELAY_TOKENS: TOKENS })
       expect(r.out?.token, args.join(' ')).toBe('TOK-B')
       expect(r.out?.args).toEqual(args)
@@ -48,6 +48,19 @@ describe.skipIf(process.platform === 'win32')('gog wrapper', () => {
   it("leaves an account gog signed in itself on gog's stored token, and never passes the token map on", () => {
     const r = gog(['gmail', 'search', '--account', 'own@x.com'], { GOG_RELAY_TOKENS: TOKENS })
     expect(r.out).toMatchObject({ token: null, tokens: null })
+  })
+
+  it("never hands a relay token to a call naming another account through gog's --acct alias", () => {
+    const one = { GOG_RELAY_TOKENS: JSON.stringify({ 'a@gmail.com': 'TOK-A' }) }
+    expect(gog(['gmail', 'send', '--acct', 'other@gmail.com'], one).out?.token).toBeNull()
+    expect(gog(['gmail', 'send', '--acct=other@gmail.com'], one).out?.token).toBeNull()
+    expect(gog(['gmail', 'send', '--accnt', 'other@gmail.com'], one).out?.token).toBeNull()
+  })
+
+  it('asks for --account rather than guess when gog cannot list its own sign-ins', () => {
+    const r = gog(['gmail', 'send'], { GOG_RELAY_TOKENS: JSON.stringify({ 'a@gmail.com': 'TOK-A' }), FAKE_AUTH_FAIL: '1' })
+    expect(r.status).toBe(2)
+    expect(r.out).toBeNull()
   })
 
   it('with no account named, uses the only relay account when gog has no sign-ins of its own', () => {
@@ -91,6 +104,12 @@ describe('installing it', () => {
     expect(resolveReal('real-gog', `/nope:${dir}`)).toBe(fake)
     expect(resolveReal(fake, '')).toBe(fake)
     expect(resolveReal('/no/such/gog', '')).toBeUndefined()
+  })
+
+  it('never resolves to the wrapper itself, even when its directory is first on PATH', () => {
+    const binDir = join(dir, 'bin')
+    expect(resolveReal('gog', `${binDir}:/nope`, existsSync, binDir)).toBeUndefined()
+    expect(resolveReal(shim, '', existsSync, binDir)).toBeUndefined()
   })
 
   it('becomes what resolveGogBin returns, ahead of GOG_BIN, until turned off', () => {

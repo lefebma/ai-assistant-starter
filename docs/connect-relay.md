@@ -17,12 +17,12 @@ Where tokens land:
 
 gog takes one access token, `GOG_ACCESS_TOKEN`, and then uses it whatever `--account` a call names. So the keeper puts the live tokens in `GOG_RELAY_TOKENS` (`{account: token}`), which every gog call inherits, and a gog wrapper (`src/connect/gog-shim.ts`) sets `GOG_ACCESS_TOKEN` per call:
 
-- `--account`, `-a` or `GOG_ACCOUNT` naming a relay account: that account's token.
+- `--account`, its hidden alias `--acct`, `-a` or `GOG_ACCOUNT` naming a relay account: that account's token. Any other flag starting `--acc` counts as naming an account the box does not hold, so it never falls through to a relay token.
 - Naming any other account: no token, so gog uses its own stored sign-in. Accounts signed in with `gog auth add` keep working beside relay ones.
-- Naming none: the relay account if it is the only one and gog has no sign-ins of its own. With several, the wrapper exits with a message asking for `--account` rather than guess.
+- Naming none: the relay account if it is the only one and gog has no sign-ins of its own. With several, or when `gog auth list` fails so the wrapper cannot tell, it exits 2 with a message asking for `--account` rather than guess.
 - `gog auth list` also prints the relay accounts (client `havn-connect`), so the agent sees every account it can reach.
 
-The wrapper is generated at startup into `store/connect-bin/gog` (node shebang, the real gog path baked in, resolved before the wrapper exists so it cannot call itself). Its directory goes first on the service's `PATH`, which the agent's shell inherits, and `resolveGogBin` returns it for the box's own calls (email alerts, the proactive calendar and threads, support mail, the Connections page). It is only installed when `/connect` is configured, and not on Windows: there, a box with exactly one relay account falls back to that token in `GOG_ACCESS_TOKEN` for every call, as in 1.64. Email alerts, the proactive calendar and the web Connections page list the relay accounts beside gog's own.
+The wrapper is generated at startup into `store/connect-bin/gog` (node shebang, the real gog path baked in, resolved with the wrapper's own directory skipped, so it can never call itself even with `GOG_BIN=gog`). Its directory goes first on the service's `PATH`, which the agent's shell inherits, and `resolveGogBin` returns it for the box's own calls (email alerts, the proactive calendar and threads, support mail, the Connections page). It is only installed when `/connect` is configured, and not on Windows: there, a box with exactly one relay account falls back to that token in `GOG_ACCESS_TOKEN` for every call, as in 1.64. Email alerts, the proactive calendar and the web Connections page list the relay accounts beside gog's own.
 
   What that means in practice:
   - **The relay is a dependency for Gmail.** If it is unreachable, the box keeps the current token until it expires (at least 30 minutes after renewal first fails), then Gmail stops until the relay is back. Outlook does not depend on the relay after sign-in.

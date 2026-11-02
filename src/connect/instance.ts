@@ -12,7 +12,7 @@ import { resolveGogBin, setGogShim } from '../infra/gog-bin.js'
 import { readEnvFile } from '../env.js'
 import { STORE_DIR } from '../config.js'
 import { logger } from '../logger.js'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, join } from 'node:path'
 
 let flow: ConnectFlow | null | undefined
 let keeper: GmailTokenKeeper | null = null
@@ -60,12 +60,12 @@ export function getConnectFlow(): ConnectFlow | null {
  */
 function setUpGogShim(): boolean {
   try {
-    const real = resolveReal(resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) }), process.env.PATH ?? '')
+    const dir = join(STORE_DIR, 'connect-bin')
+    const real = resolveReal(resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) }), process.env.PATH ?? '', undefined, dir)
     if (!real) return false
-    const path = installGogShim(join(STORE_DIR, 'connect-bin'), real, process.execPath)
+    const path = installGogShim(dir, real, process.execPath)
     if (!path) return false
     setGogShim(path)
-    const dir = dirname(path)
     const rest = (process.env.PATH ?? '').split(delimiter).filter((d) => d && d !== dir)
     process.env.PATH = [dir, ...rest].join(delimiter)
     return true

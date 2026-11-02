@@ -139,7 +139,7 @@ export class ConnectFlow {
         if (asked && accounts.length) return { reply: `Nothing connected for gmail ${asked}. Connected: ${accounts.join(', ')}` }
         return { reply: accounts.length ? `Which account? /connect remove gmail <${accounts.join('|')}>` : 'Nothing connected for gmail.' }
       }
-      const out = await this.remove('gmail', `gmail ${e.account}`, e, localOnly, () => dropGmailEntry(this.o.vault, e.account))
+      const out = await this.remove('gmail', `gmail ${e.account}`, e, localOnly, () => dropGmailEntry(this.o.vault, e.account, e.refreshToken))
       if (!readGmailEntries(this.o.vault).has(e.account.toLowerCase())) await this.o.onChange?.('gmail')
       return out
     }
@@ -177,7 +177,7 @@ export class ConnectFlow {
     } catch {
       return { reply: `Could not revoke ${label} at the provider, so I kept it here. Try again, or run /connect remove ${label} --local-only to delete it locally only.` }
     }
-    drop()
+    if (!drop()) return { reply: `Revoked the earlier ${label} sign-in at the provider. A newer sign-in for it arrived meanwhile and stays connected.` }
     return { reply: `Removed ${label}: revoked at the provider and deleted from this box.` }
   }
 

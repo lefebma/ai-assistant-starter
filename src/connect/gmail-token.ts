@@ -147,10 +147,16 @@ export function saveGmailEntry(vault: ConnectTokenVault, e: GmailEntry): void {
   writeGmailEntries(vault, all)
 }
 
-/** Delete one account. False if it was not connected. */
-export function dropGmailEntry(vault: ConnectTokenVault, account: string): boolean {
+/**
+ * Delete one account. With refreshToken, only if the entry still holds it: a
+ * new sign-in for the same address while a removal waited on the relay wins.
+ * False if nothing was deleted.
+ */
+export function dropGmailEntry(vault: ConnectTokenVault, account: string, refreshToken?: string): boolean {
   const all = readGmailEntries(vault)
-  if (!all.delete(key(account))) return false
+  const e = all.get(key(account))
+  if (!e || (refreshToken !== undefined && e.refreshToken !== refreshToken)) return false
+  all.delete(key(account))
   writeGmailEntries(vault, all)
   return true
 }
@@ -191,15 +197,19 @@ export class GmailTokenKeeper {
 
   private async run(): Promise<KeeperResult> {
     let result: KeeperResult = 'none'
+    const withdrawn: string[] = []
     for (const e of readGmailEntries(this.o.vault).values()) {
-      const r = await this.renew(e)
+      const r = await this.renew(e, withdrawn)
       if (RANK[r] > RANK[result]) result = r
     }
+    // Publish before telling anyone: a withdrawn token leaves the environment
+    // now, not after a chat message that may be slow to send.
     this.publish()
+    for (const a of withdrawn) await this.o.onRevoked?.(a)
     return result
   }
 
-  private async renew(e: GmailEntry): Promise<KeeperResult> {
+  private async renew(e: GmailEntry, withdrawn: string[]): Promise<KeeperResult> {
     if (e.revoked) return 'expired'
     if (e.expiresAt - this.now() > RENEW_BEFORE_MS) return 'fresh'
     let res: { status: number; json: Record<string, unknown> }
@@ -218,7 +228,8 @@ export class GmailTokenKeeper {
     if (res.status === 401 && j.error === 'invalid_grant') {
       all.set(key(e.account), { ...current, revoked: true })
       writeGmailEntries(this.o.vault, all)
-      await this.o.onRevoked?.(e.account)
+      this.publish()
+      withdrawn.push(e.account)
       return 'expired'
     }
     if (res.status !== 200 || typeof j.accessToken !== 'string' || typeof j.expiresAt !== 'number') return 'failed'

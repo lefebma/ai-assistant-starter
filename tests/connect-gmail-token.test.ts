@@ -228,6 +228,20 @@ describe('several relay accounts (card #271)', () => {
     expect(relayGmailAccounts()).toEqual(['b@gmail.com'])
   })
 
+  it('drops a withdrawn token from the environment before the owner is told', async () => {
+    let seen: string | undefined = 'unset'
+    const s = setup({ shim: true, refresh: async () => { throw new GrantRevokedError() } })
+    await two(s, 0, HOUR)
+    const k = new GmailTokenKeeper({
+      relayUrl: 'https://connect.gethavn.ai', boxId: 'box-1', handoffKey: HKEY, vault: s.vault, env: s.env, shim: true, now: s.now,
+      fetchImpl: (async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 401 })) as unknown as typeof fetch,
+      onRevoked: () => { seen = s.env[RELAY_TOKENS_ENV] },
+    })
+    s.env[RELAY_TOKENS_ENV] = JSON.stringify({ 'a@gmail.com': 'AT-a', 'b@gmail.com': 'AT-b' })
+    expect(await k.tick()).toBe('expired')
+    expect(JSON.parse(seen!)).toEqual({ 'b@gmail.com': 'AT-b' })
+  })
+
   it('clears the tokens once nothing is connected', async () => {
     const s = setup({ shim: true })
     s.env[RELAY_TOKENS_ENV] = '{"x@y.com":"old"}'

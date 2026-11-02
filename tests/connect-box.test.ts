@@ -224,6 +224,17 @@ describe('several Gmail accounts (card #271)', () => {
     expect(stored(s)).toEqual(['a@gmail.com'])
   })
 
+  it('a removal waiting on the relay does not delete a newer sign-in for the same address', async () => {
+    let release!: () => void
+    const s = setup(async () => new Promise<void>((r) => (release = r)))
+    await connect(s, 'a@gmail.com', 'RT-OLD')
+    const removing = s.flow.handleCommandAsync('c', '/connect remove gmail a@gmail.com')
+    await connect(s, 'a@gmail.com', 'RT-NEW')
+    release()
+    expect((await removing).reply).toContain('stays connected')
+    expect(JSON.parse(s.vault.data.get('CONNECT_GMAIL')!).accounts['a@gmail.com'].refreshToken).toBe('RT-NEW')
+  })
+
   it('reads a box connected before #271 (one account, old shape) and keeps it when adding another', async () => {
     const s = setup()
     s.vault.data.set('CONNECT_GMAIL', JSON.stringify({ account: 'old@gmail.com', accessToken: 'AT', refreshToken: 'RT-OLD', expiresAt: 1 }))
