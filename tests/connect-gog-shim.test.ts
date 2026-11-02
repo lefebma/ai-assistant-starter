@@ -34,7 +34,8 @@ function gog(args: string[], env: Record<string, string> = {}) {
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, out }
 }
 
-describe('gog wrapper', () => {
+// The wrapper is a shebang script and is never installed on Windows.
+describe.skipIf(process.platform === 'win32')('gog wrapper', () => {
   it('gives a named relay account its own token, whichever way the account is named', () => {
     for (const args of [['gmail', 'search', 'x', '--account', 'b@gmail.com'], ['--account=B@Gmail.com', 'gmail', 'search'], ['-a', 'b@gmail.com', 'gmail'], ['-ab@gmail.com', 'gmail']]) {
       const r = gog(args, { GOG_RELAY_TOKENS: TOKENS })
