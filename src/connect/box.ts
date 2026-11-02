@@ -37,13 +37,24 @@ export interface MsTokenStore {
 /** Revokes a refresh token at the provider. Throws if the provider did not confirm. */
 export type Revoker = (tokens: { accessToken: string; refreshToken: string }) => Promise<void>
 
+/**
+ * Microsoft has no call that ends one app's grant for a personal account, and
+ * revokeSignInSessions needs a permission Havn does not ask for (and signs the
+ * person out of everything). So removing Outlook deletes here and says where
+ * to withdraw the access itself.
+ */
+export const OUTLOOK_WITHDRAW =
+  'Microsoft does not let me cancel the sign-in itself, so also remove Havn in your Microsoft account: ' +
+  'personal accounts at https://account.live.com/consent/Manage, work accounts at https://myapps.microsoft.com (Havn, then Revoke permissions).'
+
 export interface ConnectOpts {
   relayUrl: string
   boxId: string
   handoffKey: string
   vault: ConnectTokenVault
   msTokens: MsTokenStore
-  revokers: Record<string, Revoker>
+  /** Gmail is revoked through the relay. Outlook has none (see OUTLOOK_WITHDRAW). */
+  revokers: Partial<Record<string, Revoker>>
   now?: () => number
   ttlMs?: number
   /** Called after a provider is connected or removed. */
@@ -80,7 +91,7 @@ const USAGE = [
   '/connect yahoo - uses an app password via /secret',
   '/connect list - what is connected',
   '/connect remove gmail - revoke at the provider and delete here',
-  '/connect remove outlook <account> - the same, for one Outlook mailbox',
+  '/connect remove outlook <account> - delete one Outlook mailbox here',
 ].join('\n')
 
 export class ConnectFlow {
@@ -149,9 +160,9 @@ export class ConnectFlow {
       }
       const t = this.o.msTokens.load(account)
       if (!t) return { reply: `Nothing connected for outlook ${account}.` }
-      const out = await this.remove('outlook', `outlook ${account}`, t, localOnly, () => this.o.msTokens.clear(account))
-      if (!this.o.msTokens.load(account)) await this.o.onChange?.('outlook')
-      return out
+      this.o.msTokens.clear(account)
+      await this.o.onChange?.('outlook')
+      return { reply: `Removed outlook ${account} from this box. ${OUTLOOK_WITHDRAW}` }
     }
     return { reply: 'Usage: /connect remove gmail, or /connect remove outlook <account>' }
   }
@@ -164,8 +175,13 @@ export class ConnectFlow {
       drop()
       return { reply: `Removed ${label} from this box. The token was not revoked at the provider; remove access in your account security settings.` }
     }
+    const revoker = this.o.revokers[provider]
+    if (!revoker) {
+      drop()
+      return { reply: `Removed ${label} from this box. The token was not revoked at the provider; remove access in your account security settings.` }
+    }
     try {
-      await this.o.revokers[provider]({ accessToken: t.accessToken ?? '', refreshToken: refresh })
+      await revoker({ accessToken: t.accessToken ?? '', refreshToken: refresh })
     } catch {
       return { reply: `Could not revoke ${label} at the provider, so I kept it here. Try again, or run /connect remove ${label} --local-only to delete it locally only.` }
     }

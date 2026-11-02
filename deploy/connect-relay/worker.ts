@@ -5,21 +5,25 @@
  *
  *  - The keys of used sign-in states, so a link works once across every copy
  *    of the Worker, not just the one that saw it first. A key is kept only
- *    until its state would have expired anyway.
- *  - The box registry: for each box id, the https origin hand-offs go to and
- *    the hand-off key that signs them. The relay mints the key; the operator
- *    copies it to the box once.
+ *    until its state would have expired anyway, and an expiry index lets each
+ *    check clear a bounded batch instead of reading every key.
+ *  - The box registry: for each box id, the https origin hand-offs go to, the
+ *    hand-off key that signs them, and the name shown to the person signing
+ *    in. The relay mints the key; the operator copies it to the box once.
  *
- * No token is ever stored here. Google's client secret is a Worker secret;
- * Microsoft needs none (public client with PKCE).
+ * No token is ever stored here. Google's client secret and the sealing secret
+ * are Worker secrets; Microsoft needs none (public client with PKCE). Every
+ * public route is rate limited per client address when the RATE_LIMITER
+ * binding exists.
  *
- * Public routes (from createRelay): GET /start, GET /callback, and POST /refresh
- * (Gmail renewal, signed with the box's hand-off key).
+ * Public routes (from createRelay): GET /start (confirmation page), POST /start
+ * (its button), GET /callback, and POST /refresh and /revoke (Gmail, signed
+ * with the box's hand-off key).
  * Admin routes take `Authorization: Bearer <admin token>` (its SHA-256 is the
  * ADMIN_TOKEN_SHA256 secret):
- *   POST   /admin/boxes/<box>  {origin}  -> {box, origin, handoffKey}  (replaces any earlier key)
- *   DELETE /admin/boxes/<box>            -> {ok}
- *   GET    /admin/boxes                  -> {boxes: [{box, origin, registeredAt}]}  (never the keys)
+ *   POST   /admin/boxes/<box>  {origin, label}  -> {box, origin, label, handoffKey}  (replaces any earlier key)
+ *   DELETE /admin/boxes/<box>                   -> {ok}
+ *   GET    /admin/boxes                         -> {boxes: [{box, origin, label, registeredAt}]}  (never the keys)
  *
  * Deploy and setup: deploy/connect-relay/README.md.
  */
@@ -33,7 +37,7 @@ interface DurableObjectStorage {
   get<T>(key: string): Promise<T | undefined>
   put(key: string, value: unknown): Promise<void>
   delete(key: string): Promise<boolean>
-  list<T>(opts: { prefix: string }): Promise<Map<string, T>>
+  list<T>(opts: { prefix: string; end?: string; limit?: number }): Promise<Map<string, T>>
 }
 interface DurableObjectState {
   storage: DurableObjectStorage
@@ -44,10 +48,14 @@ interface DurableObjectNamespace {
   get(id: unknown): DurableObjectStub
 }
 
+interface RateLimit { limit(opts: { key: string }): Promise<{ success: boolean }> }
+
 export interface Env {
   STORE: DurableObjectNamespace
+  RATE_LIMITER?: RateLimit
   PUBLIC_URL: string
   SIGNING_SECRET: string
+  SEALING_SECRET: string
   ADMIN_TOKEN_SHA256: string
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string
@@ -94,7 +102,18 @@ const store = (env: Env) => env.STORE.get(env.STORE.idFromName('main'))
 const ask = (env: Env, path: string, body?: unknown) =>
   store(env).fetch(new Request(`https://do${path}`, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }))
 
-interface StoredBox extends BoxRecord { registeredAt: string }
+interface StoredBox extends BoxRecord { label: string; registeredAt: string }
+
+/** Expired keys cleared per check: enough to outpace any rate the limiter lets through. */
+export const PRUNE_BATCH = 50
+const expKey = (exp: number, key: string) => `exp:${String(Math.max(0, Math.floor(exp))).padStart(15, '0')}:${key}`
+
+/** A display name: 1 to 60 characters, none of them markup or control characters. */
+export function cleanLabel(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const s = raw.trim()
+  return s.length >= 1 && s.length <= 60 && !/[<>"&\u0000-\u001f]/.test(s) ? s : null
+}
 
 // --- the Durable Object ------------------------------------------------------
 
@@ -109,22 +128,29 @@ export class RelayStore {
     // A Durable Object runs one event at a time and its input gate holds new
     // events while storage calls are pending, so this read-then-write is atomic.
     if (path === '/used') {
-      const key = `used:${String(body.key)}`
+      const id = String(body.key)
       const now = Number(body.now)
-      for (const [k, exp] of await s.list<number>({ prefix: 'used:' })) if (exp < now) await s.delete(k)
-      if ((await s.get<number>(key)) !== undefined) return json({ fresh: false })
-      await s.put(key, Number(body.expiresAt))
+      const exp = Number(body.expiresAt)
+      for (const [k, usedKey] of await s.list<string>({ prefix: 'exp:', end: expKey(now, ''), limit: PRUNE_BATCH })) {
+        await s.delete(k)
+        await s.delete(usedKey)
+      }
+      const usedKey = `used:${id}`
+      const seen = await s.get<number>(usedKey)
+      if (seen !== undefined && seen >= now) return json({ fresh: false })
+      await s.put(usedKey, exp)
+      await s.put(expKey(exp, id), usedKey)
       return json({ fresh: true })
     }
     if (path === '/box/get') return json((await s.get<StoredBox>(`box:${String(body.box)}`)) ?? null)
     if (path === '/box/put') {
-      const rec: StoredBox = { origin: String(body.origin), handoffKey: newKey(), registeredAt: new Date().toISOString() }
+      const rec: StoredBox = { origin: String(body.origin), label: String(body.label), handoffKey: newKey(), registeredAt: new Date().toISOString() }
       await s.put(`box:${String(body.box)}`, rec)
-      return json({ box: body.box, origin: rec.origin, handoffKey: rec.handoffKey })
+      return json({ box: body.box, origin: rec.origin, label: rec.label, handoffKey: rec.handoffKey })
     }
     if (path === '/box/delete') return json({ ok: await s.delete(`box:${String(body.box)}`) })
     if (path === '/box/list') {
-      const boxes = [...(await s.list<StoredBox>({ prefix: 'box:' }))].map(([k, v]) => ({ box: k.slice(4), origin: v.origin, registeredAt: v.registeredAt }))
+      const boxes = [...(await s.list<StoredBox>({ prefix: 'box:' }))].map(([k, v]) => ({ box: k.slice(4), origin: v.origin, label: v.label, registeredAt: v.registeredAt }))
       return json({ boxes })
     }
     return json({ error: 'not found' }, 404)
@@ -161,23 +187,32 @@ async function admin(req: Request, env: Env, url: URL): Promise<Response> {
   if (!BOX_ID.test(box)) return json({ error: 'bad box id' }, 400)
   if (req.method === 'DELETE') return ask(env, '/box/delete', { box })
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
-  let origin: string | null = null
+  let b: { origin?: unknown; label?: unknown } = {}
   try {
-    origin = cleanOrigin(((await req.json()) as { origin?: unknown }).origin)
+    b = (await req.json()) as typeof b
   } catch {
     /* fall through */
   }
+  const origin = cleanOrigin(b.origin)
   if (!origin) return json({ error: 'origin must be a bare https origin, e.g. https://box.example.com' }, 400)
-  return ask(env, '/box/put', { box, origin })
+  const label = cleanLabel(b.label)
+  if (!label) return json({ error: 'label must be 1 to 60 characters with no < > " &, e.g. Sam\'s assistant' }, 400)
+  return ask(env, '/box/put', { box, origin, label })
 }
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url)
     if (url.pathname.startsWith('/admin/')) return admin(req, env, url)
+    if (env.RATE_LIMITER) {
+      const who = req.headers.get('cf-connecting-ip') ?? 'unknown'
+      const { success } = await env.RATE_LIMITER.limit({ key: `${who}:${url.pathname}` })
+      if (!success) return new Response('Too many requests. Wait a minute and try again.', { status: 429, headers: { 'retry-after': '60' } })
+    }
     const relay = createRelay({
       publicUrl: env.PUBLIC_URL,
       signingSecret: env.SIGNING_SECRET,
+      sealingSecret: env.SEALING_SECRET,
       boxes: {
         async get(id) {
           if (!BOX_ID.test(id)) return undefined

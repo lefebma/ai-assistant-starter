@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { googleProvider, microsoftProvider, googleRevoker, microsoftRevoker, MICROSOFT_SCOPES } from '../src/connect/providers.js'
+import { googleProvider, microsoftProvider, MICROSOFT_SCOPES } from '../src/connect/providers.js'
 import { MS_SCOPES } from '../src/ms/cli.js'
 import { GrantRevokedError } from '../src/connect/relay.js'
 
@@ -60,11 +60,14 @@ describe('provider adapters (fake fetch)', () => {
     await expect(googleProvider({ clientId: 'c', clientSecret: 's' }, down).refresh!('RT')).rejects.toThrow(/^token endpoint 503$/)
     expect(microsoftProvider('c').refresh).toBeUndefined()
   })
-  it('revokers throw when the provider does not confirm', async () => {
+  it('google revocation posts the token and throws when Google does not confirm', async () => {
+    let sent = ''
+    const ok = (async (_u: string, init: RequestInit) => { sent = String(init.body); return new Response('', { status: 200 }) }) as unknown as typeof fetch
+    await googleProvider({ clientId: 'c', clientSecret: 's' }, ok).revoke!('RT')
+    expect(sent).toBe('token=RT')
     const bad = (async () => new Response('', { status: 400 })) as unknown as typeof fetch
-    await expect(googleRevoker(bad)({ accessToken: 'a', refreshToken: 'r' })).rejects.toThrow()
-    await expect(microsoftRevoker(bad)({ accessToken: 'a', refreshToken: 'r' })).rejects.toThrow()
-    const ok = (async () => new Response('', { status: 200 })) as unknown as typeof fetch
-    await expect(googleRevoker(ok)({ accessToken: 'a', refreshToken: 'r' })).resolves.toBeUndefined()
+    await expect(googleProvider({ clientId: 'c', clientSecret: 's' }, bad).revoke!('RT')).rejects.toThrow()
+    expect(microsoftProvider('c').revoke).toBeUndefined()
   })
+
 })

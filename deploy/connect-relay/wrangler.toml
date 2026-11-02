@@ -19,3 +19,13 @@ class_name = "RelayStore"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RelayStore"]
+
+# Per client address and route: 30 requests a minute. A person signing in
+# needs three; a box renewing Gmail needs one an hour.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "2061"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60

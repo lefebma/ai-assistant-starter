@@ -5,27 +5,35 @@
  */
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import worker, { RelayStore, cleanOrigin, providersFrom, durableUsedStore, type Env } from '../deploy/connect-relay/worker.js'
+import worker, { RelayStore, cleanLabel, cleanOrigin, providersFrom, durableUsedStore, PRUNE_BATCH, type Env } from '../deploy/connect-relay/worker.js'
 import { signState } from '../src/connect/state.js'
 
 const ADMIN = 'admin-secret-token'
 const SECRET = 'relay-signing-secret-for-tests-0123456789'
 
-function makeEnv(over: Partial<Env> = {}): Env {
+function makeEnv(over: Partial<Env> = {}): Env & { data: Map<string, unknown> } {
   const data = new Map<string, unknown>()
   const instance = new RelayStore({
     storage: {
       get: async (k: string) => structuredClone(data.get(k)) as never,
       put: async (k: string, v: unknown) => void data.set(k, structuredClone(v)),
       delete: async (k: string) => data.delete(k),
-      list: async ({ prefix }: { prefix: string }) =>
-        new Map([...data].filter(([k]) => k.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b))) as never,
+      // Durable Object list(): keys in order, `end` exclusive, at most `limit`.
+      list: async ({ prefix, end, limit }: { prefix: string; end?: string; limit?: number }) =>
+        new Map(
+          [...data]
+            .filter(([k]) => k.startsWith(prefix) && (end === undefined || k < end))
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .slice(0, limit ?? Infinity),
+        ) as never,
     },
   })
   return {
+    data,
     STORE: { idFromName: (n: string) => n, get: () => instance },
     PUBLIC_URL: 'https://connect.gethavn.ai',
     SIGNING_SECRET: SECRET,
+    SEALING_SECRET: 'relay-sealing-secret-for-tests-0123456789',
     ADMIN_TOKEN_SHA256: createHash('sha256').update(ADMIN).digest('hex'),
     MS_CLIENT_ID: 'ms-client',
     ...over,
@@ -35,9 +43,16 @@ function makeEnv(over: Partial<Env> = {}): Env {
 const adminCall = (env: Env, path: string, init: RequestInit = {}, token = ADMIN) =>
   worker.fetch(new Request(`https://connect.gethavn.ai${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } }), env)
 
-async function register(env: Env, box: string, origin = 'https://box.example.com') {
-  return adminCall(env, `/admin/boxes/${box}`, { method: 'POST', body: JSON.stringify({ origin }) })
+async function register(env: Env, box: string, origin = 'https://box.example.com', label: unknown = "Sam's assistant") {
+  return adminCall(env, `/admin/boxes/${box}`, { method: 'POST', body: JSON.stringify({ origin, label }) })
 }
+
+/** The click on the confirmation page. */
+const click = (env: Env, q: string) =>
+  worker.fetch(new Request('https://connect.gethavn.ai/start', {
+    method: 'POST', body: q,
+    headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://connect.gethavn.ai', 'sec-fetch-site': 'same-origin' },
+  }), env)
 
 describe('admin routes', () => {
   it('registers a box and hands back a fresh key once; the listing never shows keys', async () => {
@@ -45,7 +60,7 @@ describe('admin routes', () => {
     const r = await register(env, 'havn-test')
     expect(r.status).toBe(200)
     const out = (await r.json()) as { box: string; origin: string; handoffKey: string }
-    expect(out).toMatchObject({ box: 'havn-test', origin: 'https://box.example.com' })
+    expect(out).toMatchObject({ box: 'havn-test', origin: 'https://box.example.com', label: "Sam's assistant" })
     expect(out.handoffKey).toMatch(/^[0-9a-f]{64}$/)
     const again = (await (await register(env, 'havn-test')).json()) as { handoffKey: string }
     expect(again.handoffKey).not.toBe(out.handoffKey)
@@ -62,6 +77,9 @@ describe('admin routes', () => {
     for (const o of ['http://box.example.com', 'https://box.example.com/path', 'https://u:p@box.example.com', 'not a url']) {
       expect((await register(env, 'b1', o)).status).toBe(400)
     }
+    for (const l of [null, 42, '', '<b>x</b>', 'x'.repeat(61), 'a\nb']) {
+      expect((await register(env, 'b1', 'https://box.example.com', l)).status).toBe(400)
+    }
   })
   it('removes a box, after which its links are refused', async () => {
     const env = makeEnv()
@@ -73,11 +91,18 @@ describe('admin routes', () => {
 })
 
 describe('relay through the Worker', () => {
-  it('starts an Outlook sign-in for a registered box with PKCE', async () => {
+  it('shows the box label on the confirmation page, then starts an Outlook sign-in with PKCE on the click', async () => {
     const env = makeEnv()
     await register(env, 'b1')
-    const res = await worker.fetch(new Request('https://connect.gethavn.ai/start?provider=outlook&box=b1&nonce=nonce-0123456789abcdef'), env)
-    expect(res.status).toBe(302)
+    const q = 'provider=outlook&box=b1&nonce=nonce-0123456789abcdef'
+    const page = await worker.fetch(new Request(`https://connect.gethavn.ai/start?${q}`), env)
+    expect(page.status).toBe(200)
+    const html = await page.text()
+    expect(html).toContain('Sam&#39;s assistant')
+    expect(html).toContain('Continue to Microsoft')
+    expect(page.headers.get('content-security-policy')).toContain('form-action \'self\' https://login.microsoftonline.com')
+    const res = await click(env, q)
+    expect(res.status).toBe(303)
     const loc = new URL(res.headers.get('location')!)
     expect(loc.host).toBe('login.microsoftonline.com')
     expect(loc.searchParams.get('client_id')).toBe('ms-client')
@@ -113,6 +138,44 @@ describe('durable used store', () => {
     expect(await used.markUsed('k', 100, 50)).toBe(false)
     expect(await used.markUsed('other', 300, 200)).toBe(true) // sweeps k
     expect(await used.markUsed('k', 400, 200)).toBe(true)
+  })
+  it('clears expired keys a bounded batch at a time, oldest first, never a live one', async () => {
+    const env = makeEnv()
+    const used = durableUsedStore(env)
+    for (let i = 0; i < 120; i++) await used.markUsed(`old${i}`, 100 + i, 0)
+    await used.markUsed('live', 10_000, 0)
+    const keys = () => [...env.data.keys()].filter((k) => k.startsWith('used:'))
+    expect(keys()).toHaveLength(121)
+    await used.markUsed('n1', 10_000, 5_000)
+    expect(keys()).toHaveLength(121 - PRUNE_BATCH + 1)
+    expect(keys()).not.toContain('used:old0')
+    expect(keys()).toContain('used:old119')
+    await used.markUsed('n2', 10_000, 5_000)
+    await used.markUsed('n3', 10_000, 5_000)
+    expect(keys().filter((k) => k.startsWith('used:old'))).toHaveLength(0)
+    expect(await used.markUsed('live', 10_000, 5_000)).toBe(false)
+  })
+})
+
+describe('rate limit', () => {
+  it('answers 429 once the limiter says no, keyed by client address and route', async () => {
+    const seen: string[] = []
+    let allow = true
+    const env = makeEnv({ RATE_LIMITER: { limit: async ({ key }) => { seen.push(key); return { success: allow } } } })
+    await register(env, 'b1')
+    const req = () => new Request('https://connect.gethavn.ai/start?provider=outlook&box=b1&nonce=nonce-0123456789abcdef', { headers: { 'cf-connecting-ip': '203.0.113.9' } })
+    expect((await worker.fetch(req(), env)).status).toBe(200)
+    allow = false
+    expect((await worker.fetch(req(), env)).status).toBe(429)
+    expect(seen[0]).toBe('203.0.113.9:/start')
+  })
+})
+
+describe('cleanLabel', () => {
+  it('keeps a plain name and refuses markup and control characters', () => {
+    expect(cleanLabel("  Sam's assistant ")).toBe("Sam's assistant")
+    expect(cleanLabel('a<b')).toBeNull()
+    expect(cleanLabel('a\u0007b')).toBeNull()
   })
 })
 

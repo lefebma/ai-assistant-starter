@@ -11,6 +11,11 @@
  * GOG_ACCESS_TOKEN in place of its own stored sign-ins, so no call site needs
  * to know where the token came from.
  *
+ * The refresh token the box holds is sealed by the relay to this box, so it is
+ * useless anywhere else; what the environment carries is an access token that
+ * lasts an hour. Anything that can run gog could already reach the mail, so
+ * the agent seeing an hour-long token is no wider than gog's own keyring.
+ *
  * Renewal starts once less than RENEW_BEFORE_MS is left, which leaves a turn
  * that started on the old token enough time to finish on it.
  *
@@ -19,8 +24,8 @@
  * list still shows what was connected, and the owner is told once to run
  * /connect gmail again.
  */
-import { signHandoff, REFRESH_PATH, SIGNATURE_HEADER } from './relay.js'
-import type { ConnectTokenVault } from './box.js'
+import { signHandoff, REFRESH_PATH, REVOKE_PATH, SIGNATURE_HEADER } from './relay.js'
+import type { ConnectTokenVault, Revoker } from './box.js'
 
 export const GMAIL_ENTRY = 'CONNECT_GMAIL'
 export const RENEW_BEFORE_MS = 30 * 60_000
@@ -50,6 +55,35 @@ export interface KeeperOpts {
 }
 
 let activeAccount: string | undefined
+
+export interface RelayClient {
+  relayUrl: string
+  boxId: string
+  handoffKey: string
+  fetchImpl?: typeof fetch
+  now?: () => number
+}
+
+/** A POST to the relay, signed with this box's hand-off key. Throws only if the relay cannot be reached. */
+export async function relayPost(c: RelayClient, path: string, fields: Record<string, unknown>): Promise<{ status: number; json: Record<string, unknown> }> {
+  const body = JSON.stringify({ box: c.boxId, ...fields, ts: (c.now ?? Date.now)() })
+  const res = await (c.fetchImpl ?? fetch)(new URL(path, c.relayUrl).toString(), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', [SIGNATURE_HEADER]: signHandoff(c.handoffKey, body) },
+    body,
+    redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
+  })
+  return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> }
+}
+
+/** Gmail revocation goes through the relay: only it can open the sealed refresh token. */
+export function relayRevoker(c: RelayClient, provider = 'gmail'): Revoker {
+  return async ({ refreshToken }) => {
+    const r = await relayPost(c, REVOKE_PATH, { provider, refreshToken })
+    if (r.status !== 200) throw new Error(`revoke ${r.status}`)
+  }
+}
 
 /**
  * The relay-connected Gmail account while its token is live, for the places
@@ -114,29 +148,22 @@ export class GmailTokenKeeper {
       this.set(e)
       return 'fresh'
     }
-    const body = JSON.stringify({ box: this.o.boxId, provider: 'gmail', refreshToken: e.refreshToken, ts: this.now() })
-    let res: Response
+    let res: { status: number; json: Record<string, unknown> }
     try {
-      res = await this.doFetch(new URL(REFRESH_PATH, this.o.relayUrl).toString(), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', [SIGNATURE_HEADER]: signHandoff(this.o.handoffKey, body) },
-        body,
-        redirect: 'error',
-        signal: AbortSignal.timeout(30_000),
-      })
+      res = await relayPost({ ...this.o, fetchImpl: this.doFetch, now: this.now }, REFRESH_PATH, { provider: 'gmail', refreshToken: e.refreshToken })
     } catch {
       // Relay unreachable: keep using the current token while it lasts.
       this.set(e)
       return 'failed'
     }
-    const j = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    const j = res.json
     if (res.status === 401 && j.error === 'invalid_grant') {
       this.o.vault.set(GMAIL_ENTRY, JSON.stringify({ ...e, revoked: true }))
       this.set(null)
       await this.o.onRevoked?.(e.account)
       return 'expired'
     }
-    if (!res.ok || typeof j.accessToken !== 'string' || typeof j.expiresAt !== 'number') {
+    if (res.status !== 200 || typeof j.accessToken !== 'string' || typeof j.expiresAt !== 'number') {
       this.set(e)
       return 'failed'
     }
@@ -155,10 +182,14 @@ export class GmailTokenKeeper {
   }
 }
 
-/** `accounts` plus the relay-connected Gmail account, when its token is live and it is not already listed. */
+/**
+ * The Google accounts gog will actually reach. While a relay-connected token
+ * is live, gog uses it whatever --account a call names, so that account is the
+ * only one: listing gog's older stored accounts as well would file the
+ * connected account's mail and events under their names.
+ */
 export function withRelayGmail(accounts: string[]): string[] {
-  const a = activeAccount
-  return a && !accounts.some((x) => x.toLowerCase() === a.toLowerCase()) ? [...accounts, a] : accounts
+  return activeAccount ? [activeAccount] : accounts
 }
 
 /** Test seam: what the keeper sets when a token goes live or is dropped. */

@@ -1,7 +1,7 @@
 /**
  * Sign-in relay (connect.gethavn.ai). Runs as a Worker-style fetch handler, so
  * it has no Node-only dependencies beyond node:crypto (available on Workers
- * with nodejs_compat).
+ * with nodejs_compat) and WebCrypto.
  *
  * Why it exists: Google forbids wildcard redirect addresses and a hosted box
  * cannot receive a redirect on its own, so every box shares this one address.
@@ -10,6 +10,10 @@
  *  - Any OAuth client secret lives here only (closed over by the providers).
  *    Microsoft needs none: the Havn app is a public client and the code is
  *    bound to the sign-in by PKCE instead.
+ *  - A sign-in link opens a page naming the assistant it connects to, and only
+ *    a click on that page (a same-origin POST, from a page that cannot be
+ *    framed) goes on to the provider. A link forwarded by someone else's box
+ *    cannot skip the page, so the person signing in sees whose it is.
  *  - Every sign-in uses PKCE (S256). The verifier is derived from the signing
  *    secret and the state's box and nonce, so the relay keeps nothing between
  *    /start and /callback and the verifier never travels in a URL.
@@ -17,12 +21,15 @@
  *  - The hand-off goes only to the origin the box registry lists for the box
  *    named in the state (never to a URL taken from the request), only over
  *    https, signed with that box's hand-off key.
- *  - Renewal (POST /refresh): a box sends its own refresh token, signed with
- *    its hand-off key, and gets a fresh access token back in the answer. This
- *    is how Gmail renews without the Web client's secret leaving the relay.
+ *  - Renewal (POST /refresh) and revocation (POST /revoke), for providers
+ *    whose renewal needs the relay's client secret (Gmail): the refresh token
+ *    the box holds is sealed to that box (AES-GCM, the box and provider as
+ *    associated data). It is useless outside the relay, and the relay renews
+ *    or revokes it only for the box it was sealed to, on a request signed with
+ *    that box's hand-off key.
  *  - No token is stored. The only thing kept is the key of a used state, until
- *    it could no longer verify anyway. The log line records that a hand-off happened and
- *    never contains a token or a code.
+ *    it could no longer verify anyway. Log lines record what happened and
+ *    never contain a token or a code.
  */
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { signState, verifyState, type UsedStore } from './state.js'
@@ -42,11 +49,16 @@ export interface RenewedTokens {
 }
 
 export interface RelayProvider {
+  /** Shown on the confirmation page: "Continue to Google". */
+  label: string
+  /** Origin the provider's sign-in page lives on, for the page's form-action policy. */
+  authOrigin: string
   /** `codeChallenge` is the S256 PKCE challenge for this sign-in. */
   authUrl(state: string, redirectUri: string, codeChallenge: string): string
   exchange(code: string, redirectUri: string, codeVerifier: string): Promise<ProviderTokens>
-  /** Only providers whose renewal needs the relay's client secret have this. */
+  /** Only providers whose renewal needs the relay's client secret have these. */
   refresh?(refreshToken: string): Promise<RenewedTokens>
+  revoke?(refreshToken: string): Promise<void>
 }
 
 /** The provider no longer honours this refresh token (revoked, expired, password changed). */
@@ -61,11 +73,15 @@ export interface BoxRecord {
   origin: string
   /** Shared with that box only. Signs the hand-off body. */
   handoffKey: string
+  /** Shown to the person signing in, e.g. "Marc's assistant". */
+  label?: string
 }
 
 export interface RelayOpts {
   publicUrl: string
   signingSecret: string
+  /** Seals refresh tokens to their box. Changing it disconnects every relay-renewed account. */
+  sealingSecret: string
   boxes: { get(id: string): BoxRecord | undefined | Promise<BoxRecord | undefined> }
   providers: Record<string, RelayProvider>
   used: UsedStore
@@ -77,9 +93,10 @@ export interface RelayOpts {
 export const HANDOFF_PATH = '/connect/handoff'
 export const SIGNATURE_HEADER = 'x-connect-signature'
 export const REFRESH_PATH = '/refresh'
+export const REVOKE_PATH = '/revoke'
 /** A signed renewal request older or newer than this is refused. */
 export const REFRESH_SKEW_MS = 5 * 60_000
-const MAX_REFRESH_BODY = 16 * 1024
+const MAX_BODY = 16 * 1024
 
 export function signHandoff(key: string, body: string): string {
   return createHmac('sha256', key).update(body).digest('hex')
@@ -94,29 +111,148 @@ export function pkceChallenge(verifier: string): string {
   return createHash('sha256').update(verifier).digest('base64url')
 }
 
-const page = (status: number, msg: string) =>
-  new Response(`<!doctype html><meta name="viewport" content="width=device-width"><body style="font-family:sans-serif;padding:2rem"><p>${msg}</p>`, {
-    status,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' },
-  })
+// --- sealing ------------------------------------------------------------------
+
+const SEAL_PREFIX = 's1.'
+
+async function sealKey(secret: string): Promise<CryptoKey> {
+  if (secret.length < 32) throw new Error('relay sealing secret must be at least 32 characters')
+  const raw = createHash('sha256').update(`seal:${secret}`).digest()
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt'])
+}
+
+/** Seals a refresh token to one box and provider. */
+export async function seal(secret: string, box: string, provider: string, token: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(`${box}:${provider}`) },
+    await sealKey(secret),
+    new TextEncoder().encode(token),
+  )
+  return SEAL_PREFIX + Buffer.concat([Buffer.from(iv), Buffer.from(ct)]).toString('base64url')
+}
+
+/** The token, or null if it was not sealed by this relay for this box and provider. */
+export async function unseal(secret: string, box: string, provider: string, sealed: string): Promise<string | null> {
+  if (!sealed.startsWith(SEAL_PREFIX)) return null
+  const buf = Buffer.from(sealed.slice(SEAL_PREFIX.length), 'base64url')
+  if (buf.length < 12 + 16) return null
+  try {
+    const pt = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: buf.subarray(0, 12), additionalData: new TextEncoder().encode(`${box}:${provider}`) },
+      await sealKey(secret),
+      buf.subarray(12),
+    )
+    return new TextDecoder().decode(pt)
+  } catch {
+    return null
+  }
+}
+
+// --- pages ---------------------------------------------------------------------
+
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+
+function html(status: number, body: string, formAction = "'none'"): Response {
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Havn</title>` +
+      `<body style="font-family:sans-serif;padding:2rem;max-width:32rem;line-height:1.5">${body}`,
+    {
+      status,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-frame-options': 'DENY',
+        'x-content-type-options': 'nosniff',
+        // form-action covers the redirect after the POST too (Chrome enforces it there).
+        'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action ${formAction}`,
+      },
+    },
+  )
+}
+
+const page = (status: number, msg: string) => html(status, `<p>${esc(msg)}</p>`)
+
+/** Reads a body up to `max` bytes, or null if it is longer (checked before and while reading). */
+export async function readCapped(req: Request, max = MAX_BODY): Promise<string | null> {
+  const declared = Number(req.headers.get('content-length') ?? '0')
+  if (declared > max) return null
+  if (!req.body) return ''
+  const reader = req.body.getReader()
+  const chunks: Uint8Array[] = []
+  let n = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    n += value.byteLength
+    if (n > max) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
 
 export function createRelay(opts: RelayOpts) {
   const now = opts.now ?? Date.now
   const doFetch = opts.fetchImpl ?? fetch
   const log = opts.log ?? (() => {})
-  const redirectUri = `${opts.publicUrl.replace(/\/$/, '')}/callback`
+  const base = opts.publicUrl.replace(/\/$/, '')
+  const relayOrigin = new URL(base).origin
+  const redirectUri = `${base}/callback`
+  const providerOf = (name: string) => (Object.hasOwn(opts.providers, name) ? opts.providers[name] : undefined)
+  const notValid = () => page(400, 'This sign-in link is not valid. Ask your assistant for a new one.')
 
-  async function start(url: URL): Promise<Response> {
+  async function checkStart(provider: string, box: string, nonce: string) {
+    const p = providerOf(provider)
+    const rec = p && nonce.length >= 16 && nonce.length <= 128 ? await opts.boxes.get(box) : undefined
+    return p && rec ? { p, rec } : null
+  }
+
+  /** GET /start: the confirmation page. Never redirects. */
+  async function confirm(url: URL): Promise<Response> {
     const provider = url.searchParams.get('provider') ?? ''
     const box = url.searchParams.get('box') ?? ''
     const nonce = url.searchParams.get('nonce') ?? ''
-    const p = Object.hasOwn(opts.providers, provider) ? opts.providers[provider] : undefined
-    if (!p || !(await opts.boxes.get(box)) || nonce.length < 16 || nonce.length > 128) {
-      return page(400, 'This sign-in link is not valid. Ask your assistant for a new one.')
+    const ok = await checkStart(provider, box, nonce)
+    if (!ok) return notValid()
+    const who = esc(ok.rec.label || box)
+    const hidden = (n: string, v: string) => `<input type="hidden" name="${n}" value="${esc(v)}">`
+    return html(
+      200,
+      `<h1 style="font-size:1.3rem">Connect your ${esc(ok.p.label)} mail and calendar</h1>` +
+        `<p>This gives <strong>${who}</strong> access to read and send your email and manage your calendar.</p>` +
+        `<p><strong>Only continue if you asked your own assistant for this link just now.</strong> ` +
+        `If someone sent it to you, close this page. Continuing would give them your mail.</p>` +
+        `<form method="post" action="/start">${hidden('provider', provider)}${hidden('box', box)}${hidden('nonce', nonce)}` +
+        `<button type="submit" style="font-size:1rem;padding:.6rem 1.2rem">Continue to ${esc(ok.p.label)}</button></form>`,
+      `'self' ${ok.p.authOrigin}`,
+    )
+  }
+
+  /** POST /start: the click on the confirmation page, and only that, goes on to the provider. */
+  async function go(req: Request): Promise<Response> {
+    // A forwarded link is a GET; a form on another site carries its own Origin;
+    // the page cannot be framed. So this only passes for a click on our page.
+    const origin = req.headers.get('origin')
+    const site = req.headers.get('sec-fetch-site')
+    if (origin !== relayOrigin || (site !== null && site !== 'same-origin')) {
+      log({ event: 'start_refused', reason: 'cross_site' })
+      return notValid()
     }
+    const raw = await readCapped(req, 2048)
+    if (raw === null) return notValid()
+    const f = new URLSearchParams(raw)
+    const provider = f.get('provider') ?? ''
+    const box = f.get('box') ?? ''
+    const nonce = f.get('nonce') ?? ''
+    const ok = await checkStart(provider, box, nonce)
+    if (!ok) return notValid()
     const state = signState(opts.signingSecret, { box, provider, nonce }, now())
     const challenge = pkceChallenge(pkceVerifier(opts.signingSecret, box, nonce))
-    return new Response(null, { status: 302, headers: { location: p.authUrl(state, redirectUri, challenge), 'cache-control': 'no-store' } })
+    return new Response(null, { status: 303, headers: { location: ok.p.authUrl(state, redirectUri, challenge), 'cache-control': 'no-store' } })
   }
 
   async function callback(url: URL): Promise<Response> {
@@ -133,13 +269,15 @@ export function createRelay(opts: RelayOpts) {
       return page(400, 'Sign-in was not completed. Nothing was connected.')
     }
     const rec = await opts.boxes.get(box)
-    const p = Object.hasOwn(opts.providers, provider) ? opts.providers[provider] : undefined
+    const p = providerOf(provider)
     if (!rec || !p || !rec.origin.startsWith('https://')) {
       log({ event: 'handoff_failed', box, provider, reason: 'box_unreachable_or_insecure' })
       return page(502, 'Could not reach your assistant. Ask it for a new link.')
     }
     try {
       const tokens = await p.exchange(url.searchParams.get('code')!, redirectUri, pkceVerifier(opts.signingSecret, box, nonce))
+      // A token only the relay can renew leaves here sealed to this box.
+      if (p.refresh) tokens.refreshToken = await seal(opts.sealingSecret, box, provider, tokens.refreshToken)
       const body = JSON.stringify({ nonce, provider, ts: now(), ...tokens })
       const res = await doFetch(`${rec.origin}${HANDOFF_PATH}`, {
         method: 'POST',
@@ -149,7 +287,7 @@ export function createRelay(opts: RelayOpts) {
       })
       if (!res.ok) throw new Error(`box answered ${res.status}`)
       log({ event: 'handoff', box, provider, ok: true })
-      return page(200, 'Connected. You can close this tab and go back to your chat.')
+      return page(200, `Connected to ${rec.label || box}. You can close this tab and go back to your chat.`)
     } catch (err) {
       // Message only: never the error object, which could echo a request body.
       log({ event: 'handoff_failed', box, provider, reason: err instanceof Error ? err.message.slice(0, 80) : 'error' })
@@ -160,9 +298,14 @@ export function createRelay(opts: RelayOpts) {
   const answer = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
 
-  async function refresh(req: Request): Promise<Response> {
-    const raw = await req.text()
-    if (raw.length > MAX_REFRESH_BODY) return answer(413, { error: 'too_large' })
+  /**
+   * Shared by /refresh and /revoke: a body {box, provider, refreshToken, ts}
+   * signed with that box's hand-off key, recent, for a provider the relay
+   * renews, carrying a token sealed to that same box.
+   */
+  async function boxRequest(req: Request, event: string): Promise<{ box: string; provider: string; p: RelayProvider; token: string } | Response> {
+    const raw = await readCapped(req)
+    if (raw === null) return answer(413, { error: 'too_large' })
     let b: Record<string, unknown>
     try {
       b = JSON.parse(raw)
@@ -178,25 +321,52 @@ export function createRelay(opts: RelayOpts) {
     const got = /^[0-9a-f]{64}$/.test(sig) ? Buffer.from(sig, 'hex') : Buffer.alloc(0)
     const want = rec ? createHmac('sha256', rec.handoffKey).update(raw).digest() : Buffer.alloc(32)
     if (!rec || got.length !== want.length || !timingSafeEqual(got, want)) {
-      log({ event: 'refresh_refused', reason: 'signature' })
+      log({ event: `${event}_refused`, reason: 'signature' })
       return answer(401, { error: 'unauthorized' })
     }
     if (Math.abs(now() - ts) > REFRESH_SKEW_MS) {
-      log({ event: 'refresh_refused', box, reason: 'stale' })
+      log({ event: `${event}_refused`, box, reason: 'stale' })
       return answer(401, { error: 'stale' })
     }
-    const p = Object.hasOwn(opts.providers, provider) ? opts.providers[provider] : undefined
+    const p = providerOf(provider)
     if (!p?.refresh) return answer(400, { error: 'no_refresh_for_provider' })
+    const token = await unseal(opts.sealingSecret, box, provider, refreshToken)
+    if (token === null) {
+      log({ event: `${event}_refused`, box, provider, reason: 'not_sealed_for_box' })
+      return answer(401, { error: 'not_yours' })
+    }
+    return { box, provider, p, token }
+  }
+
+  async function refresh(req: Request): Promise<Response> {
+    const r = await boxRequest(req, 'refresh')
+    if (r instanceof Response) return r
     try {
-      const t = await p.refresh(refreshToken)
-      log({ event: 'refresh', box, provider, ok: true })
-      return answer(200, t)
+      const t = await r.p.refresh!(r.token)
+      const out: RenewedTokens = { accessToken: t.accessToken, expiresAt: t.expiresAt }
+      if (t.refreshToken) out.refreshToken = await seal(opts.sealingSecret, r.box, r.provider, t.refreshToken)
+      log({ event: 'refresh', box: r.box, provider: r.provider, ok: true })
+      return answer(200, out)
     } catch (err) {
       if (err instanceof GrantRevokedError) {
-        log({ event: 'refresh_failed', box, provider, reason: 'invalid_grant' })
+        log({ event: 'refresh_failed', box: r.box, provider: r.provider, reason: 'invalid_grant' })
         return answer(401, { error: 'invalid_grant' })
       }
-      log({ event: 'refresh_failed', box, provider, reason: err instanceof Error ? err.message.slice(0, 80) : 'error' })
+      log({ event: 'refresh_failed', box: r.box, provider: r.provider, reason: err instanceof Error ? err.message.slice(0, 80) : 'error' })
+      return answer(502, { error: 'provider_unavailable' })
+    }
+  }
+
+  async function revoke(req: Request): Promise<Response> {
+    const r = await boxRequest(req, 'revoke')
+    if (r instanceof Response) return r
+    if (!r.p.revoke) return answer(400, { error: 'no_revoke_for_provider' })
+    try {
+      await r.p.revoke(r.token)
+      log({ event: 'revoke', box: r.box, provider: r.provider, ok: true })
+      return answer(200, { ok: true })
+    } catch (err) {
+      log({ event: 'revoke_failed', box: r.box, provider: r.provider, reason: err instanceof Error ? err.message.slice(0, 80) : 'error' })
       return answer(502, { error: 'provider_unavailable' })
     }
   }
@@ -204,9 +374,14 @@ export function createRelay(opts: RelayOpts) {
   return {
     async handle(req: Request): Promise<Response> {
       const url = new URL(req.url)
-      if (req.method === 'POST' && url.pathname === REFRESH_PATH) return refresh(req)
+      if (req.method === 'POST') {
+        if (url.pathname === REFRESH_PATH) return refresh(req)
+        if (url.pathname === REVOKE_PATH) return revoke(req)
+        if (url.pathname === '/start') return go(req)
+        return new Response('not found', { status: 404 })
+      }
       if (req.method !== 'GET') return new Response('method not allowed', { status: 405 })
-      if (url.pathname === '/start') return start(url)
+      if (url.pathname === '/start') return confirm(url)
       if (url.pathname === '/callback') return callback(url)
       return new Response('not found', { status: 404 })
     },

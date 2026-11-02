@@ -4,8 +4,7 @@
  * (http-server -> web -> bot).
  */
 import { ConnectFlow } from './box.js'
-import { GmailTokenKeeper } from './gmail-token.js'
-import { googleRevoker, microsoftRevoker } from './providers.js'
+import { GmailTokenKeeper, relayRevoker } from './gmail-token.js'
 import { getSecret, defaultVault } from '../vault/index.js'
 import { saveTokens, loadTokens, clearTokens, listAuthedAccounts } from '../ms/store.js'
 
@@ -37,7 +36,7 @@ export function getConnectFlow(): ConnectFlow | null {
     relayUrl, boxId, handoffKey,
     vault,
     msTokens: { save: saveTokens, load: loadTokens, clear: clearTokens, list: () => listAuthedAccounts() },
-    revokers: { gmail: googleRevoker(), outlook: microsoftRevoker() },
+    revokers: { gmail: relayRevoker({ relayUrl, boxId, handoffKey }) },
     onChange: async (p) => {
       if (p === 'gmail') await k.tick()
     },

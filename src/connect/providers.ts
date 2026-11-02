@@ -1,12 +1,10 @@
 /**
- * Real provider adapters. Relay side: authUrl + exchange (Google's client
- * secret is passed in by the relay's own config and closed over here;
- * Microsoft has none). Box side: revokers, which need no client secret. Tests
+ * Real provider adapters, all relay side (Google's client secret is passed in
+ * by the relay's own config and closed over here; Microsoft has none). Tests
  * drive them with a fake fetch. Not usable until the relay's /callback is
  * registered on the Google and Microsoft apps (cards 205/207).
  */
 import { GrantRevokedError, type ProviderTokens, type RelayProvider } from './relay.js'
-import type { Revoker } from './box.js'
 
 export interface OAuthApp {
   clientId: string
@@ -53,6 +51,8 @@ export const MICROSOFT_SCOPES = [
 
 export function googleProvider(app: OAuthApp, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): RelayProvider {
   return {
+    label: 'Google',
+    authOrigin: 'https://accounts.google.com',
     authUrl: (state, redirectUri, codeChallenge) =>
       'https://accounts.google.com/o/oauth2/v2/auth?' +
       new URLSearchParams({
@@ -82,6 +82,15 @@ export function googleProvider(app: OAuthApp, fetchImpl: typeof fetch = fetch, n
         ...(typeof j.refresh_token === 'string' ? { refreshToken: j.refresh_token } : {}),
       }
     },
+    // Revoking the refresh token ends the whole grant; it needs no secret.
+    async revoke(refreshToken) {
+      const res = await fetchImpl('https://oauth2.googleapis.com/revoke', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: refreshToken }).toString(),
+      })
+      if (!res.ok) throw new Error(`revoke ${res.status}`)
+    },
   }
 }
 
@@ -95,6 +104,8 @@ export function googleProvider(app: OAuthApp, fetchImpl: typeof fetch = fetch, n
  */
 export function microsoftProvider(clientId: string, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): RelayProvider {
   return {
+    label: 'Microsoft',
+    authOrigin: 'https://login.microsoftonline.com',
     authUrl: (state, redirectUri, codeChallenge) =>
       'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?' +
       new URLSearchParams({
@@ -107,28 +118,5 @@ export function microsoftProvider(clientId: string, fetchImpl: typeof fetch = fe
       })
       return toTokens(j, emailFromIdToken(j.id_token), now())
     },
-  }
-}
-
-/** Google revokes by token and needs no client secret. */
-export function googleRevoker(fetchImpl: typeof fetch = fetch): Revoker {
-  return async ({ refreshToken }) => {
-    const res = await fetchImpl('https://oauth2.googleapis.com/revoke', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token: refreshToken }).toString(),
-    })
-    if (!res.ok) throw new Error(`revoke ${res.status}`)
-  }
-}
-
-/** Microsoft has no token revoke endpoint; this invalidates the account's refresh tokens via Graph. */
-export function microsoftRevoker(fetchImpl: typeof fetch = fetch): Revoker {
-  return async ({ accessToken }) => {
-    const res = await fetchImpl('https://graph.microsoft.com/v1.0/me/revokeSignInSessions', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${accessToken}` },
-    })
-    if (!res.ok) throw new Error(`revoke ${res.status}`)
   }
 }

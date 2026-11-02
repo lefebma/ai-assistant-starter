@@ -36,7 +36,7 @@ function setup(revoker?: Revoker) {
     msTokens: ms,
     onChange: (p) => void changes.push(p),
     now: () => t,
-    revokers: { gmail: revoker ?? (async (tok) => void revoked.push(tok.refreshToken)), outlook: async (tok) => void revoked.push(tok.refreshToken) },
+    revokers: { gmail: revoker ?? (async (tok) => void revoked.push(tok.refreshToken)) },
   })
   const nonceOf = (reply: string) => new URL(reply.match(/https:\/\/\S+/)![0]).searchParams.get('nonce')!
   const body = (nonce: string, over: Record<string, unknown> = {}) =>
@@ -136,7 +136,7 @@ describe('Outlook hand-off', () => {
     expect(s.vault.data.has('CONNECT_OUTLOOK')).toBe(false)
     expect(s.flow.handleCommand('c', '/connect list').reply).toBe('outlook: ME_CONTOSO_COM')
   })
-  it('removes one mailbox by address, revoking first', async () => {
+  it('removes one mailbox by address, and says where to withdraw access at Microsoft', async () => {
     const s = setup()
     for (const account of ['a@x.com', 'b@x.com']) {
       const nonce = s.nonceOf(s.flow.handleCommand('c', '/connect outlook').reply)
@@ -144,8 +144,9 @@ describe('Outlook hand-off', () => {
     }
     expect((await s.flow.handleCommandAsync('c', '/connect remove outlook')).reply).toContain('Which mailbox?')
     const r = await s.flow.handleCommandAsync('c', '/connect remove outlook b@x.com')
-    expect(r.reply).toContain('revoked at the provider')
-    expect(s.revoked).toEqual(['RT-b@x.com'])
+    expect(r.reply).toContain('account.live.com/consent/Manage')
+    expect(r.reply).not.toContain('revoked at the provider')
+    expect(s.revoked).toEqual([])
     expect([...s.ms.data.keys()]).toEqual(['A_X_COM'])
   })
   it('removes the only mailbox without naming it', async () => {
