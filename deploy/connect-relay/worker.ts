@@ -13,7 +13,8 @@
  * No token is ever stored here. Google's client secret is a Worker secret;
  * Microsoft needs none (public client with PKCE).
  *
- * Public routes (from createRelay): GET /start, GET /callback.
+ * Public routes (from createRelay): GET /start, GET /callback, and POST /refresh
+ * (Gmail renewal, signed with the box's hand-off key).
  * Admin routes take `Authorization: Bearer <admin token>` (its SHA-256 is the
  * ADMIN_TOKEN_SHA256 secret):
  *   POST   /admin/boxes/<box>  {origin}  -> {box, origin, handoffKey}  (replaces any earlier key)

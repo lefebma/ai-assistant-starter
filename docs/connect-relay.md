@@ -1,6 +1,6 @@
 # Sign-in relay and /connect (card #206)
 
-Status: relay and box built and tested with fakes; the Worker bundles. Not live: the relay is not deployed, its `/callback` is not yet registered on the Google and Microsoft apps, and Gmail tokens are not yet used by the Gmail tools (see below).
+Status: relay and box built and tested with fakes; the Worker bundles. Not live: the relay is not deployed and its `/callback` is not yet registered on the Google and Microsoft apps.
 
 Relay (`src/connect/relay.ts`, packaged as a Worker in `deploy/connect-relay/`, at connect.gethavn.ai): `GET /start` mints a signed single-use 10-minute state naming the box and redirects with a PKCE challenge; `GET /callback` verifies and spends the state, exchanges the code with the matching verifier, and POSTs the result to the registered https origin of that box, signed with that box's hand-off key. The verifier is derived from the signing secret, box and nonce, so nothing is kept between the two steps. A Durable Object holds the used-state keys (so a link works once across every copy of the Worker) and the box registry. No token is stored; the log records the fact of a hand-off only. Deploy and box registration: `deploy/connect-relay/README.md`.
 
@@ -13,4 +13,10 @@ Box config (vault or env): `CONNECT_RELAY_URL` (https), `CONNECT_BOX_ID`, `CONNE
 Where tokens land:
 
 - **Outlook:** the Microsoft token store (`MS_TOKENS_<account>`, `src/ms/store.ts`), the same entry a device-code sign-in writes. The Outlook tools, `ms-auth status` and the web Connections page use it as is, and the box refreshes it with the public client id.
-- **Gmail:** `CONNECT_GMAIL`, which nothing reads yet. A refresh token issued to the relay's Web client can only be refreshed with that client's secret, which the box must not hold. Open decision: the box asks the relay to refresh (the relay becomes a dependency for every Gmail call, about hourly), or the box holds the Web client secret. Until then `/connect gmail` should not be offered to clients.
+- **Gmail:** `CONNECT_GMAIL`. A refresh token from the relay's Google Web client can only be renewed with that client's secret, which stays on the relay. So the relay renews it (decided 2026-11-01): `GmailTokenKeeper` (`src/connect/gmail-token.ts`) checks every 5 minutes and, once under 30 minutes are left, posts the refresh token to the relay's `POST /refresh`, signed with the box's hand-off key, and gets a fresh access token back. It keeps that token in the service's `GOG_ACCESS_TOKEN`, which every gog call inherits (the agent's Bash, email alerts, the proactive calendar scan) and which gog uses in place of its own stored sign-ins. Email alerts, the proactive calendar and the web Connections page also list the account, since `gog auth list` does not know it.
+
+  What that means in practice:
+  - **The relay is a dependency for Gmail.** If it is unreachable, the box keeps the current token until it expires (at least 30 minutes after renewal first fails), then Gmail stops until the relay is back. Outlook does not depend on the relay after sign-in.
+  - **A connected relay account takes over gog.** While its token is live, gog calls use it whatever `--account` they name, so a box should not mix a relay-connected Gmail with older gog sign-ins.
+  - **When Google withdraws access** (revoked, password change), the relay answers `invalid_grant`; the box drops the token, keeps the entry (so `/connect list` still shows it), and tells the owner once to run `/connect gmail` again.
+  - A turn longer than 30 minutes can outlive the token it started with.

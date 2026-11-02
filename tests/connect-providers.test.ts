@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { googleProvider, microsoftProvider, googleRevoker, microsoftRevoker, MICROSOFT_SCOPES } from '../src/connect/providers.js'
 import { MS_SCOPES } from '../src/ms/cli.js'
+import { GrantRevokedError } from '../src/connect/relay.js'
 
 const idToken = 'h.' + Buffer.from(JSON.stringify({ email: 'x@y.com' })).toString('base64url') + '.s'
 
@@ -42,6 +43,22 @@ describe('provider adapters (fake fetch)', () => {
   })
   it('asks Microsoft for every scope the box refreshes with', () => {
     for (const s of MS_SCOPES.split(' ')) expect(MICROSOFT_SCOPES).toContain(s)
+  })
+  it('google renewal sends the secret, returns the new token, and maps invalid_grant without echoing the body', async () => {
+    let sent = ''
+    const ok = (async (_u: string, init: RequestInit) => {
+      sent = String(init.body)
+      return new Response(JSON.stringify({ access_token: 'new', expires_in: 100 }))
+    }) as unknown as typeof fetch
+    const g = googleProvider({ clientId: 'cid', clientSecret: 'SECRET' }, ok, () => 0)
+    expect(await g.refresh!('RT')).toEqual({ accessToken: 'new', expiresAt: 100_000 })
+    expect(sent).toContain('grant_type=refresh_token')
+    expect(sent).toContain('client_secret=SECRET')
+    const revoked = (async () => new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'echo RT' }), { status: 400 })) as unknown as typeof fetch
+    await expect(googleProvider({ clientId: 'c', clientSecret: 's' }, revoked).refresh!('RT')).rejects.toBeInstanceOf(GrantRevokedError)
+    const down = (async () => new Response('leaky RT', { status: 503 })) as unknown as typeof fetch
+    await expect(googleProvider({ clientId: 'c', clientSecret: 's' }, down).refresh!('RT')).rejects.toThrow(/^token endpoint 503$/)
+    expect(microsoftProvider('c').refresh).toBeUndefined()
   })
   it('revokers throw when the provider does not confirm', async () => {
     const bad = (async () => new Response('', { status: 400 })) as unknown as typeof fetch

@@ -17,11 +17,14 @@
  *  - The hand-off goes only to the origin the box registry lists for the box
  *    named in the state (never to a URL taken from the request), only over
  *    https, signed with that box's hand-off key.
+ *  - Renewal (POST /refresh): a box sends its own refresh token, signed with
+ *    its hand-off key, and gets a fresh access token back in the answer. This
+ *    is how Gmail renews without the Web client's secret leaving the relay.
  *  - No token is stored. The only thing kept is the key of a used state, until
  *    it could no longer verify anyway. The log line records that a hand-off happened and
  *    never contains a token or a code.
  */
-import { createHash, createHmac } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { signState, verifyState, type UsedStore } from './state.js'
 
 export interface ProviderTokens {
@@ -31,10 +34,26 @@ export interface ProviderTokens {
   expiresAt: number
 }
 
+export interface RenewedTokens {
+  accessToken: string
+  expiresAt: number
+  /** Present only when the provider rotated it. */
+  refreshToken?: string
+}
+
 export interface RelayProvider {
   /** `codeChallenge` is the S256 PKCE challenge for this sign-in. */
   authUrl(state: string, redirectUri: string, codeChallenge: string): string
   exchange(code: string, redirectUri: string, codeVerifier: string): Promise<ProviderTokens>
+  /** Only providers whose renewal needs the relay's client secret have this. */
+  refresh?(refreshToken: string): Promise<RenewedTokens>
+}
+
+/** The provider no longer honours this refresh token (revoked, expired, password changed). */
+export class GrantRevokedError extends Error {
+  constructor() {
+    super('invalid_grant')
+  }
 }
 
 export interface BoxRecord {
@@ -57,6 +76,10 @@ export interface RelayOpts {
 
 export const HANDOFF_PATH = '/connect/handoff'
 export const SIGNATURE_HEADER = 'x-connect-signature'
+export const REFRESH_PATH = '/refresh'
+/** A signed renewal request older or newer than this is refused. */
+export const REFRESH_SKEW_MS = 5 * 60_000
+const MAX_REFRESH_BODY = 16 * 1024
 
 export function signHandoff(key: string, body: string): string {
   return createHmac('sha256', key).update(body).digest('hex')
@@ -134,9 +157,54 @@ export function createRelay(opts: RelayOpts) {
     }
   }
 
+  const answer = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
+
+  async function refresh(req: Request): Promise<Response> {
+    const raw = await req.text()
+    if (raw.length > MAX_REFRESH_BODY) return answer(413, { error: 'too_large' })
+    let b: Record<string, unknown>
+    try {
+      b = JSON.parse(raw)
+    } catch {
+      return answer(400, { error: 'bad_request' })
+    }
+    const { box, provider, refreshToken, ts } = b
+    if (typeof box !== 'string' || typeof provider !== 'string' || typeof refreshToken !== 'string' || typeof ts !== 'number') {
+      return answer(400, { error: 'bad_request' })
+    }
+    const rec = await opts.boxes.get(box)
+    const sig = req.headers.get(SIGNATURE_HEADER) ?? ''
+    const got = /^[0-9a-f]{64}$/.test(sig) ? Buffer.from(sig, 'hex') : Buffer.alloc(0)
+    const want = rec ? createHmac('sha256', rec.handoffKey).update(raw).digest() : Buffer.alloc(32)
+    if (!rec || got.length !== want.length || !timingSafeEqual(got, want)) {
+      log({ event: 'refresh_refused', reason: 'signature' })
+      return answer(401, { error: 'unauthorized' })
+    }
+    if (Math.abs(now() - ts) > REFRESH_SKEW_MS) {
+      log({ event: 'refresh_refused', box, reason: 'stale' })
+      return answer(401, { error: 'stale' })
+    }
+    const p = Object.hasOwn(opts.providers, provider) ? opts.providers[provider] : undefined
+    if (!p?.refresh) return answer(400, { error: 'no_refresh_for_provider' })
+    try {
+      const t = await p.refresh(refreshToken)
+      log({ event: 'refresh', box, provider, ok: true })
+      return answer(200, t)
+    } catch (err) {
+      if (err instanceof GrantRevokedError) {
+        log({ event: 'refresh_failed', box, provider, reason: 'invalid_grant' })
+        return answer(401, { error: 'invalid_grant' })
+      }
+      log({ event: 'refresh_failed', box, provider, reason: err instanceof Error ? err.message.slice(0, 80) : 'error' })
+      return answer(502, { error: 'provider_unavailable' })
+    }
+  }
+
   return {
     async handle(req: Request): Promise<Response> {
       const url = new URL(req.url)
+      if (req.method === 'POST' && url.pathname === REFRESH_PATH) return refresh(req)
       if (req.method !== 'GET') return new Response('method not allowed', { status: 405 })
       if (url.pathname === '/start') return start(url)
       if (url.pathname === '/callback') return callback(url)

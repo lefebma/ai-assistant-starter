@@ -24,6 +24,7 @@ function memMs(): MsTokenStore & { data: Map<string, { accessToken: string; refr
 
 function setup(revoker?: Revoker) {
   let t = 5_000_000
+  const changes: string[] = []
   const vault = memVault()
   const ms = memMs()
   const revoked: string[] = []
@@ -33,6 +34,7 @@ function setup(revoker?: Revoker) {
     handoffKey: HKEY,
     vault,
     msTokens: ms,
+    onChange: (p) => void changes.push(p),
     now: () => t,
     revokers: { gmail: revoker ?? (async (tok) => void revoked.push(tok.refreshToken)), outlook: async (tok) => void revoked.push(tok.refreshToken) },
   })
@@ -40,7 +42,7 @@ function setup(revoker?: Revoker) {
   const body = (nonce: string, over: Record<string, unknown> = {}) =>
     JSON.stringify({ nonce, provider: 'gmail', ts: t, account: 'x@y.com', accessToken: 'AT', refreshToken: 'RT', expiresAt: 1, ...over })
   const send = (raw: string, sig = signHandoff(HKEY, raw)) => flow.acceptHandoff(raw, sig)
-  return { flow, vault, ms, revoked, nonceOf, body, send, advance: (d: number) => (t += d) }
+  return { flow, vault, ms, changes, revoked, nonceOf, body, send, advance: (d: number) => (t += d) }
 }
 
 describe('/connect start', () => {
@@ -71,6 +73,15 @@ describe('hand-off acceptance', () => {
     expect(r.message).toBe('Connected x@y.com, mail and calendar working.')
     expect(JSON.parse(s.vault.data.get('CONNECT_GMAIL')!)).toMatchObject({ account: 'x@y.com', refreshToken: 'RT' })
     expect(r.message).not.toContain('RT')
+  })
+  it('tells the keeper after a connect and after a removal, never after a refusal', async () => {
+    const s = setup()
+    const nonce = s.nonceOf(s.flow.handleCommand('c', '/connect gmail').reply)
+    await s.send(s.body(nonce))
+    await s.send(s.body(nonce))
+    expect(s.changes).toEqual(['gmail'])
+    await s.flow.handleCommandAsync('c', '/connect remove gmail')
+    expect(s.changes).toEqual(['gmail', 'gmail'])
   })
   it('accepts a state only once', async () => {
     const s = setup()

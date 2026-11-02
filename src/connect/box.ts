@@ -14,7 +14,8 @@
  * entry per mailbox, the same place a device-code sign-in puts them. So the
  * Outlook tools, ms-auth status and the web Connections page all see the new
  * mailbox, and the box refreshes it with the public client id alone. Gmail
- * tokens sit in CONNECT_GMAIL until the Gmail tools can use them.
+ * tokens go to CONNECT_GMAIL, which the relay renews and GmailTokenKeeper
+ * (gmail-token.ts) hands to gog.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
@@ -45,6 +46,8 @@ export interface ConnectOpts {
   revokers: Record<string, Revoker>
   now?: () => number
   ttlMs?: number
+  /** Called after a provider is connected or removed. */
+  onChange?: (provider: string) => void | Promise<void>
 }
 
 export interface HandoffResult {
@@ -133,7 +136,9 @@ export class ConnectFlow {
       } catch {
         /* corrupt entry: nothing to revoke, fall through to delete */
       }
-      return this.remove('gmail', 'gmail', t, localOnly, () => this.o.vault.delete(vaultName('gmail')))
+      const out = await this.remove('gmail', 'gmail', t, localOnly, () => this.o.vault.delete(vaultName('gmail')))
+      if (!this.o.vault.get(vaultName('gmail'))) await this.o.onChange?.('gmail')
+      return out
     }
     if (provider === 'outlook') {
       const accounts = this.o.msTokens.list()
@@ -144,7 +149,9 @@ export class ConnectFlow {
       }
       const t = this.o.msTokens.load(account)
       if (!t) return { reply: `Nothing connected for outlook ${account}.` }
-      return this.remove('outlook', `outlook ${account}`, t, localOnly, () => this.o.msTokens.clear(account))
+      const out = await this.remove('outlook', `outlook ${account}`, t, localOnly, () => this.o.msTokens.clear(account))
+      if (!this.o.msTokens.load(account)) await this.o.onChange?.('outlook')
+      return out
     }
     return { reply: 'Usage: /connect remove gmail, or /connect remove outlook <account>' }
   }
@@ -190,6 +197,7 @@ export class ConnectFlow {
     } else {
       this.o.vault.set(vaultName(provider), JSON.stringify({ account, accessToken, refreshToken, expiresAt }))
     }
+    await this.o.onChange?.(provider)
     return { status: 200, chatId: p.chatId, message: `Connected ${account}, mail and calendar working.` }
   }
 

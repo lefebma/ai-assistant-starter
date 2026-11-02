@@ -14,6 +14,7 @@ import { resolveGogBin } from '../infra/gog-bin.js'
 import { readEnvFile } from '../env.js'
 import type { GraphLike } from '../ms/mail.js'
 import { defaultExec, parseGogAccounts, type Exec } from '../email-alerts/sources.js'
+import { withRelayGmail } from '../connect/gmail-token.js'
 
 export interface Attendee {
   email: string
@@ -224,15 +225,14 @@ export async function discoverCalendars(deps: CalendarDeps): Promise<CalendarSou
   const sources: CalendarSource[] = []
   try {
     const auth = await exec(gogBin(), ['auth', 'list', '--plain'])
-    if (auth.ok) {
-      for (const account of parseGogAccounts(auth.stdout, 'calendar')) {
-        sources.push({
-          id: account,
-          provider: 'google',
-          address: account.toLowerCase(),
-          events: (from, to) => googleEvents(exec, account, from, to),
-        })
-      }
+    // gog lists only its own stored sign-ins; a relay-connected account runs on GOG_ACCESS_TOKEN.
+    for (const account of withRelayGmail(auth.ok ? parseGogAccounts(auth.stdout, 'calendar') : [])) {
+      sources.push({
+        id: account,
+        provider: 'google',
+        address: account.toLowerCase(),
+        events: (from, to) => googleEvents(exec, account, from, to),
+      })
     }
   } catch {
     // no Google calendars this tick

@@ -1,13 +1,34 @@
 /**
- * The hand-off route. Unconfigured boxes expose it as a 404.
+ * The hand-off route (unconfigured boxes expose it as a 404), and the Gmail
+ * token keeper's timer, which runs only when /connect is configured.
  */
 import { SIGNATURE_HEADER, HANDOFF_PATH } from './relay.js'
-import { getConnectFlow } from './instance.js'
+import { getConnectFlow, getGmailKeeper, setGmailRevokedHandler } from './instance.js'
+import { KEEPER_TICK_MS } from './gmail-token.js'
+import { PRIMARY_CHAT_ID } from '../config.js'
 import { registerHttpRoute, readBodyCapped } from '../http-server.js'
 import { sendTelegram } from '../notify.js'
 import { logger } from '../logger.js'
 
+function startGmailKeeper(): void {
+  const keeper = getGmailKeeper()
+  if (!keeper) return
+  setGmailRevokedHandler(async (account) => {
+    logger.warn('connect: Gmail grant revoked at Google')
+    await sendTelegram(`Gmail access for ${account} was withdrawn at Google, so I can no longer read or send mail there. Run /connect gmail to sign in again.`, { chatId: PRIMARY_CHAT_ID || undefined })
+  })
+  const tick = () => {
+    keeper.tick().then(
+      (r) => { if (r === 'failed') logger.warn('connect: Gmail token renewal failed, will retry') },
+      (err) => logger.warn({ err: err instanceof Error ? err.message : 'error' }, 'connect: Gmail keeper error'),
+    )
+  }
+  tick()
+  setInterval(tick, KEEPER_TICK_MS).unref()
+}
+
 export function registerConnectRoute(): void {
+  startGmailKeeper()
   registerHttpRoute('POST', HANDOFF_PATH, async (req, res) => {
     const f = getConnectFlow()
     const reply = (code: number) => { res.writeHead(code); res.end() }

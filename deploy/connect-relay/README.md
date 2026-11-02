@@ -6,6 +6,12 @@ Microsoft, takes the result at `/callback`, and posts the tokens to that box
 over https, signed with the box's own hand-off key. Code: `src/connect/`
 (shared with the box), `deploy/connect-relay/worker.ts` (the Worker).
 
+It also renews Gmail: a box posts its refresh token to `POST /refresh`, signed
+with its hand-off key, and gets a fresh access token back, because only the
+relay holds the Google Web client's secret. That makes the relay a live
+dependency for Gmail (a box keeps working for at least 30 minutes after the
+relay goes away). Outlook needs the relay only to sign in.
+
 What the relay keeps: the box registry (origin and hand-off key per box) and,
 for ten minutes, the key of each used sign-in state so a link works once. It
 never keeps a token. Google's client secret is a Worker secret; Microsoft needs

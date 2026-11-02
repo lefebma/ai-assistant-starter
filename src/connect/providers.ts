@@ -5,7 +5,7 @@
  * drive them with a fake fetch. Not usable until the relay's /callback is
  * registered on the Google and Microsoft apps (cards 205/207).
  */
-import type { ProviderTokens, RelayProvider } from './relay.js'
+import { GrantRevokedError, type ProviderTokens, type RelayProvider } from './relay.js'
 import type { Revoker } from './box.js'
 
 export interface OAuthApp {
@@ -64,6 +64,23 @@ export function googleProvider(app: OAuthApp, fetchImpl: typeof fetch = fetch, n
         code, client_id: app.clientId, client_secret: app.clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code', code_verifier: codeVerifier,
       })
       return toTokens(j, emailFromIdToken(j.id_token), now())
+    },
+    // Google ties a Web client's refresh token to its secret, so renewal runs here.
+    async refresh(refreshToken) {
+      const res = await fetchImpl('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: app.clientId, client_secret: app.clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }).toString(),
+      })
+      const j = (await res.json().catch(() => ({}))) as Record<string, unknown>
+      // Only the error code is read, never echoed: the body can repeat request fields.
+      if (j.error === 'invalid_grant') throw new GrantRevokedError()
+      if (!res.ok || typeof j.access_token !== 'string') throw new Error(`token endpoint ${res.status}`)
+      return {
+        accessToken: j.access_token,
+        expiresAt: now() + (Number(j.expires_in) || 3600) * 1000,
+        ...(typeof j.refresh_token === 'string' ? { refreshToken: j.refresh_token } : {}),
+      }
     },
   }
 }
