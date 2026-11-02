@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.64.0 - 2026-11-01
+
+- **New: connect Gmail or Outlook with one link.** Send `/connect gmail` or `/connect outlook` and your assistant replies with a sign-in link. Open it on your phone, check the page names your assistant, press Continue, sign in and tap Allow. Your assistant confirms in the chat. No codes to copy, nothing that expires while you look for your password. It runs through Havn's sign-in service at connect.gethavn.ai, which passes the result straight to your assistant and keeps no copy. Your assistant needs to be set up with that service first, so on most assistants this command says it is not set up yet.
+- **New: `/connect list` and `/connect remove`.** See what is connected and disconnect it. Removing Gmail also withdraws your assistant's access at Google. Microsoft offers no way to do that for Outlook, so your assistant deletes its copy and tells you where to remove Havn's access in your Microsoft account.
+- Yahoo and iCloud still use an app password: `/connect yahoo` walks you through it.
+
 ## 1.63.0 - 2026-11-01
 
 - **New: pick your assistant's voice during a web app voice call.** The red call bar now has a voice list next to the clock. Choose a voice before you start, or change it mid-call: the call reconnects in the new voice a moment later, and what was said so far stays in the chat. Your pick is remembered for the next call, and it is the same choice as on the voice page.
