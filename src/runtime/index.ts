@@ -38,7 +38,7 @@ const factories: Record<string, () => AgentRuntime> = {
 const instances = new Map<string, AgentRuntime>()
 let override: AgentRuntime | null = null
 
-function resolveRuntimeId(lane: RuntimeLane): string {
+export function resolveRuntimeId(lane: RuntimeLane): string {
   // A managed box (card #158) runs every lane on its engine's runtime: claude
   // for the Anthropic key, ai-sdk for an open model through a US host (card
   // #268). That is where the managed key, the pause and the guards live.
@@ -94,6 +94,12 @@ export function getAgentRuntime(lane: RuntimeLane = 'chat', id: string = resolve
     logger.info({ runtime: instance.id, lane }, 'Agent runtime selected')
   }
   return instance
+}
+
+/** Ids of the runtimes with a turn running now, for /steer. */
+export function busyRuntimeIds(): string[] {
+  if (override) return override.getActiveWorkspaces().size > 0 ? [override.id] : []
+  return [...instances.entries()].filter(([, r]) => r.getActiveWorkspaces().size > 0).map(([id]) => id)
 }
 
 /** Test seam: force one runtime for all lanes. Pass null to re-resolve from env. */

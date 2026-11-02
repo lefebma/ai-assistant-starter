@@ -174,7 +174,10 @@ export function resolveModel(tier?: string): ResolvedModel {
         modelId,
         model: buildModel(provider, modelId, {
           apiKey,
-          baseURL: provider === 'openai' || provider === 'azure' ? read('AI_BASE_URL') : undefined,
+          // AI_BASE_URL belongs to the configured provider: an OpenAI choice on
+          // a box whose AI_PROVIDER is azure must still go to OpenAI, or the
+          // OpenAI key would be sent to the Azure address.
+          baseURL: provider === (read('AI_PROVIDER') || DEFAULT_PROVIDER) && (provider === 'openai' || provider === 'azure') ? read('AI_BASE_URL') : undefined,
           resourceName: provider === 'azure' ? read('AZURE_RESOURCE_NAME') : undefined,
           apiVersion: provider === 'azure' ? read('AZURE_API_VERSION') : undefined,
         }),

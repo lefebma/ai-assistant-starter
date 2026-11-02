@@ -35,14 +35,17 @@ A stored choice is either a tier alias (`haiku`, `sonnet`, `opus`, as today) or 
 | Managed, Claude engine | Haiku, Sonnet, Opus (the managed meter already prices every Claude model) |
 | Managed, open-model engine | the one configured model; it is the only one the box has prices for |
 
-"Latest" comes from each provider's models endpoint (the same endpoints `src/secrets/validate.ts` calls). Each provider has a short family table (for example Anthropic `haiku`, `sonnet`, `opus`), and the newest listed id in each family wins (by `created_at` or `created`, else by version number in the id). Non-chat models (embeddings, audio, image, realtime, search) are filtered out. The list is cached for 24 hours in `store/model-catalog.json`. If a call fails, the cached list is used, and with no cache, a built-in fallback list per provider. Labels use the provider's display name where it gives one ("Claude Opus 5.5"), else the id.
+"Latest" comes from each provider's models endpoint (the same endpoints `src/secrets/validate.ts` calls). Each provider has a short family table (for example Anthropic `haiku`, `sonnet`, `opus`), and the newest listed id in each family wins (by `created_at` or `created`, else by version number in the id). Non-chat models (embeddings, audio, image, realtime, search) are filtered out. The list is cached for 24 hours in `store/model-catalog.json`, tied to a short hash of the key it came from. Providers are asked in parallel. If a call fails, the cached list is used and that provider is not asked again for ten minutes; with no cache, the provider is left out. (Builder's call: no built-in list of vendor ids, since guessed ids rot; the provider's own list is the source.) Labels use the provider's display name where it gives one ("Claude Opus 5.5"), else the id.
 
 ## Which runtime runs a turn
 
 - Anthropic models on a claude-runtime box stay on the claude runtime (it accepts full Claude ids). No session change.
 - A non-Anthropic model on a claude-runtime box runs on the ai-sdk runtime for that chat. `getAgentRuntime(lane, model)` picks it.
+- Every session is stamped with the runtime that wrote it (`app_state` `session_runtime:<id>`). `runAgent` never resumes a session on the other runtime: whatever moved the chat (a switch, a removed key, managed AI, an edited AGENT_RUNTIME), the turn starts fresh instead of failing.
 - Switching between runtimes starts a fresh conversation for that chat, because the two runtimes keep separate session stores. The reply says so ("Switched to GPT-5.5. This starts a fresh conversation; memory carries over."). Switching within the ai-sdk runtime keeps the history: the existing provider-switch sanitizer runs, now keyed on the turn's provider instead of `AI_PROVIDER`.
 - Managed boxes keep their forced runtime; only the listed choices can be picked.
+- `AI_BASE_URL` applies to an `openai:` or `azure:` choice only when that is the configured `AI_PROVIDER`, so the OpenAI key never goes to an Azure address.
+- `/steer` goes to the runtime with a turn running, or the one the chat's model runs on.
 
 ## Out of scope
 

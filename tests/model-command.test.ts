@@ -221,6 +221,36 @@ describe('the choices a box offers', () => {
     expect(stale.map((c) => c.ref)).toContain('openai:gpt-5.5')
   })
 
+  it('a provider that just failed is not asked again for ten minutes', async () => {
+    const env = { OPENAI_API_KEY: 'o' }
+    const down = fakeFetch(['openai'])
+    await catalog.listModelChoices(deps({ fetchImpl: down.impl, env, now: 5_000_000 }))
+    await catalog.listModelChoices(deps({ fetchImpl: down.impl, env, now: 5_000_000 + 60_000 }))
+    expect(down.calls).toHaveLength(1)
+    const up = fakeFetch()
+    const later = await catalog.listModelChoices(deps({ fetchImpl: up.impl, env, now: 5_000_000 + 11 * 60_000 }))
+    expect(up.calls).toHaveLength(1)
+    expect(later.map((c) => c.ref)).toContain('openai:gpt-5.5')
+  })
+
+  it('a new key refetches instead of serving the old account\'s list', async () => {
+    const first = fakeFetch()
+    await catalog.listModelChoices(deps({ fetchImpl: first.impl, env: { OPENAI_API_KEY: 'key-one' } }))
+    const second = fakeFetch()
+    await catalog.listModelChoices(deps({ fetchImpl: second.impl, env: { OPENAI_API_KEY: 'key-two' } }))
+    expect(second.calls).toHaveLength(1)
+  })
+
+  it('asks OpenAI itself when AI_BASE_URL is an Azure address', async () => {
+    const { impl, calls } = fakeFetch()
+    const choices = await catalog.listModelChoices(
+      deps({ fetchImpl: impl, env: { AI_PROVIDER: 'azure', AI_BASE_URL: 'https://contoso.example/openai', AI_MODEL: 'dep-1', OPENAI_API_KEY: 'o', AZURE_API_KEY: 'z' } })
+    )
+    expect(calls.some((u) => u.includes('api.openai.com'))).toBe(true)
+    expect(choices.map((c) => c.ref)).toContain('openai:gpt-5.5')
+    expect(choices.map((c) => c.ref)).not.toContain('openai:dep-1')
+  })
+
   it('a provider that is down with no cache is left out, never an error', async () => {
     const choices = await catalog.listModelChoices(deps({ fetchImpl: fakeFetch(['openai']).impl, env: { OPENAI_API_KEY: 'o' } }))
     expect(choices.map((c) => c.ref)).toEqual(['', 'haiku', 'sonnet', 'opus'])
@@ -310,14 +340,17 @@ describe('which runtime runs a choice', () => {
     expect(none.ok).toBe(false)
   })
 
-  it('a menu click maps back to its choice once', async () => {
+  it('a menu click maps back to its choice, even on an older menu or after a restart', async () => {
     const cat = { fetchImpl: fakeFetch().impl, read: () => undefined, secret: () => undefined, managed: { on: false, engine: 'claude' }, boxRuntime: 'claude' as const }
     const menu = await command.modelMenu('chat-1', 'opus', cat)
     expect(menu.text).toContain('Model: Claude Opus')
     expect(menu.buttons).toContain('Claude Haiku')
-    expect(command.takeModelClick('chat-1', 'Claude Haiku')).toBe('haiku')
-    expect(command.takeModelClick('chat-1', 'Claude Haiku')).toBeUndefined()
-    expect(command.takeModelClick('chat-2', 'Claude Haiku')).toBeUndefined()
+    expect(await command.modelForClick('chat-1', 'Claude Haiku', cat)).toBe('haiku')
+    expect(await command.modelForClick('chat-1', 'Claude Haiku', cat)).toBe('haiku')
+    // No menu shown in this chat (a restart): matched against today's list.
+    expect(await command.modelForClick('chat-2', 'Claude Opus', cat)).toBe('opus')
+    // Not a model button.
+    expect(await command.modelForClick('chat-2', 'Send', cat)).toBeUndefined()
   })
 })
 
@@ -332,5 +365,81 @@ describe('the chat choice survives a restart', () => {
     expect(store.getChatModel('777')).toBe('openai:gpt-5.5')
     store.setChatModel('777', '')
     expect(store.getChatModel('777')).toBeUndefined()
+  })
+})
+
+describe('a session is only resumed on the runtime that wrote it', () => {
+  it('starts fresh when the chat now runs on the other runtime, and stamps the new session', async () => {
+    const db = await import('../src/db.js')
+    db.initDatabase()
+    const stamp = await import('../src/runtime/session-runtime.js')
+    const agent = await import('../src/agent.js')
+    const calls: Array<string | undefined> = []
+    const fake = {
+      id: 'fake',
+      run: async (o: { sessionId?: string }) => (calls.push(o.sessionId), { text: 'ok', newSessionId: 'new-1' }),
+      runOnce: async () => '',
+      steer: () => {},
+      getActiveWorkspaces: () => new Map(),
+    }
+    runtime.setAgentRuntime(fake as never)
+    try {
+      // Written on ai-sdk (an OpenAI choice); the key has since been removed,
+      // so the chat runs on claude again: no resume.
+      stamp.stampSessionRuntime('ai-sess', 'ai-sdk')
+      await agent.runAgent('hi', 'ai-sess', undefined, undefined, undefined, 'chat', undefined, undefined, { model: 'openai:gpt-5.5' })
+      expect(calls.at(-1)).toBeUndefined()
+      expect(stamp.sessionRuntimeOf('new-1')).toBe('claude')
+      // Same runtime: resumed.
+      stamp.stampSessionRuntime('claude-sess', 'claude')
+      await agent.runAgent('hi', 'claude-sess')
+      expect(calls.at(-1)).toBe('claude-sess')
+      // Unstamped (from before this release): written by the lane's runtime.
+      await agent.runAgent('hi', 'old-sess')
+      expect(calls.at(-1)).toBe('old-sess')
+      // Unstamped, but the chat now runs on ai-sdk: fresh.
+      mockReadEnvFile.mockReturnValue({ OPENAI_API_KEY: 'o' })
+      await agent.runAgent('hi', 'old-sess-2', undefined, undefined, undefined, 'chat', undefined, undefined, { model: 'openai:gpt-5.5' })
+      expect(calls.at(-1)).toBeUndefined()
+      expect(stamp.sessionRuntimeOf('new-1')).toBe('ai-sdk')
+    } finally {
+      runtime.setAgentRuntime(null)
+    }
+  })
+
+  it('/steer goes to the runtime with a turn running', async () => {
+    const agent = await import('../src/agent.js')
+    const steered: string[] = []
+    const fake = {
+      id: 'fake',
+      run: async () => ({ text: 'ok' }),
+      runOnce: async () => '',
+      steer: (m: string) => steered.push(m),
+      getActiveWorkspaces: () => new Map([['s', '/tmp']]),
+    }
+    runtime.setAgentRuntime(fake as never)
+    try {
+      expect(runtime.busyRuntimeIds()).toEqual(['fake'])
+      agent.steerAgent('go left', 'ai-sdk')
+      expect(steered).toEqual(['go left'])
+    } finally {
+      runtime.setAgentRuntime(null)
+    }
+  })
+})
+
+describe('AI_BASE_URL belongs to the configured provider', () => {
+  it('an OpenAI choice on an Azure box goes to OpenAI, not the Azure address', () => {
+    mockReadEnvFile.mockReturnValue({ AI_PROVIDER: 'azure', AI_BASE_URL: 'https://contoso.example/openai', AZURE_API_KEY: 'z', AI_MODEL: 'dep', OPENAI_API_KEY: 'o' })
+    const r = provider.resolveModel('openai:gpt-5.5') as unknown as { model: { config?: { url?: (o: { path: string }) => string } } }
+    const url = r.model.config?.url?.({ path: '/responses' }) ?? ''
+    expect(url).toContain('api.openai.com')
+    expect(url).not.toContain('contoso')
+  })
+
+  it('an OpenAI-compatible host still gets its own configured models', () => {
+    mockReadEnvFile.mockReturnValue({ AI_PROVIDER: 'openai', AI_BASE_URL: 'https://api.together.xyz/v1', OPENAI_API_KEY: 't', AI_MODEL: 'm' })
+    const r = provider.resolveModel('openai:m') as unknown as { model: { config?: { url?: (o: { path: string }) => string } } }
+    expect(r.model.config?.url?.({ path: '/chat/completions' }) ?? '').toContain('together.xyz')
   })
 })

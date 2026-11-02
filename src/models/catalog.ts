@@ -13,6 +13,7 @@
  * the turn's model: '' (the default), a tier alias ('haiku', 'sonnet',
  * 'opus') or 'provider:modelId'. See parseModelRef in runtime/model-ref.ts.
  */
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { STORE_DIR } from '../config.js'
@@ -39,9 +40,15 @@ type FetchedProvider = 'anthropic' | 'openai' | 'google'
 type CacheFile = {
   fetchedAt: Record<string, number>
   models: Record<string, ListedModel[]>
+  /** When a fetch last failed, so a provider that is down is not asked on every /model. */
+  failedAt?: Record<string, number>
+  /** A short hash of the key each list came from: a new key (another account) refetches. */
+  keyHash?: Record<string, string>
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
+/** After a failed fetch, wait this long before asking that provider again. */
+const RETRY_MS = 10 * 60 * 1000
 const TIMEOUT_MS = 8_000
 
 /** Claude tiers on the claude runtime: aliases keep resolving to the newest model in each tier. */
@@ -186,16 +193,28 @@ async function latestFor(
   deps: { fetchImpl: typeof fetch; now: number; cache: CacheFile }
 ): Promise<{ models: ListedModel[]; changed: boolean }> {
   const { cache, now } = deps
+  const hash = createHash('sha256').update(key).digest('hex').slice(0, 12)
+  const sameKey = (cache.keyHash?.[provider] ?? hash) === hash
+  const cached = sameKey ? cache.models[provider] : undefined
   const at = cache.fetchedAt[provider] ?? 0
-  if (cache.models[provider] && now - at < DAY_MS) return { models: cache.models[provider]!, changed: false }
+  if (cached && now - at < DAY_MS) return { models: cached, changed: false }
+  if (sameKey && now - (cache.failedAt?.[provider] ?? 0) < RETRY_MS) return { models: cached ?? [], changed: false }
   try {
     const picked = latestPerFamily(provider, await fetchModels(provider, key, deps.fetchImpl))
     cache.models[provider] = picked
     cache.fetchedAt[provider] = now
+    ;(cache.keyHash ??= {})[provider] = hash
+    if (cache.failedAt) delete cache.failedAt[provider]
     return { models: picked, changed: true }
   } catch (err) {
     logger.warn({ provider, detail: err instanceof Error ? err.message : String(err) }, 'Model list unavailable; using the cached list')
-    return { models: cache.models[provider] ?? [], changed: false }
+    ;(cache.failedAt ??= {})[provider] = now
+    if (!sameKey) {
+      // The old list belongs to another key: never offer it for this one.
+      delete cache.models[provider]
+      ;(cache.keyHash ??= {})[provider] = hash
+    }
+    return { models: cache.models[provider] ?? [], changed: true }
   }
 }
 
@@ -273,23 +292,32 @@ export async function listModelChoices(deps: CatalogDeps = {}): Promise<ModelCho
   }
 
   const aiProvider = read('AI_PROVIDER') || 'anthropic'
-  const baseURL = read('AI_BASE_URL')
+  // AI_BASE_URL is the OpenAI-compatible host only when AI_PROVIDER is openai;
+  // for azure it is the Azure address, and OpenAI itself is still reachable.
+  const openaiHost = aiProvider === 'openai' ? read('AI_BASE_URL') : undefined
+
+  // Ask every provider at once: one that is slow or down costs one timeout, not three.
+  const [anthropicModels, openaiModels, googleModels] = await Promise.all([
+    boxRuntime === 'claude' ? Promise.resolve([]) : fetched('anthropic'),
+    openaiHost ? Promise.resolve([]) : fetched('openai'),
+    fetched('google'),
+  ])
 
   // Claude: tiers on the claude runtime (its CLI knows the aliases), the
   // listed ids on the ai-sdk runtime.
   if (boxRuntime === 'claude') choices.push(...CLAUDE_TIERS)
   else {
-    for (const m of await fetched('anthropic')) choices.push({ ref: `anthropic:${m.id}`, label: labelFor('anthropic', m), runtime: 'ai-sdk' })
+    for (const m of anthropicModels) choices.push({ ref: `anthropic:${m.id}`, label: labelFor('anthropic', m), runtime: 'ai-sdk' })
   }
 
   // OpenAI, or the OpenAI-compatible host in AI_BASE_URL (configured models only).
-  if (baseURL) {
-    if (secret(KEY_ENV.openai!) && (aiProvider === 'openai' || boxRuntime === 'claude')) choices.push(...configuredModels('openai', read))
+  if (openaiHost) {
+    if (secret(KEY_ENV.openai!)) choices.push(...configuredModels('openai', read))
   } else {
-    for (const m of await fetched('openai')) choices.push({ ref: `openai:${m.id}`, label: labelFor('openai', m), runtime: 'ai-sdk' })
+    for (const m of openaiModels) choices.push({ ref: `openai:${m.id}`, label: labelFor('openai', m), runtime: 'ai-sdk' })
   }
 
-  for (const m of await fetched('google')) choices.push({ ref: `google:${m.id}`, label: labelFor('google', m), runtime: 'ai-sdk' })
+  for (const m of googleModels) choices.push({ ref: `google:${m.id}`, label: labelFor('google', m), runtime: 'ai-sdk' })
 
   // Azure: the deployments the settings name.
   if (aiProvider === 'azure' && secret(KEY_ENV.azure!)) choices.push(...configuredModels('azure', read))

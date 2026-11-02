@@ -303,6 +303,27 @@ describe('web chat commands', () => {
     expect((await post(`/api/web/conversations/${id}`, { model: 'opus' })).status).toBe(200)
   })
 
+  it('a picker switch to another company\'s model starts the conversation fresh', async () => {
+    const saved = process.env['OPENAI_API_KEY']
+    process.env['OPENAI_API_KEY'] = 'sk-test'
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(
+      join(process.env['AGENT_STORE_DIR']!, 'model-catalog.json'),
+      JSON.stringify({ fetchedAt: { openai: Date.now() }, models: { openai: [{ id: 'gpt-5.5' }] } })
+    )
+    try {
+      const id = await newConv()
+      conv.updateConversation('4242', id, { sessionId: 'claude-sess' })
+      expect((await post(`/api/web/conversations/${id}`, { model: 'opus' })).status).toBe(200)
+      expect(conv.getConversation('4242', id)!.sessionId).toBe('claude-sess')
+      expect((await post(`/api/web/conversations/${id}`, { model: 'openai:gpt-5.5' })).status).toBe(200)
+      expect(conv.getConversation('4242', id)!.sessionId).toBe('')
+    } finally {
+      if (saved === undefined) delete process.env['OPENAI_API_KEY']
+      else process.env['OPENAI_API_KEY'] = saved
+    }
+  })
+
   it('refuses the command menu without a web session', async () => {
     const res = await fetch(`${base()}/api/web/commands`)
     expect(res.status).toBe(401)

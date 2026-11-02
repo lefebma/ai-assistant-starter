@@ -19,9 +19,10 @@ import { loadRoles } from './assurance/roles.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
 import { claimButtonClick } from './db.js'
 import { getChatModel, setChatModel } from './models/chat-model.js'
-import { modelMenu, switchModel, switchToRef, takeModelClick, type ModelSwitch } from './models/command.js'
+import { modelMenu, switchModel, switchToRef, modelForClick, type ModelSwitch } from './models/command.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
+import { resolveTurnRuntime } from './runtime/index.js'
 import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
@@ -771,7 +772,7 @@ async function handleModelCommand(adapter: PlatformAdapter, chatId: string, arg:
 
 /** A click on the chat's last /model menu. False: the label is not from it. */
 async function resolveModelClick(adapter: PlatformAdapter, chatId: string, label: string): Promise<boolean> {
-  const ref = takeModelClick(chatId, label)
+  const ref = await modelForClick(chatId, label)
   if (ref === undefined) return false
   const r = await switchToRef(getChatModel(chatId), ref)
   if (r.ok) applyChatModelSwitch(chatId, r)
@@ -898,7 +899,7 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
     // description would swallow it.
     const click = /^\[button_click\]: (.+)$/.exec(trimmed)
     if (click) {
-      const picked = takeModelClick(`web:${input.conversationId}`, click[1]!)
+      const picked = await modelForClick(`web:${input.conversationId}`, click[1]!)
       if (picked !== undefined) {
         const r = await switchToRef(input.model, picked)
         await adapter.sendMessage(chatId, r.text)
@@ -1919,7 +1920,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
       await adapter.sendMessage(chatId, 'Usage: /steer <message>\nInjects a steering message into the currently running agent.')
       return true
     }
-    steerAgent(steerText)
+    steerAgent(steerText, resolveTurnRuntime('chat', getChatModel(chatId)).id)
     await adapter.sendMessage(chatId, `Steer queued: "${steerText.slice(0, 80)}${steerText.length > 80 ? '...' : ''}"`)
     return true
   }

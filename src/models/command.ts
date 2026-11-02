@@ -49,11 +49,17 @@ export async function modelMenu(menuKey: string, current: string | undefined, de
   }
 }
 
-/** The ref a click on the last /model menu meant, or undefined if the label is not from it. */
-export function takeModelClick(menuKey: string, label: string): string | undefined {
+/**
+ * The ref a click on a /model menu meant, or undefined if the label is not a
+ * model button. The last menu shown answers first; a click on an older menu,
+ * or one from before a restart, is matched against today's list by its exact
+ * label, so it switches the model instead of reaching the agent as a message.
+ */
+export async function modelForClick(menuKey: string, label: string, deps?: CatalogDeps): Promise<string | undefined> {
   const ref = menus.get(menuKey)?.get(label)
-  if (ref !== undefined) menus.delete(menuKey)
-  return ref
+  if (ref !== undefined) return ref
+  const labelled = uniqueLabels(await listModelChoices(deps))
+  return labelled.find((l) => l.label === label)?.choice.ref
 }
 
 export type ModelSwitch =
