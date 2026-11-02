@@ -57,7 +57,9 @@ const state = {
   attachments: [], // the tray: files and pasted text waiting to go with the next message
 }
 
-const MODELS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']]
+// The models this box offers, from the same list /model shows (card #270).
+// The tiers stand in until the list loads.
+let MODELS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']]
 const EFFORTS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'XHigh']]
 const narrow = window.matchMedia('(max-width: 899.98px)')
 
@@ -348,10 +350,13 @@ function pickerValue(stored, defaultValue) {
 
 function renderPickers() {
   const { model, effort } = state.defaults
-  fillPicker($('chat-model'), MODELS, model)
-  fillPicker($('chat-effort'), EFFORTS, effort)
   const c = state.current
-  $('chat-model').value = pickerValue(c ? c.model : state.pending.model, model)
+  const stored = c ? c.model : state.pending.model
+  // A choice the list no longer offers (its key was removed) still shows.
+  const choices = stored && !MODELS.some(([v]) => v === stored) ? [...MODELS, [stored, stored]] : MODELS
+  fillPicker($('chat-model'), choices, model)
+  fillPicker($('chat-effort'), EFFORTS, effort)
+  $('chat-model').value = pickerValue(stored, model)
   $('chat-effort').value = pickerValue(c ? c.effort : state.pending.effort, effort)
 }
 
@@ -361,6 +366,13 @@ async function loadDefaults() {
     state.defaults = { model: (d && d.model) || null, effort: (d && d.effort) || null }
   } catch {
     // keep what we have: the pickers fall back to a plain "Default"
+  }
+  try {
+    const m = await api.get('/api/web/models')
+    const listed = (m && m.models || []).filter((x) => x.ref).map((x) => [x.ref, x.label])
+    if (listed.length) MODELS = listed
+  } catch {
+    // keep the tiers
   }
   renderPickers()
 }
@@ -833,7 +845,14 @@ function turnView(convId, userMsg) {
       if (live()) dropUser()
     },
     onDone: (d) => {
-      if (d.command) finishWith(null)
+      if (d.command) {
+        // /model picked this conversation's model: show it in the picker.
+        if (d.model !== undefined && state.current) {
+          state.current.model = d.model
+          renderPickers()
+        }
+        finishWith(null)
+      }
       else if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
       else finishWith(d.message)
     },

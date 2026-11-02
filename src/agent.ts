@@ -8,7 +8,7 @@
  * runtime) because it is provider-neutral chat concurrency, not a property
  * of any one model harness.
  */
-import { getAgentRuntime, type RuntimeLane } from './runtime/index.js'
+import { getAgentRuntime, resolveTurnRuntime, type RuntimeLane } from './runtime/index.js'
 import type { AgentRunResult, RunScope } from './runtime/types.js'
 import { withRunOrNew } from './assurance/effect-journal.js'
 import { withEgress } from './egress/index.js'
@@ -42,8 +42,13 @@ export function clearLane(chatId: string): void {
 
 /** Queue a message to inject as a follow-up after the current run completes. */
 export function steerAgent(message: string): void {
-  getAgentRuntime().steer(message)
+  // A chat on another provider's model runs on its own runtime (card #270):
+  // steer the one the latest chat turn went to.
+  getAgentRuntime('chat', lastChatRuntimeId).steer(message)
 }
+
+/** The runtime the most recent chat-lane turn ran on, for /steer. */
+let lastChatRuntimeId: string | undefined
 
 /**
  * Public agent entry point. Delegates one full turn (including retries) to
@@ -63,7 +68,11 @@ export async function runAgent(
   // One turn is one run for the effect journal (card #229), unless the caller
   // already named the run: a scheduled job or an approval card.
   // With EGRESS=enforce the turn's tools get their own egress proxy (card #231).
-  return withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane).run({
+  // The chat's /model choice may name another provider's model, which runs on
+  // the runtime that can reach it (card #270).
+  const turn = resolveTurnRuntime(lane, opts?.model)
+  if (lane === 'chat') lastChatRuntimeId = turn.id
+  return withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
     message,
     sessionId,
     onTyping,
@@ -71,7 +80,7 @@ export async function runAgent(
     onToolProgress,
     signal,
     scope,
-    ...(opts?.model ? { model: opts.model } : {}),
+    ...(turn.model ? { model: turn.model } : {}),
     ...(opts?.effort ? { effort: opts.effort } : {}),
   })))
 }

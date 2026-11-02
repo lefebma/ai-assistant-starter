@@ -18,6 +18,8 @@ import { createTask, getAllTasks, deleteTask, pauseTask, resumeTask, setTaskRole
 import { loadRoles } from './assurance/roles.js'
 import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthorizedChat } from './db.js'
 import { claimButtonClick } from './db.js'
+import { getChatModel, setChatModel } from './models/chat-model.js'
+import { modelMenu, switchModel, switchToRef, takeModelClick, type ModelSwitch } from './models/command.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
@@ -286,7 +288,7 @@ async function runTurn(
   const rotation = rotationConfig()
   if (needsRotation(getSessionMeta(chatId), rotation)) {
     const { rotated, summary } = await rotateSession(chatId, rotation, async (prompt, oldSessionId) => {
-      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal))
+      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId) }))
       return text
     })
     if (rotated) {
@@ -366,7 +368,7 @@ async function runTurn(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal))
+    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId) }))
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
@@ -600,7 +602,7 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     const fullMessage = [skillIndex, memoryContext, SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
     const sessionId = getSession(chatId) ?? undefined
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
-    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal))
+    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId) }))
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
@@ -741,6 +743,42 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
   }
 }
 
+// --- /model (card #270) ---
+
+/** Store a Telegram/Teams chat's switch, starting fresh when it changes runtime. */
+function applyChatModelSwitch(chatId: string, r: ModelSwitch & { ok: true }): void {
+  if (r.freshSession) clearSession(chatId)
+  setChatModel(chatId, r.choice.ref)
+  logger.info({ chatId, model: r.choice.ref || 'default', freshSession: r.freshSession }, 'Chat model switched')
+}
+
+async function sendModelMenu(adapter: PlatformAdapter, chatId: string, menuKey: string, current: string | undefined): Promise<void> {
+  const menu = await modelMenu(menuKey, current)
+  if (menu.buttons.length && adapter.supportsButtons) {
+    await adapter.sendMessage(chatId, menu.text, { buttons: menu.buttons })
+  } else {
+    await adapter.sendMessage(chatId, [menu.text, ...menu.lines].join('\n'))
+  }
+}
+
+async function handleModelCommand(adapter: PlatformAdapter, chatId: string, arg: string): Promise<void> {
+  const current = getChatModel(chatId)
+  if (!arg) return sendModelMenu(adapter, chatId, chatId, current)
+  const r = await switchModel(current, arg)
+  if (r.ok) applyChatModelSwitch(chatId, r)
+  await adapter.sendMessage(chatId, r.text)
+}
+
+/** A click on the chat's last /model menu. False: the label is not from it. */
+async function resolveModelClick(adapter: PlatformAdapter, chatId: string, label: string): Promise<boolean> {
+  const ref = takeModelClick(chatId, label)
+  if (ref === undefined) return false
+  const r = await switchToRef(getChatModel(chatId), ref)
+  if (r.ok) applyChatModelSwitch(chatId, r)
+  await adapter.sendMessage(chatId, r.text)
+  return true
+}
+
 // --- Web UI commands ---
 
 export interface WebCommandInput {
@@ -750,6 +788,8 @@ export interface WebCommandInput {
   hooks: WebCommandHooks
   /** For a button click: the stored message the clicked card is on. */
   clickedMessageId?: number
+  /** The conversation's current model choice, for /model. */
+  model?: string
   /**
    * The message waited in the web queue: it was sent before anything after
    * it, so a /secret set started since then neither captures it as the key
@@ -763,6 +803,8 @@ export interface WebCommandResult {
   handled: boolean
   /** /newchat in the web clears this conversation's session, not the chat's. */
   clearSession: boolean
+  /** /model in the web picked this model for the conversation ('' = default). */
+  model?: string
 }
 
 /**
@@ -837,12 +879,31 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
       await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
       return { handled: true, clearSession: true }
     }
+    // /model in the web picks the conversation's model, like its picker
+    // (card #270): the conversation keeps its own choice, not the chat's.
+    if (cmd === '/model') {
+      logger.info({ chatId, command: cmd, surface: 'web' }, 'Handling command')
+      const arg = trimmed.slice(cmd.length).trim()
+      if (!arg) {
+        await sendModelMenu(adapter, chatId, `web:${input.conversationId}`, input.model)
+        return { handled: true, clearSession: false }
+      }
+      const r = await switchModel(input.model, arg)
+      await adapter.sendMessage(chatId, r.text)
+      return r.ok ? { handled: true, clearSession: r.freshSession, model: r.choice.ref } : { handled: true, clearSession: false }
+    }
     // A click goes where Telegram's callback sends it: a click on the support
     // draft's own card resolves it, and every other click is for the agent.
     // It never reaches the text router, where a pending /secret set or support
     // description would swallow it.
     const click = /^\[button_click\]: (.+)$/.exec(trimmed)
     if (click) {
+      const picked = takeModelClick(`web:${input.conversationId}`, click[1]!)
+      if (picked !== undefined) {
+        const r = await switchToRef(input.model, picked)
+        await adapter.sendMessage(chatId, r.text)
+        return r.ok ? { handled: true, clearSession: r.freshSession, model: r.choice.ref } : { handled: true, clearSession: false }
+      }
       const draft = pendingSupport.get(chatId)
       const card = webSupportCards.get(chatId)
       const onDraftCard = !!draft && card?.draft === draft && card.card === `${input.conversationId}:${input.clickedMessageId}`
@@ -1729,6 +1790,10 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
     return true
   }
+  if (cmd === '/model') {
+    await handleModelCommand(adapter, chatId, trimmed.slice(cmd.length).trim())
+    return true
+  }
   if (cmd === '/voice') {
     if (isManagedAi()) {
       await adapter.sendMessage(chatId, VOICE_OFF_REPLY)
@@ -1925,6 +1990,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     await adapter.sendMessage(chatId, [
       'Commands:',
       '/newchat - Clear session, start fresh',
+      '/model - Pick the AI model for this chat',
       '/memory - Show stored memories',
       '/voice - Toggle voice replies',
       '/voice ui - Get your private link to the voice chat page',
@@ -1956,6 +2022,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
 /** The command menu: Telegram's native menu and the web chat's suggestions. */
 export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'newchat', description: 'Clear session, start fresh' },
+  { command: 'model', description: 'Pick the AI model for this chat' },
   { command: 'memory', description: 'Show recent stored memories' },
   { command: 'voice', description: 'Toggle voice replies' },
   { command: 'app', description: 'Sign-in link to the web app' },
@@ -2071,6 +2138,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       // The card is the run (card #229): whatever this click sends is keyed to
       // it, so the same card can never send the same email twice.
       const answer = async () => {
+        if (await resolveModelClick(adapter, chatId, label)) return
         if (await resolveSupportAction(adapter, chatId, label)) return
         await handleMessage(adapter, chatId, `[button_click]: ${label}`)
       }

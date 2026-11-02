@@ -19,6 +19,8 @@
 import { isManagedAi, managedEngine } from '../ai-limit.js'
 import { readEnvFile } from '../env.js'
 import { logger } from '../logger.js'
+import { getSecret } from '../vault/index.js'
+import { KEY_ENV, parseModelRef } from './model-ref.js'
 import { AiSdkAgentRuntime } from './ai-sdk/index.js'
 import { ClaudeAgentRuntime } from './claude.js'
 import type { AgentRuntime } from './types.js'
@@ -50,9 +52,37 @@ function resolveRuntimeId(lane: RuntimeLane): string {
   return env.AGENT_RUNTIME?.trim() || process.env.AGENT_RUNTIME?.trim() || 'claude'
 }
 
-export function getAgentRuntime(lane: RuntimeLane = 'chat'): AgentRuntime {
+/**
+ * The runtime and model for one turn with a chat's /model choice (card #270).
+ *
+ * - Managed boxes run only what the plan prices: tier aliases on the Claude
+ *   engine, nothing but the configured model on the open-model engine.
+ * - A 'provider:modelId' choice whose key has gone is dropped (box default).
+ * - Another provider's model on a claude-runtime box runs on ai-sdk.
+ * - An 'anthropic:' choice on the claude runtime is passed as the bare id.
+ */
+export function resolveTurnRuntime(lane: RuntimeLane, model: string | undefined): { id: string; model: string | undefined } {
+  const base = resolveRuntimeId(lane)
+  const m = model?.trim() || undefined
+  if (!m) return { id: base, model: undefined }
+  const ref = parseModelRef(m)
+  if (isManagedAi()) {
+    if (managedEngine() === 'open-model') return { id: base, model: undefined }
+    return { id: base, model: ref ? undefined : m }
+  }
+  if (!ref) return { id: base, model: m }
+  if (!getSecret(KEY_ENV[ref.provider]!)) return { id: base, model: undefined }
+  if (base === 'claude') return ref.provider === 'anthropic' ? { id: base, model: ref.modelId } : { id: 'ai-sdk', model: m }
+  return { id: base, model: m }
+}
+
+/** The runtime id a chat's choice runs on: a change of it means a fresh conversation. */
+export function runtimeIdFor(lane: RuntimeLane, model: string | undefined): string {
+  return resolveTurnRuntime(lane, model).id
+}
+
+export function getAgentRuntime(lane: RuntimeLane = 'chat', id: string = resolveRuntimeId(lane)): AgentRuntime {
   if (override) return override
-  const id = resolveRuntimeId(lane)
   let instance = instances.get(id)
   if (!instance) {
     const factory = factories[id]

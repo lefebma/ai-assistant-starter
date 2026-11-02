@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.65.0 - 2026-11-02
+
+- **New: `/model` picks the AI model for a chat.** Send `/model` and your assistant shows the model it is using and a button for each one you can switch to: the latest models from each AI company whose key is in your settings, so with both a Claude and an OpenAI key you see the newest of each. Your pick stays through restarts. It works the same in Telegram, Teams and the web app, where it sets the conversation's model picker, and the picker now shows the same list. Scheduled tasks keep their own model. On a managed plan, only the models your plan covers are offered.
+
 ## 1.64.3 - 2026-11-02
 
 - Fix: on assistants you talk to in Teams, connecting Gmail or Outlook worked but your assistant never said so in the chat. It now confirms on whichever app you use, and the same goes for the notice when Google withdraws Gmail access.

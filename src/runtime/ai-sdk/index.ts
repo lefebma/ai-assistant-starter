@@ -306,7 +306,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     }
     // Provider switch since this session was written? Strip provider-specific
     // baggage (providerOptions, reasoning signatures) that other vendors reject.
-    const turnProvider = this.modelOverride ? 'override' : configuredProvider()
+    const turnProvider = this.modelOverride ? 'override' : configuredProvider(options.model)
     // Photos the owner attached go to the model as images on this request
     // only; the saved session keeps the text (card #249).
     const userMessage: ModelMessage = { role: 'user', content: withAttachedImages(options.message) }
