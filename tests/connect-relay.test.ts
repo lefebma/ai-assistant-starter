@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createRelay, type RelayProvider } from '../src/connect/relay.js'
+import { createRelay, pkceChallenge, type RelayProvider } from '../src/connect/relay.js'
 import { MemoryUsedStore, signState } from '../src/connect/state.js'
 
 const SECRET = 'relay-signing-secret-for-tests-0123456789'
@@ -12,10 +12,13 @@ function setup(opts: { now?: () => number; boxOrigin?: string; exchangeFails?: b
   const logs: unknown[] = []
   const posts: Array<{ url: string; init: RequestInit }> = []
   const exchanged: string[] = []
+  const verifiers: string[] = []
   const provider: RelayProvider = {
-    authUrl: (state, redirectUri) => `https://fake-idp.test/auth?state=${encodeURIComponent(state)}&redirect_uri=${encodeURIComponent(redirectUri)}`,
-    exchange: async (code) => {
+    authUrl: (state, redirectUri, challenge) =>
+      `https://fake-idp.test/auth?state=${encodeURIComponent(state)}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${challenge}`,
+    exchange: async (code, _redirectUri, verifier) => {
       exchanged.push(code)
+      verifiers.push(verifier)
       if (opts.exchangeFails) throw new Error('boom')
       return { account: 'x@y.com', accessToken: 'AT', refreshToken: TOKEN, expiresAt: 123 }
     },
@@ -34,7 +37,7 @@ function setup(opts: { now?: () => number; boxOrigin?: string; exchangeFails?: b
       return new Response('ok', { status: opts.handoffStatus ?? 200 })
     }) as unknown as typeof fetch,
   })
-  return { relay, logs, posts, exchanged, advance: (ms: number) => (t += ms), clock: () => t }
+  return { relay, logs, posts, exchanged, verifiers, advance: (ms: number) => (t += ms), clock: () => t }
 }
 
 const start = (r: ReturnType<typeof setup>, q = `provider=fake&box=box-1&nonce=${NONCE}`) =>
@@ -60,6 +63,28 @@ describe('relay /start', () => {
     expect((await start(r, `provider=fake&box=nope&nonce=${NONCE}`)).status).toBe(400)
     expect((await start(r, `provider=zzz&box=box-1&nonce=${NONCE}`)).status).toBe(400)
     expect((await start(r, 'provider=fake&box=box-1&nonce=abc')).status).toBe(400)
+  })
+})
+
+describe('relay PKCE', () => {
+  it('exchanges with the verifier whose S256 challenge went to the provider, and never puts the verifier in a URL', async () => {
+    const r = setup()
+    const res = await start(r)
+    const loc = new URL(res.headers.get('location')!)
+    const challenge = loc.searchParams.get('code_challenge')!
+    expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    const state = encodeURIComponent(loc.searchParams.get('state')!)
+    await r.relay.handle(new Request(`https://connect.gethavn.ai/callback?code=C&state=${state}`))
+    expect(r.verifiers).toHaveLength(1)
+    expect(r.verifiers[0]).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(pkceChallenge(r.verifiers[0])).toBe(challenge)
+    expect(loc.toString()).not.toContain(r.verifiers[0])
+  })
+  it('gives each sign-in its own verifier', async () => {
+    const r = setup()
+    const a = new URL((await start(r)).headers.get('location')!).searchParams.get('code_challenge')
+    const b = new URL((await start(r, 'provider=fake&box=box-1&nonce=another-nonce-0123456789')).headers.get('location')!).searchParams.get('code_challenge')
+    expect(a).not.toBe(b)
   })
 })
 

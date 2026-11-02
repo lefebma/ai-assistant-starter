@@ -1,0 +1,73 @@
+# havn-connect: the sign-in relay
+
+`/connect gmail` and `/connect outlook` send the owner to
+`https://connect.gethavn.ai/start`. The relay sends them on to Google or
+Microsoft, takes the result at `/callback`, and posts the tokens to that box
+over https, signed with the box's own hand-off key. Code: `src/connect/`
+(shared with the box), `deploy/connect-relay/worker.ts` (the Worker).
+
+What the relay keeps: the box registry (origin and hand-off key per box) and,
+for ten minutes, the key of each used sign-in state so a link works once. It
+never keeps a token. Google's client secret is a Worker secret; Microsoft needs
+none, because the Havn app is a public client and every sign-in uses PKCE.
+
+## Before the first deploy
+
+1. **Google:** in the `havn-assistant` project, create an OAuth client of type
+   **Web application** (the existing Desktop client cannot take an https
+   redirect). Authorised redirect URI: `https://connect.gethavn.ai/callback`.
+2. **Microsoft:** on the Havn app registration, Authentication → Add a
+   platform → **Mobile and desktop applications** → custom redirect URI
+   `https://connect.gethavn.ai/callback`. Not "Web": a Web redirect makes
+   Microsoft demand a client secret, and the box could then not refresh on its
+   own. "Allow public client flows" stays on.
+3. The `gethavn.ai` zone is on this Cloudflare account, so the custom domain in
+   `wrangler.toml` creates the DNS record on deploy.
+
+## Deploy (once, from your machine)
+
+```bash
+cd deploy/connect-relay
+npx wrangler@4 deploy
+openssl rand -hex 32 | npx wrangler@4 secret put SIGNING_SECRET
+ADMIN=$(openssl rand -hex 32)          # store this in your own secrets store
+printf %s "$ADMIN" | shasum -a 256 | cut -d' ' -f1 | npx wrangler@4 secret put ADMIN_TOKEN_SHA256
+npx wrangler@4 secret put GOOGLE_CLIENT_ID       # paste from the Web client
+npx wrangler@4 secret put GOOGLE_CLIENT_SECRET   # paste from the Web client
+```
+
+A provider whose settings are missing is simply not offered: its `/start`
+answers "not valid". Changing `SIGNING_SECRET` voids any link in flight, nothing
+else.
+
+## Connect a box
+
+The box must be reachable over https at a stable origin (its tunnel hostname).
+Register it; the answer carries the box's hand-off key, shown this once:
+
+```bash
+curl -s -X POST https://connect.gethavn.ai/admin/boxes/havn-test \
+  -H "authorization: Bearer $ADMIN" -H 'content-type: application/json' \
+  -d '{"origin":"https://<box hostname>"}'
+```
+
+Then on the box, in the owner's chat, set three secrets. `/secret set <NAME>`
+asks for the value as the next message and deletes that message, so the key
+never stays in chat history:
+
+| Name | Value |
+|---|---|
+| `CONNECT_RELAY_URL` | `https://connect.gethavn.ai` |
+| `CONNECT_BOX_ID` | the box id you registered, e.g. `havn-test` |
+| `CONNECT_HANDOFF_KEY` | the `handoffKey` from the answer above |
+
+and restart the service. `/connect` answers "not set up" until all three exist.
+
+List boxes (never shows keys): `GET /admin/boxes`. Remove one:
+`DELETE /admin/boxes/<box>`. Registering a box again replaces its key, so the
+box needs the new one.
+
+## Logs
+
+`npx wrangler@4 tail havn-connect`. Each line is `{event, box, provider}` plus
+a reason on refusals. No line ever holds a code or a token.

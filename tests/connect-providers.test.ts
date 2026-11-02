@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { googleProvider, microsoftProvider, googleRevoker, microsoftRevoker } from '../src/connect/providers.js'
+import { googleProvider, microsoftProvider, googleRevoker, microsoftRevoker, MICROSOFT_SCOPES } from '../src/connect/providers.js'
+import { MS_SCOPES } from '../src/ms/cli.js'
 
 const idToken = 'h.' + Buffer.from(JSON.stringify({ email: 'x@y.com' })).toString('base64url') + '.s'
 
@@ -10,19 +11,37 @@ describe('provider adapters (fake fetch)', () => {
       sent = String(init.body)
       return new Response(JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_in: 10, id_token: idToken }))
     }) as unknown as typeof fetch
-    const t = await googleProvider({ clientId: 'cid', clientSecret: 'SECRET' }, f, () => 0).exchange('code', 'https://r/callback')
+    const t = await googleProvider({ clientId: 'cid', clientSecret: 'SECRET' }, f, () => 0).exchange('code', 'https://r/callback', 'VERIFIER')
     expect(t).toEqual({ account: 'x@y.com', accessToken: 'a', refreshToken: 'r', expiresAt: 10_000 })
     expect(sent).toContain('client_secret=SECRET')
+    expect(sent).toContain('code_verifier=VERIFIER')
+  })
+  it('microsoft exchange is a public client: PKCE verifier, no client secret', async () => {
+    let sent = ''
+    const f = (async (_u: string, init: RequestInit) => {
+      sent = String(init.body)
+      return new Response(JSON.stringify({ access_token: 'a', refresh_token: 'r', expires_in: 10, id_token: idToken }))
+    }) as unknown as typeof fetch
+    const t = await microsoftProvider('cid', f, () => 0).exchange('code', 'https://r/callback', 'VERIFIER')
+    expect(t.account).toBe('x@y.com')
+    expect(sent).toContain('code_verifier=VERIFIER')
+    expect(sent).not.toContain('client_secret')
   })
   it('a provider error does not echo the response body', async () => {
     const f = (async () => new Response('leaky refresh_token=ZZZ', { status: 400 })) as unknown as typeof fetch
-    await expect(microsoftProvider({ clientId: 'c', clientSecret: 's' }, f).exchange('c', 'u')).rejects.toThrow(/^token endpoint 400$/)
+    await expect(microsoftProvider('c', f).exchange('c', 'u', 'v')).rejects.toThrow(/^token endpoint 400$/)
   })
-  it('auth urls carry the state and never the client secret', () => {
-    const u = googleProvider({ clientId: 'cid', clientSecret: 'SECRET' }).authUrl('ST', 'https://r/callback')
-    expect(u).toContain('state=ST')
-    expect(u).not.toContain('SECRET')
-    expect(microsoftProvider({ clientId: 'cid', clientSecret: 'SECRET' }).authUrl('ST', 'u')).not.toContain('SECRET')
+  it('auth urls carry the state and an S256 challenge, never the client secret', () => {
+    const u = new URL(googleProvider({ clientId: 'cid', clientSecret: 'SECRET' }).authUrl('ST', 'https://r/callback', 'CH'))
+    expect(u.searchParams.get('state')).toBe('ST')
+    expect(u.searchParams.get('code_challenge')).toBe('CH')
+    expect(u.searchParams.get('code_challenge_method')).toBe('S256')
+    expect(u.toString()).not.toContain('SECRET')
+    const m = new URL(microsoftProvider('cid').authUrl('ST', 'u', 'CH'))
+    expect(m.searchParams.get('code_challenge_method')).toBe('S256')
+  })
+  it('asks Microsoft for every scope the box refreshes with', () => {
+    for (const s of MS_SCOPES.split(' ')) expect(MICROSOFT_SCOPES).toContain(s)
   })
   it('revokers throw when the provider does not confirm', async () => {
     const bad = (async () => new Response('', { status: 400 })) as unknown as typeof fetch

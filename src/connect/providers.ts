@@ -1,8 +1,9 @@
 /**
- * Real provider adapters. Relay side: authUrl + exchange (the client secret is
- * passed in by the relay's own config and closed over here). Box side:
- * revokers, which need no client secret. Nothing here runs in tests; the tests
- * use fakes. Not usable until the Google and Microsoft apps exist (cards 205/207).
+ * Real provider adapters. Relay side: authUrl + exchange (Google's client
+ * secret is passed in by the relay's own config and closed over here;
+ * Microsoft has none). Box side: revokers, which need no client secret. Tests
+ * drive them with a fake fetch. Not usable until the relay's /callback is
+ * registered on the Google and Microsoft apps (cards 205/207).
  */
 import type { ProviderTokens, RelayProvider } from './relay.js'
 import type { Revoker } from './box.js'
@@ -37,30 +38,55 @@ function emailFromIdToken(idToken: unknown): string {
 }
 
 export const GOOGLE_SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/calendar']
-export const MICROSOFT_SCOPES = ['openid', 'email', 'offline_access', 'Mail.ReadWrite', 'Mail.Send', 'Calendars.ReadWrite']
+/**
+ * The Graph scopes match the box's MS_SCOPES (src/ms/cli.ts) one for one, so
+ * the box's own refresh asks for nothing the owner did not consent to here.
+ * openid and email are on top, for the id_token that names the account.
+ */
+export const MICROSOFT_SCOPES = [
+  'openid', 'email', 'offline_access',
+  'https://graph.microsoft.com/User.Read',
+  'https://graph.microsoft.com/Mail.ReadWrite',
+  'https://graph.microsoft.com/Mail.Send',
+  'https://graph.microsoft.com/Calendars.ReadWrite',
+]
 
 export function googleProvider(app: OAuthApp, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): RelayProvider {
   return {
-    authUrl: (state, redirectUri) =>
+    authUrl: (state, redirectUri, codeChallenge) =>
       'https://accounts.google.com/o/oauth2/v2/auth?' +
-      new URLSearchParams({ client_id: app.clientId, redirect_uri: redirectUri, response_type: 'code', scope: GOOGLE_SCOPES.join(' '), access_type: 'offline', prompt: 'consent', state }),
-    async exchange(code, redirectUri) {
+      new URLSearchParams({
+        client_id: app.clientId, redirect_uri: redirectUri, response_type: 'code', scope: GOOGLE_SCOPES.join(' '),
+        access_type: 'offline', prompt: 'consent', state, code_challenge: codeChallenge, code_challenge_method: 'S256',
+      }),
+    async exchange(code, redirectUri, codeVerifier) {
       const j = await postForm(fetchImpl, 'https://oauth2.googleapis.com/token', {
-        code, client_id: app.clientId, client_secret: app.clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code',
+        code, client_id: app.clientId, client_secret: app.clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code', code_verifier: codeVerifier,
       })
       return toTokens(j, emailFromIdToken(j.id_token), now())
     },
   }
 }
 
-export function microsoftProvider(app: OAuthApp, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): RelayProvider {
+/**
+ * Microsoft as a public client: no client secret, the code is bound to the
+ * sign-in by PKCE. That is what lets the box refresh on its own with the
+ * client id alone, exactly as it does after a device-code sign-in. Needs the
+ * relay's /callback registered on the app under "Mobile and desktop
+ * applications", not "Web" (a Web redirect makes the token endpoint demand a
+ * secret).
+ */
+export function microsoftProvider(clientId: string, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): RelayProvider {
   return {
-    authUrl: (state, redirectUri) =>
+    authUrl: (state, redirectUri, codeChallenge) =>
       'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?' +
-      new URLSearchParams({ client_id: app.clientId, redirect_uri: redirectUri, response_type: 'code', scope: MICROSOFT_SCOPES.join(' '), response_mode: 'query', prompt: 'select_account', state }),
-    async exchange(code, redirectUri) {
+      new URLSearchParams({
+        client_id: clientId, redirect_uri: redirectUri, response_type: 'code', scope: MICROSOFT_SCOPES.join(' '),
+        response_mode: 'query', prompt: 'select_account', state, code_challenge: codeChallenge, code_challenge_method: 'S256',
+      }),
+    async exchange(code, redirectUri, codeVerifier) {
       const j = await postForm(fetchImpl, 'https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-        code, client_id: app.clientId, client_secret: app.clientSecret, redirect_uri: redirectUri, grant_type: 'authorization_code', scope: MICROSOFT_SCOPES.join(' '),
+        code, client_id: clientId, redirect_uri: redirectUri, grant_type: 'authorization_code', scope: MICROSOFT_SCOPES.join(' '), code_verifier: codeVerifier,
       })
       return toTokens(j, emailFromIdToken(j.id_token), now())
     },

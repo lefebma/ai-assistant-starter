@@ -6,6 +6,7 @@
 import { ConnectFlow } from './box.js'
 import { googleRevoker, microsoftRevoker } from './providers.js'
 import { getSecret, defaultVault } from '../vault/index.js'
+import { saveTokens, loadTokens, clearTokens, listAuthedAccounts } from '../ms/store.js'
 
 let flow: ConnectFlow | null | undefined
 
@@ -18,6 +19,7 @@ export function getConnectFlow(): ConnectFlow | null {
   flow = new ConnectFlow({
     relayUrl, boxId, handoffKey,
     vault: { get: (n) => defaultVault().get(n), set: (n, v) => defaultVault().set(n, v), delete: (n) => defaultVault().delete(n) },
+    msTokens: { save: saveTokens, load: loadTokens, clear: clearTokens, list: () => listAuthedAccounts() },
     revokers: { gmail: googleRevoker(), outlook: microsoftRevoker() },
   })
   return flow

@@ -9,6 +9,12 @@
  * The nonce is spent the moment it is looked up, so a replay always fails.
  * The box holds no OAuth client secret. Tokens go to the vault and never into
  * a reply, a log line or the model.
+ *
+ * Outlook tokens go into the Microsoft token store (src/ms/store.ts), one
+ * entry per mailbox, the same place a device-code sign-in puts them. So the
+ * Outlook tools, ms-auth status and the web Connections page all see the new
+ * mailbox, and the box refreshes it with the public client id alone. Gmail
+ * tokens sit in CONNECT_GMAIL until the Gmail tools can use them.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
@@ -16,6 +22,15 @@ export interface ConnectTokenVault {
   get(name: string): string | undefined
   set(name: string, value: string): void
   delete(name: string): boolean
+}
+
+/** The Microsoft token store, as src/ms/store.ts exposes it. expiresAt is epoch seconds. */
+export interface MsTokenStore {
+  save(account: string, tokens: { accessToken: string; refreshToken: string; expiresAt: number }): void
+  load(account: string): { accessToken: string; refreshToken: string } | null
+  clear(account: string): boolean
+  /** Account labels as stored (slugged), not the original addresses. */
+  list(): string[]
 }
 
 /** Revokes a refresh token at the provider. Throws if the provider did not confirm. */
@@ -26,6 +41,7 @@ export interface ConnectOpts {
   boxId: string
   handoffKey: string
   vault: ConnectTokenVault
+  msTokens: MsTokenStore
   revokers: Record<string, Revoker>
   now?: () => number
   ttlMs?: number
@@ -46,13 +62,22 @@ interface Pending {
 const PROVIDERS = ['gmail', 'outlook'] as const
 const APP_PASSWORD = ['yahoo', 'icloud']
 const vaultName = (p: string) => `CONNECT_${p.toUpperCase()}`
+
+function accountOf(raw: string): string | undefined {
+  try {
+    return (JSON.parse(raw) as { account?: string }).account
+  } catch {
+    return undefined
+  }
+}
 const USAGE = [
   'Connect your mail and calendar:',
   '/connect gmail - sign in with Google',
   '/connect outlook - sign in with Microsoft',
   '/connect yahoo - uses an app password via /secret',
   '/connect list - what is connected',
-  '/connect remove <gmail|outlook> - revoke at the provider and delete here',
+  '/connect remove gmail - revoke at the provider and delete here',
+  '/connect remove outlook <account> - the same, for one Outlook mailbox',
 ].join('\n')
 
 export class ConnectFlow {
@@ -71,8 +96,10 @@ export class ConnectFlow {
     const [, sub, arg] = text.trim().split(/\s+/)
     if (sub === 'remove') return { reply: 'Use handleCommandAsync for remove.' }
     if (sub === 'list') {
-      const on = PROVIDERS.filter((p) => this.o.vault.get(vaultName(p)))
-        .map((p) => `${p}: ${(JSON.parse(this.o.vault.get(vaultName(p))!) as { account?: string }).account ?? 'connected'}`)
+      const on: string[] = []
+      const gmail = this.o.vault.get(vaultName('gmail'))
+      if (gmail) on.push(`gmail: ${accountOf(gmail) ?? 'connected'}`)
+      for (const a of this.o.msTokens.list()) on.push(`outlook: ${a}`)
       return { reply: on.length ? on.join('\n') : 'Nothing connected yet.' }
     }
     if (sub && APP_PASSWORD.includes(sub)) {
@@ -95,30 +122,48 @@ export class ConnectFlow {
     const parts = text.trim().split(/\s+/)
     if (parts[1] !== 'remove') return this.handleCommand(chatId, text)
     const provider = parts[2]
-    if (!provider || !(PROVIDERS as readonly string[]).includes(provider)) return { reply: 'Usage: /connect remove <gmail|outlook>' }
-    const raw = this.o.vault.get(vaultName(provider))
-    if (!raw) return { reply: `Nothing connected for ${provider}.` }
-    const localOnly = parts[3] === '--local-only'
-    let refresh = ''
-    let access = ''
-    try {
-      const t = JSON.parse(raw) as { refreshToken?: string; accessToken?: string }
-      refresh = t.refreshToken ?? ''
-      access = t.accessToken ?? ''
-    } catch {
-      /* corrupt entry: nothing to revoke, fall through to delete */
+    const localOnly = parts.includes('--local-only')
+    const rest = parts.slice(3).filter((x) => x !== '--local-only')
+    if (provider === 'gmail') {
+      const raw = this.o.vault.get(vaultName('gmail'))
+      if (!raw) return { reply: 'Nothing connected for gmail.' }
+      let t: { refreshToken?: string; accessToken?: string } = {}
+      try {
+        t = JSON.parse(raw)
+      } catch {
+        /* corrupt entry: nothing to revoke, fall through to delete */
+      }
+      return this.remove('gmail', 'gmail', t, localOnly, () => this.o.vault.delete(vaultName('gmail')))
     }
+    if (provider === 'outlook') {
+      const accounts = this.o.msTokens.list()
+      const asked = rest[0]
+      const account = asked ?? (accounts.length === 1 ? accounts[0] : undefined)
+      if (!account) {
+        return { reply: accounts.length ? `Which mailbox? /connect remove outlook <${accounts.join('|')}>` : 'Nothing connected for outlook.' }
+      }
+      const t = this.o.msTokens.load(account)
+      if (!t) return { reply: `Nothing connected for outlook ${account}.` }
+      return this.remove('outlook', `outlook ${account}`, t, localOnly, () => this.o.msTokens.clear(account))
+    }
+    return { reply: 'Usage: /connect remove gmail, or /connect remove outlook <account>' }
+  }
+
+  private async remove(
+    provider: string, label: string, t: { refreshToken?: string; accessToken?: string }, localOnly: boolean, drop: () => boolean,
+  ): Promise<{ reply: string }> {
+    const refresh = t.refreshToken ?? ''
     if (localOnly || !refresh) {
-      this.o.vault.delete(vaultName(provider))
-      return { reply: `Removed ${provider} from this box. The token was not revoked at the provider; remove access in your account security settings.` }
+      drop()
+      return { reply: `Removed ${label} from this box. The token was not revoked at the provider; remove access in your account security settings.` }
     }
     try {
-      await this.o.revokers[provider]({ accessToken: access, refreshToken: refresh })
+      await this.o.revokers[provider]({ accessToken: t.accessToken ?? '', refreshToken: refresh })
     } catch {
-      return { reply: `Could not revoke ${provider} at the provider, so I kept it here. Try again, or run /connect remove ${provider} --local-only to delete it locally only.` }
+      return { reply: `Could not revoke ${label} at the provider, so I kept it here. Try again, or run /connect remove ${label} --local-only to delete it locally only.` }
     }
-    this.o.vault.delete(vaultName(provider))
-    return { reply: `Removed ${provider}: revoked at the provider and deleted from this box.` }
+    drop()
+    return { reply: `Removed ${label}: revoked at the provider and deleted from this box.` }
   }
 
   async acceptHandoff(rawBody: string, signature: string): Promise<HandoffResult> {
@@ -139,7 +184,12 @@ export class ConnectFlow {
     this.pending.delete(nonce)
     const now = this.now()
     if (!p || p.expiresAt < now || p.provider !== provider || Math.abs(now - ts) > this.ttl) return { status: 403 }
-    this.o.vault.set(vaultName(provider), JSON.stringify({ account, accessToken, refreshToken, expiresAt }))
+    if (provider === 'outlook') {
+      // The relay stamps milliseconds; the Microsoft store keeps seconds.
+      this.o.msTokens.save(account, { accessToken, refreshToken, expiresAt: Math.floor(expiresAt / 1000) })
+    } else {
+      this.o.vault.set(vaultName(provider), JSON.stringify({ account, accessToken, refreshToken, expiresAt }))
+    }
     return { status: 200, chatId: p.chatId, message: `Connected ${account}, mail and calendar working.` }
   }
 

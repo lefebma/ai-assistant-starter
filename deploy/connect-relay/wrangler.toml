@@ -1,0 +1,21 @@
+# Sign-in relay (card #206). Deploy: deploy/connect-relay/README.md.
+name = "havn-connect"
+main = "worker.ts"
+compatibility_date = "2026-09-01"
+# relay.ts and state.ts use node:crypto and Buffer.
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+routes = [{ pattern = "connect.gethavn.ai", custom_domain = true }]
+
+[vars]
+PUBLIC_URL = "https://connect.gethavn.ai"
+# The Havn Microsoft app (public client, no secret). Same id as DEFAULT_MS_CLIENT_ID in src/ms/auth.ts.
+MS_CLIENT_ID = "a67bec40-964d-4ea9-99bb-6a1301f217db"
+
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "RelayStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayStore"]

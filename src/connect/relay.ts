@@ -7,15 +7,21 @@
  * cannot receive a redirect on its own, so every box shares this one address.
  *
  * Guarantees:
- *  - The OAuth client secret lives here only (closed over by the providers).
+ *  - Any OAuth client secret lives here only (closed over by the providers).
+ *    Microsoft needs none: the Havn app is a public client and the code is
+ *    bound to the sign-in by PKCE instead.
+ *  - Every sign-in uses PKCE (S256). The verifier is derived from the signing
+ *    secret and the state's box and nonce, so the relay keeps nothing between
+ *    /start and /callback and the verifier never travels in a URL.
  *  - State is signed, names the box, expires in 10 minutes, and works once.
  *  - The hand-off goes only to the origin the box registry lists for the box
  *    named in the state (never to a URL taken from the request), only over
  *    https, signed with that box's hand-off key.
- *  - Nothing is stored. The log line records that a hand-off happened and
+ *  - No token is stored. The only thing kept is the key of a used state, until
+ *    it could no longer verify anyway. The log line records that a hand-off happened and
  *    never contains a token or a code.
  */
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { signState, verifyState, type UsedStore } from './state.js'
 
 export interface ProviderTokens {
@@ -26,8 +32,9 @@ export interface ProviderTokens {
 }
 
 export interface RelayProvider {
-  authUrl(state: string, redirectUri: string): string
-  exchange(code: string, redirectUri: string): Promise<ProviderTokens>
+  /** `codeChallenge` is the S256 PKCE challenge for this sign-in. */
+  authUrl(state: string, redirectUri: string, codeChallenge: string): string
+  exchange(code: string, redirectUri: string, codeVerifier: string): Promise<ProviderTokens>
 }
 
 export interface BoxRecord {
@@ -55,6 +62,15 @@ export function signHandoff(key: string, body: string): string {
   return createHmac('sha256', key).update(body).digest('hex')
 }
 
+/** PKCE verifier for one sign-in: 43 base64url characters, never sent anywhere but the token endpoint. */
+export function pkceVerifier(signingSecret: string, box: string, nonce: string): string {
+  return createHmac('sha256', signingSecret).update(`pkce:${box}:${nonce}`).digest('base64url')
+}
+
+export function pkceChallenge(verifier: string): string {
+  return createHash('sha256').update(verifier).digest('base64url')
+}
+
 const page = (status: number, msg: string) =>
   new Response(`<!doctype html><meta name="viewport" content="width=device-width"><body style="font-family:sans-serif;padding:2rem"><p>${msg}</p>`, {
     status,
@@ -76,7 +92,8 @@ export function createRelay(opts: RelayOpts) {
       return page(400, 'This sign-in link is not valid. Ask your assistant for a new one.')
     }
     const state = signState(opts.signingSecret, { box, provider, nonce }, now())
-    return new Response(null, { status: 302, headers: { location: p.authUrl(state, redirectUri), 'cache-control': 'no-store' } })
+    const challenge = pkceChallenge(pkceVerifier(opts.signingSecret, box, nonce))
+    return new Response(null, { status: 302, headers: { location: p.authUrl(state, redirectUri, challenge), 'cache-control': 'no-store' } })
   }
 
   async function callback(url: URL): Promise<Response> {
@@ -99,7 +116,7 @@ export function createRelay(opts: RelayOpts) {
       return page(502, 'Could not reach your assistant. Ask it for a new link.')
     }
     try {
-      const tokens = await p.exchange(url.searchParams.get('code')!, redirectUri)
+      const tokens = await p.exchange(url.searchParams.get('code')!, redirectUri, pkceVerifier(opts.signingSecret, box, nonce))
       const body = JSON.stringify({ nonce, provider, ts: now(), ...tokens })
       const res = await doFetch(`${rec.origin}${HANDOFF_PATH}`, {
         method: 'POST',

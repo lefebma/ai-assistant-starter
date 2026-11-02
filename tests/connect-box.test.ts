@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ConnectFlow, type ConnectTokenVault, type Revoker } from '../src/connect/box.js'
+import { ConnectFlow, type ConnectTokenVault, type MsTokenStore, type Revoker } from '../src/connect/box.js'
 import { signHandoff } from '../src/connect/relay.js'
 
 const HKEY = 'box-handoff-key-for-tests-0123456789abcdef'
@@ -9,15 +9,30 @@ function memVault(): ConnectTokenVault & { data: Map<string, string> } {
   return { data, get: (n) => data.get(n), set: (n, v) => void data.set(n, v), delete: (n) => data.delete(n) }
 }
 
+function memMs(): MsTokenStore & { data: Map<string, { accessToken: string; refreshToken: string; expiresAt: number }> } {
+  // Slugs labels the way src/ms/store.ts does, so lookups by address and by label agree.
+  const slug = (a: string) => a.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  const data = new Map<string, { accessToken: string; refreshToken: string; expiresAt: number }>()
+  return {
+    data,
+    save: (a, t) => void data.set(slug(a), t),
+    load: (a) => data.get(slug(a)) ?? null,
+    clear: (a) => data.delete(slug(a)),
+    list: () => [...data.keys()],
+  }
+}
+
 function setup(revoker?: Revoker) {
   let t = 5_000_000
   const vault = memVault()
+  const ms = memMs()
   const revoked: string[] = []
   const flow = new ConnectFlow({
     relayUrl: 'https://connect.gethavn.ai',
     boxId: 'box-1',
     handoffKey: HKEY,
     vault,
+    msTokens: ms,
     now: () => t,
     revokers: { gmail: revoker ?? (async (tok) => void revoked.push(tok.refreshToken)), outlook: async (tok) => void revoked.push(tok.refreshToken) },
   })
@@ -25,7 +40,7 @@ function setup(revoker?: Revoker) {
   const body = (nonce: string, over: Record<string, unknown> = {}) =>
     JSON.stringify({ nonce, provider: 'gmail', ts: t, account: 'x@y.com', accessToken: 'AT', refreshToken: 'RT', expiresAt: 1, ...over })
   const send = (raw: string, sig = signHandoff(HKEY, raw)) => flow.acceptHandoff(raw, sig)
-  return { flow, vault, revoked, nonceOf, body, send, advance: (ms: number) => (t += ms) }
+  return { flow, vault, ms, revoked, nonceOf, body, send, advance: (d: number) => (t += d) }
 }
 
 describe('/connect start', () => {
@@ -97,6 +112,38 @@ describe('hand-off acceptance', () => {
     expect((await s.send('not json')).status).toBe(400)
     const missing = JSON.stringify({ nonce, provider: 'gmail', ts: 5_000_000 })
     expect((await s.send(missing)).status).toBe(400)
+  })
+})
+
+describe('Outlook hand-off', () => {
+  it('lands in the Microsoft token store, in seconds, where the Outlook tools read it', async () => {
+    const s = setup()
+    const nonce = s.nonceOf(s.flow.handleCommand('chat1', '/connect outlook').reply)
+    const r = await s.send(s.body(nonce, { provider: 'outlook', account: 'me@contoso.com', expiresAt: 7_200_500 }))
+    expect(r.status).toBe(200)
+    expect(s.ms.data.get('ME_CONTOSO_COM')).toEqual({ accessToken: 'AT', refreshToken: 'RT', expiresAt: 7200 })
+    expect(s.vault.data.has('CONNECT_OUTLOOK')).toBe(false)
+    expect(s.flow.handleCommand('c', '/connect list').reply).toBe('outlook: ME_CONTOSO_COM')
+  })
+  it('removes one mailbox by address, revoking first', async () => {
+    const s = setup()
+    for (const account of ['a@x.com', 'b@x.com']) {
+      const nonce = s.nonceOf(s.flow.handleCommand('c', '/connect outlook').reply)
+      await s.send(s.body(nonce, { provider: 'outlook', account, refreshToken: `RT-${account}` }))
+    }
+    expect((await s.flow.handleCommandAsync('c', '/connect remove outlook')).reply).toContain('Which mailbox?')
+    const r = await s.flow.handleCommandAsync('c', '/connect remove outlook b@x.com')
+    expect(r.reply).toContain('revoked at the provider')
+    expect(s.revoked).toEqual(['RT-b@x.com'])
+    expect([...s.ms.data.keys()]).toEqual(['A_X_COM'])
+  })
+  it('removes the only mailbox without naming it', async () => {
+    const s = setup()
+    const nonce = s.nonceOf(s.flow.handleCommand('c', '/connect outlook').reply)
+    await s.send(s.body(nonce, { provider: 'outlook' }))
+    await s.flow.handleCommandAsync('c', '/connect remove outlook --local-only')
+    expect(s.ms.data.size).toBe(0)
+    expect(s.revoked).toEqual([])
   })
 })
 
