@@ -38,8 +38,8 @@ none, because the Havn app is a public client and every sign-in uses PKCE.
 ## Deploy (once, from your machine)
 
 ```bash
-deploy/connect-relay/setup.sh                                   # deploy + signing, sealing, admin secrets
-deploy/connect-relay/setup.sh <secrets>/havn-google-web-client.json   # again, once the Google Web client exists
+node deploy/connect-relay/setup.mjs                              # deploy + signing, sealing, admin secrets
+node deploy/connect-relay/setup.mjs <secrets>/havn-google-web-client.json   # again, once the Google Web client exists
 ```
 
 It prints no secret and is safe to re-run: it only generates what is missing.
