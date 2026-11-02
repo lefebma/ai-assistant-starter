@@ -213,6 +213,8 @@ describe('relay /callback', () => {
     const sent = JSON.parse(r.posts[0].init.body as string)
     expect(sent).toMatchObject({ nonce: NONCE, provider: 'fake', account: 'x@y.com', refreshToken: TOKEN })
     expect((r.posts[0].init.headers as Record<string, string>)['x-connect-signature']).toMatch(/^[0-9a-f]{64}$/)
+    // Cloudflare Workers throw on redirect: 'error'; only follow and manual exist there.
+    expect(r.posts[0].init.redirect).toBe('manual')
     const logged = JSON.stringify(r.logs)
     expect(logged).toContain('handoff')
     expect(logged).not.toContain(TOKEN)
@@ -268,6 +270,11 @@ describe('relay /callback', () => {
     const sb = encodeURIComponent(await stateFrom(await start(b)))
     expect((await cb(b, `code=C&state=${sb}`)).status).toBe(502)
     expect(JSON.stringify(b.logs)).not.toContain(TOKEN)
+    // A box origin that redirects is not followed: the hand-off fails.
+    const c = setup({ handoffStatus: 302 })
+    const sc = encodeURIComponent(await stateFrom(await start(c)))
+    expect((await cb(c, `code=C&state=${sc}`)).status).toBe(502)
+    expect(c.posts).toHaveLength(1)
   })
 })
 
