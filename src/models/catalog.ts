@@ -230,6 +230,8 @@ export type CatalogDeps = {
   managed?: { on: boolean; engine: string }
   /** The runtime the chat lane runs on without a choice. */
   boxRuntime?: 'claude' | 'ai-sdk'
+  /** Never call a provider: answer from the cache only (button clicks). */
+  cacheOnly?: boolean
 }
 
 function defaultRead(): (key: string) => string | undefined {
@@ -286,6 +288,10 @@ export async function listModelChoices(deps: CatalogDeps = {}): Promise<ModelCho
   const fetched = async (provider: FetchedProvider): Promise<ListedModel[]> => {
     const key = secret(KEY_ENV[provider]!)
     if (!key) return []
+    if (deps.cacheOnly) {
+      const hash = createHash('sha256').update(key).digest('hex').slice(0, 12)
+      return (cache.keyHash?.[provider] ?? hash) === hash ? (cache.models[provider] ?? []) : []
+    }
     const r = await latestFor(provider, key, { fetchImpl, now, cache })
     changed ||= r.changed
     return r.models

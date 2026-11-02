@@ -351,6 +351,11 @@ describe('which runtime runs a choice', () => {
     expect(await command.modelForClick('chat-2', 'Claude Opus', cat)).toBe('opus')
     // Not a model button.
     expect(await command.modelForClick('chat-2', 'Send', cat)).toBeUndefined()
+    // A click never waits on a provider: no cache means no network call.
+    const net = fakeFetch()
+    const withKey = { ...cat, fetchImpl: net.impl, secret: (k: string) => (k === 'OPENAI_API_KEY' ? 'o' : undefined) }
+    expect(await command.modelForClick('chat-3', 'GPT-5.5', withKey)).toBeUndefined()
+    expect(net.calls).toHaveLength(0)
   })
 })
 

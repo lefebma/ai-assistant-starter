@@ -58,8 +58,14 @@ export async function modelMenu(menuKey: string, current: string | undefined, de
 export async function modelForClick(menuKey: string, label: string, deps?: CatalogDeps): Promise<string | undefined> {
   const ref = menus.get(menuKey)?.get(label)
   if (ref !== undefined) return ref
-  const labelled = uniqueLabels(await listModelChoices(deps))
-  return labelled.find((l) => l.label === label)?.choice.ref
+  // Every button click passes through here, so this never waits on a
+  // provider (cache only) and never throws: a non-model click goes on.
+  try {
+    const labelled = uniqueLabels(await listModelChoices({ ...deps, cacheOnly: true }))
+    return labelled.find((l) => l.label === label)?.choice.ref
+  } catch {
+    return undefined
+  }
 }
 
 export type ModelSwitch =
