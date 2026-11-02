@@ -85,6 +85,16 @@ describe('teams edge (Caddy) config', () => {
     expect(off).not.toContain('/api/web')
   })
 
+  it('passes the sign-in relay hand-off by default, held across a restart, and not in setup mode', () => {
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { caddyVersion: '2.6.2' })
+    const block = c.slice(c.indexOf('handle /connect/handoff {'))
+    expect(block).toMatch(/^handle \/connect\/handoff \{\n\t\treverse_proxy 127\.0\.0\.1:3030 \{\n\t\t\tbuffer_requests\n\t\t\tlb_try_duration 10s/)
+    expect(c.indexOf('handle /connect/handoff {')).toBeLessThan(c.indexOf('respond 404'))
+    expect(buildCaddyfile('5-161-197-79.sslip.io', { teams: false, shortcuts: false })).toContain('request_buffers')
+    const setup = buildCaddyfile('5-161-197-79.sslip.io', { teams: false, shortcuts: false, connect: false, setup: true })
+    expect(setup).not.toContain('/connect')
+  })
+
   it('generates teams-only config when no options are passed (backward compat)', () => {
     const c = buildCaddyfile('5-161-197-79.sslip.io')
     expect(c).toContain('handle /api/teams/* {')
