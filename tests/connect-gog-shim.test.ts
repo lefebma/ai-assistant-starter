@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { installGogShim, resolveReal } from '../src/connect/gog-shim.js'
 import { resolveGogBin, setGogShim } from '../src/infra/gog-bin.js'
@@ -101,14 +101,14 @@ describe('installing it', () => {
   })
 
   it('finds a bare gog on PATH, and an absolute one only if it exists', () => {
-    expect(resolveReal('real-gog', `/nope:${dir}`)).toBe(fake)
+    expect(resolveReal('real-gog', ['/nope', dir].join(delimiter))).toBe(fake)
     expect(resolveReal(fake, '')).toBe(fake)
     expect(resolveReal('/no/such/gog', '')).toBeUndefined()
   })
 
   it('never resolves to the wrapper itself, even when its directory is first on PATH', () => {
     const binDir = join(dir, 'bin')
-    expect(resolveReal('gog', `${binDir}:/nope`, existsSync, binDir)).toBeUndefined()
+    expect(resolveReal('gog', [binDir, '/nope'].join(delimiter), existsSync, binDir)).toBeUndefined()
     expect(resolveReal(shim, '', existsSync, binDir)).toBeUndefined()
   })
 
