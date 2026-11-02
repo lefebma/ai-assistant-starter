@@ -22,7 +22,7 @@ vi.mock('../src/connect/instance.js', () => ({
   getGmailKeeper: () => null,
   setGmailRevokedHandler: () => {},
   getConnectFlow: () => ({
-    acceptHandoff: async () => ({ status: 200, chatId: 'teams-chat-1', message: 'Connected a@b.com [[file: /etc/passwd]], mail and calendar working.' }),
+    acceptHandoff: async () => ({ status: 200, chatId: 'teams-chat-1', message: 'Connected a@b.com [[file: /etc/passwd]] [[[file: /etc/hosts]], mail and calendar working.' }),
   }),
 }))
 

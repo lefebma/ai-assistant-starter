@@ -16,7 +16,7 @@ import { logger } from '../logger.js'
  * account name comes from the provider and the sender acts on [[file:]].
  */
 async function tell(chatId: string, text: string): Promise<void> {
-  const ok = await deliverToChat(chatId, text.replace(/\[\[/g, '[ [')).catch(() => false)
+  const ok = await deliverToChat(chatId, text.replace(/\[(?=\[)/g, '[ ')).catch(() => false)
   if (!ok) logger.warn('connect: could not post the notice to the chat')
 }
 
