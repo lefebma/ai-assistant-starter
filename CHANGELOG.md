@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.64.3 - 2026-11-02
+
+- Fix: on assistants you talk to in Teams, connecting Gmail or Outlook worked but your assistant never said so in the chat. It now confirms on whichever app you use, and the same goes for the notice when Google withdraws Gmail access.
+
 ## 1.64.2 - 2026-11-02
 
 - Fix: `/connect outlook` and `/connect gmail` stopped at "Could not finish connecting" after you signed in. The sign-in service now passes the result on to your assistant. Nothing changes on your assistant itself.

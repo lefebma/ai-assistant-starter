@@ -7,15 +7,25 @@ import { getConnectFlow, getGmailKeeper, setGmailRevokedHandler } from './instan
 import { KEEPER_TICK_MS } from './gmail-token.js'
 import { PRIMARY_CHAT_ID } from '../config.js'
 import { registerHttpRoute, readBodyCapped } from '../http-server.js'
-import { sendTelegram } from '../notify.js'
+import { deliverToChat } from '../bot.js'
 import { logger } from '../logger.js'
+
+/**
+ * Into the chat on whatever platform this box runs (Telegram, Teams), not
+ * Telegram only: a Teams box has no bot token. `[[` is broken up because the
+ * account name comes from the provider and the sender acts on [[file:]].
+ */
+async function tell(chatId: string, text: string): Promise<void> {
+  const ok = await deliverToChat(chatId, text.replace(/\[\[/g, '[ [')).catch(() => false)
+  if (!ok) logger.warn('connect: could not post the notice to the chat')
+}
 
 function startGmailKeeper(): void {
   const keeper = getGmailKeeper()
   if (!keeper) return
   setGmailRevokedHandler(async (account) => {
     logger.warn('connect: Gmail grant revoked at Google')
-    await sendTelegram(`Gmail access for ${account} was withdrawn at Google, so I can no longer read or send mail there. Run /connect gmail to sign in again.`, { chatId: PRIMARY_CHAT_ID || undefined })
+    if (PRIMARY_CHAT_ID) await tell(PRIMARY_CHAT_ID, `Gmail access for ${account} was withdrawn at Google, so I can no longer read or send mail there. Run /connect gmail to sign in again.`)
   })
   const tick = () => {
     keeper.tick().then(
@@ -44,6 +54,6 @@ export function registerConnectRoute(): void {
     // Log the outcome only. Never the body, which holds the tokens.
     logger.info({ status: r.status }, 'connect hand-off')
     reply(r.status)
-    if (r.status === 200 && r.chatId && r.message) await sendTelegram(r.message, { chatId: r.chatId })
+    if (r.status === 200 && r.chatId && r.message) await tell(r.chatId, r.message)
   })
 }
