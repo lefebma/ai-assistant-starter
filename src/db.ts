@@ -20,6 +20,11 @@ export function getDb(): Database.Database {
   return db
 }
 
+/** True once something has opened the store. Lets a check skip a store nobody set up, instead of creating one. */
+export function dbIsOpen(): boolean {
+  return Boolean(db && db.open)
+}
+
 export function initDatabase(): void {
   const d = getDb()
 
