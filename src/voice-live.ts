@@ -620,6 +620,11 @@ export async function createLiveSession(
   deliver?: (chatId: string, text: string) => Promise<boolean>,
   options: LiveCallOptions = {},
 ): Promise<unknown> {
+  // A live call sends what is said, and the call's starting notes (recent
+  // calls, the chat so far), to the voice service unfiltered: none while
+  // the privacy filter is on (card #187). Loaded here: it pulls in the store.
+  const privacy = await import('./privacy/index.js')
+  if (privacy.privacyOnFor(chatId ?? undefined)) throw new LiveSessionError(423, 'privacy_filter_on')
   if (!OPENAI_API_KEY) throw new LiveSessionError(503, 'openai_not_configured')
   if (!liveRuntimeSupported()) throw new LiveSessionError(503, 'node_22_required')
   if (activeSessions.size + pendingCreates >= MAX_CONCURRENT_SESSIONS) throw new LiveSessionError(429, 'too_many_sessions')

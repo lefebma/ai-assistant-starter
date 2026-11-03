@@ -2,7 +2,7 @@
 
 ## 1.68.1 - 2026-11-03
 
-- Privacy filter: tighter. Only your main chat can add names to the list now, so another chat cannot change what is filtered for everyone. Text files you attach (plain text, CSV, JSON and the like) are filtered like any message. Voice calls answer that they cannot help while the filter is on, since speaking an answer would send the names to the voice service. If the filter's setting cannot be read, the turn is treated as private instead of going out unfiltered.
+- Privacy filter: tighter. Only your main chat can add names to the list now, so another chat cannot change what is filtered for everyone. Text files you attach (plain text, CSV, JSON and the like) are filtered like any message. Live voice calls cannot start while the filter is on, since the voice service would hear and speak the names. If the filter's setting cannot be read, the turn is treated as private instead of going out unfiltered.
 
 ## 1.68.0 - 2026-11-03
 

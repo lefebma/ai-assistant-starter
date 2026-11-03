@@ -76,10 +76,10 @@ from every chat's requests.
 - **Web search on the Claude engine** runs at the AI service, so it searches
   for the placeholder, not the real name, and may find less.
 - **Voice.** While the filter is on, replies come as text even with voice
-  replies on, and a voice call answers that it cannot help on a call, since
-  speaking an answer would send the real names to the voice service. What
-  you say on a call, and voice notes you send, still reach the voice service
-  as audio: neither is filtered.
+  replies on, and live voice calls cannot start: a call sends what is said,
+  and notes from earlier calls and the chat, to the voice service
+  unfiltered. Voice notes you send are still transcribed by the voice
+  service as audio.
 - **Images, PDFs and other binary files** are sent as they are. Text files
   (plain text, CSV, JSON, Markdown and the like) are filtered like any text.
 

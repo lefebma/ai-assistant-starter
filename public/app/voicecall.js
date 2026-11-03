@@ -41,6 +41,7 @@ export function callProblem(err) {
   if (name === 'NotReadableError' || name === 'AbortError') return 'The microphone is busy in another app. Close it there, then try again.'
   const code = (err && err.code) || ''
   const status = (err && err.status) || 0
+  if (code === 'privacy_filter_on') return 'Voice calls are off while the privacy filter is on, since the voice service would hear the names. Type instead, or send /private off.'
   if (status === 503) return 'Voice chat is not set up on this assistant.'
   if (status === 429) return 'Two voice calls are already open on this assistant. End one first.'
   if (code === 'call_ended') return 'The call was stopped before it connected.'

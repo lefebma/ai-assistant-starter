@@ -348,6 +348,12 @@ describe('a private run', () => {
     expect(await createAssistantBackend('main')('who is my client?', new AbortController().signal)).toBe(privacy.PRIVATE_VOICE_NOTICE)
   })
 
+  it('refuses to start a live voice call while private', async () => {
+    const live = await import('../src/voice-live.js')
+    store.setChatPrivacy('main', true)
+    await expect(live.createLiveSession('v=0', undefined, 'main')).rejects.toMatchObject({ status: 423, code: 'privacy_filter_on' })
+  })
+
   it('changes nothing outside a private run', async () => {
     const env = { A: '1' }
     expect(await privacy.privateCliEnv(env)).toBe(env)
