@@ -341,6 +341,11 @@ describe('a private run', () => {
     expect(policy.decide(p, { host: 'gmail.googleapis.com', port: 443, method: null }).allow).toBe(true)
     expect(policy.decide(p, { host: '127.0.0.1', port: 45555, method: 'POST' }).allow).toBe(true)
     expect(policy.decide(egress.withPrivacyProxy(chat, '127.0.0.1:45555', false), { host: 'api.anthropic.com', port: 443, method: null }).allow).toBe(true)
+    // A wildcard, or the read list (which still opens a tunnel), does not get around it.
+    const loose: import('../src/egress/policy.js').EgressPolicy = { name: 'role', write: [{ host: 'anthropic.com', wildcard: true }], read: [{ host: 'api.anthropic.com', wildcard: false }, { host: 'example.com', wildcard: false }] }
+    const q = egress.withPrivacyProxy(loose, '127.0.0.1:45555', true)
+    expect(policy.decide(q, { host: 'api.anthropic.com', port: 443, method: null }).allow).toBe(false)
+    expect(policy.decide(q, { host: 'example.com', port: 443, method: null }).allow).toBe(true)
   })
 
   it('treats a model on this machine or network as local', () => {

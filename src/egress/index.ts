@@ -22,7 +22,7 @@ import { loadRoles, roleExpired, type RoleSpec } from '../assurance/roles.js'
 import { currentGrant } from '../assurance/grant.js'
 import { currentRun } from '../assurance/effect-journal.js'
 import { listAccounts } from '../imap/store.js'
-import { ESSENTIALS, expandRules, listFromEnv, type EgressPolicy, type GroupSources } from './policy.js'
+import { ESSENTIALS, expandRules, listFromEnv, type EgressPolicy, type GroupSources, type HostRule } from './policy.js'
 import { openRunProxy, type EgressRecord, type RunProxy } from './proxy.js'
 import { privacyProxyAddress } from '../privacy/proxy.js'
 import { privacyActive } from '../privacy/index.js'
@@ -81,10 +81,14 @@ export function policyFor(roleId: string | null | undefined, cfg: EgressConfig =
 export function withPrivacyProxy(p: EgressPolicy, address: string | null = privacyProxyAddress(), isPrivate = false): EgressPolicy {
   // A private turn may not reach the AI except through the relay: with the
   // AI's own hosts off the list, a CLI that ignored its base URL is refused.
-  const write = isPrivate ? p.write.filter((r) => !ESSENTIALS.includes(r.host)) : p.write
-  if (!address) return isPrivate ? { ...p, write } : p
+  // Any rule that would let a request to them through goes, wildcards and
+  // the read list included (read still opens an HTTPS tunnel).
+  const reachesAi = (r: HostRule) => ESSENTIALS.some((h) => (r.wildcard ? h.endsWith(`.${r.host}`) : h === r.host.toLowerCase()))
+  const write = isPrivate ? p.write.filter((r) => !reachesAi(r)) : p.write
+  const read = isPrivate ? p.read.filter((r) => !reachesAi(r)) : p.read
+  if (!address) return isPrivate ? { ...p, write, read } : p
   const [host, port] = address.split(':')
-  return { ...p, write: [...write, { host, port: Number(port), wildcard: false }] }
+  return { ...p, write: [...write, { host, port: Number(port), wildcard: false }], read }
 }
 
 /** Nothing may leave: a revoked grant. */
