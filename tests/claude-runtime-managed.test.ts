@@ -32,6 +32,7 @@ vi.mock('../src/vault/index.js', () => ({ getSecret: mockGetSecret }))
 vi.mock('../src/logger.js', () => ({ logger: mockLogger }))
 
 import { ClaudeAgentRuntime } from '../src/runtime/claude.js'
+import { getDb } from '../src/db.js'
 import { getAgentRuntime, setAgentRuntime } from '../src/runtime/index.js'
 import { AI_LIMIT_FILE, AiPausedError, MANAGED_AI_FILE, clearAiLimit, readAiLimit, writeAiLimit } from '../src/ai-limit.js'
 import { readAiUsage } from '../src/ai-usage.js'
@@ -44,6 +45,19 @@ const KEY = 'test-managed-key-not-a-real-secret-0001'
 const SPEND_RESULT = 'API Error: 400 You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.'
 const SPEND_400 = `Claude Code returned an error result: ${SPEND_RESULT}`
 const TIER_CAP_429 = 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Your organization has hit its spend cap"},"request_id":"req_022DEF"}'
+
+function resetStore() {
+  // privacyOnFor() reads the shared SQLite handle. Windows will not remove
+  // assistant.db while that handle is open.
+  getDb().close()
+  rmSync(STORE, { recursive: true, force: true })
+  mkdirSync(STORE, { recursive: true })
+}
+
+afterAll(() => {
+  getDb().close()
+  rmSync(STORE, { recursive: true, force: true })
+})
 
 function okConversation(result: string, sessionId = 'sess-managed') {
   return (async function* () {
@@ -83,8 +97,7 @@ function withKey() {
 
 describe('ClaudeAgentRuntime on a managed box', () => {
   beforeEach(() => {
-    rmSync(STORE, { recursive: true, force: true })
-    mkdirSync(STORE, { recursive: true })
+    resetStore()
     mockQuery.mockReset()
     mockReadEnvFile.mockReset()
     mockReadEnvFile.mockReturnValue({})
@@ -92,10 +105,6 @@ describe('ClaudeAgentRuntime on a managed box', () => {
     mockGetSecret.mockReturnValue(undefined)
     for (const f of Object.values(mockLogger)) f.mockClear()
     setManaged(true)
-  })
-
-  afterAll(() => {
-    rmSync(STORE, { recursive: true, force: true })
   })
 
   it('adds each call\'s reported cost to the month, chat turns and one-shots alike (card #159)', async () => {
@@ -391,8 +400,7 @@ describe('ClaudeAgentRuntime on a managed box', () => {
 
 describe('ClaudeAgentRuntime on a non-managed box', () => {
   beforeEach(() => {
-    rmSync(STORE, { recursive: true, force: true })
-    mkdirSync(STORE, { recursive: true })
+    resetStore()
     mockQuery.mockReset()
     mockGetSecret.mockReset()
     mockGetSecret.mockReturnValue(undefined)
