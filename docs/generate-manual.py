@@ -340,6 +340,7 @@ def build_section_4(story, S):
         ["/help", "Show available commands and features"],
         ["/newchat", "Start a fresh conversation (clears context)"],
         ["/model", "Pick the AI model for this chat"],
+        ["/effort", "Set how hard the assistant thinks before answering"],
         ["/cancel", "Stop what is running: the reply, queued messages, scheduled runs"],
         ["/chatid", "Display your Telegram chat ID"],
         ["/memory", "View what the assistant remembers about you"],

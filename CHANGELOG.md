@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.67.0 - 2026-11-03
+
+- **New: `/effort` sets how hard your assistant thinks before answering.** Send `/effort` and your assistant shows the current level and a button for each one its model offers: Low, Medium, High, Extra high, or Default. Low answers quickest; higher levels take longer, go deeper and use more of your AI budget. Your pick belongs to the chat and stays through restarts. It works the same in Telegram, Teams and the web app, where it sets the conversation's Effort picker, and the picker now shows only the levels the chosen model offers. A model with no effort setting says so, and your pick comes back when you switch to one that has it. Scheduled tasks keep their own setting.
+
 ## 1.66.0 - 2026-11-02
 
 - **New: connect more than one Gmail account.** Send `/connect gmail` again for each Google account. Each one you sign in with is added, and your assistant reads, sends and checks the calendar on whichever account you name. Gmail accounts connected the older way keep working beside them, so you can move them over one at a time.

@@ -20,6 +20,9 @@ import { addAuthorizedChat, removeAuthorizedChat, getAuthorizedChats, isAuthoriz
 import { claimButtonClick } from './db.js'
 import { getChatModel, setChatModel } from './models/chat-model.js'
 import { modelMenu, switchModel, switchToRef, modelForClick, type ModelSwitch } from './models/command.js'
+import { getChatEffort, setChatEffort } from './models/chat-effort.js'
+import { effortMenu, effortForClick, parseEffort, setEffort, effortNoteAfterSwitch } from './models/effort-command.js'
+import { isEffort, type Effort } from './models/effort-levels.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
 import { resolveTurnRuntime } from './runtime/index.js'
@@ -289,7 +292,7 @@ async function runTurn(
   const rotation = rotationConfig()
   if (needsRotation(getSessionMeta(chatId), rotation)) {
     const { rotated, summary } = await rotateSession(chatId, rotation, async (prompt, oldSessionId) => {
-      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId) }))
+      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId) }))
       return text
     })
     if (rotated) {
@@ -369,7 +372,7 @@ async function runTurn(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId) }))
+    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId) }))
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
@@ -603,7 +606,7 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     const fullMessage = [skillIndex, memoryContext, SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
     const sessionId = getSession(chatId) ?? undefined
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
-    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId) }))
+    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId) }))
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
@@ -762,12 +765,18 @@ async function sendModelMenu(adapter: PlatformAdapter, chatId: string, menuKey: 
   }
 }
 
+/** A /model reply, with a line when the chat's effort does not carry over as it is (card #272). */
+function switchReply(r: ModelSwitch, effort: Effort | undefined): string {
+  if (!r.ok) return r.text
+  return [r.text, effortNoteAfterSwitch(r.choice.ref || undefined, effort)].filter(Boolean).join(' ')
+}
+
 async function handleModelCommand(adapter: PlatformAdapter, chatId: string, arg: string): Promise<void> {
   const current = getChatModel(chatId)
   if (!arg) return sendModelMenu(adapter, chatId, chatId, current)
   const r = await switchModel(current, arg)
   if (r.ok) applyChatModelSwitch(chatId, r)
-  await adapter.sendMessage(chatId, r.text)
+  await adapter.sendMessage(chatId, switchReply(r, getChatEffort(chatId)))
 }
 
 /** A click on the chat's last /model menu. False: the label is not from it. */
@@ -776,6 +785,37 @@ async function resolveModelClick(adapter: PlatformAdapter, chatId: string, label
   if (ref === undefined) return false
   const r = await switchToRef(getChatModel(chatId), ref)
   if (r.ok) applyChatModelSwitch(chatId, r)
+  await adapter.sendMessage(chatId, switchReply(r, getChatEffort(chatId)))
+  return true
+}
+
+// --- /effort (card #272) ---
+
+async function sendEffortMenu(adapter: PlatformAdapter, chatId: string, model: string | undefined, current: Effort | undefined): Promise<void> {
+  const menu = await effortMenu(model, current)
+  if (menu.buttons.length && adapter.supportsButtons) {
+    await adapter.sendMessage(chatId, menu.text, { buttons: menu.buttons })
+  } else {
+    await adapter.sendMessage(chatId, [menu.text, ...menu.lines].join('\n'))
+  }
+}
+
+async function handleEffortCommand(adapter: PlatformAdapter, chatId: string, arg: string): Promise<void> {
+  const model = getChatModel(chatId)
+  const current = getChatEffort(chatId)
+  if (!arg) return sendEffortMenu(adapter, chatId, model, current)
+  const r = await setEffort(model, current, parseEffort(arg), arg)
+  if (r.ok) setChatEffort(chatId, r.effort)
+  if (r.ok) logger.info({ chatId, effort: r.effort || 'default' }, 'Chat effort set')
+  await adapter.sendMessage(chatId, r.text)
+}
+
+/** A click on a /effort button. False: the label is not one. */
+async function resolveEffortClick(adapter: PlatformAdapter, chatId: string, label: string): Promise<boolean> {
+  const wanted = effortForClick(label)
+  if (wanted === undefined) return false
+  const r = await setEffort(getChatModel(chatId), getChatEffort(chatId), wanted)
+  if (r.ok) setChatEffort(chatId, r.effort)
   await adapter.sendMessage(chatId, r.text)
   return true
 }
@@ -791,6 +831,8 @@ export interface WebCommandInput {
   clickedMessageId?: number
   /** The conversation's current model choice, for /model. */
   model?: string
+  /** The conversation's current effort choice, for /effort. */
+  effort?: string
   /**
    * The message waited in the web queue: it was sent before anything after
    * it, so a /secret set started since then neither captures it as the key
@@ -806,6 +848,8 @@ export interface WebCommandResult {
   clearSession: boolean
   /** /model in the web picked this model for the conversation ('' = default). */
   model?: string
+  /** /effort in the web picked this effort for the conversation ('' = default). */
+  effort?: Effort | ''
 }
 
 /**
@@ -870,6 +914,7 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
     // The one difference from Telegram: a web chat has its own agent session,
     // so starting fresh here clears that one and leaves the chat's alone.
     const cmd = commandWord(trimmed)
+    const webEffort = isEffort(input.effort) ? input.effort : undefined
     if (cmd === '/newchat' || cmd === '/forget') {
       logger.info({ chatId, command: cmd, surface: 'web' }, 'Handling command')
       if (!input.fromQueue && secretFlow.cancelPending(chatId)) await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
@@ -890,8 +935,20 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
         return { handled: true, clearSession: false }
       }
       const r = await switchModel(input.model, arg)
-      await adapter.sendMessage(chatId, r.text)
+      await adapter.sendMessage(chatId, switchReply(r, webEffort))
       return r.ok ? { handled: true, clearSession: r.freshSession, model: r.choice.ref } : { handled: true, clearSession: false }
+    }
+    // /effort in the web sets the conversation's effort picker (card #272).
+    if (cmd === '/effort') {
+      logger.info({ chatId, command: cmd, surface: 'web' }, 'Handling command')
+      const arg = trimmed.slice(cmd.length).trim()
+      if (!arg) {
+        await sendEffortMenu(adapter, chatId, input.model, webEffort)
+        return { handled: true, clearSession: false }
+      }
+      const r = await setEffort(input.model, webEffort, parseEffort(arg), arg)
+      await adapter.sendMessage(chatId, r.text)
+      return r.ok ? { handled: true, clearSession: false, effort: r.effort } : { handled: true, clearSession: false }
     }
     // A click goes where Telegram's callback sends it: a click on the support
     // draft's own card resolves it, and every other click is for the agent.
@@ -902,8 +959,14 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
       const picked = await modelForClick(`web:${input.conversationId}`, click[1]!)
       if (picked !== undefined) {
         const r = await switchToRef(input.model, picked)
-        await adapter.sendMessage(chatId, r.text)
+        await adapter.sendMessage(chatId, switchReply(r, webEffort))
         return r.ok ? { handled: true, clearSession: r.freshSession, model: r.choice.ref } : { handled: true, clearSession: false }
+      }
+      const level = effortForClick(click[1]!)
+      if (level !== undefined) {
+        const r = await setEffort(input.model, webEffort, level)
+        await adapter.sendMessage(chatId, r.text)
+        return r.ok ? { handled: true, clearSession: false, effort: r.effort } : { handled: true, clearSession: false }
       }
       const draft = pendingSupport.get(chatId)
       const card = webSupportCards.get(chatId)
@@ -1795,6 +1858,10 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     await handleModelCommand(adapter, chatId, trimmed.slice(cmd.length).trim())
     return true
   }
+  if (cmd === '/effort') {
+    await handleEffortCommand(adapter, chatId, trimmed.slice(cmd.length).trim())
+    return true
+  }
   if (cmd === '/voice') {
     if (isManagedAi()) {
       await adapter.sendMessage(chatId, VOICE_OFF_REPLY)
@@ -1992,6 +2059,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
       'Commands:',
       '/newchat - Clear session, start fresh',
       '/model - Pick the AI model for this chat',
+      '/effort - Set how hard I think before answering',
       '/memory - Show stored memories',
       '/voice - Toggle voice replies',
       '/voice ui - Get your private link to the voice chat page',
@@ -2024,6 +2092,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
 export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'newchat', description: 'Clear session, start fresh' },
   { command: 'model', description: 'Pick the AI model for this chat' },
+  { command: 'effort', description: 'Set how hard I think before answering' },
   { command: 'memory', description: 'Show recent stored memories' },
   { command: 'voice', description: 'Toggle voice replies' },
   { command: 'app', description: 'Sign-in link to the web app' },
@@ -2140,6 +2209,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       // it, so the same card can never send the same email twice.
       const answer = async () => {
         if (await resolveModelClick(adapter, chatId, label)) return
+        if (await resolveEffortClick(adapter, chatId, label)) return
         if (await resolveSupportAction(adapter, chatId, label)) return
         await handleMessage(adapter, chatId, `[button_click]: ${label}`)
       }
