@@ -347,6 +347,19 @@ describe('ai-sdk middleware', () => {
     expect(r.toolCalls[0]?.input).toEqual({ id: 'Jane Smith', data: { url: 'mailto:jane@acme.com' } })
   })
 
+  it('masks a part type it does not know, ids aside', async () => {
+    let seen: any
+    const model = new MockLanguageModelV3({
+      doGenerate: async (opts) => {
+        seen = opts.prompt
+        return { content: [], finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } }, warnings: [] } as any
+      },
+    })
+    const mw = privacyMiddleware(pick)
+    await mw.transformParams!({ type: 'generate', model, params: { prompt: [{ role: 'user', content: [{ type: 'future-part', id: 'Acme', note: 'for Jane Smith' } as any] }] } as any }).then((p: any) => (seen = p.prompt))
+    expect(seen.find((x: any) => x.role === 'user').content[0]).toEqual({ type: 'future-part', id: 'Acme', note: 'for PERSON_2' })
+  })
+
   it('refuses a running tool loop whose reasoning names someone', async () => {
     const model = new MockLanguageModelV3({ doGenerate: async () => { throw new Error('must not be called') } })
     await expect(generateText({

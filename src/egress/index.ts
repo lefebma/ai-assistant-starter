@@ -25,6 +25,7 @@ import { listAccounts } from '../imap/store.js'
 import { ESSENTIALS, expandRules, listFromEnv, type EgressPolicy, type GroupSources } from './policy.js'
 import { openRunProxy, type EgressRecord, type RunProxy } from './proxy.js'
 import { privacyProxyAddress } from '../privacy/proxy.js'
+import { privacyActive } from '../privacy/index.js'
 
 export type EgressConfig = { approved: string[]; read: string[]; imapHosts: () => string[] }
 
@@ -77,10 +78,13 @@ export function policyFor(roleId: string | null | undefined, cfg: EgressConfig =
  * reaches the AI, so it is as essential as the AI itself: its exact
  * loopback address joins the write list while it runs.
  */
-export function withPrivacyProxy(p: EgressPolicy, address: string | null = privacyProxyAddress()): EgressPolicy {
-  if (!address) return p
+export function withPrivacyProxy(p: EgressPolicy, address: string | null = privacyProxyAddress(), isPrivate = false): EgressPolicy {
+  // A private turn may not reach the AI except through the relay: with the
+  // AI's own hosts off the list, a CLI that ignored its base URL is refused.
+  const write = isPrivate ? p.write.filter((r) => !ESSENTIALS.includes(r.host)) : p.write
+  if (!address) return isPrivate ? { ...p, write } : p
   const [host, port] = address.split(':')
-  return { ...p, write: [...p.write, { host, port: Number(port), wildcard: false }] }
+  return { ...p, write: [...write, { host, port: Number(port), wildcard: false }] }
 }
 
 /** Nothing may leave: a revoked grant. */
@@ -159,10 +163,12 @@ export async function withEgress<T>(opts: EgressOptions, fn: () => Promise<T>): 
   const actor = currentActor()
   // The proxy's callbacks run outside this context: bind the grant check to it now.
   const live = currentGrant() ? AsyncLocalStorage.bind(() => currentGrant()) : null
+  // Whether this run is private is known now; the proxy's callbacks run outside its context.
+  const isPrivate = privacyActive()
   const policy = (): EgressPolicy => {
     const g = live ? live() : null
     if (g && !g.ok) return NOTHING(g.reason)
-    return withPrivacyProxy(policyFor(g ? g.role : startRole, opts.cfg))
+    return withPrivacyProxy(policyFor(g ? g.role : startRole, opts.cfg), privacyProxyAddress(), isPrivate)
   }
   let proxy: RunProxy
   try {

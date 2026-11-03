@@ -92,13 +92,27 @@ const truthy = (v: unknown) => typeof v === 'string' && /^(1|true|yes|on)$/i.tes
 export function relayBypass(env: Record<string, string | undefined>, cwd: string, home: string = homedir()): string | null {
   for (const k of PROVIDER_SWITCHES) if (truthy(env[k])) return `${k} is set`
   const configDir = env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude')
-  const files = [join(configDir, 'settings.json'), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]
+  const files = [
+    join(configDir, 'settings.json'),
+    join(cwd, '.claude', 'settings.json'),
+    join(cwd, '.claude', 'settings.local.json'),
+    // Managed (admin) settings, which win over everything else.
+    '/Library/Application Support/ClaudeCode/managed-settings.json',
+    '/etc/claude-code/managed-settings.json',
+  ]
   for (const f of files) {
+    let raw: string
+    try {
+      raw = readFileSync(f, 'utf8')
+    } catch {
+      continue // not there
+    }
     let parsed: { env?: Record<string, unknown> }
     try {
-      parsed = JSON.parse(readFileSync(f, 'utf8')) as { env?: Record<string, unknown> }
+      parsed = JSON.parse(raw) as { env?: Record<string, unknown> }
     } catch {
-      continue
+      // Unreadable here, maybe not to the CLI: it could name a base URL.
+      return `${f} could not be read`
     }
     const e = parsed?.env
     if (!e || typeof e !== 'object') continue

@@ -70,6 +70,14 @@ describe('the switch', () => {
 })
 
 describe('the list', () => {
+  it('finds an email that only appears in earlier thinking, so that block is left out', async () => {
+    const anthropic = await import('../src/privacy/anthropic.js')
+    const body = { messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: [{ type: 'thinking', thinking: 'mail zed@globex.io', signature: 's' }, { type: 'text', text: 'ok' }] }, { role: 'user', content: 'next' }] }
+    const scope = store.maskerFor(anthropic.requestTexts(body)).scope()
+    const out = anthropic.maskRequest(body, scope) as any
+    expect(JSON.stringify(out)).not.toMatch(/zed@globex/)
+  })
+
   it('adds one row for one phone number however it is written', () => {
     store.maskerFor(['call 416-555-0177 or (416) 555-0177'])
     expect(store.listEntries().filter((e) => e.kind === 'phone')).toHaveLength(1)
@@ -301,6 +309,11 @@ describe('a private run', () => {
     mkdirSync(join(dir, '.claude'))
     writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }))
     expect(privacy.relayBypass({}, dir, home)).toMatch(/sets ANTHROPIC_BASE_URL/)
+    writeFileSync(join(dir, '.claude', 'settings.json'), '{ not json')
+    expect(privacy.relayBypass({}, dir, home)).toMatch(/could not be read/)
+    writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ env: { OTHER: '1' } }))
+    expect(privacy.relayBypass({}, dir, home)).toBeNull()
+    writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }))
     await expect(privacy.withPrivacy(true, () => privacy.privateCliEnv({}, dir))).rejects.toThrow(/The turn was not sent/)
   })
 
@@ -319,6 +332,15 @@ describe('a private run', () => {
     expect(policy.decide(p, { host: '127.0.0.1', port: 45555, method: 'POST' })).toEqual({ allow: true, via: 'write' })
     expect(policy.decide(p, { host: '127.0.0.1', port: 45556, method: 'POST' }).allow).toBe(false)
     expect(egress.withPrivacyProxy(base, null)).toBe(base)
+  })
+
+  it('in a private turn, takes the AI host off the list so only the relay reaches it', () => {
+    const chat: import('../src/egress/policy.js').EgressPolicy = { name: 'chat', write: [{ host: 'api.anthropic.com', wildcard: false }, { host: 'gmail.googleapis.com', wildcard: false }], read: [] }
+    const p = egress.withPrivacyProxy(chat, '127.0.0.1:45555', true)
+    expect(policy.decide(p, { host: 'api.anthropic.com', port: 443, method: null }).allow).toBe(false)
+    expect(policy.decide(p, { host: 'gmail.googleapis.com', port: 443, method: null }).allow).toBe(true)
+    expect(policy.decide(p, { host: '127.0.0.1', port: 45555, method: 'POST' }).allow).toBe(true)
+    expect(policy.decide(egress.withPrivacyProxy(chat, '127.0.0.1:45555', false), { host: 'api.anthropic.com', port: 443, method: null }).allow).toBe(true)
   })
 
   it('treats a model on this machine or network as local', () => {

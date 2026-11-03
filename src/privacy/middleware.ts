@@ -14,6 +14,7 @@ import { maskerFor } from './store.js'
 
 type Any = unknown
 type Part = { type: string; [k: string]: Any }
+const OPAQUE = new Set(['type', 'toolCallId', 'toolName', 'approvalId', 'id', 'mediaType', 'data', 'providerOptions', 'providerExecuted'])
 
 /** Every string in `v`, object keys included: tool data has no fields that are safe to skip. */
 function deepAll(v: Any, f: (s: string) => string): Any {
@@ -24,6 +25,15 @@ function deepAll(v: Any, f: (s: string) => string): Any {
     return Object.fromEntries(Object.entries(v as Record<string, Any>).map(([k, x]) => [f(k), deepAll(x, f)]))
   }
   return v
+}
+
+/** One item of a tool result's content: text masked, media sent as is, anything newer masked. */
+function contentItem(c: Any, f: (s: string) => string): Any {
+  if (!c || typeof c !== 'object') return typeof c === 'string' ? f(c) : c
+  const item = c as Part
+  if (item.type === 'text' && typeof item.text === 'string') return { ...item, text: f(item.text) }
+  if (item.type === 'media' || item.type === 'image-data' || item.type === 'file-data' || item.type === 'image-url' || item.type === 'file-url') return item
+  return Object.fromEntries(Object.entries(item).map(([k, v]) => [k, OPAQUE.has(k) ? v : deepAll(v, f)]))
 }
 
 /** A tool result's output: text, JSON, or content with text and media. */
@@ -38,9 +48,7 @@ function output(o: Any, f: (s: string) => string): Any {
     case 'error-json':
       return { ...out, value: deepAll(out.value, f) }
     case 'content':
-      return Array.isArray(out.value)
-        ? { ...out, value: out.value.map((c) => (c && typeof c === 'object' && (c as Part).type === 'text' && typeof (c as Part).text === 'string' ? { ...(c as Part), text: f((c as Part).text as string) } : c)) }
-        : out
+      return Array.isArray(out.value) ? { ...out, value: out.value.map((c) => contentItem(c, f)) } : out
     default:
       // A newer output shape: its strings, keys included.
       return deepAll(o, f)
@@ -60,8 +68,13 @@ function part(p: Part, f: (s: string) => string): Part {
       return { ...p, input: deepAll(p.input, f) }
     case 'tool-result':
       return { ...p, output: output(p.output, f) }
-    default:
+    // Signed reasoning is handled by dropNamedReasoning; file data is sent as is.
+    case 'reasoning':
+    case 'file':
       return p
+    default:
+      // A newer part type: its strings, ids and types aside.
+      return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, OPAQUE.has(k) ? v : deepAll(v, f)])) as Part
   }
 }
 
@@ -94,13 +107,17 @@ function dropNamedReasoning(prompt: LanguageModelV3Prompt, masker: MaskScope): L
   })
 }
 
-/** Every piece of text in a prompt, to look for emails and phones first. */
+/** Every piece of text in a prompt, reasoning included, to look for emails and phones first. */
 export function promptTexts(prompt: LanguageModelV3Prompt): string[] {
   const out: string[] = []
   mapPrompt(prompt, (s) => {
     out.push(s)
     return s
   })
+  for (const m of prompt) {
+    if (m.role !== 'assistant') continue
+    for (const p of m.content as unknown as Part[]) if (p.type === 'reasoning' && typeof p.text === 'string') out.push(p.text)
+  }
   return out
 }
 

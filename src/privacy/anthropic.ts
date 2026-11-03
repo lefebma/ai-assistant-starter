@@ -71,13 +71,23 @@ function mapRequest(body: Obj, f: (s: string) => string): Obj {
   return out
 }
 
-/** Every piece of prose in a request, to look for emails and phones before masking. */
+/**
+ * Every piece of prose in a request, to look for emails and phones before
+ * masking. Thinking is included: it goes out unchanged, so an address in it
+ * must be on the list for the block to be caught and left out.
+ */
 export function requestTexts(body: Obj): string[] {
   const texts: string[] = []
   mapRequest(body, (s) => {
     texts.push(s)
     return s
   })
+  if (Array.isArray(body.messages)) {
+    for (const m of body.messages) {
+      if (!isObj(m) || !Array.isArray(m.content)) continue
+      for (const b of m.content) if (isObj(b) && b.type === 'thinking' && typeof b.thinking === 'string') texts.push(b.thinking)
+    }
+  }
   return texts
 }
 

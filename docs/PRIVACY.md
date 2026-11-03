@@ -113,4 +113,7 @@ starts fresh.
 
 If Claude Code is set up to send its requests elsewhere (Bedrock, Vertex or
 Foundry, or an `ANTHROPIC_BASE_URL` in its own settings files), it would not
-go through the relay, so a private turn refuses to start instead.
+go through the relay, so a private turn refuses to start instead. A settings
+file it cannot read counts as one that might, and stops the turn too. On a
+hosted box with egress enforced, a private turn's tools and Claude Code cannot
+reach the AI service at all except through the relay.
