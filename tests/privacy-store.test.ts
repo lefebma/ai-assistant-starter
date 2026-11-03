@@ -55,6 +55,14 @@ describe('the switch', () => {
     expect(store.privacyState('other').on).toBe(false)
   })
 
+  it('reads a store that exists on disk even when nothing has opened it yet', async () => {
+    store.setChatPrivacy('main', true)
+    db.getDb().close()
+    expect(db.dbIsOpen()).toBe(false)
+    expect(store.privacyState('main').on).toBe(true)
+    expect(db.dbIsOpen()).toBe(true)
+  })
+
   it('covers a run with no chat whenever any chat has it on', () => {
     expect(store.privacyState(undefined).on).toBe(false)
     store.setChatPrivacy('other', true)

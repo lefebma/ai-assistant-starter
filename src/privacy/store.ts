@@ -11,6 +11,9 @@
  * turned off from a chat. Otherwise each chat turns it on for itself with
  * /private on, kept in app_state as privacy:<chatId>.
  */
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { STORE_DIR } from '../config.js'
 import { dbIsOpen, getAppState, getDb, setAppState } from '../db.js'
 import { readEnvFile } from '../env.js'
 import { findContactDetails, Masker, normalizeContact, placeholderFor, type Entry, type Kind, KINDS } from './mask.js'
@@ -136,9 +139,9 @@ export type PrivacyState = { on: boolean; boxWide: boolean }
 /** Whether this chat's turns are anonymized. */
 export function privacyState(chatId: string | undefined, read?: (k: string) => string | undefined): PrivacyState {
   if (envOn(read)) return { on: true, boxWide: true }
-  // No store open (a script or test that never set one up): no chat can have
-  // switched it on, and opening one here would leave a stray database behind.
-  if (!dbIsOpen()) return { on: false, boxWide: false }
+  // No store on disk at all: no chat can have switched it on, and opening one
+  // here would create a stray database. A store that exists is always read.
+  if (!dbIsOpen() && !existsSync(resolve(STORE_DIR, 'assistant.db'))) return { on: false, boxWide: false }
   if (!chatId) return { on: anyChatOn(), boxWide: false }
   return { on: getAppState(chatKey(chatId)) === 'on', boxWide: false }
 }
