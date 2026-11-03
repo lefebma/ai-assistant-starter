@@ -224,6 +224,33 @@ Practical tiers:
 - **Experimental**: anything below the floor (no tool calling, tiny context).
   Expect failures that look like assistant bugs but aren't.
 
+## Switching models from the chat
+
+Send `/model` to your assistant. It shows the model this chat uses and a button
+for each one you can pick. Without buttons (some chat apps), it lists the
+names, and `/model gpt` picks the first one that matches. `/model default`
+goes back to what the settings above choose.
+
+What the list holds:
+
+- **Claude:** Haiku, Sonnet and Opus. On a Claude subscription these always
+  mean the newest of each. With `AGENT_RUNTIME=ai-sdk` and an Anthropic key,
+  the list shows the newest model ids Anthropic offers.
+- **OpenAI and Google:** the newest of each main model family, when
+  `OPENAI_API_KEY` or `GOOGLE_API_KEY` is set. The list is checked once a day,
+  so new models show up without an update.
+- **A host in `AI_BASE_URL`, and Azure:** the models in `AI_MODEL`,
+  `AI_MODEL_CHEAP` and `AI_MODEL_STRONG`. Those hosts list hundreds of models,
+  and an Azure key cannot see new ones until you deploy them.
+- **Managed AI:** only the models your plan covers.
+
+The choice belongs to one chat and is kept through restarts. Scheduled tasks
+keep their own model. Picking a model from another company on a
+Claude-subscription assistant starts a fresh conversation, because the two
+engines keep their chats apart; what the assistant remembers carries over.
+An OpenAI key set only for voice also puts OpenAI's models on the list, and
+those bill that OpenAI account.
+
 ## Switching providers later
 
 Just change `AI_PROVIDER` / `AI_MODEL`; the next message uses them. Existing conversation history

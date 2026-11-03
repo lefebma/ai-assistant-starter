@@ -5,6 +5,8 @@ import { realpathSync } from 'node:fs'
 import { PROJECT_ROOT } from '../config.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
+import { listModelChoices } from '../models/catalog.js'
+import { runtimeIdFor } from '../runtime/index.js'
 import { runWebTurn, cancelWebTurn, webSecretAwaited, webSupportAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
@@ -54,7 +56,6 @@ import {
   type QueueItem,
 } from './queue.js'
 
-const MODELS = ['', 'haiku', 'sonnet', 'opus']
 const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh']
 const MAX_TEXT = 100_000
 const MAX_TITLE = 120
@@ -260,6 +261,7 @@ async function answer(
       text,
       clickedMessageId,
       fromQueue,
+      model: (getConversation(chatId, id) ?? conv).model || undefined,
       hooks: {
         send: (t, buttons) => String(reply(t, [], buttons)),
         edit: (mid, t) => setMessageContent(id, Number(mid), t),
@@ -293,7 +295,9 @@ async function answer(
     if (cmd.handled) {
       storeUser()
       if (cmd.clearSession) updateConversation(chatId, id, { sessionId: '' })
-      sse.writeEvent('done', { cancelled: false, command: true })
+      if (cmd.model !== undefined) updateConversation(chatId, id, { model: cmd.model })
+      // /model changed the conversation's model: the page updates its picker.
+      sse.writeEvent('done', { cancelled: false, command: true, ...(cmd.model !== undefined ? { model: cmd.model } : {}) })
       sse.close()
       return paused ? 'paused' : undefined
     }
@@ -404,6 +408,16 @@ registerWebRoutes([
     },
   },
   {
+    // The model picker's choices: the same list /model shows (card #270).
+    method: 'GET',
+    pattern: /^\/api\/web\/models$/,
+    auth: true,
+    async handler(ctx) {
+      const choices = await listModelChoices()
+      sendJson(ctx.res, 200, { models: choices.map((c) => ({ ref: c.ref, label: c.label })) })
+    },
+  },
+  {
     method: 'GET',
     pattern: /^\/api\/web\/conversations$/,
     auth: true,
@@ -431,14 +445,21 @@ registerWebRoutes([
       const id = ctx.params[0]!
       if (!getConversation(ctx.chatId, id)) return sendError(ctx.res, 404, 'not_found')
       const b = await jsonBody(ctx)
-      const patch: { title?: string; model?: string; effort?: string } = {}
+      const patch: { title?: string; model?: string; effort?: string; sessionId?: string } = {}
       if (b.title !== undefined) {
         if (typeof b.title !== 'string') return sendError(ctx.res, 400, 'bad_request')
         patch.title = b.title.trim().slice(0, MAX_TITLE)
       }
       if (b.model !== undefined) {
-        if (typeof b.model !== 'string' || !MODELS.includes(b.model)) return sendError(ctx.res, 400, 'bad_model')
+        if (typeof b.model !== 'string') return sendError(ctx.res, 400, 'bad_model')
+        // Any model /model offers on this box, plus the tier aliases older
+        // pages send (card #270).
+        const offered = (await listModelChoices()).map((c) => c.ref)
+        if (!offered.includes(b.model) && !['haiku', 'sonnet', 'opus'].includes(b.model)) return sendError(ctx.res, 400, 'bad_model')
         patch.model = b.model
+        // The other runtime keeps its own sessions: switching to it starts fresh.
+        const before = getConversation(ctx.chatId, id)!.model || undefined
+        if (runtimeIdFor('chat', before) !== runtimeIdFor('chat', b.model || undefined)) patch.sessionId = ''
       }
       if (b.effort !== undefined) {
         if (typeof b.effort !== 'string' || !EFFORTS.includes(b.effort)) return sendError(ctx.res, 400, 'bad_effort')

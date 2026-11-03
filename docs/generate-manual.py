@@ -339,6 +339,7 @@ def build_section_4(story, S):
     commands = [
         ["/help", "Show available commands and features"],
         ["/newchat", "Start a fresh conversation (clears context)"],
+        ["/model", "Pick the AI model for this chat"],
         ["/cancel", "Stop what is running: the reply, queued messages, scheduled runs"],
         ["/chatid", "Display your Telegram chat ID"],
         ["/memory", "View what the assistant remembers about you"],

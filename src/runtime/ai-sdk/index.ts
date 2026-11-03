@@ -89,7 +89,6 @@ export class AiSdkAgentRuntime implements AgentRuntime {
   private readonly sessions: SessionStore
   private readonly modelOverride?: LanguageModel
   private readonly meter?: UsageMeter
-  private lastResolved: { provider: string; modelId: string } | null = null
 
   /** `model` is a test seam: injects a mock model instead of resolveModel().
    * `meter` likewise: injects a usage store instead of the shared default. */
@@ -179,7 +178,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
    * further subagent nesting (depth 1). The claude runtime gets this from
    * Claude Code's Agent tool; here it is just another runtime instance turn.
    */
-  private buildSubagentTool(cwd: string, onToolProgress?: (toolName: string, status: string) => void, scope?: RunScope, guardSession?: string) {
+  private buildSubagentTool(cwd: string, onToolProgress?: (toolName: string, status: string) => void, scope?: RunScope, guardSession?: string, model?: string) {
     return tool({
       description:
         'Dispatch a subagent to handle a self-contained task (research, multi-file analysis, a side quest '
@@ -196,7 +195,8 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           // A subagent inherits the job's role: it can never do more than its parent.
           // It is gated under the parent's session, so evasion strikes carry
           // across delegation, and it stops when the parent is cancelled (#232).
-          const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false, scope, guardSession })
+          // It runs on the parent's model: a chat's /model choice (card #270).
+          const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false, scope, guardSession, model })
           const result = await sub.generate({ prompt, abortSignal })
           return result.text.trim() || '(subagent returned no text)'
         } catch (err) {
@@ -215,7 +215,6 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const { model, provider, modelId } = this.modelOverride
       ? { model: this.modelOverride, provider: 'override', modelId: 'override' }
       : resolveModel(opts.model)
-    this.lastResolved = { provider, modelId }
     // Managed open-model box (card #268): price every model call as it ends,
     // and stop the tool loop at the next step once the month's cap is reached.
     // Subagents and isolated turns are built here too, so they count as well.
@@ -247,7 +246,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const tools: ToolSet = this.withGuard({
       ...createTools(cwd, onToolProgress),
       ...mcpTools,
-      ...(opts.subagents ? { dispatch_subagent: this.buildSubagentTool(cwd, onToolProgress, opts.scope, opts.guardSession) } : {}),
+      ...(opts.subagents ? { dispatch_subagent: this.buildSubagentTool(cwd, onToolProgress, opts.scope, opts.guardSession, opts.model) } : {}),
     }, opts.guardSession ?? `ai-sdk:${cwd}`, cwd, opts.scope)
     logger.info({ provider, modelId, cwd, toolCount: Object.keys(tools).length }, 'AI SDK agent configured')
     return new ToolLoopAgent({
@@ -306,7 +305,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     }
     // Provider switch since this session was written? Strip provider-specific
     // baggage (providerOptions, reasoning signatures) that other vendors reject.
-    const turnProvider = this.modelOverride ? 'override' : configuredProvider()
+    const turnProvider = this.modelOverride ? 'override' : configuredProvider(options.model)
     // Photos the owner attached go to the model as images on this request
     // only; the saved session keeps the text (card #249).
     const userMessage: ModelMessage = { role: 'user', content: withAttachedImages(options.message) }
@@ -355,6 +354,10 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
         try {
           logger.info({ attempt, sessionId, historyLength: history.length }, 'Starting AI SDK agent turn')
+          // The model this turn runs on, for its usage record: worked out here,
+          // not read back from the instance, which turns of other chats (on
+          // other /model choices, card #270) and subagents also write.
+          const turnModel = this.modelOverride ? { provider: 'override', modelId: 'override' } : resolveModel(options.model)
           const agent = await this.buildAgent(cwd, options.onToolProgress, {
             subagents: true,
             guardSession: sessionId,
@@ -430,8 +433,8 @@ export class AiSdkAgentRuntime implements AgentRuntime {
               {
                 ts: Math.floor(Date.now() / 1000),
                 runtime: 'ai-sdk',
-                provider: this.lastResolved?.provider ?? turnProvider,
-                model: this.lastResolved?.modelId ?? 'unknown',
+                provider: turnModel.provider,
+                model: turnModel.modelId,
                 sessionId,
                 inputTokens: usage.inputTokens,
                 outputTokens: usage.outputTokens,

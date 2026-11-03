@@ -266,6 +266,64 @@ describe('web chat commands', () => {
     expect(body.commands.map((c: any) => c.command)).toEqual(expect.arrayContaining(['newchat', 'cancel', 'schedule', 'help']))
   })
 
+  it('/model shows the choices as buttons and a click sets this conversation\'s model (card #270)', async () => {
+    const r = useRuntime()
+    const id = await newConv()
+    const menu = await chat(id, '/model')
+    const card = replies(menu)[0]
+    expect(card.content).toContain('Pick a model for this chat')
+    expect(card.buttons).toEqual(expect.arrayContaining(['Claude Haiku', 'Claude Sonnet', 'Claude Opus']))
+    const done = await chat(id, '[button_click]: Claude Opus')
+    expect(replies(done).map((m) => m.content)).toEqual(['Switched to Claude Opus.'])
+    expect(done.at(-1)).toEqual({ name: 'done', data: { cancelled: false, command: true, model: 'opus' } })
+    expect(conv.getConversation('4242', id)!.model).toBe('opus')
+    expect(r.calls).toHaveLength(0)
+    // The next turn runs on it.
+    await chat(id, 'hello')
+    expect(r.calls.at(-1)!.model).toBe('opus')
+  })
+
+  it('/model <name> switches by name, and an unknown name changes nothing', async () => {
+    useRuntime()
+    const id = await newConv()
+    const ok = await chat(id, '/model haiku')
+    expect(replies(ok)[0].content).toBe('Switched to Claude Haiku.')
+    expect(conv.getConversation('4242', id)!.model).toBe('haiku')
+    const bad = await chat(id, '/model llama-9')
+    expect(replies(bad)[0].content).toContain('No model matches "llama-9"')
+    expect(conv.getConversation('4242', id)!.model).toBe('haiku')
+  })
+
+  it('serves the picker the same list and refuses a model it does not offer', async () => {
+    const res = await fetch(`${base()}/api/web/models`, { headers: H() })
+    const body = (await res.json()) as any
+    expect(body.models.map((m: any) => m.ref)).toEqual(['', 'haiku', 'sonnet', 'opus'])
+    const id = await newConv()
+    expect((await post(`/api/web/conversations/${id}`, { model: 'openai:gpt-5.5' })).status).toBe(400)
+    expect((await post(`/api/web/conversations/${id}`, { model: 'opus' })).status).toBe(200)
+  })
+
+  it('a picker switch to another company\'s model starts the conversation fresh', async () => {
+    const saved = process.env['OPENAI_API_KEY']
+    process.env['OPENAI_API_KEY'] = 'sk-test'
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(
+      join(process.env['AGENT_STORE_DIR']!, 'model-catalog.json'),
+      JSON.stringify({ fetchedAt: { openai: Date.now() }, models: { openai: [{ id: 'gpt-5.5' }] } })
+    )
+    try {
+      const id = await newConv()
+      conv.updateConversation('4242', id, { sessionId: 'claude-sess' })
+      expect((await post(`/api/web/conversations/${id}`, { model: 'opus' })).status).toBe(200)
+      expect(conv.getConversation('4242', id)!.sessionId).toBe('claude-sess')
+      expect((await post(`/api/web/conversations/${id}`, { model: 'openai:gpt-5.5' })).status).toBe(200)
+      expect(conv.getConversation('4242', id)!.sessionId).toBe('')
+    } finally {
+      if (saved === undefined) delete process.env['OPENAI_API_KEY']
+      else process.env['OPENAI_API_KEY'] = saved
+    }
+  })
+
   it('refuses the command menu without a web session', async () => {
     const res = await fetch(`${base()}/api/web/commands`)
     expect(res.status).toBe(401)

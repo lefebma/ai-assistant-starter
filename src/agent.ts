@@ -8,7 +8,9 @@
  * runtime) because it is provider-neutral chat concurrency, not a property
  * of any one model harness.
  */
-import { getAgentRuntime, type RuntimeLane } from './runtime/index.js'
+import { busyRuntimeIds, getAgentRuntime, resolveRuntimeId, resolveTurnRuntime, type RuntimeLane } from './runtime/index.js'
+import { sessionRuntimeOf, stampSessionRuntime } from './runtime/session-runtime.js'
+import { logger } from './logger.js'
 import type { AgentRunResult, RunScope } from './runtime/types.js'
 import { withRunOrNew } from './assurance/effect-journal.js'
 import { withEgress } from './egress/index.js'
@@ -41,8 +43,13 @@ export function clearLane(chatId: string): void {
 }
 
 /** Queue a message to inject as a follow-up after the current run completes. */
-export function steerAgent(message: string): void {
-  getAgentRuntime().steer(message)
+export function steerAgent(message: string, runtimeId?: string): void {
+  // A chat on another provider's model runs on its own runtime (card #270).
+  // Steer the runtime that has a turn running; with turns on both, the one
+  // this chat's model runs on (the caller passes it).
+  const busy = busyRuntimeIds()
+  const target = busy.length === 1 ? busy[0] : runtimeId
+  getAgentRuntime('chat', target).steer(message)
 }
 
 /**
@@ -63,15 +70,32 @@ export async function runAgent(
   // One turn is one run for the effect journal (card #229), unless the caller
   // already named the run: a scheduled job or an approval card.
   // With EGRESS=enforce the turn's tools get their own egress proxy (card #231).
-  return withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane).run({
+  // The chat's /model choice may name another provider's model, which runs on
+  // the runtime that can reach it (card #270).
+  const turn = resolveTurnRuntime(lane, opts?.model)
+  // A session written by the other runtime cannot be resumed here: start
+  // fresh. An unstamped session predates the stamp and was written by the
+  // lane's own runtime.
+  let resumeId = sessionId
+  if (sessionId) {
+    const owner = sessionRuntimeOf(sessionId)
+    const wroteIt = owner === null ? resolveRuntimeId(lane) : owner
+    if (owner !== undefined && wroteIt !== turn.id) {
+      logger.info({ from: wroteIt, to: turn.id }, 'Session was written by the other runtime; starting fresh')
+      resumeId = undefined
+    }
+  }
+  const result = await withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
     message,
-    sessionId,
+    sessionId: resumeId,
     onTyping,
     onPartial,
     onToolProgress,
     signal,
     scope,
-    ...(opts?.model ? { model: opts.model } : {}),
+    ...(turn.model ? { model: turn.model } : {}),
     ...(opts?.effort ? { effort: opts.effort } : {}),
   })))
+  if (result.newSessionId) stampSessionRuntime(result.newSessionId, turn.id)
+  return result
 }
