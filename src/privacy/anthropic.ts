@@ -10,7 +10,7 @@
  * signature, and they are never shown), images, server tool blocks (web
  * search results are encrypted), tool names and ids.
  */
-import { PRIVACY_NOTE, PrivacyRefusal, type Masking, type StreamRestorer } from './mask.js'
+import { PRIVACY_NOTE, PrivacyRefusal, isTextMedia, mapBase64Text, type Masking, type StreamRestorer } from './mask.js'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 type Obj = { [k: string]: Json }
@@ -49,6 +49,11 @@ function block(b: Json, f: (s: string) => string): Json {
   if (type === 'tool_result') {
     const c = b.content
     return { ...b, ...(c === undefined ? {} : { content: typeof c === 'string' ? f(c) : Array.isArray(c) ? c.map((x) => block(x, f)) : c }) }
+  }
+  // A document whose source is a base64 text file: its text, decoded and masked.
+  if (type === 'document' && isObj(b.source) && b.source.type === 'base64' && isTextMedia(b.source.media_type) && typeof b.source.data === 'string') {
+    const masked = deepProse({ ...b, source: null }, f) as Obj
+    return { ...masked, source: { ...b.source, data: mapBase64Text(b.source.data, f) } }
   }
   // text, document, search_result and anything newer: the prose in it.
   return deepProse(b, f)

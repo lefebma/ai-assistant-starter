@@ -420,6 +420,22 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
   const hangUp = new AbortController()
   res.on('close', () => { if (!res.writableEnded) hangUp.abort() })
 
+  // The voice service speaks the answer, real names and all: while the
+  // privacy filter is on (card #187) the call gets a notice instead.
+  // Loaded here, not at the top: it pulls in the store, which some tests of this server do not set up.
+  const privacy = await import('./privacy/index.js')
+  if (privacy.privacyOnFor(undefined)) {
+    if (!stream) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(openaiComplete(completionId, model, privacy.PRIVATE_VOICE_NOTICE)))
+    } else {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
+      res.write(sseFrame(openaiChunk(completionId, model, { content: privacy.PRIVATE_VOICE_NOTICE })))
+      res.end('data: [DONE]\n\n')
+    }
+    return
+  }
+
   if (!stream) {
     const { text, newSessionId } = await withActor(`voice:${convoKey}`, () => runAgent(lastUser.content, existingSession, undefined, undefined, undefined, 'chat', hangUp.signal))
     if (hangUp.signal.aborted) return

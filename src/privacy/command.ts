@@ -8,9 +8,9 @@
  *   /private list                  the list (main chat only)
  *   /private remove <name>         take one off (main chat only)
  *
- * The list is the whole box's, so reading it or shrinking it is the main
- * chat's call: another chat could otherwise see every client's name, or
- * switch the protection off for names it never added.
+ * The list is the whole box's, so changing or reading it is the main chat's
+ * call: another chat could otherwise see every client's name, probe it, or
+ * add an ordinary word that then disappears from every chat's requests.
  */
 import { placeholderFor, type Kind } from './mask.js'
 import { addAliases, addEntry, findEntry, listEntries, privacyState, removeEntry, setChatPrivacy, type ListedEntry } from './store.js'
@@ -82,6 +82,9 @@ export function privacyCommand(ctx: PrivacyCommandContext, arg: string): string 
   }
 
   if (sub === 'add') {
+    // The list is the whole box's: another chat adding to it could probe it,
+    // or make an ordinary word vanish from every chat's requests.
+    if (!ctx.primary) return 'Names can only be added in the main chat.'
     if (!tail) return 'Add which name? For example: /private add Acme Corporation, Acme'
     let kind: Kind | undefined
     let body = tail
@@ -95,17 +98,9 @@ export function privacyCommand(ctx: PrivacyCommandContext, arg: string): string 
     if (forms.some((f) => f.length < 3)) return 'Each name needs at least 3 characters, or ordinary words would be swapped too.'
     // A quote or backslash would break tool data the name is put back into.
     if (forms.some((f) => /["\\]/.test(f))) return 'Names cannot contain double quotes or backslashes. Add the name without them.'
-    // Only the name as typed, never a placeholder: another chat must not
-    // learn what PERSON_3 stands for by "adding" it.
+    // Only the name as typed, never a placeholder: COMPANY_3 is not a name.
     const existing = findEntry(forms[0], { placeholders: false })
-    // Outside the main chat the reply is the same whether or not the name
-    // was already there, so the list cannot be probed from another chat.
     const offHint = privacyState(ctx.chatId).on ? '' : ' The filter is off in this chat: /private on turns it on.'
-    if (!ctx.primary) {
-      if (existing) addAliases(existing.id, forms.slice(1))
-      else addEntry(kind ?? guessKind(forms[0]), forms[0], forms.slice(1))
-      return `Noted: ${forms.join(', ')} will stay on this machine whenever the privacy filter is on.${offHint}`
-    }
     if (existing) {
       const extra = forms.slice(1)
       if (extra.length) addAliases(existing.id, extra)

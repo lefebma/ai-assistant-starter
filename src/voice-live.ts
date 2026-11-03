@@ -504,6 +504,10 @@ let engine: ContextEngine | undefined
 export function createAssistantBackend(chatId: string = memoryChatId(null)): RunBackend {
   let sessionId: string | undefined
   return async (prompt, signal) => {
+    // The answer is spoken by the voice service, real names and all (card #187).
+    // Loaded here, not at the top: it pulls in the store, which voice tests do not set up.
+    const privacy = await import('./privacy/index.js')
+    if (privacy.privacyOnFor(chatId)) return privacy.PRIVATE_VOICE_NOTICE
     engine ??= createDefaultEngine()
     const memoryContext = await engine.buildContext(chatId, prompt).catch(() => '')
     const full = [buildSkillIndex(), memoryContext, prompt].filter(Boolean).join('\n\n')
@@ -616,6 +620,11 @@ export async function createLiveSession(
   deliver?: (chatId: string, text: string) => Promise<boolean>,
   options: LiveCallOptions = {},
 ): Promise<unknown> {
+  // A live call sends what is said, and the call's starting notes (recent
+  // calls, the chat so far), to the voice service unfiltered: none while
+  // the privacy filter is on (card #187). Loaded here: it pulls in the store.
+  const privacy = await import('./privacy/index.js')
+  if (privacy.privacyOnFor(chatId ?? undefined)) throw new LiveSessionError(423, 'privacy_filter_on')
   if (!OPENAI_API_KEY) throw new LiveSessionError(503, 'openai_not_configured')
   if (!liveRuntimeSupported()) throw new LiveSessionError(503, 'node_22_required')
   if (activeSessions.size + pendingCreates >= MAX_CONCURRENT_SESSIONS) throw new LiveSessionError(429, 'too_many_sessions')

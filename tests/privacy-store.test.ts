@@ -128,24 +128,21 @@ describe('/private', () => {
     expect(command.privacyCommand(MAIN, 'add Jane "JJ" Doe')).toMatch(/cannot contain double quotes/)
   })
 
-  it('never tells another chat what a placeholder or a stored name holds', () => {
+  it('lets only the main chat add names, and tells another chat nothing about the list', () => {
     const e = store.addEntry('company', 'Initech Corporation', ['Initech', 'INTC'])
-    const asPlaceholder = command.privacyCommand(OTHER, `add COMPANY_${e.id}`)
-    expect(asPlaceholder).not.toMatch(/Initech/)
-    const again = command.privacyCommand(OTHER, 'add Initech, Initrode')
-    expect(again).not.toMatch(/Corporation|INTC|COMPANY_/)
-    // The same reply whether or not the name was on the list.
-    const fresh = command.privacyCommand(OTHER, 'add Globex, Initrode')
-    expect(again.replace('Initech', 'X')).toBe(fresh.replace('Globex', 'X'))
+    const before = store.listEntries().length
+    for (const arg of [`add COMPANY_${e.id}`, 'add Initech, Initrode', 'add Globex', 'add the']) {
+      expect(command.privacyCommand(OTHER, arg)).toBe('Names can only be added in the main chat.')
+    }
+    expect(store.listEntries()).toHaveLength(before)
   })
 
   it('says the filter is off when adding in a chat where it is off', () => {
-    expect(command.privacyCommand(OTHER, 'add Globex')).toMatch(/^Noted: Globex will stay.*\/private on turns it on/)
     expect(command.privacyCommand(MAIN, 'add Initrode')).toMatch(/\/private on turns it on/)
   })
 
   it('shows and shrinks the list in the main chat only', () => {
-    command.privacyCommand(OTHER, 'add Globex')
+    command.privacyCommand(MAIN, 'add Globex')
     expect(command.privacyCommand(OTHER, 'list')).toMatch(/only be shown in the main chat/)
     expect(command.privacyCommand(OTHER, 'remove Globex')).toMatch(/only be removed in the main chat/)
     expect(command.privacyCommand(MAIN, 'list')).toMatch(/- Globex as NAME_\d+/)
@@ -244,6 +241,21 @@ describe('the local proxy', () => {
     route.drop()
   })
 
+  it('masks every string in any other JSON request, and refuses one it cannot read', async () => {
+    store.addEntry('company', 'Initech')
+    reply = (_p, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
+    }
+    const route = await proxy.openRoute(upstreamUrl)
+    await fetch(`${route.baseUrl}/api/event_logging/batch`, { method: 'POST', body: JSON.stringify({ events: [{ note: 'Initech', Initech: 1 }] }) })
+    expect(received.at(-1)!.body).not.toMatch(/initech/i)
+    const res = await fetch(`${route.baseUrl}/api/upload`, { method: 'POST', body: 'raw Initech bytes' })
+    expect(res.status).toBe(403)
+    expect(received).toHaveLength(1)
+    route.drop()
+  })
+
   it('refuses a request it cannot mask instead of sending it', async () => {
     const route = await proxy.openRoute(upstreamUrl)
     const res = await fetch(`${route.baseUrl}/v1/messages`, { method: 'POST', body: 'not json Initech' })
@@ -323,6 +335,23 @@ describe('a private run', () => {
     expect(privacy.relayBypass({}, dir, home)).toBeNull()
     writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }))
     await expect(privacy.withPrivacy(true, () => privacy.privateCliEnv({}, dir))).rejects.toThrow(/The turn was not sent/)
+  })
+
+  it('treats a switch it cannot read as on, but a store never set up as off', () => {
+    expect(privacy.privacyOnFor('main', () => { throw new Error('disk I/O error') })).toBe(true)
+    expect(privacy.privacyOnFor('main', () => { throw new Error('SqliteError: no such table: app_state') })).toBe(false)
+  })
+
+  it('gives a voice call a notice instead of an answer while the chat is private', async () => {
+    const { createAssistantBackend } = await import('../src/voice-live.js')
+    store.setChatPrivacy('main', true)
+    expect(await createAssistantBackend('main')('who is my client?', new AbortController().signal)).toBe(privacy.PRIVATE_VOICE_NOTICE)
+  })
+
+  it('refuses to start a live voice call while private', async () => {
+    const live = await import('../src/voice-live.js')
+    store.setChatPrivacy('main', true)
+    await expect(live.createLiveSession('v=0', undefined, 'main')).rejects.toMatchObject({ status: 423, code: 'privacy_filter_on' })
   })
 
   it('changes nothing outside a private run', async () => {

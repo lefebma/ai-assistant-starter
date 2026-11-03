@@ -212,7 +212,10 @@ async function start() {
       const code = (await r.json().catch(() => ({}))).error
       throw new Error(code === 'node_22_required' ? SIGN_IN_TROUBLE.node : SIGN_IN_TROUBLE.disabled)
     }
-    if (!r.ok) throw new Error('Could not start the call (' + ((await r.json().catch(() => ({}))).error || r.status) + ').')
+    if (!r.ok) {
+      const code = (await r.json().catch(() => ({}))).error || r.status
+      throw new Error(code === 'privacy_filter_on' ? 'Voice calls are off while the privacy filter is on. Type to your assistant instead, or send /private off.' : 'Could not start the call (' + code + ').')
+    }
     const result = await r.json()
     sessionId = result.session?.id || ''
     await peer.setRemoteDescription({ type: 'answer', sdp: result.transport.sdp })

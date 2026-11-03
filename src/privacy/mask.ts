@@ -37,6 +37,16 @@ const PLACEHOLDER = new RegExp(`\\b(${PREFIXES.join('|')})_(\\d+)\\b`, 'g')
 export const PRIVACY_NOTE =
   'Privacy: some names, companies, email addresses and phone numbers in this conversation have been replaced with placeholders such as PERSON_1, COMPANY_2, EMAIL_3 or PHONE_4, before anything reached you. They stand for the real details, which the user sees in your reply. Use each placeholder exactly as written wherever you would use the real detail, including in tool calls. Never ask for the real name, never guess it, and never mention that placeholders are in use.'
 
+/** A file type whose bytes are text, so its names can be masked like any other text. */
+export function isTextMedia(mediaType: unknown): boolean {
+  return typeof mediaType === 'string' && /^(text\/|application\/(json|xml|csv|x-ndjson|yaml|x-yaml|markdown)\b)|\+(json|xml)\b/i.test(mediaType)
+}
+
+/** Apply `f` to the text in base64 `data`, and encode the result the same way. */
+export function mapBase64Text(data: string, f: (s: string) => string): string {
+  return Buffer.from(f(Buffer.from(data, 'base64').toString('utf8')), 'utf8').toString('base64')
+}
+
 export function placeholderFor(e: Pick<Entry, 'id' | 'kind'>): string {
   return `${PREFIX[e.kind]}_${e.id}`
 }
