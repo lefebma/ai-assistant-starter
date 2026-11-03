@@ -251,6 +251,31 @@ engines keep their chats apart; what the assistant remembers carries over.
 An OpenAI key set only for voice also puts OpenAI's models on the list, and
 those bill that OpenAI account.
 
+## How hard it thinks: /effort
+
+Send `/effort` to set how hard the assistant thinks before answering in this
+chat: Low, Medium, High, Extra high, or Default. Higher levels take longer and
+use more tokens; a managed plan's spend cap counts them as usual. Without
+buttons, type `/effort high` (or `low`, `medium`, `xhigh`, `default`).
+
+Only the levels the chat's model offers are shown:
+
+- **Claude:** the current models offer every level. Opus and Sonnet 4.6 stop at
+  High, Opus 4.5 offers Low to High, and older models have no effort setting.
+  On a Claude subscription the assistant asks Claude which levels its Haiku,
+  Sonnet and Opus take, and remembers the answer.
+- **OpenAI:** the GPT-5 family and the o-series offer Low to High. Other models
+  have no effort setting.
+- **Google:** Gemini 3 and later. Pro models offer Low and High, the others Low
+  to High.
+- **A host in `AI_BASE_URL`, Azure, and the managed open model:** no effort
+  setting.
+
+The pick belongs to the chat and is kept through restarts. After a `/model`
+switch it is matched to the new model: a level that model lacks runs as the
+nearest one below it, and on a model with no effort setting the pick is kept
+but not used until you switch back. Scheduled tasks keep their own setting.
+
 ## Switching providers later
 
 Just change `AI_PROVIDER` / `AI_MODEL`; the next message uses them. Existing conversation history

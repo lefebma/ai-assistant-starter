@@ -6,6 +6,7 @@ import { PROJECT_ROOT } from '../config.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
 import { listModelChoices } from '../models/catalog.js'
+import { effortLevelsFor } from '../models/effort.js'
 import { runtimeIdFor } from '../runtime/index.js'
 import { runWebTurn, cancelWebTurn, webSecretAwaited, webSupportAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
@@ -262,6 +263,7 @@ async function answer(
       clickedMessageId,
       fromQueue,
       model: (getConversation(chatId, id) ?? conv).model || undefined,
+      effort: (getConversation(chatId, id) ?? conv).effort || undefined,
       hooks: {
         send: (t, buttons) => String(reply(t, [], buttons)),
         edit: (mid, t) => setMessageContent(id, Number(mid), t),
@@ -296,8 +298,14 @@ async function answer(
       storeUser()
       if (cmd.clearSession) updateConversation(chatId, id, { sessionId: '' })
       if (cmd.model !== undefined) updateConversation(chatId, id, { model: cmd.model })
-      // /model changed the conversation's model: the page updates its picker.
-      sse.writeEvent('done', { cancelled: false, command: true, ...(cmd.model !== undefined ? { model: cmd.model } : {}) })
+      if (cmd.effort !== undefined) updateConversation(chatId, id, { effort: cmd.effort })
+      // /model or /effort changed the conversation: the page updates its pickers.
+      sse.writeEvent('done', {
+        cancelled: false,
+        command: true,
+        ...(cmd.model !== undefined ? { model: cmd.model } : {}),
+        ...(cmd.effort !== undefined ? { effort: cmd.effort } : {}),
+      })
       sse.close()
       return paused ? 'paused' : undefined
     }
@@ -414,7 +422,10 @@ registerWebRoutes([
     auth: true,
     async handler(ctx) {
       const choices = await listModelChoices()
-      sendJson(ctx.res, 200, { models: choices.map((c) => ({ ref: c.ref, label: c.label })) })
+      // Each with the effort levels it takes, for the effort picker (card #272).
+      sendJson(ctx.res, 200, {
+        models: choices.map((c) => ({ ref: c.ref, label: c.label, efforts: effortLevelsFor('chat', c.ref || undefined) })),
+      })
     },
   },
   {

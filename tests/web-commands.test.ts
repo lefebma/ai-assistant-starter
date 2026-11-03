@@ -283,6 +283,27 @@ describe('web chat commands', () => {
     expect(r.calls.at(-1)!.model).toBe('opus')
   })
 
+  it('/effort shows the levels and a click sets this conversation\'s effort (card #272)', async () => {
+    const r = useRuntime()
+    const id = await newConv()
+    const menu = await chat(id, '/effort')
+    expect(replies(menu)[0].buttons).toEqual(expect.arrayContaining(['High effort', 'Default effort']))
+    const done = await chat(id, '[button_click]: High effort')
+    expect(replies(done).map((m) => m.content)).toEqual(['Effort set to High.'])
+    expect(done.at(-1)).toEqual({ name: 'done', data: { cancelled: false, command: true, effort: 'high' } })
+    expect(conv.getConversation('4242', id)!.effort).toBe('high')
+    const typed = await chat(id, '/effort low')
+    expect(replies(typed)[0].content).toBe('Effort set to Low.')
+    expect(conv.getConversation('4242', id)!.effort).toBe('low')
+    expect(r.calls).toHaveLength(0)
+  })
+
+  it('the picker\'s model list carries each model\'s effort levels', async () => {
+    const res = await fetch(`${base()}/api/web/models`, { headers: H() })
+    const body = (await res.json()) as any
+    for (const m of body.models) expect(Array.isArray(m.efforts)).toBe(true)
+  })
+
   it('/model <name> switches by name, and an unknown name changes nothing', async () => {
     useRuntime()
     const id = await newConv()

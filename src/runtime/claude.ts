@@ -27,6 +27,10 @@ import {
   type AiLimitMarker,
 } from '../ai-limit.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime, RunScope } from './types.js'
+import { recordClaudeModels } from '../models/claude-models.js'
+
+/** The CLI's model list is asked for once per process: it only changes with an update, which restarts. */
+let modelsRecorded = false
 
 /** Retry config for transient API errors (429, 529, etc.) */
 const MAX_RETRIES = 3
@@ -594,6 +598,14 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         for await (const event of conversation) {
           logger.info({ type: event.type, subtype: (event as any).subtype }, 'Agent event')
           if (event.type === 'system' && event.subtype === 'init') {
+            // Which effort levels the CLI's models take, for /effort (card
+            // #272). In the background; a failure asks again next turn.
+            if (!modelsRecorded && typeof conversation.supportedModels === 'function') {
+              modelsRecorded = true
+              Promise.resolve()
+                .then(() => conversation.supportedModels())
+                .then(recordClaudeModels, () => { modelsRecorded = false })
+            }
             newSessionId = event.session_id
             lastSessionId = newSessionId
             // Track workspace for subagent conflict detection

@@ -60,7 +60,10 @@ const state = {
 // The models this box offers, from the same list /model shows (card #270).
 // The tiers stand in until the list loads.
 let MODELS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']]
-const EFFORTS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'XHigh']]
+const EFFORTS = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high']]
+// The effort levels each model takes, by model ref ('' = default), from
+// /api/web/models (card #272). A model missing here shows every level.
+let MODEL_EFFORTS = {}
 const narrow = window.matchMedia('(max-width: 899.98px)')
 
 // ---------- small helpers ----------
@@ -355,9 +358,21 @@ function renderPickers() {
   // A choice the list no longer offers (its key was removed) still shows.
   const choices = stored && !MODELS.some(([v]) => v === stored) ? [...MODELS, [stored, stored]] : MODELS
   fillPicker($('chat-model'), choices, model)
-  fillPicker($('chat-effort'), EFFORTS, effort)
   $('chat-model').value = pickerValue(stored, model)
-  $('chat-effort').value = pickerValue(c ? c.effort : state.pending.effort, effort)
+  // Only the levels the chosen model takes; a stored one it lacks still shows.
+  const storedEffort = c ? c.effort : state.pending.effort
+  const levels = MODEL_EFFORTS[stored || '']
+  let efforts = levels ? EFFORTS.filter(([v]) => levels.includes(v)) : EFFORTS
+  if (storedEffort && !efforts.some(([v]) => v === storedEffort)) {
+    const known = EFFORTS.find(([v]) => v === storedEffort)
+    efforts = [...efforts, [storedEffort, (known ? known[1] : storedEffort) + ' (not on this model)']]
+  }
+  const effortDefault = efforts.some(([v]) => v === effort) ? effort : null
+  fillPicker($('chat-effort'), efforts, effortDefault)
+  $('chat-effort').value = pickerValue(storedEffort, effortDefault)
+  const none = Boolean(levels) && levels.length === 0
+  $('chat-effort').disabled = none && !storedEffort
+  $('chat-effort').title = none ? 'This model has no effort setting' : ''
 }
 
 async function loadDefaults() {
@@ -369,8 +384,11 @@ async function loadDefaults() {
   }
   try {
     const m = await api.get('/api/web/models')
-    const listed = (m && m.models || []).filter((x) => x.ref).map((x) => [x.ref, x.label])
+    const all = (m && m.models) || []
+    const listed = all.filter((x) => x.ref).map((x) => [x.ref, x.label])
     if (listed.length) MODELS = listed
+    MODEL_EFFORTS = {}
+    for (const x of all) if (Array.isArray(x.efforts)) MODEL_EFFORTS[x.ref || ''] = x.efforts
   } catch {
     // keep the tiers
   }
@@ -409,6 +427,8 @@ async function saveConversation(fields) {
     const listed = state.conversations.find((c) => c.id === conv.id)
     if (listed) Object.assign(listed, r.conversation)
     renderProjects()
+    // A new model can take other effort levels (card #272).
+    if ('model' in fields) renderPickers()
   } catch (err) {
     note($('composer-note'), friendly(err, 'Could not save that change.'))
   }
@@ -433,7 +453,12 @@ function pick(field) {
   if (state.current) saveConversation({ [field]: value })
   else state.pending[field] = value
 }
-$('chat-model').addEventListener('change', () => pick('model'))
+$('chat-model').addEventListener('change', () => {
+  pick('model')
+  // The effort picker shows what the new model takes (saveConversation
+  // redraws it once a chat's pick is saved).
+  if (!state.current) renderPickers()
+})
 $('chat-effort').addEventListener('change', () => pick('effort'))
 
 // ---------- messages ----------
@@ -846,9 +871,10 @@ function turnView(convId, userMsg) {
     },
     onDone: (d) => {
       if (d.command) {
-        // /model picked this conversation's model: show it in the picker.
-        if (d.model !== undefined && state.current) {
-          state.current.model = d.model
+        // /model or /effort changed this conversation: show it in the pickers.
+        if ((d.model !== undefined || d.effort !== undefined) && state.current) {
+          if (d.model !== undefined) state.current.model = d.model
+          if (d.effort !== undefined) state.current.effort = d.effort
           renderPickers()
         }
         finishWith(null)

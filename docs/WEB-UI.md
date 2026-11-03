@@ -150,8 +150,10 @@ Each conversation has two pickers at the top.
 - **Model.** Which AI answers: Default, or any model `/model` offers (below).
   It lists the latest models from each AI company whose key is in your
   settings.
-- **Effort.** How hard it thinks before answering: Low is quick, High takes
-  longer and goes deeper. Default leaves it to the assistant.
+- **Effort.** How hard it thinks before answering: Low is quick, High and
+  Extra high take longer and go deeper. Default leaves it to the assistant.
+  It shows only the levels the chosen model offers, and is greyed out for a
+  model with no effort setting.
 
 ### Commands
 
@@ -161,6 +163,7 @@ and the rest. Type `/` in the message box to see the list. A command's answer
 shows up in the conversation, buttons included.
 
 - **`/model`** picks this conversation's model, the same as the picker.
+- **`/effort`** sets this conversation's effort, the same as its picker.
 - **`/newchat`** starts this conversation fresh. Your chat app's thread is
   left alone, and `/newchat` there leaves the web app alone.
 - **`/secret set`** works as it does in your chat app. The message holding the

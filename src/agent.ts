@@ -10,6 +10,7 @@
  */
 import { busyRuntimeIds, getAgentRuntime, resolveRuntimeId, resolveTurnRuntime, type RuntimeLane } from './runtime/index.js'
 import { sessionRuntimeOf, stampSessionRuntime } from './runtime/session-runtime.js'
+import { effortLevelsFor, fitEffort } from './models/effort.js'
 import { logger } from './logger.js'
 import type { AgentRunResult, RunScope } from './runtime/types.js'
 import { withRunOrNew } from './assurance/effect-journal.js'
@@ -85,6 +86,10 @@ export async function runAgent(
       resumeId = undefined
     }
   }
+  // The stored effort is matched to the model this turn runs on (card #272):
+  // a model without an effort setting gets none, and a level it lacks runs
+  // as the nearest one below.
+  const effort = opts?.effort ? fitEffort(opts.effort, effortLevelsFor(lane, opts.model)) : undefined
   const result = await withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
     message,
     sessionId: resumeId,
@@ -94,7 +99,7 @@ export async function runAgent(
     signal,
     scope,
     ...(turn.model ? { model: turn.model } : {}),
-    ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(effort ? { effort } : {}),
   })))
   if (result.newSessionId) stampSessionRuntime(result.newSessionId, turn.id)
   return result
