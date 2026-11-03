@@ -36,8 +36,8 @@ function readCache(): Recorded[] {
   }
 }
 
-/** Keep the CLI's report. Never throws: a failed write only loses the hint. */
-export function recordClaudeModels(models: ReportedModel[], now = Date.now()): void {
+/** Keep the CLI's report. Never throws; false when nothing was kept, so the caller asks again. */
+export function recordClaudeModels(models: ReportedModel[], now = Date.now()): boolean {
   try {
     const recorded: Recorded[] = models
       .filter((m) => typeof m?.value === 'string' && m.value)
@@ -46,15 +46,16 @@ export function recordClaudeModels(models: ReportedModel[], now = Date.now()): v
         supportsEffort: Boolean(m.supportsEffort),
         levels: (m.supportedEffortLevels ?? []).filter(isEffort),
       }))
-    if (!recorded.length) return
+    if (!recorded.length) return false
     const file = cachePath()
     mkdirSync(dirname(file), { recursive: true })
     const tmp = `${file}.${process.pid}.tmp`
     writeFileSync(tmp, JSON.stringify({ recordedAt: now, models: recorded } satisfies CacheFile))
     renameSync(tmp, file)
     memo = { at: now, models: recorded }
+    return true
   } catch {
-    /* the next turn tries again */
+    return false
   }
 }
 
@@ -73,5 +74,9 @@ export function claudeRuntimeLevels(model: string): Effort[] {
   const m = model.trim()
   const reported = readCache().find((r) => r.value === m)
   if (reported) return reported.supportsEffort ? EFFORTS.filter((e) => reported.levels.includes(e)) : []
-  return claudeEffortLevels(m) ?? [...EFFORTS]
+  const rule = claudeEffortLevels(m)
+  if (rule) return rule
+  // A full Claude id the rule does not know (claude-3-7-sonnet-...) is an
+  // old model with no effort setting; only a bare alias offers every level.
+  return /^claude-/.test(m) ? [] : [...EFFORTS]
 }

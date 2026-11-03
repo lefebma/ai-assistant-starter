@@ -604,7 +604,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
               modelsRecorded = true
               Promise.resolve()
                 .then(() => conversation.supportedModels())
-                .then(recordClaudeModels, () => { modelsRecorded = false })
+                .then((models) => { if (!recordClaudeModels(models)) modelsRecorded = false }, () => { modelsRecorded = false })
             }
             newSessionId = event.session_id
             lastSessionId = newSessionId

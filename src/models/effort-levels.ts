@@ -43,7 +43,8 @@ export function aiSdkEffortLevels(provider: string, modelId: string, viaBaseUrl:
   if (provider === 'anthropic') return claudeEffortLevels(id) ?? []
   if (provider === 'openai') {
     if (/^gpt-5/.test(id) && !/-chat/.test(id)) return ['low', 'medium', 'high']
-    if (/^o\d/.test(id)) return ['low', 'medium', 'high']
+    // o1-mini and o1-preview predate reasoning effort and reject it.
+    if (/^o\d/.test(id) && !/^o1-(mini|preview)/.test(id)) return ['low', 'medium', 'high']
     return []
   }
   if (provider === 'google') {

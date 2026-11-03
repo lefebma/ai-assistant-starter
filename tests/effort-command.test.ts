@@ -77,6 +77,8 @@ describe('levels per model', () => {
     expect(levels.aiSdkEffortLevels('openai', 'gpt-5-chat-latest', false)).toEqual([])
     expect(levels.aiSdkEffortLevels('openai', 'gpt-4.1', false)).toEqual([])
     expect(levels.aiSdkEffortLevels('openai', 'o4-mini', false)).toEqual(['low', 'medium', 'high'])
+    expect(levels.aiSdkEffortLevels('openai', 'o1-mini', false)).toEqual([])
+    expect(levels.aiSdkEffortLevels('openai', 'o1-preview', false)).toEqual([])
     expect(levels.aiSdkEffortLevels('openai', 'gpt-5.5', true)).toEqual([])
     expect(levels.aiSdkEffortLevels('google', 'gemini-3-pro', false)).toEqual(['low', 'high'])
     expect(levels.aiSdkEffortLevels('google', 'gemini-3.5-flash', false)).toEqual(['low', 'medium', 'high'])
@@ -109,6 +111,7 @@ describe('the Claude CLI\'s report', () => {
     // its model lacks), a full id follows the Claude rule.
     expect(claudeModels.claudeRuntimeLevels('haiku')).toEqual(ALL)
     expect(claudeModels.claudeRuntimeLevels('claude-haiku-4-5')).toEqual([])
+    expect(claudeModels.claudeRuntimeLevels('claude-3-7-sonnet-20250219')).toEqual([])
     claudeModels.recordClaudeModels([
       { value: 'sonnet', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'max'] },
       { value: 'haiku', supportsEffort: false },
@@ -125,7 +128,7 @@ describe('the Claude CLI\'s report', () => {
   it('a broken file or an empty report changes nothing', () => {
     writeFileSync(join(STORE, 'claude-models.json'), '{not json')
     expect(claudeModels.claudeRuntimeLevels('opus')).toEqual(ALL)
-    claudeModels.recordClaudeModels([])
+    expect(claudeModels.recordClaudeModels([])).toBe(false)
     expect(claudeModels.claudeRuntimeLevels('opus')).toEqual(ALL)
   })
 })
