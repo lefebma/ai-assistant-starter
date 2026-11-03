@@ -7,6 +7,7 @@ import { initEmailAlertTables } from './email-alerts/store.js'
 import { initProactiveTables } from './proactive/store.js'
 import { initEffectJournalTables } from './assurance/effect-journal.js'
 import { initRunStateTables } from './assurance/run-state.js'
+import { initPrivacyTables } from './privacy/schema.js'
 
 let db: Database.Database
 
@@ -282,6 +283,7 @@ export function initDatabase(): void {
   initProactiveTables(d)
   initEffectJournalTables(d)
   initRunStateTables(d)
+  initPrivacyTables(d)
 }
 
 // --- App state (one-shot install flags) ---

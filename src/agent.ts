@@ -15,6 +15,7 @@ import { logger } from './logger.js'
 import type { AgentRunResult, RunScope } from './runtime/types.js'
 import { withRunOrNew } from './assurance/effect-journal.js'
 import { withEgress } from './egress/index.js'
+import { privacyOnFor, withPrivacy } from './privacy/index.js'
 
 /**
  * Lane-based concurrency tracking (OpenClaw v2026.5.19 -- cron wake-lane isolation).
@@ -66,7 +67,7 @@ export async function runAgent(
   lane: RuntimeLane = 'chat',
   signal?: AbortSignal,
   scope?: RunScope,
-  opts?: { model?: string; effort?: 'low' | 'medium' | 'high' | 'xhigh' }
+  opts?: { model?: string; effort?: 'low' | 'medium' | 'high' | 'xhigh'; chatId?: string }
 ): Promise<AgentRunResult> {
   // One turn is one run for the effect journal (card #229), unless the caller
   // already named the run: a scheduled job or an approval card.
@@ -90,7 +91,9 @@ export async function runAgent(
   // a model without an effort setting gets none, and a level it lacks runs
   // as the nearest one below.
   const effort = opts?.effort ? fitEffort(opts.effort, effortLevelsFor(lane, opts.model)) : undefined
-  const result = await withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
+  // The anonymizer (card #187): on for this chat, or for the whole box. A
+  // run with no chat is private whenever any chat is.
+  const result = await withPrivacy(privacyOnFor(opts?.chatId), () => withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
     message,
     sessionId: resumeId,
     onTyping,
@@ -100,7 +103,7 @@ export async function runAgent(
     scope,
     ...(turn.model ? { model: turn.model } : {}),
     ...(effort ? { effort } : {}),
-  })))
+  }))))
   if (result.newSessionId) stampSessionRuntime(result.newSessionId, turn.id)
   return result
 }

@@ -24,6 +24,7 @@ import { currentRun } from '../assurance/effect-journal.js'
 import { listAccounts } from '../imap/store.js'
 import { ESSENTIALS, expandRules, listFromEnv, type EgressPolicy, type GroupSources } from './policy.js'
 import { openRunProxy, type EgressRecord, type RunProxy } from './proxy.js'
+import { privacyProxyAddress } from '../privacy/proxy.js'
 
 export type EgressConfig = { approved: string[]; read: string[]; imapHosts: () => string[] }
 
@@ -69,6 +70,17 @@ export function policyFor(roleId: string | null | undefined, cfg: EgressConfig =
   if (!roleId) return chatPolicy(cfg)
   const role = roles.get(roleId)
   return role ? rolePolicy(role, cfg) : essentialsPolicy(`the undefined ${roleId} role`)
+}
+
+/**
+ * The anonymizer's local proxy (card #187) is how a private run's CLI
+ * reaches the AI, so it is as essential as the AI itself: its exact
+ * loopback address joins the write list while it runs.
+ */
+export function withPrivacyProxy(p: EgressPolicy, address: string | null = privacyProxyAddress()): EgressPolicy {
+  if (!address) return p
+  const [host, port] = address.split(':')
+  return { ...p, write: [...p.write, { host, port: Number(port), wildcard: false }] }
 }
 
 /** Nothing may leave: a revoked grant. */
@@ -150,7 +162,7 @@ export async function withEgress<T>(opts: EgressOptions, fn: () => Promise<T>): 
   const policy = (): EgressPolicy => {
     const g = live ? live() : null
     if (g && !g.ok) return NOTHING(g.reason)
-    return policyFor(g ? g.role : startRole, opts.cfg)
+    return withPrivacyProxy(policyFor(g ? g.role : startRole, opts.cfg))
   }
   let proxy: RunProxy
   try {

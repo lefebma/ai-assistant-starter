@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.68.0 - 2026-11-03
+
+- **New: a privacy filter keeps client names on this machine.** Send `/private on` and, in that chat, the names and companies on your list, plus every email address and phone number, are swapped for placeholders like COMPANY_1 before anything goes to the AI service. Replies come back with the real names put back in, so you read normal text and your assistant's tools still act on the real names. Add names with `/private add Acme Corporation, Acme`; `/private list` and `/private remove` work in your main chat. The list never leaves the machine. Set `PRIVACY=on` in your settings to turn it on for every chat. It works with every AI engine, and leaves a model running on your own network alone. See docs/PRIVACY.md for what it covers and what it does not.
+
 ## 1.67.0 - 2026-11-03
 
 - **New: `/effort` sets how hard your assistant thinks before answering.** Send `/effort` and your assistant shows the current level and a button for each one its model offers: Low, Medium, High, Extra high, or Default. Low answers quickest; higher levels take longer, go deeper and use more of your AI budget. Your pick belongs to the chat and stays through restarts. It works the same in Telegram, Teams and the web app, where it sets the conversation's Effort picker, and the picker now shows only the levels the chosen model offers. A model with no effort setting says so, and your pick comes back when you switch to one that has it. Scheduled tasks keep their own setting.

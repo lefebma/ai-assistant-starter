@@ -372,7 +372,7 @@ export async function runDueTasks(): Promise<void> {
       // Every tool call rereads the task (card #230): pausing, deleting or
       // re-roling the job takes effect at the next call, not the next run.
       const grant = taskGrant(task.id, getTask)
-      const { text, aiPaused, newSessionId } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', controller.signal, scopeOf(task)))))
+      const { text, aiPaused, newSessionId } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', controller.signal, scopeOf(task), { chatId: task.chat_id }))))
       // Cancelled: cancelWhere already recorded it and the command already
       // replied. Nothing to deliver, defer or delete.
       if (controller.signal.aborted) {
@@ -406,7 +406,7 @@ export async function runDueTasks(): Promise<void> {
             let retryText: AgentResult['text']
             let retryPaused: AgentResult['aiPaused']
             try {
-              ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now))))))
+              ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now), { chatId: task.chat_id })))))
             } finally {
               runningRuns.delete(retry.runId)
               // Shutdown keeps the key for the boot sweep; a cancel already cleared it.

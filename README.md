@@ -128,6 +128,13 @@ provider-agnostic. See [docs/PROVIDERS.md](docs/PROVIDERS.md) for BYOK setup
 engine routing, model certification, and usage reporting. Keep your API keys
 in the encrypted vault: [docs/VAULT.md](docs/VAULT.md).
 
+### Optional: Keep client names on this machine
+
+`/private on` turns on a privacy filter: listed names and companies, email
+addresses and phone numbers are swapped for placeholders before anything
+reaches the AI service, and put back in the reply locally. See
+[docs/PRIVACY.md](docs/PRIVACY.md).
+
 ## First Things to Try
 
 1. **"Hello"** - verify personality

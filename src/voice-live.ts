@@ -507,7 +507,7 @@ export function createAssistantBackend(chatId: string = memoryChatId(null)): Run
     engine ??= createDefaultEngine()
     const memoryContext = await engine.buildContext(chatId, prompt).catch(() => '')
     const full = [buildSkillIndex(), memoryContext, prompt].filter(Boolean).join('\n\n')
-    const { text, newSessionId } = await withActor(`live-voice:${chatId}`, () => runAgent(full, sessionId, undefined, undefined, undefined, 'chat', signal))
+    const { text, newSessionId } = await withActor(`live-voice:${chatId}`, () => runAgent(full, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { chatId }))
     if (signal.aborted) {
       // Never resume a session a cancelled run touched: resuming it right after
       // the abort failed with error_during_execution and then an unhandled
