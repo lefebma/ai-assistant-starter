@@ -87,6 +87,15 @@ describe('a scope for one request', () => {
     expect(r.push('Hi PERS') + r.push('ON_2 of COMPANY_1') + r.flush()).toBe('Hi Jane Smith of COMPANY_1')
   })
 
+  it('restores to the words this request used, never a fuller spelling', () => {
+    const s = m.scope()
+    s.mask('Ask acme about JANE@ACME.COM')
+    expect(s.restore('COMPANY_1 and EMAIL_3')).toBe('acme and JANE@ACME.COM')
+    const both = m.scope()
+    both.mask('Acme, also known as Acme Corporation')
+    expect(both.restore('COMPANY_1')).toBe('Acme Corporation')
+  })
+
   it('does not reveal a name through a streamed Messages reply either', () => {
     const s = m.scope()
     maskRequest({ messages: [{ role: 'user', content: 'Who is COMPANY_1? Ask Jane Smith.' }] }, s)

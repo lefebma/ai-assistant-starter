@@ -116,7 +116,7 @@ export class Masker {
    * placeholder. Emails and phones go first: an address like
    * jane@acme.com must become EMAIL_4 whole, not jane@COMPANY_2.com.
    */
-  mask(text: string, used?: Set<number>): string {
+  mask(text: string, used?: Map<number, string>): string {
     if (!text) return text
     let out = text
     if (this.contacts.size) {
@@ -124,7 +124,7 @@ export class Masker {
         out = out.replace(re, (m) => {
           const e = this.contacts.get(`${kind}:${normalizeContact(kind, m)}`)
           if (!e) return m
-          used?.add(e.id)
+          seen(used, e.id, m)
           return placeholderFor(e)
         })
       }
@@ -135,7 +135,7 @@ export class Masker {
       const groups = args.slice(1, 1 + this.formOwner.length) as Array<string | undefined>
       const i = groups.findIndex((g) => g !== undefined)
       if (i < 0) return args[0]
-      used?.add(this.formOwner[i].id)
+      seen(used, this.formOwner[i].id, args[0] as string)
       return placeholderFor(this.formOwner[i])
     })
   }
@@ -147,19 +147,22 @@ export class Masker {
 
   /**
    * `text` with known placeholders swapped back. `json`: the text sits
-   * inside a JSON string. `allowed`: only these entries (see MaskScope).
+   * inside a JSON string. `allowed`: only these entries, each back to the
+   * words that were masked (see MaskScope).
    */
-  restore(text: string, json = false, allowed?: ReadonlySet<number>): string {
+  restore(text: string, json = false, allowed?: ReadonlyMap<number, string>): string {
     if (!text || !this.byId.size) return text
     return text.replace(PLACEHOLDER, (whole, prefix: string, id: string) => {
       const e = this.byId.get(Number(id))
-      if (!e || PREFIX[e.kind] !== prefix || (allowed && !allowed.has(e.id))) return whole
-      return json ? JSON.stringify(e.value).slice(1, -1) : e.value
+      if (!e || PREFIX[e.kind] !== prefix) return whole
+      const value = allowed ? allowed.get(e.id) : e.value
+      if (value === undefined) return whole
+      return json ? JSON.stringify(value).slice(1, -1) : value
     })
   }
 
   /** A restorer for text that arrives in pieces (a streamed reply). */
-  stream(json = false, allowed?: ReadonlySet<number>): StreamRestorer {
+  stream(json = false, allowed?: ReadonlyMap<number, string>): StreamRestorer {
     return new StreamRestorer(this, json, allowed)
   }
 
@@ -169,13 +172,21 @@ export class Masker {
   }
 }
 
+/** Note the words masked as entry `id`, keeping the longest spelling seen. */
+function seen(used: Map<number, string> | undefined, id: number, words: string): void {
+  if (!used) return
+  const had = used.get(id)
+  if (had === undefined || words.length > had.length) used.set(id, words)
+}
+
 /**
- * One request and its reply. Only placeholders this request's own masking
- * produced are restored, so typing "PERSON_3" in a chat and getting the model
- * to repeat it never reveals a name that chat did not already send.
+ * One request and its reply. A placeholder is restored only if this
+ * request's own masking produced it, and back to the words the request
+ * contained. So a chat that types "PERSON_3", or only ever says "Acme",
+ * never gets back a name or a fuller spelling it did not send.
  */
 export class MaskScope {
-  readonly used = new Set<number>()
+  readonly used = new Map<number, string>()
   constructor(private readonly masker: Masker) {}
   mask(text: string): string {
     return this.masker.mask(text, this.used)
@@ -215,7 +226,7 @@ export function pendingTail(text: string): string {
  */
 export class StreamRestorer {
   private held = ''
-  constructor(private readonly masker: Masker, private readonly json: boolean, private readonly allowed?: ReadonlySet<number>) {}
+  constructor(private readonly masker: Masker, private readonly json: boolean, private readonly allowed?: ReadonlyMap<number, string>) {}
 
   /** The restored text that is safe to pass on now. */
   push(piece: string): string {

@@ -96,16 +96,22 @@ export function privacyCommand(ctx: PrivacyCommandContext, arg: string): string 
     // Only the name as typed, never a placeholder: another chat must not
     // learn what PERSON_3 stands for by "adding" it.
     const existing = findEntry(forms[0], { placeholders: false })
+    // Outside the main chat the reply is the same whether or not the name
+    // was already there, so the list cannot be probed from another chat.
+    const offHint = privacyState(ctx.chatId).on ? '' : ' The filter is off in this chat: /private on turns it on.'
+    if (!ctx.primary) {
+      if (existing) addAliases(existing.id, forms.slice(1))
+      else addEntry(kind ?? guessKind(forms[0]), forms[0], forms.slice(1))
+      return `Noted: ${forms.join(', ')} will stay on this machine whenever the privacy filter is on.${offHint}`
+    }
     if (existing) {
       const extra = forms.slice(1)
       if (extra.length) addAliases(existing.id, extra)
-      // Outside the main chat, say no more than what was typed.
-      if (!ctx.primary) return extra.length ? `${forms[0]} is already on the list; the other spellings were added.` : `${forms[0]} is already on the list.`
       const updated = extra.length ? listEntries().find((e) => e.id === existing.id) : existing
       return extra.length && updated ? `Updated: ${describe(updated)}.` : `${existing.value} is already on the list, as ${placeholderFor(existing)}.`
     }
     const e = addEntry(kind ?? guessKind(forms[0]), forms[0], forms.slice(1))
-    return `Added ${KIND_LABEL[e.kind]}: ${describe(e)}. It stays on this machine whenever the privacy filter is on.${privacyState(ctx.chatId).on ? '' : ' The filter is off in this chat: /private on turns it on.'}`
+    return `Added ${KIND_LABEL[e.kind]}: ${describe(e)}. It stays on this machine whenever the privacy filter is on.${offHint}`
   }
 
   if (sub === 'list') {

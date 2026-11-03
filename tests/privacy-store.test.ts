@@ -111,13 +111,15 @@ describe('/private', () => {
     const asPlaceholder = command.privacyCommand(OTHER, `add COMPANY_${e.id}`)
     expect(asPlaceholder).not.toMatch(/Initech/)
     const again = command.privacyCommand(OTHER, 'add Initech, Initrode')
-    expect(again).toBe('Initech is already on the list; the other spellings were added.')
-    expect(again).not.toMatch(/Corporation|INTC/)
-    expect(command.privacyCommand(OTHER, 'add initech corporation')).toBe('initech corporation is already on the list.')
+    expect(again).not.toMatch(/Corporation|INTC|COMPANY_/)
+    // The same reply whether or not the name was on the list.
+    const fresh = command.privacyCommand(OTHER, 'add Globex, Initrode')
+    expect(again.replace('Initech', 'X')).toBe(fresh.replace('Globex', 'X'))
   })
 
   it('says the filter is off when adding in a chat where it is off', () => {
-    expect(command.privacyCommand(OTHER, 'add Globex')).toMatch(/\/private on turns it on/)
+    expect(command.privacyCommand(OTHER, 'add Globex')).toMatch(/^Noted: Globex will stay.*\/private on turns it on/)
+    expect(command.privacyCommand(MAIN, 'add Initrode')).toMatch(/\/private on turns it on/)
   })
 
   it('shows and shrinks the list in the main chat only', () => {
