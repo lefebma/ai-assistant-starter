@@ -90,6 +90,20 @@ export async function openRoute(upstream: string = DEFAULT_UPSTREAM): Promise<{ 
   return { baseUrl: `http://127.0.0.1:${p}/p/${token}`, drop: () => routes.delete(token), hits: () => route.hits }
 }
 
+function maskAll(v: unknown, f: (s: string) => string): unknown {
+  if (typeof v === 'string') return f(v)
+  if (Array.isArray(v)) return v.map((x) => maskAll(x, f))
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [f(k), maskAll(x, f)]))
+  return v
+}
+
+function collectStrings(v: unknown, out: string[] = []): string[] {
+  if (typeof v === 'string') out.push(v)
+  else if (Array.isArray(v)) v.forEach((x) => collectStrings(x, out))
+  else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v as Record<string, unknown>)) { out.push(k); collectStrings(x, out) }
+  return out
+}
+
 async function readBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)
@@ -117,6 +131,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   headers['accept-encoding'] = 'identity'
 
   let body: Buffer | undefined = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req)
+  // Any other request with a body: every string in it masked if it is JSON,
+  // refused if it is not. Nothing reaches the API unread.
+  if (!masked && body && body.length) {
+    let other: unknown
+    try {
+      other = JSON.parse(body.toString('utf8'))
+    } catch {
+      return refuse(res, 403, 'The privacy filter only passes on requests it can read.')
+    }
+    const scope = maskerFor(collectStrings(other)).scope()
+    body = Buffer.from(JSON.stringify(maskAll(other, (s) => scope.mask(s))), 'utf8')
+  }
   let masker: MaskScope | null = null
   if (masked) route.hits++
   if (masked) {

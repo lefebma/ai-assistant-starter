@@ -51,18 +51,23 @@ export function privacyActive(): boolean {
 
 /**
  * Whether a turn for this chat (or for no chat) is private right now. Never
- * throws. PRIVACY=on is read before the store, so it always holds; a chat's
- * own switch that cannot be read counts as off, since the list lives in the
- * same store and there would be nothing to mask with.
+ * throws. PRIVACY=on is read before the store, so it always holds. A switch
+ * that cannot be read counts as on (the turn then fails rather than going out
+ * unfiltered), except in a store that was never set up, where no chat can
+ * have turned it on.
  */
-export function privacyOnFor(chatId: string | undefined): boolean {
+export function privacyOnFor(chatId: string | undefined, state: (chatId: string | undefined) => { on: boolean } = privacyState): boolean {
   try {
-    return privacyState(chatId).on
+    return state(chatId).on
   } catch (err) {
-    logger.warn({ err: String(err) }, 'privacy filter: could not read the switch; treating it as off')
-    return false
+    if (/no such table/i.test(String(err))) return false
+    logger.error({ err: String(err) }, 'privacy filter: could not read the switch; treating it as on')
+    return true
   }
 }
+
+/** What a voice call hears instead of an answer while the filter is on: speaking it would send the names to the voice service. */
+export const PRIVATE_VOICE_NOTICE = 'The privacy filter is on, so I cannot answer that on a voice call. Ask me in the chat instead.'
 
 /**
  * The CLI env for a private run: `env` (or the process env) with

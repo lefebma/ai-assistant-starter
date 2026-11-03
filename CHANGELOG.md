@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.68.1 - 2026-11-03
+
+- Privacy filter: tighter. Only your main chat can add names to the list now, so another chat cannot change what is filtered for everyone. Text files you attach (plain text, CSV, JSON and the like) are filtered like any message. Voice calls answer that they cannot help while the filter is on, since speaking an answer would send the names to the voice service. If the filter's setting cannot be read, the turn is treated as private instead of going out unfiltered.
+
 ## 1.68.0 - 2026-11-03
 
 - **New: a privacy filter keeps client names on this machine.** Send `/private on` and, in that chat, the names and companies on your list, plus every email address and phone number, are swapped for placeholders like COMPANY_1 before anything goes to the AI service. Replies come back with the real names put back in, so you read normal text and your assistant's tools still act on the real names. Add names with `/private add Acme Corporation, Acme`; `/private list` and `/private remove` work in your main chat. The list never leaves the machine. Set `PRIVACY=on` in your settings to turn it on for every chat. It works with every AI engine, and leaves a model running on your own network alone. See docs/PRIVACY.md for what it covers and what it does not.

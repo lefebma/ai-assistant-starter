@@ -9,7 +9,7 @@
  * them.
  */
 import type { LanguageModelV3Middleware, LanguageModelV3Prompt, LanguageModelV3StreamPart } from '@ai-sdk/provider'
-import { PRIVACY_NOTE, PrivacyRefusal, type Masker, type MaskScope, type StreamRestorer } from './mask.js'
+import { PRIVACY_NOTE, PrivacyRefusal, isTextMedia, mapBase64Text, type Masker, type MaskScope, type StreamRestorer } from './mask.js'
 import { maskerFor } from './store.js'
 
 type Any = unknown
@@ -27,11 +27,19 @@ function deepAll(v: Any, f: (s: string) => string): Any {
   return v
 }
 
-/** One item of a tool result's content: text masked, media sent as is, anything newer masked. */
+/** A file part's data with its text masked: bytes or base64 in, the same form out. A URL is left alone. */
+function fileData(data: Any, f: (s: string) => string): Any {
+  if (data instanceof Uint8Array) return new TextEncoder().encode(f(new TextDecoder().decode(data)))
+  if (typeof data === 'string') return mapBase64Text(data, f)
+  return data
+}
+
+/** One item of a tool result's content: text masked, text files masked, other media sent as is, anything newer masked. */
 function contentItem(c: Any, f: (s: string) => string): Any {
   if (!c || typeof c !== 'object') return typeof c === 'string' ? f(c) : c
   const item = c as Part
   if (item.type === 'text' && typeof item.text === 'string') return { ...item, text: f(item.text) }
+  if ((item.type === 'media' || item.type === 'file-data') && isTextMedia(item.mediaType) && typeof item.data === 'string') return { ...item, data: mapBase64Text(item.data, f) }
   if (item.type === 'media' || item.type === 'image-data' || item.type === 'file-data' || item.type === 'image-url' || item.type === 'file-url') return item
   return Object.fromEntries(Object.entries(item).map(([k, v]) => [k, OPAQUE.has(k) ? v : deepAll(v, f)]))
 }
@@ -68,10 +76,12 @@ function part(p: Part, f: (s: string) => string): Part {
       return { ...p, input: deepAll(p.input, f) }
     case 'tool-result':
       return { ...p, output: output(p.output, f) }
-    // Signed reasoning is handled by dropNamedReasoning; file data is sent as is.
+    // Signed reasoning is handled by dropNamedReasoning.
     case 'reasoning':
-    case 'file':
       return p
+    // A text file is masked like any text; images and other binary files are sent as they are.
+    case 'file':
+      return isTextMedia(p.mediaType) ? { ...p, data: fileData(p.data, f) } : p
     default:
       // A newer part type: its strings, ids and types aside.
       return Object.fromEntries(Object.entries(p).map(([k, v]) => [k, OPAQUE.has(k) ? v : deepAll(v, f)])) as Part

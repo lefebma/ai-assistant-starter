@@ -26,8 +26,8 @@ filter on, since what it reads may have come from that chat.
 | Command | What it does |
 |---|---|
 | `/private` | Says whether it is on here, and how many names are on the list |
-| `/private add Acme Corporation, Acme` | Adds a company, with "Acme" as another way it is written |
-| `/private add person Jane Smith` | Adds a person (say `company` or `person` when the guess would be wrong) |
+| `/private add Acme Corporation, Acme` | Adds a company, with "Acme" as another way it is written (main chat only) |
+| `/private add person Jane Smith` | Adds a person (say `company` or `person` when the guess would be wrong; main chat only) |
 | `/private list` | Shows the list (main chat only) |
 | `/private remove Acme Corporation` | Takes one off (main chat only) |
 
@@ -49,8 +49,9 @@ says "Acme", replies there say "Acme", never the fuller name on the list, and
 typing a placeholder like COMPANY_1 by hand does not reveal what it stands
 for.
 
-Only the main chat can show or shorten the list, because it holds every
-chat's names.
+Only the main chat can add to, show or shorten the list, because it holds
+every chat's names: another chat adding an ordinary word would make it vanish
+from every chat's requests.
 
 ## What it covers
 
@@ -75,11 +76,12 @@ chat's names.
 - **Web search on the Claude engine** runs at the AI service, so it searches
   for the placeholder, not the real name, and may find less.
 - **Voice.** While the filter is on, replies come as text even with voice
-  replies on, since speaking them would send the real names to the voice
-  service. Voice notes you send are still transcribed by the voice service
-  as audio, and live voice calls send audio straight to it: neither is
-  filtered.
-- **Images and attached files** are sent as they are.
+  replies on, and a voice call answers that it cannot help on a call, since
+  speaking an answer would send the real names to the voice service. What
+  you say on a call, and voice notes you send, still reach the voice service
+  as audio: neither is filtered.
+- **Images, PDFs and other binary files** are sent as they are. Text files
+  (plain text, CSV, JSON, Markdown and the like) are filtered like any text.
 
 ## How it works
 
@@ -110,6 +112,11 @@ or from before the filter was turned on, can hold the real name: it is left
 out of the request. In the middle of a step (the AI waiting on a tool) it
 cannot be left out, so that one request is refused and the next message
 starts fresh.
+
+Any other request Claude Code sends through the relay with a body is filtered
+too, every string in it, and one that is not readable JSON is refused. If the
+filter's on/off setting cannot be read, the turn counts as private and fails
+rather than going out unfiltered.
 
 If Claude Code is set up to send its requests elsewhere (Bedrock, Vertex or
 Foundry, or an `ANTHROPIC_BASE_URL` in its own settings files), it would not

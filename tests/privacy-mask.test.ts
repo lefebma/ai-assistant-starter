@@ -230,6 +230,17 @@ describe('Messages API requests', () => {
     expect(() => maskRequest(clean, m)).not.toThrow()
   })
 
+  it('masks a base64 text document, and leaves a PDF alone', () => {
+    const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
+    const out = maskRequest({ messages: [{ role: 'user', content: [
+      { type: 'document', title: 'Notes on Acme', source: { type: 'base64', media_type: 'text/plain', data: b64('Call Jane Smith at Acme Corporation') } },
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64('%PDF Acme') } },
+    ] }] }, m) as any
+    expect(Buffer.from(out.messages[0].content[0].source.data, 'base64').toString('utf8')).toBe('Call PERSON_2 at COMPANY_1')
+    expect(out.messages[0].content[0].title).toBe('Notes on COMPANY_1')
+    expect(out.messages[0].content[1].source.data).toBe(b64('%PDF Acme'))
+  })
+
   it('adds the note to a plain string system prompt or to none', () => {
     expect((maskRequest({ system: 'Hi Acme', messages: [] }, m) as any).system).toEqual([{ type: 'text', text: 'Hi COMPANY_1' }, { type: 'text', text: PRIVACY_NOTE }])
     expect((maskRequest({ messages: [] }, m) as any).system).toEqual([{ type: 'text', text: PRIVACY_NOTE }])
@@ -345,6 +356,26 @@ describe('ai-sdk middleware', () => {
     expect(seen[2].content[0].input).toEqual({ id: 'COMPANY_1', url: 'https://x/COMPANY_1', data: { owner: 'EMAIL_3' } })
     expect(seen[3].content[0].output.value).toEqual({ data: [{ name: 'PERSON_2', email: 'EMAIL_3' }], COMPANY_1: 1 })
     expect(r.toolCalls[0]?.input).toEqual({ id: 'Jane Smith', data: { url: 'mailto:jane@acme.com' } })
+  })
+
+  it('masks text files in the prompt and in tool results, and leaves images alone', async () => {
+    const mw = privacyMiddleware(pick)
+    const model = new MockLanguageModelV3({})
+    const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64')
+    const p: any = await mw.transformParams!({ type: 'generate', model, params: { prompt: [
+      { role: 'user', content: [
+        { type: 'file', mediaType: 'text/csv', data: new TextEncoder().encode('name\nJane Smith') },
+        { type: 'file', mediaType: 'application/json', data: b64('{"c":"Acme"}') },
+        { type: 'file', mediaType: 'image/png', data: b64('Acme') },
+      ] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c', toolName: 'read', output: { type: 'content', value: [{ type: 'file-data', mediaType: 'text/plain', data: b64('for Jane Smith') }] } }] },
+    ] } as any })
+    const user = p.prompt.find((x: any) => x.role === 'user').content
+    expect(new TextDecoder().decode(user[0].data)).toBe('name\nPERSON_2')
+    expect(Buffer.from(user[1].data, 'base64').toString('utf8')).toBe('{"c":"COMPANY_1"}')
+    expect(user[2].data).toBe(b64('Acme'))
+    const tool = p.prompt.find((x: any) => x.role === 'tool').content[0]
+    expect(Buffer.from(tool.output.value[0].data, 'base64').toString('utf8')).toBe('for PERSON_2')
   })
 
   it('masks a part type it does not know, ids aside', async () => {

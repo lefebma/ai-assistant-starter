@@ -504,6 +504,10 @@ let engine: ContextEngine | undefined
 export function createAssistantBackend(chatId: string = memoryChatId(null)): RunBackend {
   let sessionId: string | undefined
   return async (prompt, signal) => {
+    // The answer is spoken by the voice service, real names and all (card #187).
+    // Loaded here, not at the top: it pulls in the store, which voice tests do not set up.
+    const privacy = await import('./privacy/index.js')
+    if (privacy.privacyOnFor(chatId)) return privacy.PRIVATE_VOICE_NOTICE
     engine ??= createDefaultEngine()
     const memoryContext = await engine.buildContext(chatId, prompt).catch(() => '')
     const full = [buildSkillIndex(), memoryContext, prompt].filter(Boolean).join('\n\n')
