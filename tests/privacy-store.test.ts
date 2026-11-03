@@ -3,7 +3,7 @@
  * wiring (card #187).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -70,6 +70,11 @@ describe('the switch', () => {
 })
 
 describe('the list', () => {
+  it('adds one row for one phone number however it is written', () => {
+    store.maskerFor(['call 416-555-0177 or (416) 555-0177'])
+    expect(store.listEntries().filter((e) => e.kind === 'phone')).toHaveLength(1)
+  })
+
   it('adds email addresses and phone numbers by itself before they go out', () => {
     const masker = store.maskerFor(['reach me at bo@initech.io or 647 555 0100', 'bo@initech.io again'])
     expect(masker.mask('bo@initech.io, 647-555-0100')).toMatch(/^EMAIL_\d+, PHONE_\d+$/)
@@ -104,6 +109,7 @@ describe('/private', () => {
     expect(command.privacyCommand(MAIN, 'add Initech Corporation, INTC')).toMatch(/^Updated: Initech Corporation \(also Initech, INTC\)/)
     expect(command.privacyCommand(MAIN, 'add Initech Corporation')).toMatch(/already on the list, as COMPANY_\d+/)
     expect(command.privacyCommand(MAIN, 'add Al')).toMatch(/at least 3 characters/)
+    expect(command.privacyCommand(MAIN, 'add Jane "JJ" Doe')).toMatch(/cannot contain double quotes/)
   })
 
   it('never tells another chat what a placeholder or a stored name holds', () => {
@@ -230,6 +236,40 @@ describe('the local proxy', () => {
     route.drop()
   })
 
+  it('stops the upstream call when the CLI goes away', async () => {
+    let closed = false
+    reply = (_p, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      const t = setInterval(() => res.write('event: ping\ndata: {"type":"ping"}\n\n'), 20)
+      res.on('close', () => {
+        closed = true
+        clearInterval(t)
+      })
+    }
+    const route = await proxy.openRoute(upstreamUrl)
+    const ac = new AbortController()
+    const res = await fetch(`${route.baseUrl}/v1/messages`, { method: 'POST', body: JSON.stringify({ messages: [] }), signal: ac.signal })
+    const reader = res.body!.getReader()
+    await reader.read()
+    ac.abort()
+    for (let i = 0; i < 50 && !closed; i++) await new Promise((r) => setTimeout(r, 20))
+    expect(closed).toBe(true)
+    route.drop()
+  })
+
+  it('counts the requests a route carried', async () => {
+    reply = (_p, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
+    }
+    const route = await proxy.openRoute(upstreamUrl)
+    expect(route.hits()).toBe(0)
+    await fetch(`${route.baseUrl}/v1/messages`, { method: 'POST', body: JSON.stringify({ messages: [] }) })
+    await fetch(`${route.baseUrl}/api/other`)
+    expect(route.hits()).toBe(1)
+    route.drop()
+  })
+
   it('refuses an unknown or dropped route', async () => {
     const route = await proxy.openRoute(upstreamUrl)
     route.drop()
@@ -251,6 +291,17 @@ describe('a private run', () => {
     expect(seen?.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/p\/[\w-]+$/)
     const res = await fetch(`${seen!.ANTHROPIC_BASE_URL}/v1/messages`, { method: 'POST', body: '{}' })
     expect(res.status).toBe(404)
+  })
+
+  it('refuses a private turn that Claude Code would send around the relay', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'privacy-bypass-'))
+    const home = mkdtempSync(join(tmpdir(), 'privacy-home-'))
+    expect(privacy.relayBypass({}, dir, home)).toBeNull()
+    expect(privacy.relayBypass({ CLAUDE_CODE_USE_BEDROCK: '1' }, dir, home)).toMatch(/CLAUDE_CODE_USE_BEDROCK is set/)
+    mkdirSync(join(dir, '.claude'))
+    writeFileSync(join(dir, '.claude', 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }))
+    expect(privacy.relayBypass({}, dir, home)).toMatch(/sets ANTHROPIC_BASE_URL/)
+    await expect(privacy.withPrivacy(true, () => privacy.privateCliEnv({}, dir))).rejects.toThrow(/The turn was not sent/)
   })
 
   it('changes nothing outside a private run', async () => {

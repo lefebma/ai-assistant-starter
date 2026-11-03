@@ -45,29 +45,48 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** One form of a name as a pattern: any case, any run of spaces between words, whole words only. */
+// Letters and digits in any script: a name ends where these stop.
+const WORD = '[\\p{L}\\p{M}\\p{N}_]'
+const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{M}\p{N}_]/u.test(c)
+
+/**
+ * One form of a name as a pattern: any case, any run of spaces between
+ * words, straight or curly apostrophes, any dash, whole words only. Forms
+ * and text are both compared in composed Unicode (NFC), so an accented name
+ * typed or stored either way still matches.
+ */
 function formPattern(form: string): string {
-  const words = form.trim().split(/\s+/).map(escapeRegExp)
+  const words = form.normalize('NFC').trim().split(/\s+/).map((w) =>
+    escapeRegExp(w).replace(/['\u2018\u2019]/g, "['\u2018\u2019]").replace(/[-\u2010\u2011\u2013\u2014]/g, '[-\u2010\u2011\u2013\u2014]'),
+  )
   const body = words.join('\\s+')
-  // \b only works next to a word character; "A.C.M.E." ends in a dot.
-  const start = /^\w/.test(form.trim()) ? '(?<![\\w])' : ''
-  const end = /\w$/.test(form.trim()) ? '(?![\\w])' : ''
+  const t = form.trim()
+  const start = isWordChar(t[0]) ? `(?<!${WORD})` : ''
+  const end = isWordChar(t[t.length - 1]) ? `(?!${WORD})` : ''
   return `${start}${body}${end}`
 }
 
 /** Email addresses and phone numbers, found without a list. */
 export const EMAIL_RE = /(?<![\w.+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![\w-])/g
-// 10 to 15 digits with the usual separators, optionally +country code. Not
-// dates (2026-11-03) or long ids: a dashed date has only 8 digits, and a run
-// of digits with no separator at all is left alone.
-export const PHONE_RE = /(?<![\w+])(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}(?![\w])/g
+// A North American number with the usual separators (optionally +1), or any
+// number written with a + country code (8 to 15 digits in groups). Not dates
+// (2026-11-03) or ids: a run of digits with no + and no separators is left
+// alone, so a bare 4165551234 is not caught (docs/PRIVACY.md says so).
+export const PHONE_RE = /(?<![\w+])(?:(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}|\+\d{1,3}(?:[\s.-]?\(?\d{1,4}\)?){2,6})(?![\w])/g
+
+/** A phone match with a plausible number of digits. */
+function phoneOk(m: string): boolean {
+  const n = m.replace(/\D/g, '').length
+  return n >= 8 && n <= 15
+}
 
 /** Every email address and phone number in `text`, in order, without repeats. */
 export function findContactDetails(text: string): Array<{ kind: 'email' | 'phone'; value: string }> {
   const seen = new Set<string>()
   const out: Array<{ kind: 'email' | 'phone'; value: string }> = []
   for (const [kind, re] of [['email', EMAIL_RE], ['phone', PHONE_RE]] as const) {
-    for (const m of text.matchAll(re)) {
+    for (const m of text.normalize('NFC').matchAll(re)) {
+      if (kind === 'phone' && !phoneOk(m[0])) continue
       const key = `${kind}:${normalizeContact(kind, m[0])}`
       if (seen.has(key)) continue
       seen.add(key)
@@ -104,7 +123,7 @@ export class Masker {
     // Longest first, so "Acme Corporation" wins over "Acme".
     forms.sort((a, b) => b.form.length - a.form.length)
     this.formOwner = forms.map((f) => f.entry)
-    this.pattern = forms.length ? new RegExp(forms.map((f) => `(${formPattern(f.form)})`).join('|'), 'gi') : null
+    this.pattern = forms.length ? new RegExp(forms.map((f) => `(${formPattern(f.form)})`).join('|'), 'giu') : null
   }
 
   get size(): number {
@@ -118,10 +137,11 @@ export class Masker {
    */
   mask(text: string, used?: Map<number, string>): string {
     if (!text) return text
-    let out = text
+    let out = text.normalize('NFC')
     if (this.contacts.size) {
       for (const [kind, re] of [['email', EMAIL_RE], ['phone', PHONE_RE]] as const) {
         out = out.replace(re, (m) => {
+          if (kind === 'phone' && !phoneOk(m)) return m
           const e = this.contacts.get(`${kind}:${normalizeContact(kind, m)}`)
           if (!e) return m
           seen(used, e.id, m)
@@ -138,6 +158,11 @@ export class Masker {
       seen(used, this.formOwner[i].id, args[0] as string)
       return placeholderFor(this.formOwner[i])
     })
+  }
+
+  /** True when `text` holds anything on the list. */
+  matches(text: string): boolean {
+    return !!text && this.mask(text) !== text.normalize('NFC')
   }
 
   /** True when `kind:value` is already on the list. */
@@ -197,10 +222,25 @@ export class MaskScope {
   stream(json = false): StreamRestorer {
     return this.masker.stream(json, this.used)
   }
+  matches(text: string): boolean {
+    return this.masker.matches(text)
+  }
+}
+
+/**
+ * A request that cannot go out filtered: the AI's own signed reasoning in
+ * the current step holds a listed name (it was written before the name was
+ * added, or before the filter was on). It cannot be changed or left out.
+ */
+export class PrivacyRefusal extends Error {
+  constructor() {
+    super('This step cannot continue with the privacy filter on: the AI\'s earlier reasoning in it mentions a name on the list. Send the request again to start a fresh step.')
+    this.name = 'PrivacyRefusal'
+  }
 }
 
 /** What the wire formats need: a Masker, or a MaskScope for one request. */
-export type Masking = Pick<MaskScope, 'mask' | 'restore' | 'stream'>
+export type Masking = Pick<MaskScope, 'mask' | 'restore' | 'stream' | 'matches'>
 
 /**
  * The longest tail of `text` that could still grow into a placeholder:

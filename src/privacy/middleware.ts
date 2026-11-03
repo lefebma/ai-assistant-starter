@@ -9,28 +9,88 @@
  * them.
  */
 import type { LanguageModelV3Middleware, LanguageModelV3Prompt, LanguageModelV3StreamPart } from '@ai-sdk/provider'
-import { PRIVACY_NOTE, type Masker, type MaskScope, type StreamRestorer } from './mask.js'
+import { PRIVACY_NOTE, PrivacyRefusal, type Masker, type MaskScope, type StreamRestorer } from './mask.js'
 import { maskerFor } from './store.js'
 
 type Any = unknown
-const OPAQUE = new Set(['type', 'toolCallId', 'toolName', 'mediaType', 'data', 'url', 'providerOptions', 'id', 'filename'])
+type Part = { type: string; [k: string]: Any }
 
-function deep(v: Any, f: (s: string) => string): Any {
+/** Every string in `v`, object keys included: tool data has no fields that are safe to skip. */
+function deepAll(v: Any, f: (s: string) => string): Any {
   if (typeof v === 'string') return f(v)
-  if (Array.isArray(v)) return v.map((x) => deep(x, f))
+  if (Array.isArray(v)) return v.map((x) => deepAll(x, f))
   if (v && typeof v === 'object') {
     if (v instanceof Uint8Array || v instanceof URL) return v
-    return Object.fromEntries(Object.entries(v as Record<string, Any>).map(([k, x]) => [k, OPAQUE.has(k) ? x : deep(x, f)]))
+    return Object.fromEntries(Object.entries(v as Record<string, Any>).map(([k, x]) => [f(k), deepAll(x, f)]))
   }
   return v
+}
+
+/** A tool result's output: text, JSON, or content with text and media. */
+function output(o: Any, f: (s: string) => string): Any {
+  if (!o || typeof o !== 'object') return o
+  const out = o as { type?: string; value?: Any }
+  switch (out.type) {
+    case 'text':
+    case 'error-text':
+      return typeof out.value === 'string' ? { ...out, value: f(out.value) } : out
+    case 'json':
+    case 'error-json':
+      return { ...out, value: deepAll(out.value, f) }
+    case 'content':
+      return Array.isArray(out.value)
+        ? { ...out, value: out.value.map((c) => (c && typeof c === 'object' && (c as Part).type === 'text' && typeof (c as Part).text === 'string' ? { ...(c as Part), text: f((c as Part).text as string) } : c)) }
+        : out
+    default:
+      // A newer output shape: its strings, keys included.
+      return deepAll(o, f)
+  }
+}
+
+/**
+ * One message part. Text, tool inputs and tool results are walked in full;
+ * reasoning goes back exactly as it came (some providers sign it) and files
+ * are sent as they are.
+ */
+function part(p: Part, f: (s: string) => string): Part {
+  switch (p.type) {
+    case 'text':
+      return typeof p.text === 'string' ? { ...p, text: f(p.text) } : p
+    case 'tool-call':
+      return { ...p, input: deepAll(p.input, f) }
+    case 'tool-result':
+      return { ...p, output: output(p.output, f) }
+    default:
+      return p
+  }
 }
 
 function mapPrompt(prompt: LanguageModelV3Prompt, f: (s: string) => string): LanguageModelV3Prompt {
   return prompt.map((m) => {
     if (m.role === 'system') return { ...m, content: f(m.content) }
-    // Reasoning goes back exactly as it came: some providers sign it.
-    const parts = (m.content as Array<{ type: string }>).map((p) => (p.type === 'reasoning' || p.type === 'file' ? p : deep(p, f)))
-    return { ...m, content: parts } as typeof m
+    return { ...m, content: (m.content as unknown as Part[]).map((p) => part(p, f)) } as unknown as typeof m
+  })
+}
+
+/**
+ * Reasoning goes out as it came back (some providers sign it), so a part
+ * that holds a listed name is left out, except in a tool loop still
+ * running, where it must stay: PrivacyRefusal.
+ */
+function dropNamedReasoning(prompt: LanguageModelV3Prompt, masker: MaskScope): LanguageModelV3Prompt {
+  let last = -1
+  prompt.forEach((m, i) => {
+    if (m.role === 'assistant') last = i
+  })
+  // Only a tool loop still running (the prompt ends with tool results) must keep it.
+  if (prompt[prompt.length - 1]?.role !== 'tool') last = -1
+  return prompt.map((m, i) => {
+    if (m.role !== 'assistant') return m
+    const parts = m.content as unknown as Part[]
+    const named = (p: Part) => p.type === 'reasoning' && typeof p.text === 'string' && masker.matches(p.text)
+    if (!parts.some(named)) return m
+    if (i === last) throw new PrivacyRefusal()
+    return { ...m, content: parts.filter((p) => !named(p)) } as unknown as typeof m
   })
 }
 
@@ -47,7 +107,7 @@ export function promptTexts(prompt: LanguageModelV3Prompt): string[] {
 /** A tool call's input (a JSON string) with names restored. */
 function restoreInput(input: string, masker: MaskScope): string {
   try {
-    return JSON.stringify(deep(JSON.parse(input), (s) => masker.restore(s)))
+    return JSON.stringify(deepAll(JSON.parse(input), (s) => masker.restore(s)))
   } catch {
     return masker.restore(input, true)
   }
@@ -58,7 +118,7 @@ export function privacyMiddleware(pick: (texts: string[]) => Masker = (t) => mas
   const maskers = new WeakMap<object, MaskScope>()
   const masked = (params: { prompt: LanguageModelV3Prompt }) => {
     const masker = pick(promptTexts(params.prompt)).scope()
-    const prompt = mapPrompt(params.prompt, (s) => masker.mask(s))
+    const prompt = mapPrompt(dropNamedReasoning(params.prompt, masker), (s) => masker.mask(s))
     // After the system messages, so a cached system prompt stays cached.
     const firstOther = prompt.findIndex((m) => m.role !== 'system')
     const at = firstOther < 0 ? prompt.length : firstOther

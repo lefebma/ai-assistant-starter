@@ -13,6 +13,9 @@
  * never turns it on.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { wrapLanguageModel, type LanguageModel } from 'ai'
 import type { LanguageModelV3 } from '@ai-sdk/provider'
 import { privacyMiddleware } from './middleware.js'
@@ -21,15 +24,21 @@ import { privacyState } from './store.js'
 import { readEnvFile } from '../env.js'
 import { logger } from '../logger.js'
 
-type RunPrivacy = { drops: Array<() => void> }
+type RunPrivacy = { drops: Array<() => void>; routes: Array<() => number> }
 const store = new AsyncLocalStorage<RunPrivacy>()
 
 /** Run `fn` anonymized when `on`. Routes it opened on the proxy close when it ends. */
 export async function withPrivacy<T>(on: boolean, fn: () => Promise<T>): Promise<T> {
   if (!on || store.getStore()) return fn()
-  const ctx: RunPrivacy = { drops: [] }
+  const ctx: RunPrivacy = { drops: [], routes: [] }
   try {
-    return await store.run(ctx, fn)
+    const result = await store.run(ctx, fn)
+    // A CLI that never called the relay went somewhere else (a settings file
+    // this check did not foresee). Too late for this turn: say so loudly.
+    if (ctx.routes.length && ctx.routes.every((hits) => hits() === 0)) {
+      logger.error('privacy filter: a private turn finished without one request through the relay; check Claude Code settings for a base URL or provider override')
+    }
+    return result
   } finally {
     for (const d of ctx.drops) d()
   }
@@ -60,13 +69,43 @@ export function privacyOnFor(chatId: string | undefined): boolean {
  * ANTHROPIC_BASE_URL on the proxy, which forwards to whatever base URL the
  * env had. Unchanged outside a private run.
  */
-export async function privateCliEnv<E extends Record<string, string | undefined>>(env: E | undefined): Promise<E | NodeJS.ProcessEnv | undefined> {
+export async function privateCliEnv<E extends Record<string, string | undefined>>(env: E | undefined, cwd: string = process.cwd()): Promise<E | NodeJS.ProcessEnv | undefined> {
   const ctx = store.getStore()
   if (!ctx) return env
   const base = env ?? process.env
+  const bypass = relayBypass(base, cwd)
+  if (bypass) throw new Error(`The privacy filter is on, but ${bypass}, so Claude Code would not send this turn through the filter. The turn was not sent.`)
   const route = await openRoute(base.ANTHROPIC_BASE_URL?.trim() || DEFAULT_UPSTREAM)
   ctx.drops.push(route.drop)
+  ctx.routes.push(route.hits)
   return { ...base, ANTHROPIC_BASE_URL: route.baseUrl }
+}
+
+const PROVIDER_SWITCHES = ['CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']
+const truthy = (v: unknown) => typeof v === 'string' && /^(1|true|yes|on)$/i.test(v.trim())
+
+/**
+ * Why Claude Code would not use the relay, or null. It ignores the base URL
+ * when sending to Bedrock, Vertex or Foundry, and an env block in its
+ * settings files overrides the env this process gives it.
+ */
+export function relayBypass(env: Record<string, string | undefined>, cwd: string, home: string = homedir()): string | null {
+  for (const k of PROVIDER_SWITCHES) if (truthy(env[k])) return `${k} is set`
+  const configDir = env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude')
+  const files = [join(configDir, 'settings.json'), join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]
+  for (const f of files) {
+    let parsed: { env?: Record<string, unknown> }
+    try {
+      parsed = JSON.parse(readFileSync(f, 'utf8')) as { env?: Record<string, unknown> }
+    } catch {
+      continue
+    }
+    const e = parsed?.env
+    if (!e || typeof e !== 'object') continue
+    if (typeof e.ANTHROPIC_BASE_URL === 'string' && e.ANTHROPIC_BASE_URL.trim()) return `${f} sets ANTHROPIC_BASE_URL`
+    for (const k of PROVIDER_SWITCHES) if (truthy(e[k])) return `${f} sets ${k}`
+  }
+  return null
 }
 
 /** True when an address is this machine or a private network (a local model, not a public one). */

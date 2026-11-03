@@ -13,7 +13,7 @@
  */
 import { getAppState, getDb, setAppState } from '../db.js'
 import { readEnvFile } from '../env.js'
-import { findContactDetails, Masker, placeholderFor, type Entry, type Kind, KINDS } from './mask.js'
+import { findContactDetails, Masker, normalizeContact, placeholderFor, type Entry, type Kind, KINDS } from './mask.js'
 
 type Row = { id: number; kind: string; value: string; aliases: string; source: string }
 
@@ -97,10 +97,10 @@ export function maskerFor(texts: Iterable<string>): Masker {
   const fresh: Array<{ kind: 'email' | 'phone'; value: string }> = []
   const seen = new Set<string>()
   for (const t of texts) {
-    if (!t || (!t.includes('@') && !/\d{3}/.test(t))) continue
+    if (!t || (!t.includes('@') && !/\d/.test(t))) continue
     for (const c of findContactDetails(t)) {
       if (masker.hasContact(c.kind, c.value)) continue
-      const key = `${c.kind}:${c.value.toLowerCase()}`
+      const key = `${c.kind}:${normalizeContact(c.kind, c.value)}`
       if (seen.has(key)) continue
       seen.add(key)
       fresh.push(c)

@@ -93,6 +93,8 @@ export function privacyCommand(ctx: PrivacyCommandContext, arg: string): string 
     const forms = body.split(',').map((f) => f.trim()).filter(Boolean)
     if (!forms.length) return 'Add which name? For example: /private add Acme Corporation, Acme'
     if (forms.some((f) => f.length < 3)) return 'Each name needs at least 3 characters, or ordinary words would be swapped too.'
+    // A quote or backslash would break tool data the name is put back into.
+    if (forms.some((f) => /["\\]/.test(f))) return 'Names cannot contain double quotes or backslashes. Add the name without them.'
     // Only the name as typed, never a placeholder: another chat must not
     // learn what PERSON_3 stands for by "adding" it.
     const existing = findEntry(forms[0], { placeholders: false })

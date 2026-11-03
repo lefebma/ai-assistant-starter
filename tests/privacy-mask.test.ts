@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { MockLanguageModelV3 } from 'ai/test'
 import { generateText, simulateReadableStream, streamText, wrapLanguageModel } from 'ai'
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider'
-import { Masker, PRIVACY_NOTE, findContactDetails, pendingTail, type Entry } from '../src/privacy/mask.js'
+import { Masker, PRIVACY_NOTE, PrivacyRefusal, findContactDetails, pendingTail, type Entry } from '../src/privacy/mask.js'
 import { maskRequest, requestTexts, restoreResponse, SseRestorer } from '../src/privacy/anthropic.js'
 import { privacyMiddleware } from '../src/privacy/middleware.js'
 
@@ -53,6 +53,25 @@ describe('mask', () => {
 
   it('does nothing with an empty list', () => {
     expect(new Masker([]).mask('Jane Smith')).toBe('Jane Smith')
+  })
+})
+
+describe('spellings', () => {
+  const q = new Masker([
+    { id: 8, kind: 'person', value: 'José Álvarez', aliases: [] },
+    { id: 9, kind: 'person', value: "Sean O'Brien", aliases: [] },
+    { id: 10, kind: 'company', value: 'Smith-Jones', aliases: [] },
+    { id: 11, kind: 'company', value: 'Ünal', aliases: [] },
+  ])
+  it('matches accented names in either Unicode form', () => {
+    expect(q.mask('José Álvarez'.normalize('NFD'))).toBe('PERSON_8')
+    expect(q.mask('JOSÉ ÁLVAREZ')).toBe('PERSON_8')
+  })
+  it('treats curly apostrophes and any dash as the same', () => {
+    expect(q.mask('Sean O\u2019Brien and Smith\u2013Jones')).toBe('PERSON_9 and COMPANY_10')
+  })
+  it('keeps whole-word matching for names starting with an accented letter', () => {
+    expect(q.mask('Ünal and XÜnal and Ünalco')).toBe('COMPANY_11 and XÜnal and Ünalco')
   })
 })
 
@@ -136,6 +155,10 @@ describe('streamed restore', () => {
 })
 
 describe('contact details', () => {
+  it('finds international numbers written with a + country code', () => {
+    expect(findContactDetails('+44 20 7946 0958 and +33 1 23 45 67 89').map((c) => c.value)).toEqual(['+44 20 7946 0958', '+33 1 23 45 67 89'])
+  })
+
   it('finds emails and phones, not dates or long ids', () => {
     const found = findContactDetails('a@b.co, (437) 224-2640, 2026-11-03, order 1234567890123')
     expect(found).toEqual([{ kind: 'email', value: 'a@b.co' }, { kind: 'phone', value: '(437) 224-2640' }])
@@ -152,7 +175,7 @@ describe('Messages API requests', () => {
       {
         role: 'assistant',
         content: [
-          { type: 'thinking', thinking: 'Jane Smith', signature: 'sig' },
+          { type: 'thinking', thinking: 'PERSON_2 asked', signature: 'sig' },
           { type: 'text', text: 'Sure, Jane Smith.' },
           { type: 'tool_use', id: 'tu_1', name: 'send_email', input: { to: 'jane@acme.com', name: 'Jane Smith' } },
         ],
@@ -176,8 +199,35 @@ describe('Messages API requests', () => {
 
   it('leaves no listed name anywhere in what goes out, except where the API needs it unchanged', () => {
     const out = JSON.stringify(maskRequest({ ...body, tools: [] }, m))
-    // Only the signed thinking block and the image data keep their text.
-    expect(out.match(/Jane Smith|Acme Corporation|jane@acme\.com/g)).toEqual(['Jane Smith'])
+    expect(out.match(/Jane Smith|Acme Corporation|jane@acme\.com/g)).toBeNull()
+  })
+
+  it('masks object keys in tool inputs too', () => {
+    const out = maskRequest({ messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'n', input: { 'Acme Corporation': { id: 'Jane Smith' } } }] }] }, m) as any
+    expect(out.messages[0].content[0].input).toEqual({ COMPANY_1: { id: 'PERSON_2' } })
+  })
+
+  it('leaves out earlier thinking that names someone, and refuses it in a running tool loop', () => {
+    const thinking = { type: 'thinking', thinking: 'Jane Smith again', signature: 's' }
+    const done = {
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: [thinking, { type: 'text', text: 'ok' }] },
+        { role: 'user', content: 'and now?' },
+      ],
+    }
+    const out = maskRequest(done, m) as any
+    expect(out.messages[1].content).toEqual([{ type: 'text', text: 'ok' }])
+    const looping = {
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: [thinking, { type: 'tool_use', id: 't', name: 'n', input: {} }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'done' }] },
+      ],
+    }
+    expect(() => maskRequest(looping, m)).toThrow(PrivacyRefusal)
+    const clean = { ...looping, messages: looping.messages.map((x, i) => (i === 1 ? { ...x, content: [{ type: 'thinking', thinking: 'PERSON_2', signature: 's' }, x.content[1]] } : x)) }
+    expect(() => maskRequest(clean, m)).not.toThrow()
   })
 
   it('adds the note to a plain string system prompt or to none', () => {
@@ -261,17 +311,52 @@ describe('ai-sdk middleware', () => {
       system: 'Assist Jane Smith',
       messages: [
         { role: 'user', content: 'Call Acme Corporation' },
-        { role: 'assistant', content: [{ type: 'reasoning', text: 'Jane Smith' }, { type: 'text', text: 'Jane Smith' }] },
+        { role: 'assistant', content: [{ type: 'reasoning', text: 'PERSON_2 asked' }, { type: 'text', text: 'Jane Smith' }] },
         { role: 'user', content: 'ok, mail jane@acme.com' },
       ],
     })
     expect(seen[0]).toMatchObject({ role: 'system', content: 'Assist PERSON_2' })
     expect(seen[1]).toMatchObject({ role: 'system', content: PRIVACY_NOTE })
     expect(seen[2].content[0].text).toBe('Call COMPANY_1')
-    expect(seen[3].content[0]).toMatchObject({ type: 'reasoning', text: 'Jane Smith' })
+    expect(seen[3].content[0]).toMatchObject({ type: 'reasoning', text: 'PERSON_2 asked' })
     expect(seen[3].content[1].text).toBe('PERSON_2')
     expect(r.text).toBe('Hi Jane Smith')
     expect(r.toolCalls[0]?.input).toEqual({ to: 'jane@acme.com' })
+  })
+
+  it('masks every field of tool inputs and tool results, keys included', async () => {
+    let seen: any
+    const model = new MockLanguageModelV3({
+      doGenerate: async (opts) => {
+        seen = opts.prompt
+        return { content: [{ type: 'tool-call', toolCallId: 'c2', toolName: 'mail', input: '{"id":"PERSON_2","data":{"url":"mailto:EMAIL_3"}}' }], finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } }, warnings: [] } as any
+      },
+    })
+    const r = await generateText({
+      model: wrapLanguageModel({ model, middleware: privacyMiddleware(pick) }),
+      messages: [
+        { role: 'user', content: 'go' },
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c', toolName: 'look', input: { id: 'Acme Corporation', url: 'https://x/Acme', data: { owner: 'jane@acme.com' } } }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c', toolName: 'look', output: { type: 'json', value: { data: [{ name: 'Jane Smith', email: 'jane@acme.com' }], Acme: 1 } } }] },
+      ],
+    })
+    const out = JSON.stringify(seen)
+    expect(out).not.toMatch(/Acme|Jane Smith|jane@acme/)
+    expect(seen[2].content[0].input).toEqual({ id: 'COMPANY_1', url: 'https://x/COMPANY_1', data: { owner: 'EMAIL_3' } })
+    expect(seen[3].content[0].output.value).toEqual({ data: [{ name: 'PERSON_2', email: 'EMAIL_3' }], COMPANY_1: 1 })
+    expect(r.toolCalls[0]?.input).toEqual({ id: 'Jane Smith', data: { url: 'mailto:jane@acme.com' } })
+  })
+
+  it('refuses a running tool loop whose reasoning names someone', async () => {
+    const model = new MockLanguageModelV3({ doGenerate: async () => { throw new Error('must not be called') } })
+    await expect(generateText({
+      model: wrapLanguageModel({ model, middleware: privacyMiddleware(pick) }),
+      messages: [
+        { role: 'user', content: 'go' },
+        { role: 'assistant', content: [{ type: 'reasoning', text: 'Jane Smith' }, { type: 'tool-call', toolCallId: 'c', toolName: 'look', input: {} }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c', toolName: 'look', output: { type: 'text', value: 'ok' } }] },
+      ],
+    })).rejects.toThrow(/privacy filter/)
   })
 
   it('restores a streamed reply split mid-placeholder, and streamed tool input', async () => {

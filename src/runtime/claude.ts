@@ -317,7 +317,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     if (isManagedAi()) return this.runOnceManaged(prompt, options)
     let fullText = ''
     // A private run's CLI talks to the API through the anonymizer (card #187).
-    const env = await privateCliEnv(toolEnvOption(undefined))
+    const env = await privateCliEnv(toolEnvOption(undefined), options.workingDirectory ?? PROJECT_ROOT)
     const conversation = query({
       prompt,
       options: {
@@ -354,7 +354,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     // A non-limit API error in the result event: never an answer, never ends a pause.
     let errorText: string | null = null
     let usageLimitSignal = false
-    const env = await privateCliEnv(toolEnvOption(managedEnv(key)))
+    const env = await privateCliEnv(toolEnvOption(managedEnv(key)), options.workingDirectory ?? PROJECT_ROOT)
     try {
       const conversation = query({
         prompt,
@@ -573,7 +573,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           ? managed
             ? managedEnv(apiKeyOverride)
             : { ...process.env, ANTHROPIC_API_KEY: apiKeyOverride }
-          : undefined))
+          : undefined), cwd)
         const conversation = query({
           prompt: options.message,
           options: options.isolated ? {

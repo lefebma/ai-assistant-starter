@@ -23,6 +23,7 @@ import { modelMenu, switchModel, switchToRef, modelForClick, type ModelSwitch } 
 import { getChatEffort, setChatEffort } from './models/chat-effort.js'
 import { effortMenu, effortForClick, parseEffort, setEffort, effortNoteAfterSwitch } from './models/effort-command.js'
 import { privacyCommand } from './privacy/command.js'
+import { privacyOnFor } from './privacy/index.js'
 import { isEffort, type Effort } from './models/effort-levels.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
@@ -320,7 +321,9 @@ async function runTurn(
   await adapter.sendTyping(chatId).catch(() => {})
 
   // Streaming preview setup
-  const willVoice = (forceVoiceReply || voiceModeChats.has(chatId)) && voiceCapabilities().tts
+  // A spoken reply sends its text, real names and all, to the voice service,
+  // so with the privacy filter on (card #187) the reply stays text.
+  const willVoice = (forceVoiceReply || voiceModeChats.has(chatId)) && voiceCapabilities().tts && !privacyOnFor(chatId)
   const streamingEnabled = !willVoice && adapter.supportsEdit
 
   let previewMessageId: string | null = null

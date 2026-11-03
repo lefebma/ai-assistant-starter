@@ -10,7 +10,7 @@
  * signature, and they are never shown), images, server tool blocks (web
  * search results are encrypted), tool names and ids.
  */
-import { PRIVACY_NOTE, type Masking, type StreamRestorer } from './mask.js'
+import { PRIVACY_NOTE, PrivacyRefusal, type Masking, type StreamRestorer } from './mask.js'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 type Obj = { [k: string]: Json }
@@ -21,11 +21,11 @@ const OPAQUE_KEYS = new Set(['type', 'id', 'tool_use_id', 'signature', 'media_ty
 
 const isObj = (v: Json | undefined): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** Every string value in `v`, keys left alone. */
+/** Every string in `v`, object keys included: tool inputs have no fields that are safe to skip. */
 function deep(v: Json, f: (s: string) => string): Json {
   if (typeof v === 'string') return f(v)
   if (Array.isArray(v)) return v.map((x) => deep(x, f))
-  if (isObj(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deep(x, f)]))
+  if (isObj(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [f(k), deep(x, f)]))
   return v
 }
 
@@ -81,9 +81,36 @@ export function requestTexts(body: Obj): string[] {
   return texts
 }
 
-/** The request as it may leave: masked, with the privacy note last in the system prompt. */
+/**
+ * Thinking blocks go out as the AI wrote them (they are signed), so one that
+ * holds a listed name (written before the name was added or the filter was
+ * on) is left out, which the API allows, except in a tool loop still
+ * running, where it must stay, so the request is refused (PrivacyRefusal).
+ */
+function dropNamedThinking(messages: Json[], masker: Masking): Json[] {
+  // Only the assistant turn of a tool loop still running (the request ends
+  // with its tool results) must keep its thinking.
+  let last = -1
+  messages.forEach((m, i) => {
+    if (isObj(m) && m.role === 'assistant') last = i
+  })
+  const tail = messages[messages.length - 1]
+  const looping = isObj(tail) && tail.role === 'user' && Array.isArray(tail.content) && tail.content.some((b) => isObj(b) && b.type === 'tool_result')
+  if (!looping) last = -1
+  return messages.map((m, i) => {
+    if (!isObj(m) || m.role !== 'assistant' || !Array.isArray(m.content)) return m
+    const named = (b: Json) => isObj(b) && b.type === 'thinking' && typeof b.thinking === 'string' && masker.matches(b.thinking)
+    if (!m.content.some(named)) return m
+    if (i === last) throw new PrivacyRefusal()
+    const kept = m.content.filter((b) => !named(b))
+    return { ...m, content: kept.length ? kept : [{ type: 'text', text: '(earlier reasoning left out)' }] }
+  })
+}
+
+/** The request as it may leave: masked, with the privacy note last in the system prompt. Throws PrivacyRefusal. */
 export function maskRequest(body: Obj, masker: Masking): Obj {
-  const out = mapRequest(body, (s) => masker.mask(s))
+  const cleaned = Array.isArray(body.messages) ? { ...body, messages: dropNamedThinking(body.messages, masker) } : body
+  const out = mapRequest(cleaned, (s) => masker.mask(s))
   // Only a request with messages (a turn or its token count) gets the note.
   if (!Array.isArray(out.messages)) return out
   const note: Obj = { type: 'text', text: PRIVACY_NOTE }

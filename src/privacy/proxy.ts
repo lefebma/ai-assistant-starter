@@ -19,11 +19,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { logger } from '../logger.js'
 import { maskRequest, requestTexts, restoreResponse, SseRestorer, type MessagesBody } from './anthropic.js'
-import { currentMasker, maskerFor } from './store.js'
+import { maskerFor } from './store.js'
+import { PrivacyRefusal, type MaskScope } from './mask.js'
 
 export const DEFAULT_UPSTREAM = 'https://api.anthropic.com'
 
-type Route = { upstream: string }
+type Route = { upstream: string; hits: number }
 
 const routes = new Map<string, Route>()
 let server: Server | null = null
@@ -44,8 +45,11 @@ export function ensurePrivacyProxy(): Promise<number> {
   starting = new Promise<number>((resolve, reject) => {
     const s = createServer((req, res) => {
       handle(req, res).catch((err) => {
+        if (res.destroyed) return
         logger.error({ err: String(err) }, 'privacy proxy: request failed')
-        if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' })
+        // Mid-stream, an error body would corrupt the reply: cut it off instead.
+        if (res.headersSent) return void res.destroy()
+        res.writeHead(502, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'The privacy filter could not complete this request.' } }))
       })
     })
@@ -78,11 +82,12 @@ export function privacyProxyAddress(): string | null {
 }
 
 /** A base URL for one run's CLI, sending its calls on to `upstream`. Call the returned drop() when the run ends. */
-export async function openRoute(upstream: string = DEFAULT_UPSTREAM): Promise<{ baseUrl: string; drop: () => void }> {
+export async function openRoute(upstream: string = DEFAULT_UPSTREAM): Promise<{ baseUrl: string; drop: () => void; hits: () => number }> {
   const p = await ensurePrivacyProxy()
   const token = randomBytes(18).toString('base64url')
-  routes.set(token, { upstream: upstream.replace(/\/+$/, '') })
-  return { baseUrl: `http://127.0.0.1:${p}/p/${token}`, drop: () => routes.delete(token) }
+  const route: Route = { upstream: upstream.replace(/\/+$/, ''), hits: 0 }
+  routes.set(token, route)
+  return { baseUrl: `http://127.0.0.1:${p}/p/${token}`, drop: () => routes.delete(token), hits: () => route.hits }
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -112,7 +117,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   headers['accept-encoding'] = 'identity'
 
   let body: Buffer | undefined = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req)
-  let masker = currentMasker().scope()
+  let masker: MaskScope | null = null
+  if (masked) route.hits++
   if (masked) {
     let parsed: MessagesBody
     try {
@@ -121,10 +127,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return refuse(res, 400, 'The privacy filter could not read this request, so it was not sent.')
     }
     masker = maskerFor(requestTexts(parsed)).scope()
-    body = Buffer.from(JSON.stringify(maskRequest(parsed, masker)), 'utf8')
+    try {
+      body = Buffer.from(JSON.stringify(maskRequest(parsed, masker)), 'utf8')
+    } catch (err) {
+      if (err instanceof PrivacyRefusal) return refuse(res, 400, err.message)
+      throw err
+    }
   }
 
+  // The CLI gone (a cancelled turn): stop the upstream call too, so the AI
+  // does not keep writing, and billing, a reply nobody reads.
+  const abort = new AbortController()
+  res.on('close', () => {
+    if (!res.writableFinished) abort.abort()
+  })
   const upstream = await fetch(`${route.upstream}${rest}`, {
+    signal: abort.signal,
     method: req.method,
     headers,
     ...(body !== undefined ? { body: new Uint8Array(body) } : {}),
@@ -137,7 +155,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   })
   const type = upstream.headers.get('content-type') ?? ''
 
-  if (!masked || !upstream.body || pathOnly.endsWith('/count_tokens')) {
+  if (!masker || !upstream.body || pathOnly.endsWith('/count_tokens')) {
     res.writeHead(upstream.status, outHeaders)
     if (upstream.body) for await (const c of upstream.body as unknown as AsyncIterable<Uint8Array>) res.write(c)
     res.end()
