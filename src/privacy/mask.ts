@@ -116,14 +116,16 @@ export class Masker {
    * placeholder. Emails and phones go first: an address like
    * jane@acme.com must become EMAIL_4 whole, not jane@COMPANY_2.com.
    */
-  mask(text: string): string {
+  mask(text: string, used?: Set<number>): string {
     if (!text) return text
     let out = text
     if (this.contacts.size) {
       for (const [kind, re] of [['email', EMAIL_RE], ['phone', PHONE_RE]] as const) {
         out = out.replace(re, (m) => {
           const e = this.contacts.get(`${kind}:${normalizeContact(kind, m)}`)
-          return e ? placeholderFor(e) : m
+          if (!e) return m
+          used?.add(e.id)
+          return placeholderFor(e)
         })
       }
     }
@@ -132,7 +134,9 @@ export class Masker {
       // The first group that matched names the form (groups are in sorted order).
       const groups = args.slice(1, 1 + this.formOwner.length) as Array<string | undefined>
       const i = groups.findIndex((g) => g !== undefined)
-      return i >= 0 ? placeholderFor(this.formOwner[i]) : args[0]
+      if (i < 0) return args[0]
+      used?.add(this.formOwner[i].id)
+      return placeholderFor(this.formOwner[i])
     })
   }
 
@@ -141,21 +145,51 @@ export class Masker {
     return this.contacts.has(`${kind}:${normalizeContact(kind, value)}`)
   }
 
-  /** `text` with every known placeholder swapped back. `json`: the text sits inside a JSON string. */
-  restore(text: string, json = false): string {
+  /**
+   * `text` with known placeholders swapped back. `json`: the text sits
+   * inside a JSON string. `allowed`: only these entries (see MaskScope).
+   */
+  restore(text: string, json = false, allowed?: ReadonlySet<number>): string {
     if (!text || !this.byId.size) return text
     return text.replace(PLACEHOLDER, (whole, prefix: string, id: string) => {
       const e = this.byId.get(Number(id))
-      if (!e || PREFIX[e.kind] !== prefix) return whole
+      if (!e || PREFIX[e.kind] !== prefix || (allowed && !allowed.has(e.id))) return whole
       return json ? JSON.stringify(e.value).slice(1, -1) : e.value
     })
   }
 
   /** A restorer for text that arrives in pieces (a streamed reply). */
-  stream(json = false): StreamRestorer {
-    return new StreamRestorer(this, json)
+  stream(json = false, allowed?: ReadonlySet<number>): StreamRestorer {
+    return new StreamRestorer(this, json, allowed)
+  }
+
+  /** A scope for one request and its reply. */
+  scope(): MaskScope {
+    return new MaskScope(this)
   }
 }
+
+/**
+ * One request and its reply. Only placeholders this request's own masking
+ * produced are restored, so typing "PERSON_3" in a chat and getting the model
+ * to repeat it never reveals a name that chat did not already send.
+ */
+export class MaskScope {
+  readonly used = new Set<number>()
+  constructor(private readonly masker: Masker) {}
+  mask(text: string): string {
+    return this.masker.mask(text, this.used)
+  }
+  restore(text: string, json = false): string {
+    return this.masker.restore(text, json, this.used)
+  }
+  stream(json = false): StreamRestorer {
+    return this.masker.stream(json, this.used)
+  }
+}
+
+/** What the wire formats need: a Masker, or a MaskScope for one request. */
+export type Masking = Pick<MaskScope, 'mask' | 'restore' | 'stream'>
 
 /**
  * The longest tail of `text` that could still grow into a placeholder:
@@ -181,19 +215,19 @@ export function pendingTail(text: string): string {
  */
 export class StreamRestorer {
   private held = ''
-  constructor(private readonly masker: Masker, private readonly json: boolean) {}
+  constructor(private readonly masker: Masker, private readonly json: boolean, private readonly allowed?: ReadonlySet<number>) {}
 
   /** The restored text that is safe to pass on now. */
   push(piece: string): string {
     const text = this.held + piece
     const tail = pendingTail(text)
     this.held = tail
-    return this.masker.restore(text.slice(0, text.length - tail.length), this.json)
+    return this.masker.restore(text.slice(0, text.length - tail.length), this.json, this.allowed)
   }
 
   /** Whatever is still held, restored. Call once the piece stream ends. */
   flush(): string {
-    const out = this.masker.restore(this.held, this.json)
+    const out = this.masker.restore(this.held, this.json, this.allowed)
     this.held = ''
     return out
   }

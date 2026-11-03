@@ -10,7 +10,7 @@
  * signature, and they are never shown), images, server tool blocks (web
  * search results are encrypted), tool names and ids.
  */
-import { PRIVACY_NOTE, type Masker, type StreamRestorer } from './mask.js'
+import { PRIVACY_NOTE, type Masking, type StreamRestorer } from './mask.js'
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json }
 type Obj = { [k: string]: Json }
@@ -82,7 +82,7 @@ export function requestTexts(body: Obj): string[] {
 }
 
 /** The request as it may leave: masked, with the privacy note last in the system prompt. */
-export function maskRequest(body: Obj, masker: Masker): Obj {
+export function maskRequest(body: Obj, masker: Masking): Obj {
   const out = mapRequest(body, (s) => masker.mask(s))
   // Only a request with messages (a turn or its token count) gets the note.
   if (!Array.isArray(out.messages)) return out
@@ -93,7 +93,7 @@ export function maskRequest(body: Obj, masker: Masker): Obj {
 }
 
 /** A whole (not streamed) Messages response with names restored. */
-export function restoreResponse(body: Obj, masker: Masker): Obj {
+export function restoreResponse(body: Obj, masker: Masking): Obj {
   if (!Array.isArray(body.content)) return body
   return {
     ...body,
@@ -114,7 +114,7 @@ export function restoreResponse(body: Obj, masker: Masker): Obj {
 export class SseRestorer {
   private buf = ''
   private readonly blocks = new Map<number, { kind: 'text' | 'json'; r: StreamRestorer }>()
-  constructor(private readonly masker: Masker) {}
+  constructor(private readonly masker: Masking) {}
 
   /** Restored output for this chunk of the stream (complete events only). */
   feed(chunk: string): string {

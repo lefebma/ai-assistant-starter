@@ -112,7 +112,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   headers['accept-encoding'] = 'identity'
 
   let body: Buffer | undefined = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req)
-  let masker = currentMasker()
+  let masker = currentMasker().scope()
   if (masked) {
     let parsed: MessagesBody
     try {
@@ -120,7 +120,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch {
       return refuse(res, 400, 'The privacy filter could not read this request, so it was not sent.')
     }
-    masker = maskerFor(requestTexts(parsed))
+    masker = maskerFor(requestTexts(parsed)).scope()
     body = Buffer.from(JSON.stringify(maskRequest(parsed, masker)), 'utf8')
   }
 

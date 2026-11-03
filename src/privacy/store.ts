@@ -79,11 +79,12 @@ export function removeEntry(id: number): boolean {
   return changed
 }
 
-/** The entry a name, alias or placeholder points to. */
-export function findEntry(text: string): ListedEntry | undefined {
+/** The entry a name or alias (and, unless told not to, a placeholder) points to. */
+export function findEntry(text: string, opts: { placeholders?: boolean } = {}): ListedEntry | undefined {
   const t = text.trim().toLowerCase()
   if (!t) return undefined
-  return listEntries().find((e) => [e.value, ...e.aliases].some((f) => f.toLowerCase() === t) || placeholderFor(e).toLowerCase() === t)
+  const byPlaceholder = opts.placeholders !== false
+  return listEntries().find((e) => [e.value, ...e.aliases].some((f) => f.toLowerCase() === t) || (byPlaceholder && placeholderFor(e).toLowerCase() === t))
 }
 
 /**

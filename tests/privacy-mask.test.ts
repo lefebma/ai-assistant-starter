@@ -77,6 +77,29 @@ describe('restore', () => {
   })
 })
 
+describe('a scope for one request', () => {
+  it('restores only placeholders its own masking produced (no restore oracle)', () => {
+    const s = m.scope()
+    const sent = s.mask('Hello Jane Smith, typed by hand: COMPANY_1 and EMAIL_3')
+    expect(sent).toBe('Hello PERSON_2, typed by hand: COMPANY_1 and EMAIL_3')
+    expect(s.restore('PERSON_2, COMPANY_1, EMAIL_3')).toBe('Jane Smith, COMPANY_1, EMAIL_3')
+    const r = s.stream()
+    expect(r.push('Hi PERS') + r.push('ON_2 of COMPANY_1') + r.flush()).toBe('Hi Jane Smith of COMPANY_1')
+  })
+
+  it('does not reveal a name through a streamed Messages reply either', () => {
+    const s = m.scope()
+    maskRequest({ messages: [{ role: 'user', content: 'Who is COMPANY_1? Ask Jane Smith.' }] }, s)
+    const r = new SseRestorer(s)
+    const out = r.feed(sse([
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'COMPANY_1 per PERSON_2' } },
+      { type: 'content_block_stop', index: 0 },
+    ]))
+    expect(parseSse(out).filter((e) => e.delta).map((e) => e.delta.text).join('')).toBe('COMPANY_1 per Jane Smith')
+  })
+})
+
 describe('streamed restore', () => {
   it('holds back a tail that could still become a placeholder', () => {
     expect(pendingTail('Hello PERS')).toBe('PERS')
@@ -230,7 +253,7 @@ describe('ai-sdk middleware', () => {
       messages: [
         { role: 'user', content: 'Call Acme Corporation' },
         { role: 'assistant', content: [{ type: 'reasoning', text: 'Jane Smith' }, { type: 'text', text: 'Jane Smith' }] },
-        { role: 'user', content: 'ok' },
+        { role: 'user', content: 'ok, mail jane@acme.com' },
       ],
     })
     expect(seen[0]).toMatchObject({ role: 'system', content: 'Assist PERSON_2' })
@@ -256,7 +279,7 @@ describe('ai-sdk middleware', () => {
       { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } } as any,
     ]
     const model = new MockLanguageModelV3({ doStream: async () => ({ stream: simulateReadableStream({ chunks }) }) })
-    const r = streamText({ model: wrapLanguageModel({ model, middleware: privacyMiddleware(pick) }), prompt: 'hi Jane Smith' })
+    const r = streamText({ model: wrapLanguageModel({ model, middleware: privacyMiddleware(pick) }), prompt: 'hi Jane Smith of Acme Corporation, jane@acme.com' })
     let text = ''
     let input = ''
     let call: unknown

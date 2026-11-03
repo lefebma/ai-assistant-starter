@@ -102,7 +102,18 @@ describe('/private', () => {
     expect(command.privacyCommand(MAIN, 'add person Bolton')).toMatch(/^Added person: Bolton/)
     expect(command.privacyCommand(MAIN, 'add Initech Corporation')).toMatch(/already on the list/)
     expect(command.privacyCommand(MAIN, 'add Initech Corporation, INTC')).toMatch(/^Updated: Initech Corporation \(also Initech, INTC\)/)
+    expect(command.privacyCommand(MAIN, 'add Initech Corporation')).toMatch(/already on the list, as COMPANY_\d+/)
     expect(command.privacyCommand(MAIN, 'add Al')).toMatch(/at least 3 characters/)
+  })
+
+  it('never tells another chat what a placeholder or a stored name holds', () => {
+    const e = store.addEntry('company', 'Initech Corporation', ['Initech', 'INTC'])
+    const asPlaceholder = command.privacyCommand(OTHER, `add COMPANY_${e.id}`)
+    expect(asPlaceholder).not.toMatch(/Initech/)
+    const again = command.privacyCommand(OTHER, 'add Initech, Initrode')
+    expect(again).toBe('Initech is already on the list; the other spellings were added.')
+    expect(again).not.toMatch(/Corporation|INTC/)
+    expect(command.privacyCommand(OTHER, 'add initech corporation')).toBe('initech corporation is already on the list.')
   })
 
   it('says the filter is off when adding in a chat where it is off', () => {

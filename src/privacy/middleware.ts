@@ -9,7 +9,7 @@
  * them.
  */
 import type { LanguageModelV3Middleware, LanguageModelV3Prompt, LanguageModelV3StreamPart } from '@ai-sdk/provider'
-import { PRIVACY_NOTE, type Masker, type StreamRestorer } from './mask.js'
+import { PRIVACY_NOTE, type Masker, type MaskScope, type StreamRestorer } from './mask.js'
 import { maskerFor } from './store.js'
 
 type Any = unknown
@@ -45,7 +45,7 @@ export function promptTexts(prompt: LanguageModelV3Prompt): string[] {
 }
 
 /** A tool call's input (a JSON string) with names restored. */
-function restoreInput(input: string, masker: Masker): string {
+function restoreInput(input: string, masker: MaskScope): string {
   try {
     return JSON.stringify(deep(JSON.parse(input), (s) => masker.restore(s)))
   } catch {
@@ -55,9 +55,9 @@ function restoreInput(input: string, masker: Masker): string {
 
 /** The middleware. `masker` is a test seam; normally the box's list is read per call. */
 export function privacyMiddleware(pick: (texts: string[]) => Masker = (t) => maskerFor(t)): LanguageModelV3Middleware {
-  const maskers = new WeakMap<object, Masker>()
+  const maskers = new WeakMap<object, MaskScope>()
   const masked = (params: { prompt: LanguageModelV3Prompt }) => {
-    const masker = pick(promptTexts(params.prompt))
+    const masker = pick(promptTexts(params.prompt)).scope()
     const prompt = mapPrompt(params.prompt, (s) => masker.mask(s))
     // After the system messages, so a cached system prompt stays cached.
     const firstOther = prompt.findIndex((m) => m.role !== 'system')
@@ -70,7 +70,7 @@ export function privacyMiddleware(pick: (texts: string[]) => Masker = (t) => mas
     specificationVersion: 'v3',
     transformParams: async ({ params }) => masked(params) as typeof params,
     wrapGenerate: async ({ doGenerate, params }) => {
-      const masker = maskers.get(params) ?? pick([])
+      const masker = maskers.get(params) ?? pick([]).scope()
       const result = await doGenerate()
       return {
         ...result,
@@ -82,7 +82,7 @@ export function privacyMiddleware(pick: (texts: string[]) => Masker = (t) => mas
       }
     },
     wrapStream: async ({ doStream, params }) => {
-      const masker = maskers.get(params) ?? pick([])
+      const masker = maskers.get(params) ?? pick([]).scope()
       const { stream, ...rest } = await doStream()
       const open = new Map<string, StreamRestorer>()
       const restorer = (id: string, json: boolean) => {

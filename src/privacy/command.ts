@@ -93,12 +93,16 @@ export function privacyCommand(ctx: PrivacyCommandContext, arg: string): string 
     const forms = body.split(',').map((f) => f.trim()).filter(Boolean)
     if (!forms.length) return 'Add which name? For example: /private add Acme Corporation, Acme'
     if (forms.some((f) => f.length < 3)) return 'Each name needs at least 3 characters, or ordinary words would be swapped too.'
-    const existing = findEntry(forms[0])
+    // Only the name as typed, never a placeholder: another chat must not
+    // learn what PERSON_3 stands for by "adding" it.
+    const existing = findEntry(forms[0], { placeholders: false })
     if (existing) {
       const extra = forms.slice(1)
-      if (!extra.length) return `${existing.value} is already on the list, as ${placeholderFor(existing)}.`
-      const updated = addAliases(existing.id, extra)
-      return updated ? `Updated: ${describe(updated)}.` : `${existing.value} is already on the list.`
+      if (extra.length) addAliases(existing.id, extra)
+      // Outside the main chat, say no more than what was typed.
+      if (!ctx.primary) return extra.length ? `${forms[0]} is already on the list; the other spellings were added.` : `${forms[0]} is already on the list.`
+      const updated = extra.length ? listEntries().find((e) => e.id === existing.id) : existing
+      return extra.length && updated ? `Updated: ${describe(updated)}.` : `${existing.value} is already on the list, as ${placeholderFor(existing)}.`
     }
     const e = addEntry(kind ?? guessKind(forms[0]), forms[0], forms.slice(1))
     return `Added ${KIND_LABEL[e.kind]}: ${describe(e)}. It stays on this machine whenever the privacy filter is on.${privacyState(ctx.chatId).on ? '' : ' The filter is off in this chat: /private on turns it on.'}`
