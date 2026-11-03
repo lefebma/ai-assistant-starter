@@ -1,9 +1,13 @@
 # Changelog
 
-## 1.65.0 - 2026-11-02
+## 1.66.0 - 2026-11-02
 
 - **New: connect more than one Gmail account.** Send `/connect gmail` again for each Google account. Each one you sign in with is added, and your assistant reads, sends and checks the calendar on whichever account you name. Gmail accounts connected the older way keep working beside them, so you can move them over one at a time.
 - `/connect list` shows every connected account, and marks one that needs a fresh sign-in. `/connect remove gmail <account>` disconnects just that one; if Google withdraws access to one account, the others keep working.
+
+## 1.65.0 - 2026-11-02
+
+- **New: `/model` picks the AI model for a chat.** Send `/model` and your assistant shows the model it is using and a button for each one you can switch to: the latest models from each AI company whose key is in your settings, so with both a Claude and an OpenAI key you see the newest of each. Your pick stays through restarts. It works the same in Telegram, Teams and the web app, where it sets the conversation's model picker, and the picker now shows the same list. Scheduled tasks keep their own model. On a managed plan, only the models your plan covers are offered.
 
 ## 1.64.3 - 2026-11-02
 

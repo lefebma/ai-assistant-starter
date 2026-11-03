@@ -147,8 +147,9 @@ the web app's sign-in is enough.
 
 Each conversation has two pickers at the top.
 
-- **Model.** Which AI answers: Default, or a smaller and faster one, or the
-  most capable.
+- **Model.** Which AI answers: Default, or any model `/model` offers (below).
+  It lists the latest models from each AI company whose key is in your
+  settings.
 - **Effort.** How hard it thinks before answering: Low is quick, High takes
   longer and goes deeper. Default leaves it to the assistant.
 
@@ -159,6 +160,7 @@ thing: `/schedule`, `/cancel`, `/skill`, `/memory`, `/support`, `/update`
 and the rest. Type `/` in the message box to see the list. A command's answer
 shows up in the conversation, buttons included.
 
+- **`/model`** picks this conversation's model, the same as the picker.
 - **`/newchat`** starts this conversation fresh. Your chat app's thread is
   left alone, and `/newchat` there leaves the web app alone.
 - **`/secret set`** works as it does in your chat app. The message holding the

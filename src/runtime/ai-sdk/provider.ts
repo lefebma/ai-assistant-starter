@@ -29,6 +29,8 @@ import type { LanguageModel } from 'ai'
 import { readEnvFile } from '../../env.js'
 import { getSecret } from '../../vault/index.js'
 import { OPEN_MODEL_KEY_NAME, isManagedAi, managedEngine } from '../../ai-limit.js'
+import { logger } from '../../logger.js'
+import { KEY_ENV, parseModelRef } from '../model-ref.js'
 
 const DEFAULT_PROVIDER = 'anthropic'
 /** Only anthropic gets a default model; other providers must set AI_MODEL. */
@@ -39,14 +41,6 @@ const ANTHROPIC_DEFAULT_MODEL = 'claude-sonnet-5'
  * back to its configured AI_MODEL (never a guessed vendor id).
  */
 const ANTHROPIC_CHEAP_MODEL = 'claude-haiku-5-5'
-/** Env var holding each provider's API key. Also gates the known-provider set. */
-const KEY_ENV: Record<string, string> = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  google: 'GOOGLE_API_KEY',
-  azure: 'AZURE_API_KEY',
-}
-
 export type ResolvedModel = {
   provider: string
   modelId: string
@@ -110,8 +104,12 @@ export function buildModel(
  * The provider name the env currently selects, without building a model.
  * Used by the session-store provider stamp (history sanitizer).
  */
-export function configuredProvider(): string {
+export function configuredProvider(model?: string): string {
   if (managedOpenModel()) return 'openai'
+  // A chat's /model choice of another provider (card #270) writes that
+  // provider's history, as long as its key is still there.
+  const ref = parseModelRef(model)
+  if (ref && getSecret(KEY_ENV[ref.provider]!)) return ref.provider
   const env = readEnvFile()
   return env['AI_PROVIDER']?.trim() || process.env.AI_PROVIDER?.trim() || DEFAULT_PROVIDER
 }
@@ -162,6 +160,32 @@ export function resolveModel(tier?: string): ResolvedModel {
   const read = (key: string): string | undefined =>
     env[key]?.trim() || process.env[key]?.trim() || undefined
   if (managedOpenModel()) return resolveManagedOpenModel(read)
+
+  // A 'provider:modelId' choice (card #270) runs on that provider's own key.
+  // A key removed since the choice was made falls back to the default rather
+  // than failing every turn.
+  const ref = parseModelRef(tier)
+  if (ref) {
+    const apiKey = getSecret(KEY_ENV[ref.provider]!)
+    if (apiKey) {
+      const { provider, modelId } = ref
+      return {
+        provider,
+        modelId,
+        model: buildModel(provider, modelId, {
+          apiKey,
+          // AI_BASE_URL belongs to the configured provider: an OpenAI choice on
+          // a box whose AI_PROVIDER is azure must still go to OpenAI, or the
+          // OpenAI key would be sent to the Azure address.
+          baseURL: provider === (read('AI_PROVIDER') || DEFAULT_PROVIDER) && (provider === 'openai' || provider === 'azure') ? read('AI_BASE_URL') : undefined,
+          resourceName: provider === 'azure' ? read('AZURE_RESOURCE_NAME') : undefined,
+          apiVersion: provider === 'azure' ? read('AZURE_API_VERSION') : undefined,
+        }),
+      }
+    }
+    logger.warn({ provider: ref.provider }, 'Chosen model has no key any more; using the default model')
+    tier = undefined
+  }
 
   const provider = read('AI_PROVIDER') || DEFAULT_PROVIDER
   const defaultModelId = read('AI_MODEL') || (provider === 'anthropic' ? ANTHROPIC_DEFAULT_MODEL : '')
