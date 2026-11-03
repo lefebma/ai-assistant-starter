@@ -7,6 +7,7 @@ import { initEmailAlertTables } from './email-alerts/store.js'
 import { initProactiveTables } from './proactive/store.js'
 import { initEffectJournalTables } from './assurance/effect-journal.js'
 import { initRunStateTables } from './assurance/run-state.js'
+import { initPrivacyTables } from './privacy/schema.js'
 
 let db: Database.Database
 
@@ -17,6 +18,11 @@ export function getDb(): Database.Database {
     db.pragma('journal_mode = WAL')
   }
   return db
+}
+
+/** True once something has opened the store. Lets a check skip a store nobody set up, instead of creating one. */
+export function dbIsOpen(): boolean {
+  return Boolean(db && db.open)
 }
 
 export function initDatabase(): void {
@@ -282,6 +288,7 @@ export function initDatabase(): void {
   initProactiveTables(d)
   initEffectJournalTables(d)
   initRunStateTables(d)
+  initPrivacyTables(d)
 }
 
 // --- App state (one-shot install flags) ---

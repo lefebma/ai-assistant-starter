@@ -28,6 +28,7 @@ import { cachedSystem, historyMaxBytes, reconcileHistory, trimHistory, withCache
 import { loadMcpTools } from './mcp.js'
 import { buildSystemPrompt } from './prompt.js'
 import { configuredProvider, resolveModel } from './provider.js'
+import { localModelHost, privacyOnFor, privateModel, withPrivacy } from '../../privacy/index.js'
 import { recordUsage, type UsageMeter } from '../../metering.js'
 import { AiPausedError, isManagedAi } from '../../ai-limit.js'
 import { capReached } from '../../ai-usage.js'
@@ -217,6 +218,10 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const { model, provider, modelId } = this.modelOverride
       ? { model: this.modelOverride, provider: 'override', modelId: 'override' }
       : resolveModel(opts.model)
+    // A private run (card #187): the model sees placeholders, never the
+    // names on the owner's list. A model on this machine or network is not
+    // a public model and is left alone.
+    const sent = this.modelOverride ? privateModel(model) : privateModel(model, { local: localModelHost(provider) })
     // Managed open-model box (card #268): price every model call as it ends,
     // and stop the tool loop at the next step once the month's cap is reached.
     // Subagents and isolated turns are built here too, so they count as well.
@@ -240,7 +245,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
       // even loaded for it.
       logger.info({ provider, modelId, toolCount: 0 }, 'AI SDK isolated turn configured')
       return new ToolLoopAgent({
-        model,
+        model: sent,
         instructions: ISOLATED_INSTRUCTIONS,
         tools: {},
         stopWhen: stepCountIs(1),
@@ -256,7 +261,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     }, opts.guardSession ?? `ai-sdk:${cwd}`, cwd, opts.scope)
     logger.info({ provider, modelId, cwd, toolCount: Object.keys(tools).length }, 'AI SDK agent configured')
     return new ToolLoopAgent({
-      model,
+      model: sent,
       instructions: cachedSystem(buildSystemPrompt(cwd)),
       tools,
       stopWhen: [stepCountIs(MAX_STEPS), atCapNow],
@@ -271,6 +276,11 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
   /** One-shot turn: no session, no retries, errors propagate (contract parity with the claude runtime). */
   async runOnce(prompt: string, options: { workingDirectory?: string; model?: string } = {}): Promise<string> {
+    // Private whenever any chat is (card #187): what it reads may have come from one.
+    return withPrivacy(privacyOnFor(undefined), () => this.runOnceUnwrapped(prompt, options))
+  }
+
+  private async runOnceUnwrapped(prompt: string, options: { workingDirectory?: string; model?: string }): Promise<string> {
     const cwd = options.workingDirectory ?? PROJECT_ROOT
     // Managed box: paused or not set up throws, like the claude runtime's runOnce.
     const gate = capGate()

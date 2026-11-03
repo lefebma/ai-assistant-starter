@@ -22,6 +22,8 @@ import { getChatModel, setChatModel } from './models/chat-model.js'
 import { modelMenu, switchModel, switchToRef, modelForClick, type ModelSwitch } from './models/command.js'
 import { getChatEffort, setChatEffort } from './models/chat-effort.js'
 import { effortMenu, effortForClick, parseEffort, setEffort, effortNoteAfterSwitch } from './models/effort-command.js'
+import { privacyCommand } from './privacy/command.js'
+import { privacyOnFor } from './privacy/index.js'
 import { isEffort, type Effort } from './models/effort-levels.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
@@ -292,7 +294,7 @@ async function runTurn(
   const rotation = rotationConfig()
   if (needsRotation(getSessionMeta(chatId), rotation)) {
     const { rotated, summary } = await rotateSession(chatId, rotation, async (prompt, oldSessionId) => {
-      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId) }))
+      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
       return text
     })
     if (rotated) {
@@ -319,7 +321,9 @@ async function runTurn(
   await adapter.sendTyping(chatId).catch(() => {})
 
   // Streaming preview setup
-  const willVoice = (forceVoiceReply || voiceModeChats.has(chatId)) && voiceCapabilities().tts
+  // A spoken reply sends its text, real names and all, to the voice service,
+  // so with the privacy filter on (card #187) the reply stays text.
+  const willVoice = (forceVoiceReply || voiceModeChats.has(chatId)) && voiceCapabilities().tts && !privacyOnFor(chatId)
   const streamingEnabled = !willVoice && adapter.supportsEdit
 
   let previewMessageId: string | null = null
@@ -372,7 +376,7 @@ async function runTurn(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId) }))
+    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
@@ -606,7 +610,7 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     const fullMessage = [skillIndex, memoryContext, SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
     const sessionId = getSession(chatId) ?? undefined
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
-    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId) }))
+    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
@@ -728,6 +732,7 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
       runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
         model: input.model,
         effort: input.effort,
+        chatId,
       }),
     )
     if (signal.aborted) return { text: null, cancelled: true }
@@ -1862,6 +1867,12 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     await handleEffortCommand(adapter, chatId, trimmed.slice(cmd.length).trim())
     return true
   }
+  if (cmd === '/private') {
+    const arg = trimmed.slice(cmd.length).trim()
+    logger.info({ chatId, sub: arg.split(/\s+/)[0] || 'status' }, 'Handling /private')
+    await adapter.sendMessage(chatId, privacyCommand({ chatId, primary: isPrimaryChat(chatId) }, arg))
+    return true
+  }
   if (cmd === '/voice') {
     if (isManagedAi()) {
       await adapter.sendMessage(chatId, VOICE_OFF_REPLY)
@@ -2060,6 +2071,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
       '/newchat - Clear session, start fresh',
       '/model - Pick the AI model for this chat',
       '/effort - Set how hard I think before answering',
+      '/private - Keep client names on this machine (on/off/add/list/remove)',
       '/memory - Show stored memories',
       '/voice - Toggle voice replies',
       '/voice ui - Get your private link to the voice chat page',
@@ -2093,6 +2105,7 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'newchat', description: 'Clear session, start fresh' },
   { command: 'model', description: 'Pick the AI model for this chat' },
   { command: 'effort', description: 'Set how hard I think before answering' },
+  { command: 'private', description: 'Keep client names on this machine' },
   { command: 'memory', description: 'Show recent stored memories' },
   { command: 'voice', description: 'Toggle voice replies' },
   { command: 'app', description: 'Sign-in link to the web app' },

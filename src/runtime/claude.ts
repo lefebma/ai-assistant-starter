@@ -9,6 +9,7 @@ import { query, type HookInput, type HookJSONOutput, type McpServerConfig } from
 import { EGRESS_CGROUP, PROJECT_ROOT } from '../config.js'
 import { gateToolCall, exposureForScope, resolveRole } from '../assurance/scope-gate.js'
 import { toolEnvOption } from '../egress/tool-env.js'
+import { privacyOnFor, privateCliEnv, withPrivacy } from '../privacy/index.js'
 import { currentProxy, withEgress } from '../egress/index.js'
 import { spawnInToolsCgroup } from '../egress/hosted.js'
 import { readEnvFile } from '../env.js'
@@ -308,13 +309,15 @@ export class ClaudeAgentRuntime implements AgentRuntime {
   /** One-shot turn, moved verbatim from src/dreaming/index.ts runDreamingAgent(). */
   async runOnce(prompt: string, options: { workingDirectory?: string; model?: string } = {}): Promise<string> {
     // A one-shot can use tools too: it gets the chat egress policy (card #231).
-    return withEgress({}, () => this.runOnceUnwrapped(prompt, options))
+    // It is private whenever any chat is (card #187): what it reads may have come from one.
+    return withPrivacy(privacyOnFor(undefined), () => withEgress({}, () => this.runOnceUnwrapped(prompt, options)))
   }
 
   private async runOnceUnwrapped(prompt: string, options: { workingDirectory?: string; model?: string }): Promise<string> {
     if (isManagedAi()) return this.runOnceManaged(prompt, options)
     let fullText = ''
-    const env = toolEnvOption(undefined)
+    // A private run's CLI talks to the API through the anonymizer (card #187).
+    const env = await privateCliEnv(toolEnvOption(undefined), options.workingDirectory ?? PROJECT_ROOT)
     const conversation = query({
       prompt,
       options: {
@@ -351,6 +354,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
     // A non-limit API error in the result event: never an answer, never ends a pause.
     let errorText: string | null = null
     let usageLimitSignal = false
+    const env = await privateCliEnv(toolEnvOption(managedEnv(key)), options.workingDirectory ?? PROJECT_ROOT)
     try {
       const conversation = query({
         prompt,
@@ -360,7 +364,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           permissionMode: 'bypassPermissions',
           settingSources: ['project', 'user'],
           hooks: { PreToolUse: [{ hooks: [guardHook] }] },
-          env: toolEnvOption(managedEnv(key)),
+          env,
           ...cgroupSpawn(),
         },
       })
@@ -564,11 +568,12 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         const model = options.model ?? resolveModel()
         // The run key (card #229) and the run's egress proxy (card #231) ride
         // along to every tool the CLI starts.
-        const laneEnv = toolEnvOption(apiKeyOverride
+        // A private run (card #187) reaches the API through the anonymizer.
+        const laneEnv = await privateCliEnv(toolEnvOption(apiKeyOverride
           ? managed
             ? managedEnv(apiKeyOverride)
             : { ...process.env, ANTHROPIC_API_KEY: apiKeyOverride }
-          : undefined)
+          : undefined), cwd)
         const conversation = query({
           prompt: options.message,
           options: options.isolated ? {

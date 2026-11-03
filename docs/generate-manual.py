@@ -341,6 +341,7 @@ def build_section_4(story, S):
         ["/newchat", "Start a fresh conversation (clears context)"],
         ["/model", "Pick the AI model for this chat"],
         ["/effort", "Set how hard the assistant thinks before answering"],
+        ["/private on|off|add|list|remove", "Keep client names on this machine (privacy filter)"],
         ["/cancel", "Stop what is running: the reply, queued messages, scheduled runs"],
         ["/chatid", "Display your Telegram chat ID"],
         ["/memory", "View what the assistant remembers about you"],
