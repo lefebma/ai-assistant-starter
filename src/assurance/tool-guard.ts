@@ -30,6 +30,7 @@ import { dirname, resolve } from 'node:path'
 import { EvasionMonitor, type Decision } from './evasion.js'
 import type { NetWrite } from './net-intent.js'
 import { redactSensitive } from '../support/redact.js'
+import { evidenceLogPath } from './evidence-logs.js'
 
 export type GuardMode = 'off' | 'log' | 'enforce'
 
@@ -246,12 +247,13 @@ export function getToolGuard(mode: GuardMode, storeDir: string): ToolGuard {
   const key = `${mode}:${storeDir}`
   let g = shared.get(key)
   if (!g) {
-    g = new ToolGuard({ mode, record: appendGuardLog(resolve(storeDir, 'tool-guard.jsonl')) })
+    g = new ToolGuard({ mode, record: appendGuardLog(guardLogPath(storeDir)) })
     shared.set(key, g)
   }
   return g
 }
 
+/** In the audit store when auditing is on, else store/ (card #237, evidence-logs.ts). */
 export function guardLogPath(storeDir: string): string {
-  return resolve(storeDir, 'tool-guard.jsonl')
+  return evidenceLogPath('tool-guard.jsonl', storeDir)
 }

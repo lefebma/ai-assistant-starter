@@ -26,6 +26,7 @@
  */
 import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 
 export type AuditEvent = {
@@ -278,15 +279,51 @@ export type GuardDecision = { allowed: boolean; reason?: string; record?: AuditE
 
 const DESTRUCTIVE_VERB = /\b(rm|rmdir|mv|truncate|shred|unlink|dd|chmod|chown|ln|tee|cp|sed|perl|python3?|node|ruby|open)\b|>>?|\bwrite\b/i
 
+/** The files kept in the audit store: the chain, and the guard and role logs (card #237). */
+const STORE_FILES = /\b(?:audit|tool-guard|role-log)\.jsonl\b/
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The command as a shell would see its paths: ~, $HOME and ${HOME} expanded,
+ * backslash-escaped spaces and quotes dropped. A self-install's store sits in
+ * a path with a space (Application Support), so it is rarely typed as-is.
+ */
+function shellPaths(command: string, home: string): string {
+  return command
+    .replace(/(^|[\s'"=:(])~(?=\/|[\s'"]|$)/g, `$1${home}`)
+    .replace(/\$\{HOME\}|\$HOME\b/g, home)
+    .replace(/\\ /g, ' ')
+    .replace(/["']/g, '')
+}
+
+/** The store's folder and its parents below the home folder (or below /var/lib). */
+function storeAncestors(dir: string, home: string): string[] {
+  const out: string[] = []
+  const floor = dir.startsWith(home + sep) ? home : '/var/lib'
+  for (let p = dir; p.length > floor.length && p !== dirname(p); p = dirname(p)) out.push(p)
+  return out
+}
+
 function bashTouchesStore(log: AuditLog, command: string): string | null {
   const dir = canon(log.dir)
   if (command.includes(log.dir) || command.includes(dir)) return 'command references the audit store'
+  const home = canon(homedir())
+  const seen = shellPaths(command, home)
+  if (seen.includes(log.dir) || seen.includes(dir)) return 'command references the audit store'
+  // A parent of the store with a write verb (rm -rf .../Havn), or a glob reaching into it.
+  if (DESTRUCTIVE_VERB.test(command)) {
+    for (const a of storeAncestors(dir, home)) {
+      if (new RegExp(`${escapeRe(a)}(?:/?\\*|/?\\?|[\\s;&|)]|/?$)`).test(seen)) return 'command reaches the audit store through a parent folder'
+    }
+    if (/[Hh]avn[^\s]*\/audit\b/.test(seen)) return 'command reaches the audit store through a pattern'
+  }
   // Relative reach-ins like `cd ../audit` or `../audit/audit.jsonl`.
   const base = dir.split(sep).pop() ?? ''
   if (base && new RegExp(`(^|[\\s/='"])\\.\\.?/(?:[^\\s]*/)?${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(/|\\s|$|'|")`).test(command)) {
     return 'command reaches the audit store via a relative path'
   }
-  if (/audit\.jsonl/.test(command) && DESTRUCTIVE_VERB.test(command)) return 'command names the audit file with a write verb'
+  if (STORE_FILES.test(command) && DESTRUCTIVE_VERB.test(command)) return 'command names an audit store file with a write verb'
   return null
 }
 
