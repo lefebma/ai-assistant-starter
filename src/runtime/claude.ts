@@ -8,6 +8,7 @@
 import { query, type HookInput, type HookJSONOutput, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { EGRESS_CGROUP, PROJECT_ROOT } from '../config.js'
 import { gateToolCall, exposureForScope, resolveRole } from '../assurance/scope-gate.js'
+import { recordToolEvidence } from '../assurance/run-obligations.js'
 import { toolEnvOption } from '../egress/tool-env.js'
 import { privacyOnFor, privateCliEnv, withPrivacy } from '../privacy/index.js'
 import { currentProxy, withEgress } from '../egress/index.js'
@@ -83,6 +84,16 @@ export function makeGuardHook(scope: RunScope | undefined, cwd: string) {
  */
 function cgroupSpawn(): { spawnClaudeCodeProcess?: typeof spawnInToolsCgroup } {
   return EGRESS_CGROUP && currentProxy() ? { spawnClaudeCodeProcess: spawnInToolsCgroup } : {}
+}
+
+/**
+ * After a tool succeeds, the harness records what it did against the run's
+ * obligations (card #197). Failed calls arrive as PostToolUseFailure and
+ * prove nothing. Outside a tracked scheduled run this does nothing.
+ */
+export const evidenceHook = async (input: HookInput): Promise<HookJSONOutput> => {
+  if (input.hook_event_name === 'PostToolUse') recordToolEvidence(input.tool_use_id, input.tool_name, input.tool_input)
+  return {}
 }
 
 /** The unscoped hook (chat and one-shot runs). */
@@ -325,7 +336,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         cwd: options.workingDirectory ?? PROJECT_ROOT,
         permissionMode: 'bypassPermissions',
         settingSources: ['project', 'user'],
-        hooks: { PreToolUse: [{ hooks: [guardHook] }] },
+        hooks: { PreToolUse: [{ hooks: [guardHook] }], PostToolUse: [{ hooks: [evidenceHook] }] },
         ...(env ? { env } : {}),
         ...cgroupSpawn(),
       },
@@ -363,7 +374,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           cwd: options.workingDirectory ?? PROJECT_ROOT,
           permissionMode: 'bypassPermissions',
           settingSources: ['project', 'user'],
-          hooks: { PreToolUse: [{ hooks: [guardHook] }] },
+          hooks: { PreToolUse: [{ hooks: [guardHook] }], PostToolUse: [{ hooks: [evidenceHook] }] },
           env,
           ...cgroupSpawn(),
         },
@@ -588,7 +599,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             includePartialMessages: Boolean(onPartial),
             abortController,
             ...(sessionId ? { resume: sessionId } : {}),
-            hooks: { PreToolUse: [{ hooks: [makeGuardHook(options.scope, cwd)] }] },
+            hooks: { PreToolUse: [{ hooks: [makeGuardHook(options.scope, cwd)] }], PostToolUse: [{ hooks: [evidenceHook] }] },
             ...scopeOptions(options.scope, cwd),
             ...cgroupSpawn(),
             // Overflow lane: scope the API key to THIS subprocess only. Spread

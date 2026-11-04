@@ -21,6 +21,7 @@ import { withAttachedImages } from './images.js'
 import { z } from 'zod'
 import { PROJECT_ROOT } from '../../config.js'
 import { gateToolCall, resolveRole } from '../../assurance/scope-gate.js'
+import { recordToolEvidence } from '../../assurance/run-obligations.js'
 import { canonicalTool, toolAllowed, type RoleSpec } from '../../assurance/roles.js'
 import { logger } from '../../logger.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime, RunScope } from '../types.js'
@@ -142,7 +143,10 @@ export class AiSdkAgentRuntime implements AgentRuntime {
             execute: async (input: unknown, opts: unknown) => {
               const v = gateToolCall({ session, tool: name, input, cwd, scope })
               if (!v.allow) return v.reason
-              return execute(input, opts)
+              const out = await execute(input, opts)
+              // A call that returned (did not throw) proves what it did (card #197).
+              if (!toolFailed(out)) recordToolEvidence(toolCallId(opts), name, input)
+              return out
             },
           },
         ]
@@ -536,4 +540,19 @@ export class AiSdkAgentRuntime implements AgentRuntime {
       if (!isolated) this.pendingSteer = null
     }
   }
+}
+
+/** The AI SDK passes each call's id in the execute options. */
+function toolCallId(opts: unknown): string {
+  const id = opts && typeof opts === 'object' ? (opts as { toolCallId?: unknown }).toolCallId : undefined
+  return typeof id === 'string' ? id : ''
+}
+
+/** A tool that reports failure in its result rather than by throwing. */
+function toolFailed(out: unknown): boolean {
+  // The bash tool answers a failure as text: "exit code: N ..." or "cancelled: ...".
+  if (typeof out === 'string') return /^(?:exit code: |cancelled: |error:)/i.test(out)
+  if (!out || typeof out !== 'object') return false
+  const o = out as { isError?: unknown; error?: unknown; exitCode?: unknown }
+  return o.isError === true || (typeof o.exitCode === 'number' && o.exitCode !== 0) || (o.error !== undefined && o.error !== null && o.error !== false)
 }

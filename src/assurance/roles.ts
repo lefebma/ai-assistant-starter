@@ -26,6 +26,7 @@
 import { readFileSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { validateParams, type ToolDef } from './capabilities.js'
+import type { Obligation } from './obligations.js'
 
 export interface RoleSpec {
   id: string
@@ -50,6 +51,13 @@ export interface RoleSpec {
    * @approved (EGRESS_ALLOW), @read (EGRESS_READ). No egress: only the AI.
    */
   egress?: { write?: string[]; read?: string[] }
+  /**
+   * What a run under this role owes before it counts as done (card #197).
+   * Built-in roles have defaults in run-obligations.ts; every run also owes
+   * running to the end. evidenceType is one of mail.read, mail.drafted,
+   * calendar.read, web.read, source.read, file.written.
+   */
+  obligations?: Obligation[]
 }
 
 /** Read-only basics every role with a shell gets. */

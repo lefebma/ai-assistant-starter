@@ -39,7 +39,9 @@ describe('scheduler lane routing', () => {
     runAgentSpy.mockClear()
     createTask('lane-2', '123', 'triage the inbox', '0 9 * * *', Math.floor(Date.now() / 1000) - 60, 'Triage', 'silent', 'America/Toronto', false, 'inbox-triage')
     await runDueTasks()
-    const call = runAgentSpy.mock.calls.find((c) => c[0] === 'triage the inbox')!
+    // The prompt also carries what the job is checked on (card #197).
+    const call = runAgentSpy.mock.calls.find((c) => String(c[0]).startsWith('triage the inbox'))!
+    expect(String(call[0])).toContain('read the inbox')
     expect(call[5]).toBe('cron')
     expect(call[7]).toEqual({ role: 'inbox-triage', taskId: 'lane-2' })
   })

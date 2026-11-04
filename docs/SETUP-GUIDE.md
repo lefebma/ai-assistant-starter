@@ -582,6 +582,34 @@ pause or delete it and the next call is refused; change its role and the next
 call is checked against the new one. A retry waiting after an AI overload
 does the same when it fires, and picks up where the first attempt stopped.
 
+**A job is "done" only when the assistant can show it.** Before a job starts,
+the assistant notes what it owes, and afterwards it checks its own records of
+what the job's tools actually did. What the job says in its answer does not
+count. Every job owes running to the end with an answer; a job with a role
+also owes what the role is for:
+
+| Role | Counts as done when it has |
+|---|---|
+| `inbox-triage` | Read the inbox (a mail search, read or inbox command that worked) |
+| `briefing` | Read at least one source: email, the calendar or the web |
+| `research` | Read at least one web page or search result |
+| `full`, or no role | Just run to the end with an answer |
+
+A job that falls short still delivers its answer, with a line above it:
+"Not finished: there is no record that this job did the following: read the
+inbox." `/schedule list` shows `INCOMPLETE:` in front of its last result. A
+silent job only stays quiet when it is done; an unfinished one always
+messages you. A job that crashes, or whose answer cannot be delivered, is
+recorded as failed.
+
+A role in `roles.json` can list its own `obligations`, each with an `id`, a
+`description` (in plain words, it is what you are told is missing) and an
+`evidenceType`: `mail.read`, `mail.drafted`, `calendar.read`, `web.read`,
+`source.read` (any of the three reads) or `file.written`. `minCount` asks for
+more than one. For example, a role that must save a draft:
+`"obligations": [{ "id": "drafts", "description": "save a draft reply", "evidenceType": "mail.drafted" }]`.
+An entry missing one of those fields is ignored.
+
 **If the assistant restarts mid-job**, it notices when it starts again and
 messages you: which job was cut off, what it had already sent, and anything it
 started but never got confirmed (check Sent for those). A one-shot job then
