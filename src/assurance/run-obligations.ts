@@ -20,7 +20,7 @@
  */
 import { currentRun } from './effect-journal.js'
 import type { AuthorityFacet, Obligation, Verdict } from './obligations.js'
-import { canonicalTool, splitSegments, type RoleSpec } from './roles.js'
+import { canonicalTool, type RoleSpec } from './roles.js'
 import { openRun } from './run-state.js'
 
 /** Effectively unlimited: reading the inbox twice is fine, it is not a send. */
@@ -69,19 +69,78 @@ function words(segment: string): string[] {
 
 const starts = (w: string[], prefixes: string[]) => prefixes.some((p) => p.split(' ').every((x, i) => w[i] === x))
 
+type Op = '&&' | '||' | ';' | '|' | '&'
+
+/**
+ * A shell command as its simple commands and the operator after each, outside
+ * quotes. Same reading as roles.splitSegments (continuations join, quoted
+ * text stays one argument), keeping the operators so the caller can tell
+ * which commands' failures would have reached the exit status.
+ */
+function chain(cmd: string): Array<{ seg: string; after: Op | null }> {
+  const out: Array<{ seg: string; after: Op | null }> = []
+  let cur = ''
+  const push = (op: Op | null) => { out.push({ seg: cur.trim(), after: op }); cur = '' }
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]
+    if (c === '\\' && cmd[i + 1] === '\n') { cur += ' '; i++; continue }
+    if (c === '\\' && i + 1 < cmd.length) { cur += c + cmd[++i]; continue }
+    if (c === "'" || c === '"') {
+      let j = i + 1
+      while (j < cmd.length && cmd[j] !== c) j += c === '"' && cmd[j] === '\\' ? 2 : 1
+      cur += 'Q'
+      i = j
+      continue
+    }
+    const two = cmd.slice(i, i + 2)
+    if (two === '&&' || two === '||') { push(two); i++; continue }
+    if (c === ';' || c === '\n') { push(';'); continue }
+    if (c === '|') { push('|'); continue }
+    if (c === '&' && cmd[i - 1] !== '>' && cmd[i + 1] !== '>') { push('&'); continue }
+    cur += c
+  }
+  push(null)
+  return out.filter((x) => x.seg)
+}
+
+/**
+ * The simple commands of `cmd` that certainly ran and succeeded, given that
+ * the whole command exited 0. A command counts when every operator after it
+ * is && (its failure would have stopped the chain and failed the command) and
+ * it did not follow ||. A command piped into another hides its own exit
+ * status, so it counts only if the pipe produced output: a mail search that
+ * failed prints its error to stderr and nothing to the pipe.
+ */
+function certainSegments(cmd: string, stdout: string | undefined): string[] {
+  const parts = chain(cmd)
+  const piped = parts.some((p) => p.after === '|')
+  const hasOutput = typeof stdout === 'string' && stdout.trim().length > 0
+  return parts.filter((p, i) => {
+    if (i > 0 && parts[i - 1].after === '||') return false
+    const rest = parts.slice(i).map((x) => x.after).filter((op): op is Op => op !== null)
+    if (!rest.every((op) => op === '&&' || op === '|')) return false
+    return !piped || !rest.includes('|') || hasOutput
+  }).map((p) => p.seg)
+}
+
 /**
  * What a tool call that succeeded shows was done, as evidence types. A shell
- * command counts for each kind of command it ran (mail read, draft saved,
- * calendar read, web read). Exported for tests.
+ * command counts for each kind of command it certainly ran (mail read, draft
+ * saved, calendar read, web read); see certainSegments. `output` is what the
+ * tool returned. Exported for tests.
  */
-export function evidenceTypes(tool: string, input: unknown): string[] {
+export function evidenceTypes(tool: string, input: unknown, output?: unknown): string[] {
   const name = canonicalTool(tool)
   const out = new Set<string>()
   if (WEB_TOOLS.includes(name)) out.add('web.read')
   if (name === 'Write' || name === 'Edit') out.add('file.written')
   if (name === 'Bash') {
     const cmd = typeof input === 'object' && input && typeof (input as { command?: unknown }).command === 'string' ? (input as { command: string }).command : ''
-    for (const seg of splitSegments(cmd)) {
+    const res = typeof output === 'object' && output ? output as { stdout?: unknown; interrupted?: unknown; backgroundTaskId?: unknown } : undefined
+    // Interrupted, or still running in the background: it has not finished.
+    if (res?.interrupted === true || res?.backgroundTaskId) return []
+    const stdout = typeof output === 'string' ? output : typeof res?.stdout === 'string' ? res.stdout : undefined
+    for (const seg of certainSegments(cmd, stdout)) {
       const w = words(seg)
       if (starts(w, MAIL_READ)) out.add('mail.read')
       if (starts(w, MAIL_DRAFT)) out.add('mail.drafted')
@@ -120,13 +179,13 @@ export function trackRun(runKey: string, obligations: Obligation[]): TrackedRun 
  * tracked run (chat, the owner at a terminal) it does nothing. Never throws:
  * evidence is bookkeeping and must not break a tool call.
  */
-export function recordToolEvidence(callId: string, tool: string, input: unknown, runKey: string | undefined = currentRun()): number {
+export function recordToolEvidence(callId: string, tool: string, input: unknown, output?: unknown, runKey: string | undefined = currentRun()): number {
   if (!runKey || !callId) return 0
   const authority = active.get(runKey)
   if (!authority) return 0
   let accepted = 0
   try {
-    const types = evidenceTypes(tool, input)
+    const types = evidenceTypes(tool, input, output)
     for (const o of authority.snapshot().obligations) {
       if (!types.includes(o.evidenceType)) continue
       const r = authority.record({ eventId: `${callId}:${o.id}`, runId: runKey, origin: 'tool', evidenceType: o.evidenceType, obligationId: o.id })

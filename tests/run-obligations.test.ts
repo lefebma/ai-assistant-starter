@@ -95,6 +95,29 @@ describe('tool calls become evidence', () => {
     expect(evidenceTypes('WebSearch', { query: 'x' })).toEqual(['web.read', 'source.read'])
   })
 
+  it('counts only commands whose failure would have shown', () => {
+    // Followed by ; or ||, or after ||: a failure there is hidden by the exit status.
+    expect(evidenceTypes('Bash', { command: 'gog gmail search x; echo ok' })).toEqual([])
+    expect(evidenceTypes('Bash', { command: 'gog gmail search x || true' })).toEqual([])
+    expect(evidenceTypes('Bash', { command: 'true || gog gmail search x' })).toEqual([])
+    expect(evidenceTypes('Bash', { command: 'echo start; gog gmail search x' })).toContain('mail.read')
+    expect(evidenceTypes('Bash', { command: 'cd /tmp && gog gmail search x' })).toContain('mail.read')
+    expect(evidenceTypes('Bash', { command: 'gog gmail search x &' })).toEqual([])
+  })
+
+  it('a piped mail command counts only when the pipe produced output', () => {
+    const cmd = { command: 'gog gmail search "is:unread" --json | jq ".[0]"' }
+    expect(evidenceTypes('Bash', cmd, { stdout: '', stderr: 'auth error', interrupted: false })).toEqual([])
+    expect(evidenceTypes('Bash', cmd, { stdout: '{"id":"1"}', stderr: '', interrupted: false })).toContain('mail.read')
+    expect(evidenceTypes('bash', cmd, '{"id":"1"}')).toContain('mail.read')
+  })
+
+  it('an interrupted or backgrounded command has not finished', () => {
+    const cmd = { command: 'gog gmail search x' }
+    expect(evidenceTypes('Bash', cmd, { stdout: 'x', interrupted: true })).toEqual([])
+    expect(evidenceTypes('Bash', cmd, { stdout: '', interrupted: false, backgroundTaskId: 'b1' })).toEqual([])
+  })
+
   it('a command that only talks about the inbox proves nothing', () => {
     expect(evidenceTypes('Bash', { command: 'echo "gog gmail search done"' })).toEqual([])
     expect(evidenceTypes('Bash', { command: 'ls inbox' })).toEqual([])
@@ -102,13 +125,13 @@ describe('tool calls become evidence', () => {
   })
 
   it('evidence counts only inside a tracked run, and the same call counts once', () => {
-    expect(recordToolEvidence('c1', 'Bash', { command: 'gog gmail search x' }, 'job:none')).toBe(0)
+    expect(recordToolEvidence('c1', 'Bash', { command: 'gog gmail search x' }, undefined, 'job:none')).toBe(0)
     const run = trackRun('job:t-evidence', obligationsFor(role('inbox-triage')))
-    expect(recordToolEvidence('c1', 'Bash', { command: 'gog gmail search x' }, 'job:t-evidence')).toBe(1)
-    expect(recordToolEvidence('c1', 'Bash', { command: 'gog gmail search x' }, 'job:t-evidence')).toBe(0)
-    expect(recordToolEvidence('c2', 'Bash', { command: 'gog gmail read 123' }, 'job:t-evidence')).toBe(1)
+    expect(recordToolEvidence('c1', 'Bash', { command: 'gog gmail search x' }, undefined, 'job:t-evidence')).toBe(1)
+    expect(recordToolEvidence('c1', 'Bash', { command: 'gog gmail search x' }, undefined, 'job:t-evidence')).toBe(0)
+    expect(recordToolEvidence('c2', 'Bash', { command: 'gog gmail read 123' }, undefined, 'job:t-evidence')).toBe(1)
     run.end()
-    expect(recordToolEvidence('c3', 'Bash', { command: 'gog gmail read 4' }, 'job:t-evidence')).toBe(0)
+    expect(recordToolEvidence('c3', 'Bash', { command: 'gog gmail read 4' }, undefined, 'job:t-evidence')).toBe(0)
   })
 
   it('the model saying it finished is not evidence', () => {

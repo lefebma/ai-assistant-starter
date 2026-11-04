@@ -145,7 +145,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
               if (!v.allow) return v.reason
               const out = await execute(input, opts)
               // A call that returned (did not throw) proves what it did (card #197).
-              if (!toolFailed(out)) recordToolEvidence(toolCallId(opts), name, input)
+              if (!toolFailed(out)) recordToolEvidence(toolCallId(opts), name, input, out)
               return out
             },
           },
@@ -550,8 +550,9 @@ function toolCallId(opts: unknown): string {
 
 /** A tool that reports failure in its result rather than by throwing. */
 function toolFailed(out: unknown): boolean {
-  // The bash tool answers a failure as text: "exit code: N ..." or "cancelled: ...".
-  if (typeof out === 'string') return /^(?:exit code: |cancelled: |error:)/i.test(out)
+  // The built-in tools answer a failure as text: "exit code: N ...",
+  // "cancelled: ...", "Error: ...", "Error writing file: ..." (tools.ts).
+  if (typeof out === 'string') return /^(?:exit code: |cancelled: |error\b)/i.test(out)
   if (!out || typeof out !== 'object') return false
   const o = out as { isError?: unknown; error?: unknown; exitCode?: unknown }
   return o.isError === true || (typeof o.exitCode === 'number' && o.exitCode !== 0) || (o.error !== undefined && o.error !== null && o.error !== false)
