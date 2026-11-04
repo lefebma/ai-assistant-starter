@@ -7,7 +7,7 @@ import {
   type Memory,
 } from './db.js'
 import { logger } from './logger.js'
-import { ownerWords, recallLine, replyOrigin } from './memory/provenance.js'
+import { hasQuoted, ownerWords, recallLine, replyOrigin } from './memory/provenance.js'
 
 const SEMANTIC_PATTERN = /\b(my|i am|i'm|i prefer|remember|always|never)\b/i
 
@@ -44,7 +44,7 @@ export async function buildMemoryContext(
   return `<memory-context hidden="true">\nThe following is background context from previous conversations. DO NOT include this in your response. Use it only to inform your answer.\n${lines.join('\n')}\n</memory-context>`
 }
 
-const UNTRUSTED_BLOCK = /<untrusted-[\w-]+>\n?([\s\S]*?)\n?<\/untrusted-[\w-]+>/g
+const UNTRUSTED_BLOCK = /<(untrusted-[\w-]+)>\n?([\s\S]*?)\n?<\/\1>/g
 
 /**
  * Save one turn. Provenance (card #235): the owner's words are saved as
@@ -78,14 +78,14 @@ export async function saveConversationTurn(
 
   // Quoted or forwarded text: kept, but as what it is.
   for (const m of userMsg.matchAll(UNTRUSTED_BLOCK)) {
-    const quoted = m[1]!.trim()
+    const quoted = m[2]!.trim()
     if (quoted.length > 20) insertMemory(chatId, `Quoted or forwarded text: ${quoted.slice(0, 500)}`, 'episodic', undefined, 'untrusted')
   }
 
   // Save a compressed version of the assistant response for episodic recall
   if (assistantMsg.length > 50) {
     const summary = assistantMsg.slice(0, 300)
-    insertMemory(chatId, `Assistant responded: ${summary}`, 'episodic', undefined, replyOrigin(opts.reads))
+    insertMemory(chatId, `Assistant responded: ${summary}`, 'episodic', undefined, replyOrigin(opts.reads, hasQuoted(userMsg)))
   }
 
   logger.debug({ chatId, sector }, 'Conversation turn saved to memory')

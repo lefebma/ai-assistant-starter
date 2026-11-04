@@ -8,29 +8,27 @@
  * No stored text can open or close one of the context blocks around it.
  */
 import type { Memory, MemoryOrigin } from '../db.js'
-import { wrapUntrusted } from '../prompt-safety.js'
+import { defang, wrapUntrusted } from '../prompt-safety.js'
 
 /** Evidence types that mean a turn's tools read text the owner did not write. */
 export const OUTSIDE_READS = ['mail.read', 'web.read', 'source.read'] as const
 
 /** The origin of an assistant reply, from what the turn's tools read. */
-export function replyOrigin(reads: readonly string[] | undefined): 'assistant' | 'untrusted' {
+export function replyOrigin(reads: readonly string[] | undefined, quoted = false): 'assistant' | 'untrusted' {
+  // A reply to a forwarded or quoted message may repeat it, like one written after a tool read.
+  if (quoted) return 'untrusted'
   return reads?.some((r) => (OUTSIDE_READS as readonly string[]).includes(r)) ? 'untrusted' : 'assistant'
 }
 
 /** True when a recalled memory must reach the model inside an untrusted wrapper. */
 export function isUntrusted(m: Pick<Memory, 'origin' | 'content'>): boolean {
   if (m.origin === 'untrusted') return true
-  // Written before provenance: only the owner's own words are known to be safe.
-  return m.origin === 'legacy' && !m.content.startsWith('User said:')
+  // Written before provenance: only the owner's own words are known to be
+  // safe, and not even those when they carried a forwarded or quoted block.
+  return m.origin === 'legacy' && (!m.content.startsWith('User said:') || /<\s*\/?\s*untrusted-/i.test(m.content))
 }
 
-const BLOCK_TAG = /<\s*\/?\s*(memory-context|workspace-context|decision-ledger|untrusted-[\w-]*)\b[^>]*>/gi
-
-/** Neutralise any context-block tag inside stored text (card #235, defect 12). */
-export function defang(text: string): string {
-  return text.replace(BLOCK_TAG, '[tag]')
-}
+export { defang }
 
 /** The line a memory contributes to the memory block. */
 export function recallLine(m: Pick<Memory, 'origin' | 'content'>, maxLen = 400): string {
@@ -40,7 +38,14 @@ export function recallLine(m: Pick<Memory, 'origin' | 'content'>, maxLen = 400):
 
 /** The owner's words as saved: quoted third-party text is left out. */
 export function ownerWords(text: string): string {
-  return text.replace(/<untrusted-[\w-]+>[\s\S]*?<\/untrusted-[\w-]+>/g, '[quoted text]')
+  // A wrapper closes only with its own label and id (the backreference); its
+  // content has every other block tag defanged, so it cannot close early.
+  return text.replace(/<(untrusted-[\w-]+)>[\s\S]*?<\/\1>/g, '[quoted text]')
+}
+
+/** True when the owner's message carried quoted or forwarded text. */
+export function hasQuoted(text: string): boolean {
+  return /<untrusted-[\w-]+>/.test(text)
 }
 
 export type { MemoryOrigin }

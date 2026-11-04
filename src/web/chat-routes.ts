@@ -253,7 +253,7 @@ async function answer(
     // the first proposal rides this reply as its Pin and Skip when the reply
     // has no buttons of its own; any other is offered as a /decide line.
     const [card, ...others] = replyLabels.length ? [undefined, ...proposals] : proposals
-    const offers = [card ? proposalCard(card) : '', ...others.map((p) => p && proposalHint(p))]
+    const offers = [card ? proposalCard(card, chatId) : '', ...others.map((p) => p && proposalHint(p))]
     const labels = card ? PIN_BUTTONS : replyLabels
     const content = [cleanText, ...notes, ...offers].filter(Boolean).join('\n\n')
     const mid = addMessage(id, 'assistant', content, files, labels)

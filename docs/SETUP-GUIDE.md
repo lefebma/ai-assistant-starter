@@ -529,7 +529,7 @@ Once the service is running, message your bot:
 
 Long chats get trimmed, so something you settled early on ("send invoice reminders to billing@, not Priya", "the late fee is waived") can fall out of what your assistant sees. Pin it and it stays.
 
-- When you state a decision, your assistant offers it on a small card: **Pin** or **Skip**. Nothing is pinned until you tap Pin, so a decision can never come from an email or web page it read.
+- When you state a decision, your assistant offers it on a small card: **Pin** or **Skip**. The card names the topic and anything the decision would replace. Nothing is pinned until someone taps Pin, so a decision can never come from an email or web page it read. In a group chat, anyone in the group can tap Pin or use `/decide`, so pin your private decisions in your own chat.
 - `/decide <decision>` pins one yourself. Give it a topic to replace an older one later: `/decide invoices: send reminders to billing@`. A new decision on the same topic replaces the old one.
 - `/decisions` lists what is pinned for this chat; `/decisions remove 2` removes one.
 
