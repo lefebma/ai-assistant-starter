@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { defaultAuditDir } from '../src/config.js'
 import { evidenceDir, evidenceLogPath, resetEvidenceLogs } from '../src/assurance/evidence-logs.js'
 import { AuditLog, storeTouch } from '../src/assurance/audit-log.js'
@@ -16,15 +16,17 @@ const NO_HOSTED = '/nonexistent-havn-audit'
 
 describe('the audit log is on by default outside the install', () => {
   it('uses the platform app-data folder, one per install', () => {
-    const mac = defaultAuditDir('/Users/a/havn', 'darwin', { HOME: '/Users/a' })
+    // Built with the host's path separator; compare in forward slashes.
+    const fwd = (p: string) => p.split(sep).join('/')
+    const mac = fwd(defaultAuditDir('/Users/a/havn', 'darwin', { HOME: '/Users/a' }))
     expect(mac).toMatch(/^\/Users\/a\/Library\/Application Support\/Havn\/audit\/[0-9a-f]{12}$/)
-    const linux = defaultAuditDir('/home/a/havn', 'linux', { HOME: '/home/a' })
+    const linux = fwd(defaultAuditDir('/home/a/havn', 'linux', { HOME: '/home/a' }))
     expect(linux).toMatch(/^\/home\/a\/\.local\/state\/havn\/audit\/[0-9a-f]{12}$/)
-    expect(defaultAuditDir('/home/a/havn', 'linux', { HOME: '/home/a', XDG_STATE_HOME: '/s' })).toMatch(/^\/s\/havn\/audit\//)
+    expect(fwd(defaultAuditDir('/home/a/havn', 'linux', { HOME: '/home/a', XDG_STATE_HOME: '/s' }))).toMatch(/^\/s\/havn\/audit\//)
     const win = defaultAuditDir('C:\\havn', 'win32', { USERPROFILE: 'C:\\Users\\a', LOCALAPPDATA: 'C:\\Users\\a\\AppData\\Local' })
     expect(win).toContain('Havn')
     // Two installs never share a chain.
-    expect(defaultAuditDir('/Users/a/havn2', 'darwin', { HOME: '/Users/a' })).not.toBe(mac)
+    expect(fwd(defaultAuditDir('/Users/a/havn2', 'darwin', { HOME: '/Users/a' }))).not.toBe(mac)
   })
 
   it('tests get none unless they set AUDIT_DIR', () => {
@@ -87,11 +89,13 @@ describe('the carry-over cannot be used to plant entries (review)', () => {
     expect(readFileSync(path, 'utf-8')).toBe('{"a":1}\n')
   })
 
-  it('takes only JSON object lines from a regular file, never through a symlink', () => {
+  it('takes only JSON object lines', () => {
     writeFileSync(join(store, 'tool-guard.jsonl'), '{"ok":1}\nnot json\n[1,2]\n"str"\n')
     expect(readFileSync(evidenceLogPath('tool-guard.jsonl', store, audit), 'utf-8')).toBe('{"ok":1}\n')
+  })
 
-    resetEvidenceLogs()
+  // Windows CI cannot create symlinks without admin rights.
+  it.skipIf(process.platform === 'win32')('never reads through a symlink', () => {
     const audit2 = join(root, 'audit2')
     const secret = join(root, 'secret.json')
     writeFileSync(secret, '{"token":"x"}\n')
@@ -114,7 +118,8 @@ describe('a named pipe in store/ cannot hang startup (review)', () => {
   }, 5000)
 })
 
-describe('the shell cannot reach the store by another spelling (review)', () => {
+// A shell check: ~ and $HOME are POSIX shell spellings, and Windows reads the home folder from USERPROFILE.
+describe.skipIf(process.platform === 'win32')('the shell cannot reach the store by another spelling (review)', () => {
   const realHome = process.env.HOME
   let home: string, dir: string, log: AuditLog
   beforeEach(() => {
