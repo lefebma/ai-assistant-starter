@@ -139,7 +139,7 @@ describe('web chat commands', () => {
     const r = useRuntime()
     const id = await newConv()
     const evs = await chat(id, '/HELP')
-    expect(replies(evs)[0].content).toContain('/newchat - Clear session, start fresh')
+    expect(replies(evs)[0].content).toContain('- /newchat: Clear the session and start fresh')
     expect(r.calls).toHaveLength(0)
   })
 

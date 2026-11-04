@@ -92,6 +92,7 @@ import {
   saveSupportRequest,
 } from './support/index.js'
 import type { SupportDraft } from './support/index.js'
+import { buildHelpText } from './help-text.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
 import { createWebCommandAdapter, WEB_USER_MESSAGE_ID, type WebCommandHooks } from './web/command-adapter.js'
 import { dropQueuedForChat } from './web/queue.js'
@@ -2066,34 +2067,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     return true
   }
   if (cmd === '/help') {
-    await adapter.sendMessage(chatId, [
-      'Commands:',
-      '/newchat - Clear session, start fresh',
-      '/model - Pick the AI model for this chat',
-      '/effort - Set how hard I think before answering',
-      '/private - Keep client names on this machine (on/off/add/list/remove)',
-      '/memory - Show stored memories',
-      '/voice - Toggle voice replies',
-      '/voice ui - Get your private link to the voice chat page',
-      '/app - Get a sign-in link to the web app (signout)',
-      '/shortcut - Talk to me from Siri and Apple Shortcuts (status/revoke)',
-      '/schedule - Manage scheduled tasks',
-      '/guard report [days] - What the tool guard caught (or would have)',
-      '/dashboard - Dashboard (start/stop)',
-      '/browser - Chrome CDP (start/stop/status)',
-      '/cancel - Stop what is running: the reply, queued messages, scheduled runs',
-      '/steer - Inject mid-run steering message',
-      '/skill - Manage skills (list/enable/disable/reload)',
-      '/secret - Manage API keys in the encrypted vault (set/list/rm)',
-      '/authorize - Manage multi-chat access (add/remove/list)',
-      '/workspace - Shared workspaces (join/status/sync/leave, primary only)',
-      '/audit - Review how you have been using the assistant (monthly on/off)',
-      '/support - Draft and send a support request (confirms before sending)',
-      '/update - Check for and apply updates (check/apply)',
-      '/version - Show current version',
-      '/chatid - Show your chat ID',
-      '/help - This message',
-    ].join('\n'))
+    await adapter.sendMessage(chatId, buildHelpText())
     return true
   }
 
