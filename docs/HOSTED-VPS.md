@@ -45,7 +45,7 @@ machine you can snapshot, rebuild, and reach without touching their hardware.
   the audit log and lists, by host, what enforce would have refused. Add the
   hosts the client uses on purpose to `EGRESS_ALLOW` first.
   `TOOL_GUARD` in `.env` sets the mode: `log` (the default) records what
-  *would* have been blocked in `store/tool-guard.jsonl` and blocks nothing,
+  *would* have been blocked in `/var/lib/havn-audit/tool-guard.jsonl` (append-only, beside the audit log) and blocks nothing,
   `enforce` blocks, `off` skips it. `/guard report` in the owner's chat
   summarises the log. Run a box in `log` for a week or two, check the report
   shows only real catches, then set `enforce` and restart. It checks command

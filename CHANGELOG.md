@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.70.0 - 2026-11-04
+
+- **The assistant cannot delete its own evidence on any install.** The audit log of every tool call is now on by default on self-installed Macs, Windows PCs and Linux machines, not only on hosted boxes. It lives outside the assistant's folder (on a Mac, `~/Library/Application Support/Havn/audit/`), and any tool call that touches it is refused before it runs. The tool guard's and scheduled-job roles' logs moved there too, out of `store/` where the assistant's own shell could delete them; existing entries are carried over and `/guard report` keeps its history. On a hosted box both logs sit beside the audit log in `/var/lib/havn-audit`, append-only, so they cannot be edited or deleted even from a shell. Existing hosted boxes get that with `npm run enable-audit -- <ip>` after updating. Set `AUDIT_DIR` to move the log or `AUDIT_DIR=off` to turn it off.
+
 ## 1.69.0 - 2026-11-04
 
 - **Scheduled jobs are "done" only when the assistant can show it.** Before a job starts, the assistant writes down what it owes: every job owes running to the end with an answer, and a job with a role also owes what the role is for (an inbox triage has to read the inbox, a briefing has to read at least one source, a research job at least one web page). Afterwards it checks its own records of what the job's tools actually did, never what the job says about itself. A job that falls short still sends its answer, under a line saying what is missing, and `/schedule list` shows it as `INCOMPLETE`. A silent job stays quiet only when it is done. A job that crashes or whose answer cannot be delivered is recorded as failed. A role in `roles.json` can list its own obligations (see the setup guide, Scheduled tasks).

@@ -27,7 +27,7 @@ const days = flag('days') ? Number(flag('days')) : null
 const dir = resolveAuditDir(AUDIT_DIR)
 const file = flag('file') ?? (dir ? join(dir, 'audit.jsonl') : null)
 if (!file) {
-  console.error('No audit log: this install has none (AUDIT_DIR is unset). Pass --file to read one.')
+  console.error('No audit log: auditing is off on this install (AUDIT_DIR=off). Pass --file to read one.')
   process.exit(2)
 }
 let events: AuditEvent[]

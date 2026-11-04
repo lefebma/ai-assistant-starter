@@ -25,7 +25,7 @@
  * else. See audit-trail.ts.
  */
 import { appendFileSync, mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { AUDIT_DIR, PROJECT_ROOT, ROLES_FILE, STORE_DIR, TOOL_GUARD } from '../config.js'
 import { logger } from '../logger.js'
 import { getToolGuard, parseGuardMode } from './tool-guard.js'
@@ -38,6 +38,7 @@ import { effectsOfCommand } from './effect-commands.js'
 import { netWrites, type NetWrite } from './net-intent.js'
 import { chatPolicy, rolePolicy, type EgressConfig } from '../egress/index.js'
 import { decide as decideEgress, ESSENTIALS, type EgressPolicy } from '../egress/policy.js'
+import { evidenceLogPath } from './evidence-logs.js'
 
 export interface RoleLogEntry {
   at: string
@@ -67,14 +68,16 @@ export function formatRoleReport(entries: RoleLogEntry[]): string {
   ].join('\n')
 }
 
+/** In the audit store when auditing is on, else store/ (card #237, evidence-logs.ts). */
 export function roleLogPath(storeDir: string = STORE_DIR): string {
-  return resolve(storeDir, 'role-log.jsonl')
+  return evidenceLogPath('role-log.jsonl', storeDir)
 }
 
 function recordRole(e: RoleLogEntry): void {
   try {
-    mkdirSync(STORE_DIR, { recursive: true })
-    appendFileSync(roleLogPath(), JSON.stringify(e) + '\n', { mode: 0o600 })
+    const path = roleLogPath()
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, JSON.stringify(e) + '\n', { mode: 0o600 })
   } catch {
     // Recording never decides the outcome.
   }

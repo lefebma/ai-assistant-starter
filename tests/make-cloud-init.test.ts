@@ -344,10 +344,15 @@ describe('shipped templates', () => {
     const { HOSTED_AUDIT_DIR } = await import('../src/assurance/audit-trail.js')
     expect(DIR).toBe(HOSTED_AUDIT_DIR)
     // The migration script for existing boxes does exactly what cloud-init does.
-    for (const line of SETUP.split('\n').filter((l) => /^(install|\[ -e|chattr)/.test(l))) {
-      expect(rendered).toContain(line)
+    expect(SETUP).toContain(`install -d -m 0750 -o havn -g havn ${DIR}`)
+    expect(rendered).toContain(`install -d -m 0750 -o havn -g havn ${DIR}`)
+    // Both create the audit log and the guard and role logs beside it, append-only (card #237).
+    for (const f of ['audit.jsonl', 'tool-guard.jsonl', 'role-log.jsonl']) {
+      expect(SETUP).toContain(f)
+      expect(rendered).toContain(f)
     }
-    expect(rendered).toContain(`chattr +a ${DIR}/audit.jsonl`)
+    expect(rendered).toContain('chattr +a /var/lib/havn-audit/$f')
+    expect(SETUP).toContain(`chattr +a ${DIR}/$f`)
   })
 
   it('clears the service account expiry before the first user switch', () => {

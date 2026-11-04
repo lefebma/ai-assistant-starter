@@ -243,8 +243,11 @@ write_files:
       # delete them; clearing it takes root (chattr -a). The app always uses
       # this store when the file exists. Kept outside the install directory.
       install -d -m 0750 -o havn -g havn /var/lib/havn-audit
-      [ -e /var/lib/havn-audit/audit.jsonl ] || install -m 0640 -o havn -g havn /dev/null /var/lib/havn-audit/audit.jsonl
-      chattr +a /var/lib/havn-audit/audit.jsonl
+      # The tool-guard and role logs live here too (card #237), append-only.
+      for f in audit.jsonl tool-guard.jsonl role-log.jsonl; do
+        [ -e /var/lib/havn-audit/$f ] || install -m 0640 -o havn -g havn /dev/null /var/lib/havn-audit/$f
+        chattr +a /var/lib/havn-audit/$f
+      done
 
       # --- Egress allowlist (card #231) ------------------------------------
       # Everything the assistant's tools start runs in a cgroup that nftables

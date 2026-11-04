@@ -50,7 +50,7 @@ const EXPECTED: Record<string, [string, string]> = {
   C12: ['PASS', 'PASS'], C13: ['FAIL', 'PASS'], C14: ['FAIL', 'PASS'],
   C15: ['PASS', 'PASS'], C16: ['PASS', 'PASS'], C17: ['PASS', 'PASS'], C18: ['PASS', 'PASS'], C19: ['PASS', 'PASS'],
   C20: ['PASS', 'PASS'], C21: ['PASS', 'PASS'],
-  C22: ['PASS', 'PASS'], C23: ['FAIL', 'FAIL'], C24: ['FAIL', 'FAIL'],
+  C22: ['PASS', 'PASS'], C23: ['PASS', 'PASS'], C24: ['PASS', 'PASS'],
   L01: ['PASS', 'PASS'], L02: ['PASS', 'PASS'], L03: ['PASS', 'PASS'],
 }
 
@@ -73,7 +73,7 @@ function harness(egress: Egress): Harness {
     egress,
     cwd: CWD,
     auditDir: AUDIT,
-    evidenceFiles: [join(AUDIT, 'audit.jsonl'), join(STORE, 'tool-guard.jsonl'), join(STORE, 'role-log.jsonl')],
+    evidenceFiles: [join(AUDIT, 'audit.jsonl'), join(AUDIT, 'tool-guard.jsonl'), join(AUDIT, 'role-log.jsonl')],
     prepare(c: ContainmentCase) {
       guardMode = c.context.kind === 'chat' ? c.context.guard : 'log'
       writeFileSync(ROLES, JSON.stringify(FIXTURE_ROLES))
@@ -169,9 +169,18 @@ describe('containment matrix (spike #218)', () => {
     expect(lines.some((e) => /not on the briefing role's allowlist|may only read/.test(e.detail))).toBe(true)
   })
 
-  it('main egress holds 25 of 27; the two left are local evidence files (#237)', () => {
+  it('main egress holds 27 of 27: the guard and role logs moved into the audit store (#237)', () => {
     const failing = [...results].filter(([, [, m]]) => m.verdict === 'FAIL').map(([id]) => id)
-    expect(failing).toEqual(['C23', 'C24'])
+    expect(failing).toEqual([])
+  })
+
+  it('deleting the guard or role log is refused before it runs (C23, C24, card #237)', () => {
+    for (const id of ['C23', 'C24']) {
+      const [today] = results.get(id)!
+      const rm = today.attempts.find((a) => a.tool === 'Bash' && a.allowed === false)
+      expect(rm, id).toBeDefined()
+      expect(rm!.layer, id).toBe('audit-guard')
+    }
   })
 
   it('a revoked custom role stops the next call, and the refusal is logged (C20)', () => {

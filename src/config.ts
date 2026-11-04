@@ -1,4 +1,6 @@
-import { resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { readEnvFile, PROJECT_ROOT } from './env.js'
 import { getSecret } from './vault/index.js'
@@ -106,10 +108,30 @@ export const EGRESS_PORTS = egressEnv.EGRESS_PORTS ?? '47000-47999'
 export const EGRESS_CGROUP = (egressEnv.EGRESS_CGROUP ?? '').trim()
 /**
  * Audit log of every tool call (card #196). A hosted box always uses
- * /var/lib/havn-audit when root has created it, whatever this says; elsewhere
- * set AUDIT_DIR (outside the install) to turn it on. See src/assurance/audit-trail.ts.
+ * /var/lib/havn-audit when root has created it, whatever this says. Anywhere
+ * else it is on by default (card #237) in a per-user folder outside the
+ * install (defaultAuditDir); AUDIT_DIR moves it, and AUDIT_DIR=off turns it
+ * off. The guard and role logs live in the same folder. See
+ * src/assurance/audit-trail.ts.
  */
-export const AUDIT_DIR = (env['AUDIT_DIR'] ?? process.env.AUDIT_DIR ?? '').trim()
+const auditSetting = (env['AUDIT_DIR'] ?? process.env.AUDIT_DIR ?? '').trim()
+export const AUDIT_DIR = /^(off|none|false|0)$/i.test(auditSetting) ? '' : auditSetting || defaultAuditDir()
+
+/**
+ * Where a self-install keeps its audit store when AUDIT_DIR is not set: the
+ * platform's per-user app-data folder, one subfolder per install so two
+ * installs never share a chain. Outside the install, so the assistant's own
+ * workspace never contains it. Tests get none unless they set AUDIT_DIR.
+ */
+export function defaultAuditDir(root: string = PROJECT_ROOT, platform: NodeJS.Platform = process.platform, envVars: NodeJS.ProcessEnv = process.env): string {
+  if (envVars.VITEST) return ''
+  const home = envVars.HOME || envVars.USERPROFILE || homedir()
+  const base = platform === 'darwin' ? join(home, 'Library', 'Application Support', 'Havn')
+    : platform === 'win32' ? join(envVars.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Havn')
+    : join(envVars.XDG_STATE_HOME || join(home, '.local', 'state'), 'havn')
+  const id = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 12)
+  return join(base, 'audit', id)
+}
 /** Off-box witness for that log (card #196 part 2). Both written by `npm run witness-token`. */
 export const AUDIT_WITNESS_URL = (env['AUDIT_WITNESS_URL'] ?? '').trim()
 export const AUDIT_WITNESS_TOKEN = getSecret('AUDIT_WITNESS_TOKEN') ?? ''

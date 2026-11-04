@@ -6,8 +6,9 @@
  *   npm run enable-audit -- <ip-or-host>
  *
  * New boxes get the same from cloud-init. This creates
- * /var/lib/havn-audit/audit.jsonl owned by havn with the append-only flag, then
- * proves it as havn: appending works, rewriting and deleting do not. The app
+ * /var/lib/havn-audit/audit.jsonl, and the tool-guard and role logs beside it
+ * (card #237), owned by havn with the append-only flag, then proves each as
+ * havn: appending works, rewriting and deleting do not. The app
  * picks the store up on its next start; this does not restart it.
  *
  * Safe to re-run: an existing log is kept, and the flag is set again.
@@ -17,12 +18,17 @@ import { spawnSync } from 'node:child_process'
 export const DIR = '/var/lib/havn-audit'
 
 /** Run as root on the box, through havn-admin's sudo. Mirrors cloud-init. */
+/** The audit log, and the tool-guard and role logs that live beside it (card #237). */
+export const FILES = ['audit.jsonl', 'tool-guard.jsonl', 'role-log.jsonl']
+
 export const SETUP = `set -euo pipefail
 install -d -m 0750 -o havn -g havn ${DIR}
-[ -e ${DIR}/audit.jsonl ] || install -m 0640 -o havn -g havn /dev/null ${DIR}/audit.jsonl
-chattr +a ${DIR}/audit.jsonl
-lsattr ${DIR}/audit.jsonl
-lsattr ${DIR}/audit.jsonl | awk '{print $1}' | grep -q a || { echo "append-only flag did not stick"; exit 1; }
+for f in ${FILES.join(' ')}; do
+  [ -e ${DIR}/$f ] || install -m 0640 -o havn -g havn /dev/null ${DIR}/$f
+  chattr +a ${DIR}/$f
+  lsattr ${DIR}/$f
+  lsattr ${DIR}/$f | awk '{print $1}' | grep -q a || { echo "append-only flag did not stick on $f"; exit 1; }
+done
 `
 
 /**
@@ -31,12 +37,15 @@ lsattr ${DIR}/audit.jsonl | awk '{print $1}' | grep -q a || { echo "append-only 
  * The truncate and delete probes would destroy an unflagged log, so they only
  * run once the flag is confirmed.
  */
-export const PROVE = `f=${DIR}/audit.jsonl
+export const PROVE = `for name in ${FILES.join(' ')}; do
+f=${DIR}/$name
+echo "$name:"
 lsattr "$f" | awk '{print $1}' | grep -q a || { echo "flag missing; not probing"; exit 1; }
 printf '' >> "$f" && echo "append: ok" || { echo "append: FAILED"; exit 1; }
 if { : > "$f"; } 2>/dev/null; then echo "truncate: ALLOWED"; exit 1; else echo "truncate: refused"; fi
 if rm -f "$f" 2>/dev/null && [ ! -e "$f" ]; then echo "delete: ALLOWED"; exit 1; else echo "delete: refused"; fi
 if mv "$f" "$f.x" 2>/dev/null; then echo "rename: ALLOWED"; exit 1; else echo "rename: refused"; fi
+done
 `
 
 function ssh(user: string, host: string, command: string, stdin?: string): { ok: boolean; out: string } {
