@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.69.0 - 2026-11-04
+
+- **Scheduled jobs are "done" only when the assistant can show it.** Before a job starts, the assistant writes down what it owes: every job owes running to the end with an answer, and a job with a role also owes what the role is for (an inbox triage has to read the inbox, a briefing has to read at least one source, a research job at least one web page). Afterwards it checks its own records of what the job's tools actually did, never what the job says about itself. A job that falls short still sends its answer, under a line saying what is missing, and `/schedule list` shows it as `INCOMPLETE`. A silent job stays quiet only when it is done. A job that crashes or whose answer cannot be delivered is recorded as failed. A role in `roles.json` can list its own obligations (see the setup guide, Scheduled tasks).
+
 ## 1.68.2 - 2026-11-03
 
 - **Fixed: `/help` was one wall of text in Teams.** The command list was written one command per line, but Teams treats a single line break as no break at all, so every command arrived run together in one long paragraph. `/help` now has a short heading for each group (this chat, talking to me from anywhere, connections and automation, security and access, help and updates) and one command to a line, on every platform. It also lists `/connect`, which the old list left out, and mentions `/forget` as another way to start fresh.

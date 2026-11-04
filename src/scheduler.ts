@@ -4,7 +4,9 @@ import { getDueTasks, getAllTasks, getTask, updateTaskAfterRun, setTaskNextRun, 
 import { runAgent, isChatLaneActive, markLane, clearLane } from './agent.js'
 import { withActor } from './assurance/audit-trail.js'
 import { jobRunKey, journalForRun, withRun, type JournalRow } from './assurance/effect-journal.js'
-import { markRunUnknown } from './assurance/run-state.js'
+import { closeSavedRun, markRunUnknown } from './assurance/run-state.js'
+import { obligationNote, obligationsFor, recordFinished, trackRun, verdictNote, type TrackedRun } from './assurance/run-obligations.js'
+import { resolveRole } from './assurance/scope-gate.js'
 import { taskGrant, withGrant } from './assurance/grant.js'
 import { expandTaskPrompt } from './audit/schedule.js'
 import { collectAudit, defaultAuditIO } from './audit/index.js'
@@ -95,6 +97,8 @@ function cancelWhere(match: (taskId: string, chatId: string) => boolean): Schedu
     const task = taskById(taskId)
     if (!match(taskId, task?.chat_id ?? '')) continue
     cancelDeferredRetry(taskId)
+    // The first attempt's run waited on this retry: it ends here (card #197).
+    if (task?.run_key) try { closeSavedRun(task.run_key, 'cancelled', 'stopped by the owner') } catch { /* bookkeeping only */ }
     retriesCleared.push(task ? labelFor(task) : taskId)
     touched.add(taskId)
   }
@@ -148,6 +152,44 @@ export function isScheduledTaskRunning(taskId: string): boolean {
 }
 
 const scopeOf = (task: Pick<ScheduledTask, 'id' | 'role'>) => (task.role ? { role: task.role, taskId: task.id } : undefined)
+
+/**
+ * What the run owes (card #197): its role's obligations, then running to the
+ * end. A role nobody defined still gets the default here; runAgent refuses
+ * to run it, and the run is recorded as failed.
+ */
+function runObligations(task: Pick<ScheduledTask, 'id' | 'role'>) {
+  let role = null
+  try { role = resolveRole(scopeOf(task)) } catch { /* runAgent refuses it */ }
+  return obligationsFor(role)
+}
+
+/**
+ * The run produced an answer (or did not): ask the checker, never the model.
+ * Returns the note the owner sees above the answer when the run is not
+ * complete, and the tag for last_result.
+ */
+export function concludeRun(run: TrackedRun, produced: boolean): { complete: boolean; note: string | null; tag: string | null } {
+  if (produced) recordFinished(run)
+  const verdict = run.authority.requestCompletion()
+  const note = verdictNote(verdict, run.authority.snapshot().obligations)
+  const tag = verdict.status === 'incomplete' ? 'INCOMPLETE' : verdict.status === 'unknown' ? 'UNKNOWN' : null
+  logger.info({ runKey: run.runKey, status: verdict.status, unmet: verdict.unmet, reason: verdict.reason }, 'Scheduled run verdict')
+  return { complete: verdict.status === 'complete', note, tag }
+}
+
+const withNote = (note: string | null, result: string) => (note ? `${note}\n\n${result}` : result)
+
+/**
+ * A stopped run: the owner's cancel (or /schedule delete, which removes the
+ * row before the run unwinds) closes it; a shutdown leaves it for the boot sweep.
+ */
+function closeStopped(run: TrackedRun, taskId: string): void {
+  try {
+    const now = getTask(taskId)
+    if (!now || now.last_result === 'CANCELLED') run.authority.cancel(now ? 'stopped by the owner' : 'the task was deleted')
+  } catch { /* bookkeeping only */ }
+}
 
 /** last_result of a one-shot the sweep re-queued; runDueTasks resumes it instead of starting over. */
 export const RESUME_MARK = 'RESUMING: interrupted by a restart'
@@ -354,8 +396,13 @@ export async function runDueTasks(): Promise<void> {
     markLane(task.chat_id, 'cron')
     const { runId, controller } = registerRun(task, label)
     let deferred = false
+    let tracked: TrackedRun | undefined
 
     try {
+      // Written before the run starts, so only evidence can satisfy it (card #197).
+      const obligations = runObligations(task)
+      tracked = trackRun(runKey, obligations)
+      const run = tracked
       // Only announce for non-silent jobs
       if (sender && !isSilent) {
         await sender(task.chat_id, `Running: ${label}...`)
@@ -368,7 +415,8 @@ export async function runDueTasks(): Promise<void> {
         buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
       )
       // Picked up after a restart cut it off (card #234): tell the model so.
-      const prompt = resuming ? continuationPrompt(expanded, 'because the assistant restarted') : expanded
+      const checked = expanded + obligationNote(obligations)
+      const prompt = resuming ? continuationPrompt(checked, 'because the assistant restarted') : checked
       // Every tool call rereads the task (card #230): pausing, deleting or
       // re-roling the job takes effect at the next call, not the next run.
       const grant = taskGrant(task.id, getTask)
@@ -376,6 +424,7 @@ export async function runDueTasks(): Promise<void> {
       // Cancelled: cancelWhere already recorded it and the command already
       // replied. Nothing to deliver, defer or delete.
       if (controller.signal.aborted) {
+        closeStopped(run, task.id)
         logger.info({ taskId: task.id, name: task.name }, 'Cancelled scheduled run stopped')
         continue
       }
@@ -403,16 +452,24 @@ export async function runDueTasks(): Promise<void> {
             logger.info({ taskId: task.id, resume: Boolean(newSessionId), role: now.role }, 'Running deferred retry')
             markTaskRunning(task.id, runKey, nextRun, 'RUNNING... (retry)')
             const retry = registerRun(now, label)
+            let retryRun: TrackedRun | undefined
             let retryText: AgentResult['text']
             let retryPaused: AgentResult['aiPaused']
             try {
+              // Same run key: the first attempt's evidence still counts.
+              retryRun = trackRun(runKey, runObligations(now));
               ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now), { chatId: task.chat_id })))))
+            } catch (err) {
+              try { retryRun?.authority.fail(String(err)) } catch { /* already closed */ }
+              throw err
             } finally {
               runningRuns.delete(retry.runId)
+              retryRun?.end()
               // Shutdown keeps the key for the boot sweep; a cancel already cleared it.
               if (!retry.controller.signal.aborted) clearTaskRun(task.id, runKey)
             }
             if (retry.controller.signal.aborted) {
+              closeStopped(retryRun!, task.id)
               logger.info({ taskId: task.id }, 'Cancelled deferred retry stopped')
               return
             }
@@ -422,13 +479,23 @@ export async function runDueTasks(): Promise<void> {
               return
             }
             const retryResult = retryText ?? '(no response)'
-            updateTaskAfterRun(task.id, retryResult, nextRun)
+            const retryOverloaded = OVERLOAD_PATTERN.test(retryResult)
+            const rv = retryOverloaded ? null : concludeRun(retryRun!, retryText !== null)
+            // Overloaded twice: the run gives up here, recorded as failed.
+            if (retryOverloaded) retryRun!.authority.fail('the AI was overloaded on the retry too')
+            updateTaskAfterRun(task.id, rv?.tag ? `${rv.tag}: ${retryResult}` : retryResult, nextRun)
 
-            if (sender && !OVERLOAD_PATTERN.test(retryResult)) {
-              if (isSilent && shouldSuppressResult(retryResult)) {
+            if (sender && rv) {
+              // Only a run the checker calls complete may stay quiet.
+              if (isSilent && rv.complete && shouldSuppressResult(retryResult)) {
                 logger.info({ taskId: task.id }, 'Deferred retry suppressed (silent)')
               } else {
-                await sender(task.chat_id, `${label}:\n\n${retryResult}`)
+                try {
+                  await sender(task.chat_id, `${label}:\n\n${withNote(rv.note, retryResult)}`)
+                } catch (err) {
+                  retryRun!.authority.fail(`the answer could not be delivered: ${String(err)}`)
+                  throw err
+                }
               }
             } else if (sender && OVERLOAD_PATTERN.test(retryResult)) {
               logger.warn({ taskId: task.id }, 'Deferred retry also overloaded, giving up')
@@ -454,18 +521,22 @@ export async function runDueTasks(): Promise<void> {
         continue
       }
 
+      // Complete only when the checker says so, never on the model's word (card #197).
+      const verdict = concludeRun(run, text !== null)
       // Update with actual result (next_run already set)
-      updateTaskAfterRun(task.id, result, nextRun)
+      updateTaskAfterRun(task.id, verdict.tag ? `${verdict.tag}: ${result}` : result, nextRun)
 
       if (sender) {
-        if (isSilent && shouldSuppressResult(result)) {
+        // Only a complete run may stay quiet: an unfinished silent job always speaks up.
+        if (isSilent && verdict.complete && shouldSuppressResult(result)) {
           logger.info({ taskId: task.id, name: task.name }, 'Silent task suppressed')
-        } else if (isSilent) {
-          // Silent mode but has actionable content
-          await sender(task.chat_id, `${label}:\n\n${result}`)
         } else {
-          // Announce mode
-          await sender(task.chat_id, `${label}:\n\n${result}`)
+          try {
+            await sender(task.chat_id, `${label}:\n\n${withNote(verdict.note, result)}`)
+          } catch (err) {
+            run.authority.fail(`the answer could not be delivered: ${String(err)}`)
+            throw err
+          }
         }
       }
 
@@ -478,6 +549,7 @@ export async function runDueTasks(): Promise<void> {
       logger.info({ taskId: task.id, name: task.name, nextRun }, 'Scheduled task completed')
     } catch (err) {
       logger.error({ err, taskId: task.id }, 'Scheduled task failed')
+      try { tracked?.authority.fail(String(err)) } catch { /* already closed */ }
       if (sender) {
         await sender(task.chat_id, `Scheduled task "${label}" failed: ${String(err)}`)
       }
@@ -488,6 +560,7 @@ export async function runDueTasks(): Promise<void> {
       } catch { /* best effort */ }
     } finally {
       runningRuns.delete(runId)
+      tracked?.end()
       clearLane(task.chat_id)
       // Every final outcome already cleared it; this catches any path that ends
       // without one. A pending retry still owes the run, and shutdown keeps it
