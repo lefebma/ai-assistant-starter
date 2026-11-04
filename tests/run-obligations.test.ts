@@ -20,8 +20,8 @@ vi.mock('../src/agent.js', () => ({
   clearLane: () => {},
 }))
 
-import { initDatabase, createTask, getTask } from '../src/db.js'
-import { initScheduler, runDueTasks, stopScheduler } from '../src/scheduler.js'
+import { initDatabase, createTask, getTask, deleteTask, resumeTask } from '../src/db.js'
+import { cancelScheduledTask, initScheduler, runDueTasks, stopScheduler } from '../src/scheduler.js'
 import {
   evidenceTypes, obligationsFor, recordToolEvidence, trackRun, verdictNote, obligationNote, recordFinished, resetTrackedRuns, FINISHED,
 } from '../src/assurance/run-obligations.js'
@@ -116,6 +116,11 @@ describe('tool calls become evidence', () => {
     const cmd = { command: 'gog gmail search x' }
     expect(evidenceTypes('Bash', cmd, { stdout: 'x', interrupted: true })).toEqual([])
     expect(evidenceTypes('Bash', cmd, { stdout: '', interrupted: false, backgroundTaskId: 'b1' })).toEqual([])
+  })
+
+  it('curl counts only when it fetches an address', () => {
+    expect(evidenceTypes('Bash', { command: 'curl --version' })).toEqual([])
+    expect(evidenceTypes('Bash', { command: 'curl -s "https://example.com/a?b=1&c=2"' })).toContain('web.read')
   })
 
   it('a command that only talks about the inbox proves nothing', () => {
@@ -260,6 +265,72 @@ describe('the overload retry shares the run', () => {
       h.runAgent.mockImplementationOnce(async () => { throw new Error('kaboom') })
       await vi.advanceTimersByTimeAsync(10 * 60_000 + 1)
       expect(loadRunState(`job:o-10@${t.next_run}`)?.terminal?.status).toBe('failed')
+    } finally { vi.useRealTimers() }
+  })
+})
+
+describe('runs never stay open, and a closed one does not haunt the next', () => {
+  const OVERLOADED = 'API is temporarily overloaded. Try again shortly.'
+
+  /** A runAgent that waits for its signal, then resolves like a cancelled turn. */
+  function runsUntilCancelled(): Promise<void> {
+    let started!: () => void
+    const p = new Promise<void>((r) => { started = r })
+    h.runAgent.mockImplementationOnce((...args: unknown[]) => {
+      const signal = args[6] as AbortSignal
+      started()
+      return new Promise((resolve) => signal.addEventListener('abort', () => resolve({ text: null }), { once: true }))
+    })
+    return p
+  }
+
+  it('a cancelled one-shot, resumed later, is a fresh run that can be complete', async () => {
+    createTask('o-11', 'chat-o', 'triage', '0 9 * * *', due(), 'Once', 'silent', 'America/Toronto', true, 'inbox-triage')
+    const started = runsUntilCancelled()
+    const run = runDueTasks()
+    await started
+    cancelScheduledTask('o-11')
+    await run
+    expect(loadRunState('job:o-11')?.terminal?.status).toBe('cancelled')
+
+    resumeTask('o-11', due())
+    h.sent.length = 0
+    agentRuns([['Bash', { command: 'gog gmail search x' }]], 'HEARTBEAT_OK')
+    await runDueTasks()
+    // Complete, so the silent one-shot stays quiet and is deleted.
+    expect(results()).toEqual([])
+    expect(getTask('o-11')).toBeUndefined()
+  })
+
+  it('deleting a job mid-run closes its run as cancelled', async () => {
+    createTask('o-12', 'chat-o', 'x', '0 9 * * *', due(), 'Doomed', 'announce')
+    const t = getTask('o-12')!
+    const started = runsUntilCancelled()
+    const run = runDueTasks()
+    await started
+    cancelScheduledTask('o-12')
+    deleteTask('o-12')
+    await run
+    expect(loadRunState(`job:o-12@${t.next_run}`)?.terminal?.status).toBe('cancelled')
+  })
+
+  it('cancelling a waiting retry closes the run; overloaded twice is failed', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      createTask('o-13', 'chat-o', 'x', '0 9 * * *', due(), 'Wait', 'announce')
+      const t13 = getTask('o-13')!
+      agentRuns([], OVERLOADED)
+      await runDueTasks()
+      cancelScheduledTask('o-13')
+      expect(loadRunState(`job:o-13@${t13.next_run}`)?.terminal?.status).toBe('cancelled')
+
+      createTask('o-14', 'chat-o', 'x', '0 9 * * *', due(), 'Twice', 'announce')
+      const t14 = getTask('o-14')!
+      agentRuns([], OVERLOADED)
+      await runDueTasks()
+      agentRuns([], OVERLOADED)
+      await vi.advanceTimersByTimeAsync(10 * 60_000 + 1)
+      expect(loadRunState(`job:o-14@${t14.next_run}`)?.terminal?.status).toBe('failed')
     } finally { vi.useRealTimers() }
   })
 })

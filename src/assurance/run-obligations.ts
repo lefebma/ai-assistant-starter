@@ -21,7 +21,7 @@
 import { currentRun } from './effect-journal.js'
 import type { AuthorityFacet, Obligation, Verdict } from './obligations.js'
 import { canonicalTool, type RoleSpec } from './roles.js'
-import { openRun } from './run-state.js'
+import { dropRunState, loadRunState, openRun } from './run-state.js'
 
 /** Effectively unlimited: reading the inbox twice is fine, it is not a send. */
 const MANY = 1_000_000
@@ -145,7 +145,8 @@ export function evidenceTypes(tool: string, input: unknown, output?: unknown): s
       if (starts(w, MAIL_READ)) out.add('mail.read')
       if (starts(w, MAIL_DRAFT)) out.add('mail.drafted')
       if (starts(w, CALENDAR_READ)) out.add('calendar.read')
-      if (starts(w, WEB_COMMANDS)) out.add('web.read')
+      // curl or wget fetching an address, not `curl --version`.
+      if (starts(w, WEB_COMMANDS) && /https?:\/\//i.test(cmd) && w.slice(1).some((x) => !x.startsWith('-'))) out.add('web.read')
     }
   }
   // Reading any source counts for a briefing.
@@ -168,6 +169,11 @@ export type TrackedRun = {
 
 /** Open (or reopen) a run's obligations and start collecting its evidence. */
 export function trackRun(runKey: string, obligations: Obligation[]): TrackedRun {
+  // A one-shot keeps its key (job:<id>) for life. A run under it that was
+  // closed (cancelled, failed, swept as unknown) is over; a resume after
+  // /schedule resume is a new run and starts from nothing. An open one (a
+  // restart mid-run, an overload retry) carries on with what it proved.
+  if (loadRunState(runKey)?.terminal) dropRunState(runKey)
   const { authority, restored } = openRun(runKey, obligations)
   active.set(runKey, authority)
   return { runKey, authority, restored, end: () => { if (active.get(runKey) === authority) active.delete(runKey) } }

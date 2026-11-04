@@ -67,6 +67,21 @@ export function openRun(runId: string, initial: Obligation[]): { authority: Auth
  * died mid-way and will not be resumed. No-op when the run has no saved state
  * or is already closed. Returns the status the run now has.
  */
+export function closeSavedRun(runId: string, status: 'cancelled' | 'failed' | 'unknown', reason: string): RunStatus | null {
+  const state = loadRunState(runId)
+  if (!state) return null
+  const { authority } = createRun(runId, state.obligations, { state, onChange: save })
+  if (status === 'cancelled') authority.cancel(reason)
+  else if (status === 'failed') authority.fail(reason)
+  else authority.markUnknown(reason)
+  return authority.requestCompletion().status
+}
+
+/** Forget a run's saved state: a new run under a reused key starts clean. */
+export function dropRunState(runId: string): void {
+  db().prepare('DELETE FROM run_state WHERE run_id = ?').run(runId)
+}
+
 export function markRunUnknown(runId: string, reason: string): RunStatus | null {
   const state = loadRunState(runId)
   if (!state) return null
