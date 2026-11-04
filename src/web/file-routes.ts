@@ -149,7 +149,8 @@ export function tooLarge(req: IncomingMessage, res: import('node:http').ServerRe
  * Stream the body to `path`, refusing past `max` bytes. On any failure the temp file is deleted once the
  * write stream has closed: the stream opens asynchronously, so an abort right
  * after the headers would otherwise unlink before the file exists and leave
- * an empty `.part` behind once the open completes.
+ * an empty `.part` behind once the open completes. Success also waits for
+ * close, so callers can remove or link the file immediately on Windows.
  */
 export function streamToFile(req: IncomingMessage, path: string, max: number = MAX_UPLOAD_BYTES): Promise<'ok' | 'too_large' | 'error'> {
   return new Promise((resolveP) => {
@@ -186,7 +187,10 @@ export function streamToFile(req: IncomingMessage, path: string, max: number = M
     })
     req.on('end', () => {
       if (settled) return
-      out.end(() => succeed())
+      out.end(() => {
+        if (out.closed) succeed()
+        else out.once('close', succeed)
+      })
     })
     req.on('aborted', () => fail('error'))
     req.on('error', () => fail('error'))
