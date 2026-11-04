@@ -12,12 +12,12 @@
  *     can add lines but not edit, truncate or delete them.
  * With auditing off (AUDIT_DIR=off and no hosted store) they stay in store/.
  *
- * A log already in store/ is carried over once: its lines are appended to the
- * new file and the old file is renamed `<name>.moved`, so /guard report keeps
- * the history.
+ * A log already in store/ is carried over once (see carryOver): its lines are
+ * appended to the new file and the old file is renamed `<name>.moved`, so
+ * /guard report keeps the history.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
-import { join, relative, isAbsolute, resolve } from 'node:path'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, isAbsolute, resolve } from 'node:path'
 import { AUDIT_DIR, PROJECT_ROOT, STORE_DIR } from '../config.js'
 import { resolveAuditDir } from './audit-trail.js'
 import { logger } from '../logger.js'
@@ -38,19 +38,32 @@ export function evidenceDir(configured: string = AUDIT_DIR, workspace: string = 
 
 const carried = new Set<string>()
 
-/** Append a log left in store/ to its new home, once per process. Never throws. */
+/**
+ * Append a log left in store/ to its new home. Once per log, ever: a marker
+ * beside the new file records that it happened, so a file the assistant puts
+ * back in store/ later is never imported (it could hold made-up entries).
+ * Only a regular file (never a symlink) and only lines that are JSON objects
+ * are taken. Never throws.
+ */
 function carryOver(oldPath: string, newPath: string): void {
   if (carried.has(newPath)) return
   carried.add(newPath)
+  const marker = `${newPath}.carried`
   try {
-    if (!existsSync(oldPath)) return
-    const old = readFileSync(oldPath, 'utf-8')
-    if (old.trim()) {
-      mkdirSync(join(newPath, '..'), { recursive: true, mode: 0o700 })
-      appendFileSync(newPath, old.endsWith('\n') ? old : old + '\n', { mode: 0o600 })
+    if (existsSync(marker)) return
+    const st = existsSync(oldPath) ? lstatSync(oldPath) : null
+    mkdirSync(dirname(newPath), { recursive: true, mode: 0o700 })
+    if (st?.isFile()) {
+      const lines = readFileSync(oldPath, 'utf-8').split('\n').filter((l) => {
+        try { const v = JSON.parse(l); return Boolean(v) && typeof v === 'object' && !Array.isArray(v) } catch { return false }
+      })
+      if (lines.length) appendFileSync(newPath, lines.join('\n') + '\n', { mode: 0o600 })
+      renameSync(oldPath, `${oldPath}.moved`)
+      logger.info({ from: oldPath, to: newPath, lines: lines.length }, 'Moved a guard log out of store/ (card #237)')
+    } else if (st) {
+      logger.warn({ from: oldPath }, 'Not moving a guard log that is not a regular file')
     }
-    renameSync(oldPath, `${oldPath}.moved`)
-    logger.info({ from: oldPath, to: newPath }, 'Moved a guard log out of store/ (card #237)')
+    writeFileSync(marker, `${new Date().toISOString()}\n`, { mode: 0o600 })
   } catch (err) {
     logger.warn({ err: String(err), from: oldPath }, 'Could not move a guard log out of store/')
   }

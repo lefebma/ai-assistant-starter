@@ -3,12 +3,13 @@
  * log is on by default on self-installs, in a per-user folder outside the
  * install.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaultAuditDir } from '../src/config.js'
 import { evidenceDir, evidenceLogPath, resetEvidenceLogs } from '../src/assurance/evidence-logs.js'
+import { AuditLog, storeTouch } from '../src/assurance/audit-log.js'
 
 const NO_HOSTED = '/nonexistent-havn-audit'
 
@@ -63,5 +64,70 @@ describe('guard and role logs move into the audit store', () => {
     expect(evidenceDir(root, install, NO_HOSTED)).toBeNull()
     expect(evidenceDir(audit, install, NO_HOSTED)).toBe(audit)
     expect(evidenceDir('', install, NO_HOSTED)).toBeNull()
+  })
+})
+
+describe('the carry-over cannot be used to plant entries (review)', () => {
+  let root: string, store: string, audit: string
+  beforeEach(() => {
+    resetEvidenceLogs()
+    root = mkdtempSync(join(tmpdir(), 'evcarry-'))
+    store = join(root, 'install', 'store')
+    audit = join(root, 'audit')
+    mkdirSync(store, { recursive: true })
+  })
+
+  it('happens once ever: a file put back in store/ after a restart is ignored', () => {
+    writeFileSync(join(store, 'role-log.jsonl'), '{"a":1}\n')
+    const path = evidenceLogPath('role-log.jsonl', store, audit)
+    resetEvidenceLogs() // a new process
+    writeFileSync(join(store, 'role-log.jsonl'), '{"forged":true}\n')
+    evidenceLogPath('role-log.jsonl', store, audit)
+    expect(readFileSync(path, 'utf-8')).toBe('{"a":1}\n')
+  })
+
+  it('takes only JSON object lines from a regular file, never through a symlink', () => {
+    writeFileSync(join(store, 'tool-guard.jsonl'), '{"ok":1}\nnot json\n[1,2]\n"str"\n')
+    expect(readFileSync(evidenceLogPath('tool-guard.jsonl', store, audit), 'utf-8')).toBe('{"ok":1}\n')
+
+    resetEvidenceLogs()
+    const audit2 = join(root, 'audit2')
+    const secret = join(root, 'secret.json')
+    writeFileSync(secret, '{"token":"x"}\n')
+    symlinkSync(secret, join(store, 'role-log.jsonl'))
+    const p = evidenceLogPath('role-log.jsonl', store, audit2)
+    expect(existsSync(p)).toBe(false)
+  })
+})
+
+describe('the shell cannot reach the store by another spelling (review)', () => {
+  const realHome = process.env.HOME
+  let home: string, dir: string, log: AuditLog
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'evhome-'))
+    process.env.HOME = home
+    dir = join(home, 'Library', 'Application Support', 'Havn', 'audit', 'abc123def456')
+    log = new AuditLog({ dir, workspace: join(home, 'havn') })
+  })
+  afterEach(() => { process.env.HOME = realHome })
+
+  const touch = (command: string) => storeTouch(log, { kind: 'bash', command })
+
+  it('refuses ~, $HOME, escaped spaces, globs, parents and the log names', () => {
+    for (const c of [
+      'rm ~/Library/Application\\ Support/Havn/audit/abc123def456/tool-guard.jsonl',
+      'rm "$HOME/Library/Application Support/Havn/audit/abc123def456/role-log.jsonl"',
+      'truncate -s0 ${HOME}/Library/Application\\ Support/Havn/audit/abc123def456/audit.jsonl',
+      'rm -rf ~/Library/Application\\ Support/Havn',
+      'rm -rf ~/Library/Application\\ Support/Havn/audit/*',
+      'rm ~/Library/App*/Havn/audit/*/tool-guard.jsonl',
+      'find ~ -name role-log.jsonl | xargs rm',
+    ]) expect(touch(c), c).not.toBeNull()
+  })
+
+  it('leaves ordinary work alone', () => {
+    for (const c of ['ls ~/Library/Application\\ Support', 'rm -rf ~/Library/Application\\ Support/OtherApp', 'git status', 'rm /tmp/x.jsonl']) {
+      expect(touch(c), c).toBeNull()
+    }
   })
 })
