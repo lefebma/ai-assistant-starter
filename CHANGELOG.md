@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: `/help` was one wall of text in Teams.** The command list was written one command per line, but Teams treats a single line break as no break at all, so every command arrived run together in one long paragraph. `/help` now has a short heading for each group (this chat, talking to me from anywhere, connections and automation, security and access, help and updates) and one command to a line, on every platform. It also lists `/connect`, which the old list left out, and mentions `/forget` as another way to start fresh.
+
 ## 1.68.1 - 2026-11-03
 
 - Privacy filter: tighter. Only your main chat can add names to the list now, so another chat cannot change what is filtered for everyone. Text files you attach (plain text, CSV, JSON and the like) are filtered like any message. Live voice calls cannot start while the filter is on, since the voice service would hear and speak the names. If the filter's setting cannot be read, the turn is treated as private instead of going out unfiltered.
