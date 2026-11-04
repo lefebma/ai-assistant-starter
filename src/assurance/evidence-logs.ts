@@ -64,9 +64,10 @@ function carryOver(oldPath: string, newPath: string): void {
     }
     writeFileSync(marker, `${new Date().toISOString()}\n`, { mode: 0o600 })
     if (!present) return
-    // One descriptor, opened without following a link, checked and read.
+    // One descriptor, opened without following a link and without waiting
+    // (a named pipe would otherwise block startup), checked and read.
     let fd: number
-    try { fd = openSync(moved, constants.O_RDONLY | constants.O_NOFOLLOW) } catch {
+    try { fd = openSync(moved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) } catch {
       logger.warn({ from: oldPath }, 'Not moving a guard log that is not a regular file')
       return
     }

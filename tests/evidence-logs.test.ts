@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { defaultAuditDir } from '../src/config.js'
 import { evidenceDir, evidenceLogPath, resetEvidenceLogs } from '../src/assurance/evidence-logs.js'
@@ -98,6 +99,19 @@ describe('the carry-over cannot be used to plant entries (review)', () => {
     const p = evidenceLogPath('role-log.jsonl', store, audit2)
     expect(existsSync(p)).toBe(false)
   })
+})
+
+describe('a named pipe in store/ cannot hang startup (review)', () => {
+  it.skipIf(process.platform === 'win32')('is skipped, not read', () => {
+    resetEvidenceLogs()
+    const root = mkdtempSync(join(tmpdir(), 'evfifo-'))
+    const store = join(root, 'install', 'store')
+    mkdirSync(store, { recursive: true })
+    execFileSync('mkfifo', [join(store, 'tool-guard.jsonl')])
+    const p = evidenceLogPath('tool-guard.jsonl', store, join(root, 'audit'))
+    expect(existsSync(p)).toBe(false)
+    expect(existsSync(`${p}.carried`)).toBe(true)
+  }, 5000)
 })
 
 describe('the shell cannot reach the store by another spelling (review)', () => {
