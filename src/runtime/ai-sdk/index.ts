@@ -36,6 +36,8 @@ import { capReached } from '../../ai-usage.js'
 import { capGate, recordStepSpend } from '../../managed-cap.js'
 import { SessionStore } from './sessions.js'
 import { createTools } from './tools.js'
+import { turnChat } from '../../memory/turn-context.js'
+import { briefWithDecisions } from '../../memory/decisions.js'
 import { effortProviderOptions, type Effort } from '../../models/effort-levels.js'
 
 /** Retry config for transient API errors — same shape as the claude runtime. */
@@ -204,7 +206,8 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           // It runs on the parent's model and effort: a chat's /model and
           // /effort choices (cards #270, #272).
           const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false, scope, guardSession, model, effort })
-          const result = await sub.generate({ prompt, abortSignal })
+          // The brief carries the chat's pinned decisions (card #235).
+          const result = await sub.generate({ prompt: briefWithDecisions(turnChat(), prompt), abortSignal })
           return result.text.trim() || '(subagent returned no text)'
         } catch (err) {
           if (abortSignal?.aborted) return 'Subagent stopped: the run was cancelled.'

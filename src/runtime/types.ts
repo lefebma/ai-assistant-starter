@@ -70,6 +70,8 @@ export type AgentRunResult = {
    * owner. Never set on a non-managed box.
    */
   aiPaused?: AiLimitKind
+  /** Evidence types the turn's successful tool calls showed (card #235), e.g. 'mail.read'. Set by runAgent. */
+  reads?: string[]
 }
 
 export interface AgentRuntime {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.71.0 - 2026-11-04
+
+- **New: decisions you pin stay put.** When you settle something ("send it to billing@, not Priya", "waive the late fee"), your assistant offers it on a card with Pin and Skip. Pinned decisions ride along with every reply, scheduled job and helper in that chat, however long the conversation gets, so they are never trimmed away. Only your tap pins one. `/decide` pins one yourself, `/decisions` lists them and removes one. A new decision on the same topic replaces the old one.
+- **Memory knows where things came from.** What you typed is remembered as yours. A reply written after reading an email or a web page, a forwarded message, and calendar details are remembered as outside text, which your assistant reads as information, never as instructions. Nothing stored can break out of the memory section of a prompt.
+- **Memory stays in its chat and answers plain questions.** A memory from one chat or group no longer turns up in another. Asking a normal question ("When is the lease renewal due?") now finds memories that share its key words, instead of only an exact match of every word.
+
 ## 1.70.0 - 2026-11-04
 
 - **The assistant cannot delete its own evidence on any install.** The audit log of every tool call is now on by default on self-installed Macs, Windows PCs and Linux machines, not only on hosted boxes. It lives outside the assistant's folder (on a Mac, `~/Library/Application Support/Havn/audit/`), and any tool call that touches it is refused before it runs. The tool guard's and scheduled-job roles' logs moved there too, out of `store/` where the assistant's own shell could delete them; existing entries are carried over and `/guard report` keeps its history. On a hosted box both logs sit beside the audit log in `/var/lib/havn-audit`, append-only, so they cannot be edited or deleted even from a shell. Existing hosted boxes get that with `npm run enable-audit -- <ip>` after updating. Set `AUDIT_DIR` to move the log or `AUDIT_DIR=off` to turn it off.

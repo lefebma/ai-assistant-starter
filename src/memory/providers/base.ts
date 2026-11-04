@@ -21,6 +21,11 @@ export interface ContextFragment {
    * are not.
    */
   standing?: true
+  /**
+   * Learned from outside the owner (a tool read mail or the web, a forwarded
+   * message): rendered inside an untrusted wrapper (card #235).
+   */
+  untrusted?: true
 }
 
 export interface ContextProvider {

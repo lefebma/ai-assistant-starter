@@ -9,6 +9,7 @@ import { listModelChoices } from '../models/catalog.js'
 import { effortLevelsFor } from '../models/effort.js'
 import { runtimeIdFor } from '../runtime/index.js'
 import { runWebTurn, cancelWebTurn, webSecretAwaited, webSupportAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
+import { PIN_BUTTONS, extractDecisionMarkers, proposalCard, proposalHint, proposeDecision, setProposalCard } from '../memory/decisions.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
@@ -237,8 +238,9 @@ async function answer(
       return { kind: 'paused', text: result.paused }
     }
     if (result.cancelled || result.text === null) return { kind: 'cancelled' }
-    const { cleanText: noFiles, requests } = extractFileMarkers(result.text)
-    const { cleanText, labels } = extractButtons(noFiles)
+    const { cleanText: noDecisions, proposals } = extractDecisionMarkers(result.text)
+    const { cleanText: noFiles, requests } = extractFileMarkers(noDecisions)
+    const { cleanText, labels: replyLabels } = extractButtons(noFiles)
     const files: StoredFile[] = []
     const notes: string[] = []
     for (const req of requests) {
@@ -247,8 +249,16 @@ async function answer(
       else if (r.ok) files.push({ path: r.path, name: r.name, kind: r.kind })
       else notes.push(`(file not sent: ${r.reason})`)
     }
-    const content = [cleanText, ...notes].filter(Boolean).join('\n\n')
-    return { kind: 'reply', mid: addMessage(id, 'assistant', content, files, labels) }
+    // A proposed decision (card #235): a page answers only its latest card, so
+    // the first proposal rides this reply as its Pin and Skip when the reply
+    // has no buttons of its own; any other is offered as a /decide line.
+    const [card, ...others] = replyLabels.length ? [undefined, ...proposals] : proposals
+    const offers = [card ? proposalCard(card) : '', ...others.map((p) => p && proposalHint(p))]
+    const labels = card ? PIN_BUTTONS : replyLabels
+    const content = [cleanText, ...notes, ...offers].filter(Boolean).join('\n\n')
+    const mid = addMessage(id, 'assistant', content, files, labels)
+    if (card) setProposalCard(proposeDecision(chatId, card.topic, card.text), `${id}:${mid}`)
+    return { kind: 'reply', mid }
   }
 
   // Slash commands, and the flows they start, answer the same way they
