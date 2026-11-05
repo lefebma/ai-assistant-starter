@@ -1,5 +1,6 @@
 import type { ContextProvider, ContextFragment } from './base.js'
 import { getRecentMemories, touchMemory } from '../../db.js'
+import { isUntrusted } from '../provenance.js'
 
 /**
  * Episodic provider - retrieves recent conversation turns.
@@ -26,6 +27,7 @@ export class EpisodicProvider implements ContextProvider {
     return memories.map((m) => ({
       source: this.name,
       content: m.content,
+      ...(isUntrusted(m) ? { untrusted: true as const } : {}),
       relevance: Math.min(m.salience / 5.0, 1.0),
     }))
   }

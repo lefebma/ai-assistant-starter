@@ -28,6 +28,8 @@ export class CalendarProvider implements ContextProvider {
           source: this.name,
           content: this.cache.content,
           relevance: 0.8,
+          // Event titles and notes come from whoever sent the invite (card #235).
+          untrusted: true,
         },
       ]
     }
@@ -54,6 +56,8 @@ export class CalendarProvider implements ContextProvider {
           source: this.name,
           content,
           relevance: 0.8,
+          // Event titles and notes come from whoever sent the invite (card #235).
+          untrusted: true,
         },
       ]
     } catch {

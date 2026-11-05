@@ -13,6 +13,7 @@ import { collectAudit, defaultAuditIO } from './audit/index.js'
 import { buildAuditPrompt } from './audit/report.js'
 import { logger } from './logger.js'
 import { aiPausedForBackground, readAiLimit, recoveryDueAt } from './ai-limit.js'
+import { ledgerBlock } from './memory/decisions.js'
 import { dashboardDataFile } from './cockpit/paths.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
@@ -415,7 +416,9 @@ export async function runDueTasks(): Promise<void> {
         buildAuditPrompt(collectAudit(task.chat_id, defaultAuditIO()))
       )
       // Picked up after a restart cut it off (card #234): tell the model so.
-      const checked = expanded + obligationNote(obligations)
+      // The chat's pinned decisions hold for its scheduled jobs too (card #235).
+      const ledger = ledgerBlock(task.chat_id)
+      const checked = (ledger ? `${ledger}\n\n` : '') + expanded + obligationNote(obligations)
       const prompt = resuming ? continuationPrompt(checked, 'because the assistant restarted') : checked
       // Every tool call rereads the task (card #230): pausing, deleting or
       // re-roling the job takes effect at the next call, not the next run.

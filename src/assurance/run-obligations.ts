@@ -21,6 +21,7 @@
 import { currentRun } from './effect-journal.js'
 import type { AuthorityFacet, Obligation, Verdict } from './obligations.js'
 import { canonicalTool, type RoleSpec } from './roles.js'
+import { noteReads } from '../memory/turn-context.js'
 import { dropRunState, loadRunState, openRun } from './run-state.js'
 
 /** Effectively unlimited: reading the inbox twice is fine, it is not a send. */
@@ -186,6 +187,8 @@ export function trackRun(runKey: string, obligations: Obligation[]): TrackedRun 
  * evidence is bookkeeping and must not break a tool call.
  */
 export function recordToolEvidence(callId: string, tool: string, input: unknown, output?: unknown, runKey: string | undefined = currentRun()): number {
+  // What the turn read, for its memory's provenance (card #235). Any turn, tracked or not.
+  try { noteReads(evidenceTypes(tool, input, output)) } catch { /* never break the tool path */ }
   if (!runKey || !callId) return 0
   const authority = active.get(runKey)
   if (!authority) return 0

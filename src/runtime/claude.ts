@@ -29,6 +29,8 @@ import {
   type AiLimitMarker,
 } from '../ai-limit.js'
 import type { AgentRunOptions, AgentRunResult, AgentRuntime, RunScope } from './types.js'
+import { turnChat } from '../memory/turn-context.js'
+import { briefWithDecisions } from '../memory/decisions.js'
 import { recordClaudeModels } from '../models/claude-models.js'
 
 /** The CLI's model list is asked for once per process: it only changes with an update, which restarts. */
@@ -73,8 +75,23 @@ export function makeGuardHook(scope: RunScope | undefined, cwd: string) {
     if (input.hook_event_name !== 'PreToolUse') return {}
     const v = gateToolCall({ session: input.session_id, tool: input.tool_name, input: input.tool_input, cwd, scope })
     if (!v.allow) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: v.reason } }
+    // A subagent brief carries the chat's pinned decisions (card #235). Every
+    // run with this hook is bypassPermissions, so 'allow' grants nothing new;
+    // it is what makes the CLI apply updatedInput.
+    const briefed = briefedSubagentInput(input.tool_name, input.tool_input)
+    if (briefed) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: briefed } }
     return {}
   }
+}
+
+/** The Agent (formerly Task) tool's input with the ledger in front of its prompt, or null. */
+export function briefedSubagentInput(tool: string, input: unknown, chatId: string | undefined = turnChat()): Record<string, unknown> | null {
+  if (tool !== 'Agent' && tool !== 'Task') return null
+  if (!input || typeof input !== 'object') return null
+  const prompt = (input as { prompt?: unknown }).prompt
+  if (typeof prompt !== 'string') return null
+  const briefed = briefWithDecisions(chatId, prompt)
+  return briefed === prompt ? null : { ...(input as Record<string, unknown>), prompt: briefed }
 }
 
 /**

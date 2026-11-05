@@ -1,5 +1,6 @@
 import type { ContextProvider, ContextFragment } from './base.js'
 import { searchMemories, touchMemory } from '../../db.js'
+import { isUntrusted } from '../provenance.js'
 
 /**
  * Semantic provider - retrieves memories matching the current message
@@ -16,8 +17,8 @@ export class SemanticProvider implements ContextProvider {
     this.limit = limit
   }
 
-  async retrieve(_chatId: string, message: string): Promise<ContextFragment[]> {
-    const memories = searchMemories(message, this.limit)
+  async retrieve(chatId: string, message: string): Promise<ContextFragment[]> {
+    const memories = searchMemories(message, this.limit, chatId)
 
     for (const m of memories) {
       touchMemory(m.id)
@@ -26,6 +27,7 @@ export class SemanticProvider implements ContextProvider {
     return memories.map((m) => ({
       source: this.name,
       content: m.content,
+      ...(isUntrusted(m) ? { untrusted: true as const } : {}),
       relevance: Math.min(m.salience / 5.0, 1.0),
     }))
   }

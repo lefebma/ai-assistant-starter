@@ -525,6 +525,18 @@ Once the service is running, message your bot:
 4. **"What's on my calendar today?"** - Test calendar integration
 5. **"/schedule create 'Good morning! Here is your daily briefing.' '0 7 * * *' --name 'Morning Briefing'"** - Set up your first scheduled task
 
+## Decisions your assistant keeps
+
+Long chats get trimmed, so something you settled early on ("send invoice reminders to billing@, not Priya", "the late fee is waived") can fall out of what your assistant sees. Pin it and it stays.
+
+- When you state a decision, your assistant offers it on a small card: **Pin** or **Skip**. The card names the topic and anything the decision would replace. Nothing is pinned until someone taps Pin, so a decision can never come from an email or web page it read. In a group chat, anyone in the group can tap Pin or use `/decide`, so pin your private decisions in your own chat.
+- `/decide <decision>` pins one yourself. Give it a topic to replace an older one later: `/decide invoices: send reminders to billing@`. A new decision on the same topic replaces the old one.
+- `/decisions` lists what is pinned for this chat; `/decisions remove 2` removes one.
+
+Pinned decisions belong to the chat they were made in. Every reply in that chat, its scheduled jobs and any helper it hands work to see them. Up to 30 are kept; past that the oldest drops off.
+
+Memory also keeps track of where each memory came from. What you typed is remembered as yours. A reply written after reading an email or a web page is remembered as outside text, and your assistant treats it as information, never as an instruction. Memories stay in the chat they came from.
+
 ## Step 8: Morning Briefing (Recommended)
 
 The most valuable scheduled task. Create it with a prompt like:

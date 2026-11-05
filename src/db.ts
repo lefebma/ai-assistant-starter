@@ -8,6 +8,7 @@ import { initProactiveTables } from './proactive/store.js'
 import { initEffectJournalTables } from './assurance/effect-journal.js'
 import { initRunStateTables } from './assurance/run-state.js'
 import { initPrivacyTables } from './privacy/schema.js'
+import { initDecisionTables } from './memory/decision-schema.js'
 
 let db: Database.Database
 
@@ -84,6 +85,14 @@ export function initDatabase(): void {
       DELETE FROM memories_fts WHERE rowid = OLD.id;
     END
   `)
+
+  // Memory provenance (card #235): where each memory came from. Rows written
+  // before the column existed read as 'legacy'.
+  const memoryCols = (d.prepare('PRAGMA table_info(memories)').all() as { name: string }[]).map((c) => c.name)
+  if (!memoryCols.includes('origin')) {
+    d.exec("ALTER TABLE memories ADD COLUMN origin TEXT NOT NULL DEFAULT 'legacy'")
+  }
+  d.exec('CREATE INDEX IF NOT EXISTS idx_memories_chat ON memories(chat_id, accessed_at)')
 
   // Scheduled tasks
   d.exec(`
@@ -289,6 +298,7 @@ export function initDatabase(): void {
   initEffectJournalTables(d)
   initRunStateTables(d)
   initPrivacyTables(d)
+  initDecisionTables(d)
 }
 
 // --- App state (one-shot install flags) ---
@@ -368,41 +378,60 @@ export interface Memory {
   salience: number
   created_at: number
   accessed_at: number
+  /** Where it came from (card #235). 'untrusted' and 'legacy' rows are recalled inside an untrusted wrapper or as before. */
+  origin: MemoryOrigin
 }
+
+/**
+ * owner: the owner's own typed words. assistant: a reply from a turn that read
+ * nothing from outside. untrusted: a reply from a turn whose tools read mail,
+ * the web or another source, or a forwarded message. system: internal writes
+ * (session handoff summaries). legacy: written before provenance existed.
+ */
+export type MemoryOrigin = 'owner' | 'assistant' | 'untrusted' | 'system' | 'legacy'
 
 export function insertMemory(
   chatId: string,
   content: string,
   sector: 'semantic' | 'episodic',
-  topicKey?: string
+  topicKey?: string,
+  origin: Exclude<MemoryOrigin, 'legacy'> = 'system'
 ): void {
   const d = getDb()
   const ts = now()
   d.prepare(
-    `INSERT INTO memories (chat_id, topic_key, content, sector, salience, created_at, accessed_at)
-     VALUES (?, ?, ?, ?, 1.0, ?, ?)`
-  ).run(chatId, topicKey ?? null, content, sector, ts, ts)
+    `INSERT INTO memories (chat_id, topic_key, content, sector, salience, created_at, accessed_at, origin)
+     VALUES (?, ?, ?, ?, 1.0, ?, ?, ?)`
+  ).run(chatId, topicKey ?? null, content, sector, ts, ts, origin)
 }
 
-export function searchMemories(query: string, limit = 3): Memory[] {
-  const d = getDb()
-  const sanitized = query.replace(/[^\w\s]/g, '').trim()
-  if (!sanitized) return []
-  const ftsQuery = sanitized
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w + '*')
-    .join(' ')
+/** Words that carry no topic: dropped from a recall query (card #235). */
+const STOPWORDS = new Set(('the and for are but not you all any can had her was one our out has have him his how its may new now old see two way who did get let put say she too use what when where which why with will would could should this that than then them they there these those from into onto your yours about after again also been before being both does doing done each just like make many more most much must only other over same some such very want were here is am an as at be by do go if in it me my no of on or so to up us we').split(' '))
+
+/** An FTS5 query from a natural question: topic words as prefix terms, any of them. */
+export function memoryQuery(query: string): string {
+  const words = query.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/)
+  const terms = [...new Set(words.filter((w) => w.length >= 3 && !STOPWORDS.has(w)))]
+  return terms.map((w) => `"${w}"*`).join(' OR ')
+}
+
+/**
+ * Memories of this chat matching a natural question, best first (card #235:
+ * scoped to the chat, and any topic word matches instead of every word).
+ */
+export function searchMemories(query: string, limit: number, chatId: string): Memory[] {
+  const ftsQuery = memoryQuery(query)
+  if (!ftsQuery) return []
   try {
-    return d
+    return getDb()
       .prepare(
         `SELECT m.* FROM memories m
          JOIN memories_fts f ON f.rowid = m.id
-         WHERE memories_fts MATCH ?
-         ORDER BY rank
+         WHERE memories_fts MATCH ? AND m.chat_id = ?
+         ORDER BY bm25(memories_fts)
          LIMIT ?`
       )
-      .all(ftsQuery, limit) as Memory[]
+      .all(ftsQuery, chatId, limit) as Memory[]
   } catch {
     return []
   }

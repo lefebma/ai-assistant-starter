@@ -82,7 +82,9 @@ export async function rotateSession(
       const text = await runSummary(SUMMARY_PROMPT, meta.sessionId)
       if (text && text.trim()) {
         summary = text.trim()
-        insertMemory(chatId, `Session handoff (${new Date().toISOString().slice(0, 10)}): ${summary.slice(0, 1500)}`, 'semantic')
+        // Model-written over a session that may have read mail or the web: untrusted (card #235).
+        // The owner's decisions do not depend on it: they live in the pinned ledger.
+        insertMemory(chatId, `Session handoff (${new Date().toISOString().slice(0, 10)}): ${summary.slice(0, 1500)}`, 'semantic', undefined, 'untrusted')
       }
     } catch (err) {
       logger.warn({ err, chatId }, 'Session summary failed; rotating without one')

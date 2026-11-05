@@ -31,6 +31,7 @@ import { resolveTurnRuntime } from './runtime/index.js'
 import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
+import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, extractDecisionMarkers, ledgerBlock, outcomeText, proposalCard, proposalHint, proposeDecision, resolveProposal, setProposalCard } from './memory/decisions.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
@@ -285,7 +286,9 @@ async function runTurn(
   const offerInterview = !welcomeSetup && isPrimaryChat(chatId) && shouldOfferInterview(PROJECT_ROOT)
   const onboardingNudge = welcomeSetup ? welcomeNudge(welcomeSetup) : offerInterview ? interviewNudge() : ''
 
-  const fullMessage = [skillIndex, memoryContext, onboardingNudge, rawText]
+  // Pinned decisions ride every turn, outside the history that trimming and
+  // compaction drop, with how to propose a new one (card #235).
+  const fullMessage = [skillIndex, memoryContext, ledgerBlock(chatId), DECISION_INSTRUCTION, onboardingNudge, rawText]
     .filter(Boolean)
     .join('\n\n')
 
@@ -377,7 +380,9 @@ async function runTurn(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: response, newSessionId, aiPaused } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
+    const { text: rawResponse, newSessionId, aiPaused, reads } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
+    // A proposed decision becomes a card of its own after the reply (card #235).
+    const { cleanText: response, proposals } = rawResponse ? extractDecisionMarkers(rawResponse) : { cleanText: rawResponse, proposals: [] }
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
@@ -423,6 +428,12 @@ async function runTurn(
       return
     }
 
+    if (!response && proposals.length) {
+      // The reply was only a proposed decision: the card is the answer.
+      if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
+      await sendDecisionCards(adapter, chatId, proposals)
+      return
+    }
     if (!response) {
       if (previewMessageId != null) {
         await adapter.editMessage(chatId, previewMessageId, '(no response)')
@@ -433,7 +444,7 @@ async function runTurn(
     }
 
     // Save to memory
-    if (!opts.skipMemory) await saveConversationTurn(chatId, rawText, response)
+    if (!opts.skipMemory) await saveConversationTurn(chatId, rawText, response, { reads })
 
     // Voice reply?
     if (willVoice) {
@@ -506,6 +517,9 @@ async function runTurn(
     // rather than silently not turning up.
     if (fileRequests.length > 0) await deliverFiles(adapter, chatId, fileRequests)
 
+    // Proposed decisions: one card each, pinned only by the owner's tap.
+    if (proposals.length) await sendDecisionCards(adapter, chatId, proposals)
+
     // Managed box at 80% of its monthly cap (card #159): one heads-up a month,
     // to the owner only, after the reply. Marked only once it is delivered,
     // against the month it was decided in.
@@ -553,6 +567,33 @@ async function runTurn(
     clearInterval(typingInterval)
     clearLane(chatId)
   }
+}
+
+// --- Pinned decisions (card #235) ---
+
+/** One card per proposed decision. Only a tap on Pin writes the ledger. */
+async function sendDecisionCards(adapter: PlatformAdapter, chatId: string, proposals: Array<{ topic: string | null; text: string }>): Promise<void> {
+  for (const p of proposals) {
+    try {
+      if (!adapter.supportsButtons) {
+        await adapter.sendMessage(chatId, proposalHint(p))
+        continue
+      }
+      const id = proposeDecision(chatId, p.topic, p.text)
+      const cardId = await adapter.sendMessage(chatId, proposalCard(p, chatId), { buttons: PIN_BUTTONS })
+      if (cardId) setProposalCard(id, cardId)
+    } catch (err) {
+      logger.warn({ err: String(err), chatId }, 'Could not send a decision card')
+    }
+  }
+}
+
+/** A tap on a decision card. False when the card is something else. */
+async function resolveDecisionClick(adapter: PlatformAdapter, chatId: string, cardId: string, label: string): Promise<boolean> {
+  const outcome = resolveProposal(chatId, cardId, label)
+  if (!outcome) return false
+  await adapter.sendMessage(chatId, outcomeText(outcome))
+  return true
 }
 
 // --- Apple Shortcuts ---
@@ -608,17 +649,19 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
   try {
     const skillIndex = buildSkillIndex()
     const memoryContext = await contextEngine.buildContext(chatId, rawText)
-    const fullMessage = [skillIndex, memoryContext, SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
+    const fullMessage = [skillIndex, memoryContext, ledgerBlock(chatId), SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
     const sessionId = getSession(chatId) ?? undefined
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
-    const { text, newSessionId } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
+    const { text: raw, newSessionId, reads } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
+    // Shortcuts get no instruction to propose decisions; strip a stray marker.
+    const text = raw ? extractDecisionMarkers(raw).cleanText : raw
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
     const clearedMidTurn = sessionId !== undefined && getSession(chatId) == null
     if (newSessionId && !clearedMidTurn) setSession(chatId, newSessionId)
     if (!clearedMidTurn) bumpSessionMessageCount(chatId)
-    if (text) await saveConversationTurn(chatId, rawText, text)
+    if (text) await saveConversationTurn(chatId, rawText, text, { reads })
     return text
   } finally {
     clearLane(chatId)
@@ -727,9 +770,9 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
   try {
     const skillIndex = buildSkillIndex()
     const memoryContext = await contextEngine.buildContext(chatId, text)
-    const fullMessage = [skillIndex, memoryContext, framing, text].filter(Boolean).join('\n\n')
+    const fullMessage = [skillIndex, memoryContext, ledgerBlock(chatId), DECISION_INSTRUCTION, framing, text].filter(Boolean).join('\n\n')
     logger.info({ chatId, key, messageLength: text.length }, 'Processing web message')
-    const { text: reply, newSessionId, aiPaused } = await withActor(`web:${chatId}`, () =>
+    const { text: reply, newSessionId, aiPaused, reads } = await withActor(`web:${chatId}`, () =>
       runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
         model: input.model,
         effort: input.effort,
@@ -746,7 +789,7 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
       const paused = (marker ? ownerPauseReply(marker, new Date())?.text : undefined) ?? repeatReply(marker?.resumesAt)
       return { text: null, newSessionId, cancelled: false, paused }
     }
-    if (reply && !input.skipMemory) await saveConversationTurn(chatId, text, reply)
+    if (reply && !input.skipMemory) await saveConversationTurn(chatId, text, extractDecisionMarkers(reply).cleanText, { reads })
     return { text: reply, newSessionId, cancelled: false }
   } finally {
     clearLane(key)
@@ -962,6 +1005,10 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
     // description would swallow it.
     const click = /^\[button_click\]: (.+)$/.exec(trimmed)
     if (click) {
+      // A decision card's Pin or Skip (card #235).
+      if (input.clickedMessageId !== undefined && (await resolveDecisionClick(adapter, chatId, `${input.conversationId}:${input.clickedMessageId}`, click[1]!))) {
+        return { handled: true, clearSession: false }
+      }
       const picked = await modelForClick(`web:${input.conversationId}`, click[1]!)
       if (picked !== undefined) {
         const r = await switchToRef(input.model, picked)
@@ -1924,6 +1971,10 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     await adapter.sendMessage(chatId, [formatGuardReport(entries, parseGuardMode(TOOL_GUARD), days), formatRoleReport(refused)].filter(Boolean).join('\n\n'))
     return true
   }
+  if (cmd === '/decide' || cmd === '/decisions') {
+    await adapter.sendMessage(chatId, decisionCommand(chatId, cmd, trimmed.slice(cmd.length).trim()))
+    return true
+  }
   if (cmd === '/memory') {
     const memories = getMemoriesForChat(chatId, 10)
     if (memories.length === 0) {
@@ -2081,6 +2132,8 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'effort', description: 'Set how hard I think before answering' },
   { command: 'private', description: 'Keep client names on this machine' },
   { command: 'memory', description: 'Show recent stored memories' },
+  { command: 'decisions', description: 'Pinned decisions (list/remove)' },
+  { command: 'decide', description: 'Pin a decision for this chat' },
   { command: 'voice', description: 'Toggle voice replies' },
   { command: 'app', description: 'Sign-in link to the web app' },
   { command: 'shortcut', description: 'Use me from Siri and Apple Shortcuts' },
@@ -2195,6 +2248,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       // The card is the run (card #229): whatever this click sends is keyed to
       // it, so the same card can never send the same email twice.
       const answer = async () => {
+        if (msg.messageId && (await resolveDecisionClick(adapter, chatId, msg.messageId, label))) return
         if (await resolveModelClick(adapter, chatId, label)) return
         if (await resolveEffortClick(adapter, chatId, label)) return
         if (await resolveSupportAction(adapter, chatId, label)) return

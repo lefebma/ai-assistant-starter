@@ -7,12 +7,26 @@
  * inside can forge or close that boundary.
  */
 
+/**
+ * Any tag that opens or closes one of the prompt's context blocks: an
+ * untrusted wrapper of any label, the memory, workspace and decision-ledger
+ * blocks. The closing '>' is optional, so text cut off mid-tag cannot leave a
+ * live one behind (card #235).
+ */
+const BLOCK_TAG = /<\s*\/?\s*(?:memory-context|workspace-context|decision-ledger|untrusted-[\w-]*)\b[^<>]*>?/gi
+
+/** Neutralise every context-block tag in text from outside the owner (card #235). */
+export function defang(text: string): string {
+  return text.replace(BLOCK_TAG, '[redacted-tag]')
+}
+
 export function wrapUntrusted(label: string, content: string, maxLen = 8000): string {
   const id = Math.random().toString(36).slice(2, 10)
   const truncated = content.length > maxLen ? content.slice(0, maxLen) + '\n[truncated]' : content
-  // Defang any opening or closing tag for this label (any id) inside the content,
-  // so injected text cannot break out of the wrapper.
-  const safe = truncated.replace(new RegExp(`</?untrusted-${label}-[a-zA-Z0-9_-]+>`, 'g'), '[redacted-tag]')
+  // Defang every block tag inside the content (an untrusted wrapper of any
+  // label, the memory and ledger blocks), so injected text cannot close this
+  // wrapper or forge another block (card #235).
+  const safe = defang(truncated)
   return `<untrusted-${label}-${id}>\n${safe}\n</untrusted-${label}-${id}>`
 }
 

@@ -8,6 +8,8 @@ import { skillsProvider } from './providers/skills.js'
 import { AutoMemoryProvider } from './providers/automemory.js'
 import { UpdateProvider } from './providers/update.js'
 import { loadSkills } from '../skills/index.js'
+import { defang } from './provenance.js'
+import { wrapUntrusted } from '../prompt-safety.js'
 import { logger } from '../logger.js'
 
 /**
@@ -147,7 +149,10 @@ export class ContextEngine {
     const deduped = deduplicateFragments(selected)
 
     // Format into memory-context block
-    const lines = deduped.map((f) => `- ${f.content} (${f.source})`)
+    // No stored text may open or close a context block, and what came from
+    // outside the owner is wrapped as untrusted (card #235). Wrapping happens
+    // after the budget cut, so a cut can never drop a closing tag.
+    const lines = deduped.map((f) => `- ${f.untrusted ? wrapUntrusted('memory', defang(f.content)) : defang(f.content)} (${f.source})`)
 
     logger.debug(
       {
@@ -166,7 +171,7 @@ export class ContextEngine {
       )
     }
     if (standing.length > 0) {
-      const standingLines = deduplicateFragments(standing).map((f) => `- ${f.content} (${f.source})`)
+      const standingLines = deduplicateFragments(standing).map((f) => `- ${defang(f.content)} (${f.source})`)
       blocks.push(
         `<workspace-context>\nSTANDING RULES AND SHARED CONTEXT (active now, not history):\n${standingLines.join('\n')}\n</workspace-context>`
       )

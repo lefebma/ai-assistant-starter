@@ -15,6 +15,7 @@ import { logger } from './logger.js'
 import type { AgentRunResult, RunScope } from './runtime/types.js'
 import { withRunOrNew } from './assurance/effect-journal.js'
 import { withEgress } from './egress/index.js'
+import { withTurn } from './memory/turn-context.js'
 import { privacyOnFor, withPrivacy } from './privacy/index.js'
 
 /**
@@ -93,7 +94,9 @@ export async function runAgent(
   const effort = opts?.effort ? fitEffort(opts.effort, effortLevelsFor(lane, opts.model)) : undefined
   // The anonymizer (card #187): on for this chat, or for the whole box. A
   // run with no chat is private whenever any chat is.
-  const result = await withPrivacy(privacyOnFor(opts?.chatId), () => withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
+  // The turn context notes what its tools read (memory provenance) and which
+  // chat it is for (pinned decisions in subagent briefs), card #235.
+  const { result, reads } = await withTurn(opts?.chatId, () => withPrivacy(privacyOnFor(opts?.chatId), () => withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
     message,
     sessionId: resumeId,
     onTyping,
@@ -103,7 +106,7 @@ export async function runAgent(
     scope,
     ...(turn.model ? { model: turn.model } : {}),
     ...(effort ? { effort } : {}),
-  }))))
+  })))))
   if (result.newSessionId) stampSessionRuntime(result.newSessionId, turn.id)
-  return result
+  return reads.length ? { ...result, reads } : result
 }

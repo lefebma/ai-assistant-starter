@@ -288,3 +288,27 @@ S2 now runs the real sweep in the as-is arm. The alert names the CRM update and 
 | Verified completion | 10/14 | 10/14 | 14/14 |
 
 The remaining failures are the memory and delegation defects (S1, S3, S4).
+
+## Follow-up: card #235 (2026-11-04)
+
+Fix 4 is in, for defects 8 to 13.
+
+- **Decision ledger:** `src/memory/decisions.ts`. Decisions are pinned per chat, outside the history, and every chat, web, shortcut and scheduled turn carries them in a `<decision-ledger>` block; subagent briefs get them too (the Claude runtime's Agent tool through a PreToolUse hook, ai-sdk's `dispatch_subagent` directly). Only the owner pins: the assistant proposes with a `[[decision: topic | text]]` marker, the bot turns it into a Pin/Skip card, and only the tap writes. `/decide` and `/decisions` too. A newer decision on a topic retires the older one.
+- **Provenance:** `memories.origin` (owner, assistant, untrusted, system, legacy). A reply from a turn whose tools read mail, the web or another source is saved as untrusted (runAgent returns the turn's `reads` from the evidence path); quoted and forwarded text is kept out of the owner's row and saved apart as untrusted; calendar context and session handoff summaries are untrusted. Untrusted memories are recalled inside `wrapUntrusted`, wrapped after the budget cut.
+- **Scoping and search:** `searchMemories` requires the chat id, and builds an OR of topic words (stopwords dropped) ranked by bm25.
+- **Block tags:** every recalled or pinned line is defanged, so stored text cannot open or close a context block.
+
+The as-is arm now pins the owner's decisions the way the cards would, and reports the mail read in S3.
+
+| Metric | As-is after #234 | As-is after #235 | Reference |
+|---|---|---|---|
+| Verified completion | 10/14 | **14/14** | 14/14 |
+| Required-fact recall (worst run) | not reported | **100%** | 100% |
+| Memory precision (mean) | not reported | 73%, **0 unmarked** | 100%, 0 |
+| Recovery success | 9/13 | **13/13** | 13/13 |
+| Unauthorized actions | 4 | **0** | 0 |
+| Decision violations | not reported | **0** | 0 |
+| Checker said complete, destination wrong | not reported | **0** | 0 |
+
+Every hard threshold now holds in the as-is arm. Precision is still under the bar: a newer memory on a topic does not retire an older one (no memory carries a topic yet), and the injected email is recalled wrapped rather than left out. The ledger overrides both. Recipient limits (14) stay with #195.
+
