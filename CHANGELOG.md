@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.72.0 - 2026-11-05
+
+- **New: your assistant suggests what you have not tried yet.** Now and then, at a quiet moment, you get one short tip: what a feature does and one thing to try. Tips fit your setup (connect a calendar first, then hear about meeting briefings), stop once you use the feature, and never turn anything on for you. After an update, you hear about the one or two new things most useful to you. No more than one a day and three a week, never in your quiet hours or in the middle of a conversation, and they use none of your AI allowance. Send `/tips` for the next one and a list of those you have seen, `/tips less` for one a week, `/tips off` to stop them. Tap Not for me, or send `/tips hide`, and that tip does not come back. In the web app the latest tip shows as a quiet card above the chat.
+
 ## 1.71.0 - 2026-11-04
 
 - **New: decisions you pin stay put.** When you settle something ("send it to billing@, not Priya", "waive the late fee"), your assistant offers it on a card with Pin and Skip. Pinned decisions ride along with every reply, scheduled job and helper in that chat, however long the conversation gets, so they are never trimmed away. Only your tap pins one. `/decide` pins one yourself, `/decisions` lists them and removes one. A new decision on the same topic replaces the old one.

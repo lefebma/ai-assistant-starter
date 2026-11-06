@@ -11,5 +11,6 @@ import './status-routes.js'
 import './dictation-routes.js'
 import './voice-chat-routes.js'
 import './proactive-routes.js'
+import './tips-routes.js'
 
 export { handleWebRequest, webPathFor } from './http.js'

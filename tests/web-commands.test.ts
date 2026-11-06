@@ -193,6 +193,20 @@ describe('web chat commands', () => {
     expect(conv.getConversation('777', id)!.title).toBe('')
   })
 
+  it('/tips answers in the conversation and its buttons never reach the agent (card #273)', async () => {
+    const r = useRuntime()
+    const { loadState } = await import('../src/tips/state.js')
+    const id = await newConv()
+    const card = replies(await chat(id, '/tips'))[0]
+    expect(card.content).toMatch(/^Tip: /)
+    expect(card.buttons).toEqual(['Got it', 'Not for me'])
+    const shown = loadState().current!.ids[0]!
+    const done = await chat(id, '[button_click]: Not for me')
+    expect(replies(done)[0].content).toContain('will not suggest')
+    expect(loadState().tips[shown]?.status).toBe('dismissed')
+    expect(r.calls).toHaveLength(0)
+  })
+
   it('runs the support flow: description, then a click on the draft\'s buttons', async () => {
     const r = useRuntime()
     const id = await newConv()

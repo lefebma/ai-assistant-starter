@@ -23,6 +23,7 @@ export const HELP_GROUPS: Array<{ title: string; items: Array<[command: string, 
       ['/decide', 'Pin a decision, e.g. /decide invoices: send to billing@'],
       ['/cancel', 'Stop what is running: the reply, queued messages, scheduled runs'],
       ['/steer', 'Steer me in the middle of a reply'],
+      ['/tips', 'See what you have not tried yet (on/less/off/hide)'],
     ],
   },
   {

@@ -169,7 +169,7 @@ async function start() {
   setupDictation()
   setupVoiceCall()
   if (!narrow.matches && window.innerWidth >= 1280) setFilesOpen(true)
-  await Promise.all([loadProjects(), loadGoals(), loadStatus(), loadDefaults()])
+  await Promise.all([loadProjects(), loadGoals(), loadStatus(), loadDefaults(), loadTip()])
   $('input').focus()
 }
 
@@ -2286,6 +2286,34 @@ $('update-dismiss').addEventListener('click', async () => {
     }
   }
 })
+
+// ---------- tips ----------
+
+// A quiet card above the chat, never a popup. Answered here or in the chat
+// app, it goes from both.
+async function loadTip() {
+  let tip = null
+  try {
+    tip = (await api.get('/api/web/tips')).tip
+  } catch {
+    // no card this visit
+  }
+  $('tip-text').textContent = tip ? tip.text : ''
+  $('tip-try').textContent = tip ? tip.tryIt : ''
+  show($('tip-card'), !!tip)
+}
+
+async function answerTip(action) {
+  show($('tip-card'), false)
+  try {
+    await api.post('/api/web/tips', { action })
+  } catch {
+    // hidden for this visit; it comes back on the next load
+  }
+}
+
+$('tip-ok').addEventListener('click', () => answerTip('ok'))
+$('tip-hide').addEventListener('click', () => answerTip('hide'))
 
 // A new link pasted into an open tab only changes the fragment.
 window.addEventListener('hashchange', () => {

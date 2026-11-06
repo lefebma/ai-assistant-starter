@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { registerConnectRoute } from './connect/wiring.js'
 import { resolve } from 'node:path'
-import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, AUDIT_DIR, AUDIT_WITNESS_URL, AUDIT_WITNESS_TOKEN } from './config.js'
+import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, TIPS_ENABLED, AUDIT_DIR, AUDIT_WITNESS_URL, AUDIT_WITNESS_TOKEN } from './config.js'
 import { getAuditTrail } from './assurance/audit-trail.js'
 import { WitnessShipper, startWitnessShipping } from './assurance/witness.js'
 import { WitnessChecker, startWitnessChecks } from './assurance/witness-check.js'
@@ -17,7 +17,7 @@ import { getSecret } from './vault/index.js'
 import { sendTextWithFiles } from './outbound-delivery.js'
 import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './workspace/service.js'
 import { initUpdateNotice, stopUpdateNotice } from './update/notice-service.js'
-import { checkForUpdate, getChangelog, restartPending } from './updater.js'
+import { checkForUpdate, getChangelog, getCurrentVersion, restartPending } from './updater.js'
 import { startHttpServer, stopHttpServer } from './http-server.js'
 import { pruneVoiceTranscripts } from './voice-history.js'
 import { stopChrome, isCdpAvailable } from './browser.js'
@@ -38,6 +38,10 @@ import { localDay } from './email-alerts/rules.js'
 import { outlookClient } from './email-alerts/sources.js'
 import { listAuthedAccounts } from './ms/store.js'
 import { startProactive } from './proactive/service.js'
+import { startTips } from './tips/service.js'
+import { isChatBusy } from './agent.js'
+import { tipContext } from './tips/context.js'
+import { lastOwnerMessage } from './tips/control.js'
 import { discoverCalendars } from './proactive/calendar.js'
 import { relatedThreads } from './proactive/threads.js'
 import { DAILY_DECISION_CAP, decide as decideBriefing } from './proactive/decide.js'
@@ -360,6 +364,28 @@ async function main(): Promise<void> {
     })
   }
 
+  // Tips (card #273). No model and no network, so nothing here can cost
+  // anything; off for the whole box with TIPS=off.
+  const stopTips = PRIMARY_CHAT_ID && TIPS_ENABLED
+    ? startTips({
+        context: () => tipContext(PRIMARY_CHAT_ID),
+        send: async (text, buttons) => {
+          const id = await adapter.sendMessage(
+            PRIMARY_CHAT_ID,
+            adapter.formatText(text),
+            adapter.supportsButtons ? { buttons } : undefined
+          )
+          return adapter.supportsButtons && id ? id : null
+        },
+        buttons: adapter.supportsButtons,
+        currentVersion: getCurrentVersion,
+        busy: () => isChatBusy(PRIMARY_CHAT_ID),
+        lastOwnerMs: lastOwnerMessage,
+        now: () => new Date(),
+        tz: emailAlertsTz,
+      })
+    : () => {}
+
   // Graceful shutdown
   let shuttingDown = false
   const shutdown = async (): Promise<void> => {
@@ -381,6 +407,7 @@ async function main(): Promise<void> {
     stopWitnessChecks()
     stopEmailAlerts()
     stopProactive()
+    stopTips()
     stopAiRecovery()
 
     // The listener closes first, and the order is load-bearing on a hosted box.
