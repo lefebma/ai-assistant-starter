@@ -14,6 +14,7 @@
  *
  * A new decision on a topic retires the older one on the same topic.
  */
+import { projectBlock } from '../projects/store.js'
 import { getDb } from '../db.js'
 import { logger } from '../logger.js'
 import { defang } from './provenance.js'
@@ -94,10 +95,9 @@ export function ledgerBlock(chatId: string | undefined): string {
   return `<decision-ledger>\nDECISIONS THE OWNER PINNED (current; they hold until the owner changes them, and they override anything older in the conversation or in memory):\n${lines.join('\n')}\n</decision-ledger>`
 }
 
-/** A subagent brief with the chat's decisions in front of it. */
-export function briefWithDecisions(chatId: string | undefined, prompt: string): string {
-  const block = ledgerBlock(chatId)
-  return block ? `${block}\n\n${prompt}` : prompt
+/** A subagent brief with the project's instructions and the decisions in front of it. */
+export function briefWithDecisions(scope: string | undefined, prompt: string): string {
+  return [projectBlock(scope), ledgerBlock(scope), prompt].filter(Boolean).join('\n\n')
 }
 
 /** Told on chat turns: how to propose a pin. */
@@ -124,10 +124,10 @@ export function extractDecisionMarkers(text: string): { cleanText: string; propo
 }
 
 /** Store a proposal; its card id is set once the card is sent. */
-export function proposeDecision(chatId: string, topic: string | null, text: string): number {
+export function proposeDecision(chatId: string, topic: string | null, text: string, scope: string = chatId): number {
   const info = getDb()
-    .prepare('INSERT INTO decision_proposals (chat_id, topic, text, created_at) VALUES (?, ?, ?, ?)')
-    .run(chatId, topic, text, now())
+    .prepare('INSERT INTO decision_proposals (chat_id, scope, topic, text, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(chatId, scope, topic, text, now())
   return Number(info.lastInsertRowid)
 }
 
@@ -172,14 +172,15 @@ export function resolveProposal(chatId: string, cardId: string, label: string): 
   if (label !== PIN_LABEL && label !== SKIP_LABEL) return null
   const d = getDb()
   const p = d
-    .prepare('SELECT id, topic, text, resolved FROM decision_proposals WHERE chat_id = ? AND card_id = ?')
-    .get(chatId, cardId) as { id: number; topic: string | null; text: string; resolved: string | null } | undefined
+    .prepare('SELECT id, scope, topic, text, resolved FROM decision_proposals WHERE chat_id = ? AND card_id = ?')
+    .get(chatId, cardId) as { id: number; scope: string | null; topic: string | null; text: string; resolved: string | null } | undefined
   if (!p) return null
   if (p.resolved) return { kind: 'already', resolved: p.resolved }
   const claimed = d.prepare('UPDATE decision_proposals SET resolved = ? WHERE id = ? AND resolved IS NULL').run(label === PIN_LABEL ? 'pinned' : 'skipped', p.id)
   if (claimed.changes === 0) return { kind: 'already', resolved: 'answered' }
   if (label === SKIP_LABEL) return { kind: 'skipped' }
-  const r = pinDecision(chatId, p.text, p.topic)
+  // The project the card came from, not the one open at the tap (card #281).
+  const r = pinDecision(p.scope ?? chatId, p.text, p.topic)
   return r ? { kind: 'pinned', ...r } : { kind: 'skipped' }
 }
 

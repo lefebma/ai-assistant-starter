@@ -27,4 +27,7 @@ export function initDecisionTables(d: Database.Database): void {
     )
   `)
   d.exec('CREATE INDEX IF NOT EXISTS idx_decision_proposals_card ON decision_proposals(chat_id, card_id)')
+  // Where a Pin lands: the project the card came from, not the one open at the tap (card #281).
+  const cols = d.pragma('table_info(decision_proposals)') as { name: string }[]
+  if (!cols.some((c) => c.name === 'scope')) d.exec('ALTER TABLE decision_proposals ADD COLUMN scope TEXT')
 }

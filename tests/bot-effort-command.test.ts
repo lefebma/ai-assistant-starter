@@ -95,7 +95,7 @@ describe('/effort in a chat', () => {
     expect(getChatEffort('owner')).toBe('high')
     expect(h.runAgent).not.toHaveBeenCalled()
     await send({ text: 'hello' })
-    expect(h.runAgent.mock.calls.at(-1)![8]).toEqual({ model: undefined, effort: 'high', chatId: 'owner' })
+    expect(h.runAgent.mock.calls.at(-1)![8]).toEqual({ model: undefined, effort: 'high', chatId: 'owner', scope: 'owner' })
   })
 
   it('lists typed choices where there are no buttons, and takes a typed level', async () => {

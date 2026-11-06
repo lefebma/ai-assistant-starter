@@ -10,8 +10,8 @@
  * realpath relative to the root (which catches a symlink inside root that
  * points at `store/`); and the realpath must stay inside the realpath of root.
  */
-import { readdirSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { readdirSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { PROJECT_ROOT } from '../config.js'
 import { NEVER_SEND } from '../outbound-files.js'
 import { UPLOADS_DIR } from '../media.js'
@@ -55,6 +55,16 @@ export function setFileRootsForTest(next: FileRoots | null): void {
 }
 export function getFileRoots(): FileRoots {
   return roots
+}
+
+export function conversationDir(conversationId: string): string {
+  return join(roots.uploadsDir, 'chat', conversationId)
+}
+
+/** Delete a conversation's attachments with it. */
+export function removeConversationFiles(conversationId: string): void {
+  if (!/^[\w-]+$/.test(conversationId)) return
+  rmSync(conversationDir(conversationId), { recursive: true, force: true })
 }
 
 export function isHiddenSegment(seg: string): boolean {

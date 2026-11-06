@@ -25,7 +25,7 @@ export function noteReads(types: readonly string[]): void {
   if (ctx) for (const t of types) ctx.reads.add(t)
 }
 
-/** The chat this turn belongs to, if any. */
+/** The chat, or the project scope, this turn belongs to, if any. */
 export function turnChat(): string | undefined {
   return store.getStore()?.chatId
 }

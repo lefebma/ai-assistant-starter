@@ -209,6 +209,13 @@ export const TIPS: Tip[] = [
     commands: ['/support'],
   },
   {
+    id: 'projects',
+    since: '1.73.0',
+    text: 'A project keeps one client or topic apart, with its own instructions and memory.',
+    tryIt: 'Send /project new and a name, then /project instructions and how I should work.',
+    commands: ['/project'],
+  },
+  {
     id: 'tips',
     since: '1.72.0',
     text: 'I now suggest things you have not tried yet, no more than a few a week. They come at a quiet moment and stop once you use the feature.',

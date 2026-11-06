@@ -47,6 +47,10 @@ many. You can also sign out from **Settings** in the page.
   in Settings. It stays until the update is installed, even if you dismiss
   the banner.
 
+### Projects
+
+The plus next to Projects adds a project, and the pencil on a project edits its name and instructions or deletes it. A chat started under a project belongs to it for good: it follows the project's instructions and uses only the project's memory and pinned decisions, and commands typed in it, such as `/memory` and `/decide`, act on the project. The folders found under `projects/` are listed as before; they have no instructions and share General's memory. The [setup guide](SETUP-GUIDE.md#projects) has the `/project` commands.
+
 ### Sending while it is still answering
 
 You can keep typing while the assistant is still writing a reply. Press Send

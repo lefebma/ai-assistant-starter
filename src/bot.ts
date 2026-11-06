@@ -37,6 +37,8 @@ import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, extractDecisionMark
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
+import { activeProject, clearChatSessions, deleteProjectRows, getProject, projectBlock, scopeFor, setActiveProject, type Project } from './projects/store.js'
+import { projectCommand } from './projects/command.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
 import { mintWebLink, revokeAllWebSessions, webAppUrl } from './web/sessions.js'
 import { mintVoiceLink, revokeVoiceLinks, voiceLinkMessage, voiceLinkUrl } from './voice-links.js'
@@ -98,8 +100,10 @@ import type { SupportDraft } from './support/index.js'
 import { buildHelpText } from './help-text.js'
 import type { PlatformAdapter, IncomingMessage } from './platform/types.js'
 import { createWebCommandAdapter, WEB_USER_MESSAGE_ID, type WebCommandHooks } from './web/command-adapter.js'
-import { dropQueuedForChat } from './web/queue.js'
-import { cancelVoiceForChat } from './web/voice-chat.js'
+import { deleteQueueForConversation, dropQueuedForChat } from './web/queue.js'
+import { cancelVoiceForChat, endCallsForConversation } from './web/voice-chat.js'
+import { listConversations } from './web/conversations.js'
+import { removeConversationFiles } from './web/files.js'
 import { MEDIA_MESSAGE_TYPES } from './platform/types.js'
 
 // Non-abort text patterns (OpenClaw v2026.5.18 -- /btw non-abort behavior).
@@ -236,6 +240,9 @@ type TurnOpts = {
   // Saving that prompt back into the record would put last month's audit into
   // next month's sample, and the month after that would audit the audit.
   skipMemory?: boolean
+  // Where this turn lives (card #281): read when the message arrives, so a
+  // switch made while it waits does not move it.
+  scope?: string
 }
 
 /**
@@ -257,6 +264,7 @@ async function handleMessage(
     web.turns.push(web.hooks.turn(rawText, { skipMemory: opts.skipMemory }))
     return
   }
+  opts = { ...opts, scope: opts.scope ?? scopeFor(chatId, activeProject(chatId)?.id) }
   const ahead = turnQueue.enqueue(chatId, (signal) => runTurn(adapter, chatId, rawText, forceVoiceReply, opts, signal))
   if (ahead > 0) logger.info({ chatId, ahead }, 'Agent turn queued behind a running turn')
 }
@@ -270,6 +278,7 @@ async function runTurn(
   signal: AbortSignal
 ): Promise<void> {
   noteOwnerActive(isPrimaryChat(chatId))
+  const scope = opts.scope ?? chatId
   // Always-on skill catalog so the assistant knows its full toolbox and can route
   // to a skill even when the message lacks a literal trigger word. Kept as its
   // own block (not via ContextEngine) so it bypasses the "prior conversation
@@ -277,7 +286,7 @@ async function runTurn(
   const skillIndex = buildSkillIndex()
 
   // Build memory context via ContextEngine
-  const memoryContext = await contextEngine.buildContext(chatId, rawText)
+  const memoryContext = await contextEngine.buildContext(scope, rawText)
 
   // An install that has never run the discovery interview gets told about it
   // once, folded into this reply. The startup greeting covers platforms that
@@ -291,7 +300,7 @@ async function runTurn(
 
   // Pinned decisions ride every turn, outside the history that trimming and
   // compaction drop, with how to propose a new one (card #235).
-  const fullMessage = [skillIndex, memoryContext, ledgerBlock(chatId), DECISION_INSTRUCTION, onboardingNudge, rawText]
+  const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, onboardingNudge, rawText]
     .filter(Boolean)
     .join('\n\n')
 
@@ -299,9 +308,9 @@ async function runTurn(
   // budget before compaction gets a chance to wreck the turn. Off unless
   // SESSION_MAX_MESSAGES / SESSION_MAX_AGE_HOURS are set.
   const rotation = rotationConfig()
-  if (needsRotation(getSessionMeta(chatId), rotation)) {
-    const { rotated, summary } = await rotateSession(chatId, rotation, async (prompt, oldSessionId) => {
-      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
+  if (needsRotation(getSessionMeta(scope), rotation)) {
+    const { rotated, summary } = await rotateSession(scope, rotation, async (prompt, oldSessionId) => {
+      const { text } = await withActor(`chat:${chatId}`, () => runAgent(prompt, oldSessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope }))
       return text
     })
     if (rotated) {
@@ -317,7 +326,7 @@ async function runTurn(
   }
 
   // Get existing session
-  const sessionId = getSession(chatId) ?? undefined
+  const sessionId = getSession(scope) ?? undefined
 
   logger.info({ chatId, messageLength: rawText.length }, 'Processing message')
 
@@ -383,7 +392,7 @@ async function runTurn(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: rawResponse, newSessionId, aiPaused, reads } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
+    const { text: rawResponse, newSessionId, aiPaused, reads } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope }))
     // A proposed decision becomes a card of its own after the reply (card #235).
     const { cleanText: response, proposals } = rawResponse ? extractDecisionMarkers(rawResponse) : { cleanText: rawResponse, proposals: [] }
 
@@ -408,11 +417,11 @@ async function runTurn(
 
     // /newchat can arrive mid-turn now that turns run off the message loop.
     // If the session was cleared while this turn ran, don't write the old one back.
-    const clearedMidTurn = sessionId !== undefined && getSession(chatId) == null
+    const clearedMidTurn = sessionId !== undefined && getSession(scope) == null
     if (newSessionId && !clearedMidTurn) {
-      setSession(chatId, newSessionId)
+      setSession(scope, newSessionId)
     }
-    if (!clearedMidTurn) bumpSessionMessageCount(chatId)
+    if (!clearedMidTurn) bumpSessionMessageCount(scope)
 
     // A managed box whose AI allowance is used up. The owner hears it once, then
     // at most once a day; nothing else about the turn happens (no memory save,
@@ -434,8 +443,8 @@ async function runTurn(
     if (!response && proposals.length) {
       // The reply was only a proposed decision: the card is the answer.
       if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
-      if (!opts.skipMemory) await saveConversationTurn(chatId, rawText, '', { reads })
-      await sendDecisionCards(adapter, chatId, proposals)
+      if (!opts.skipMemory) await saveConversationTurn(scope, rawText, '', { reads })
+      await sendDecisionCards(adapter, chatId, proposals, scope)
       return
     }
     if (!response) {
@@ -448,7 +457,7 @@ async function runTurn(
     }
 
     // Save to memory
-    if (!opts.skipMemory) await saveConversationTurn(chatId, rawText, response, { reads })
+    if (!opts.skipMemory) await saveConversationTurn(scope, rawText, response, { reads })
 
     // Voice reply?
     if (willVoice) {
@@ -522,7 +531,7 @@ async function runTurn(
     if (fileRequests.length > 0) await deliverFiles(adapter, chatId, fileRequests)
 
     // Proposed decisions: one card each, pinned only by the owner's tap.
-    if (proposals.length) await sendDecisionCards(adapter, chatId, proposals)
+    if (proposals.length) await sendDecisionCards(adapter, chatId, proposals, scope)
 
     // Managed box at 80% of its monthly cap (card #159): one heads-up a month,
     // to the owner only, after the reply. Marked only once it is delivered,
@@ -576,15 +585,15 @@ async function runTurn(
 // --- Pinned decisions (card #235) ---
 
 /** One card per proposed decision. Only a tap on Pin writes the ledger. */
-async function sendDecisionCards(adapter: PlatformAdapter, chatId: string, proposals: Array<{ topic: string | null; text: string }>): Promise<void> {
+async function sendDecisionCards(adapter: PlatformAdapter, chatId: string, proposals: Array<{ topic: string | null; text: string }>, scope: string = chatId): Promise<void> {
   for (const p of proposals) {
     try {
       if (!adapter.supportsButtons) {
         await adapter.sendMessage(chatId, proposalHint(p))
         continue
       }
-      const id = proposeDecision(chatId, p.topic, p.text)
-      const cardId = await adapter.sendMessage(chatId, proposalCard(p, chatId), { buttons: PIN_BUTTONS })
+      const id = proposeDecision(chatId, p.topic, p.text, scope)
+      const cardId = await adapter.sendMessage(chatId, proposalCard(p, scope), { buttons: PIN_BUTTONS })
       if (cardId) setProposalCard(id, cardId)
     } catch (err) {
       logger.warn({ err: String(err), chatId }, 'Could not send a decision card')
@@ -649,12 +658,13 @@ export function isChatAllowed(chatId: string): boolean {
  * knows.
  */
 export function runShortcutTurn(chatId: string, rawText: string): Promise<string | null> {
+  const scope = scopeFor(chatId, activeProject(chatId)?.id)
   return new Promise((resolveTurn, rejectTurn) => {
     const ahead = turnQueue.enqueue(
       chatId,
       async (signal) => {
         try {
-          resolveTurn(await shortcutTurn(chatId, rawText, signal))
+          resolveTurn(await shortcutTurn(chatId, rawText, signal, scope))
         } catch (err) {
           rejectTurn(err)
         }
@@ -665,24 +675,24 @@ export function runShortcutTurn(chatId: string, rawText: string): Promise<string
   })
 }
 
-async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal): Promise<string | null> {
+async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal, scope: string): Promise<string | null> {
   markLane(chatId, 'chat')
   try {
     const skillIndex = buildSkillIndex()
-    const memoryContext = await contextEngine.buildContext(chatId, rawText)
-    const fullMessage = [skillIndex, memoryContext, ledgerBlock(chatId), SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
-    const sessionId = getSession(chatId) ?? undefined
+    const memoryContext = await contextEngine.buildContext(scope, rawText)
+    const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), SHORTCUT_FRAMING, rawText].filter(Boolean).join('\n\n')
+    const sessionId = getSession(scope) ?? undefined
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
-    const { text: raw, newSessionId, reads } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId }))
+    const { text: raw, newSessionId, reads } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope }))
     // Shortcuts get no instruction to propose decisions; strip a stray marker.
     const text = raw ? extractDecisionMarkers(raw).cleanText : raw
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
-    const clearedMidTurn = sessionId !== undefined && getSession(chatId) == null
-    if (newSessionId && !clearedMidTurn) setSession(chatId, newSessionId)
-    if (!clearedMidTurn) bumpSessionMessageCount(chatId)
-    if (text) await saveConversationTurn(chatId, rawText, text, { reads })
+    const clearedMidTurn = sessionId !== undefined && getSession(scope) == null
+    if (newSessionId && !clearedMidTurn) setSession(scope, newSessionId)
+    if (!clearedMidTurn) bumpSessionMessageCount(scope)
+    if (text) await saveConversationTurn(scope, rawText, text, { reads })
     return text
   } finally {
     clearLane(chatId)
@@ -696,6 +706,8 @@ export interface WebTurnInput {
   conversationId: string
   text: string
   framing?: string
+  /** The project this web chat is in (card #281); General when absent. */
+  scope?: string
   sessionId?: string
   model?: string
   effort?: 'low' | 'medium' | 'high' | 'xhigh'
@@ -791,19 +803,21 @@ export function cancelWebTurn(conversationId: string): CancelResult {
 
 async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): Promise<WebTurnResult> {
   const { chatId, text, framing, sessionId } = input
+  const scope = input.scope ?? chatId
   if (signal.aborted) return { text: null, cancelled: true }
   noteOwnerActive(isPrimaryChat(chatId))
   markLane(key, 'chat')
   try {
     const skillIndex = buildSkillIndex()
-    const memoryContext = await contextEngine.buildContext(chatId, text)
-    const fullMessage = [skillIndex, memoryContext, ledgerBlock(chatId), DECISION_INSTRUCTION, framing, text].filter(Boolean).join('\n\n')
+    const memoryContext = await contextEngine.buildContext(scope, text)
+    const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, framing, text].filter(Boolean).join('\n\n')
     logger.info({ chatId, key, messageLength: text.length }, 'Processing web message')
     const { text: reply, newSessionId, aiPaused, reads } = await withActor(`web:${chatId}`, () =>
       runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
         model: input.model,
         effort: input.effort,
         chatId,
+        scope,
       }),
     )
     if (signal.aborted) return { text: null, cancelled: true }
@@ -816,7 +830,7 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
       const paused = (marker ? ownerPauseReply(marker, new Date())?.text : undefined) ?? repeatReply(marker?.resumesAt)
       return { text: null, newSessionId, cancelled: false, paused }
     }
-    if (reply && !input.skipMemory) await saveConversationTurn(chatId, text, extractDecisionMarkers(reply).cleanText, { reads })
+    if (reply && !input.skipMemory) await saveConversationTurn(scope, text, extractDecisionMarkers(reply).cleanText, { reads })
     return { text: reply, newSessionId, cancelled: false }
   } finally {
     clearLane(key)
@@ -827,7 +841,8 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
 
 /** Store a Telegram/Teams chat's switch, starting fresh when it changes runtime. */
 function applyChatModelSwitch(chatId: string, r: ModelSwitch & { ok: true }): void {
-  if (r.freshSession) clearSession(chatId)
+  // Every session of the chat: a project's cannot resume on the new runtime either.
+  if (r.freshSession) clearChatSessions(chatId)
   setChatModel(chatId, r.choice.ref)
   logger.info({ chatId, model: r.choice.ref || 'default', freshSession: r.freshSession }, 'Chat model switched')
 }
@@ -909,6 +924,8 @@ export interface WebCommandInput {
   model?: string
   /** The conversation's current effort choice, for /effort. */
   effort?: string
+  /** The conversation's project (card #281): commands act on it. */
+  projectId?: string
   /**
    * The message waited in the web queue: it was sent before anything after
    * it, so a /secret set started since then neither captures it as the key
@@ -933,7 +950,33 @@ export interface WebCommandResult {
  * turns it started (`/audit` runs one). The web keeps its reply stream open
  * until they finish so their answer lands in the page.
  */
-const webCommands = new WeakMap<PlatformAdapter, { hooks: WebCommandHooks; turns: Promise<void>[] }>()
+const webCommands = new WeakMap<PlatformAdapter, { hooks: WebCommandHooks; turns: Promise<void>[]; chatId: string; projectId?: string }>()
+
+/** The project a command acts on: the web conversation's, or the chat's active one. */
+function commandProject(adapter: PlatformAdapter, chatId: string): Project | null {
+  const web = webCommands.get(adapter)
+  return web ? getProject(chatId, web.projectId) : activeProject(chatId)
+}
+
+const commandScope = (adapter: PlatformAdapter, chatId: string): string => scopeFor(chatId, commandProject(adapter, chatId)?.id)
+
+/** Delete a project and all it owns, stopping anything of it still running. */
+export function removeProject(chatId: string, id: string): boolean {
+  if (!getProject(chatId, id)) return false
+  if (activeProject(chatId)?.id === id) {
+    turnQueue.cancel(chatId)
+    setActiveProject(chatId, null)
+  }
+  const chats = listConversations(chatId, id)
+  for (const c of chats) {
+    cancelWebTurn(c.id)
+    endCallsForConversation(chatId, c.id)
+    deleteQueueForConversation(c.id)
+  }
+  for (const t of getAllTasks()) if (t.chat_id === chatId && t.project_id === id) cancelScheduledTask(t.id)
+  for (const c of deleteProjectRows(chatId, id) ?? []) removeConversationFiles(c)
+  return true
+}
 
 /**
  * The web card a support draft was sent on, so only a click on that card
@@ -985,7 +1028,7 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
   }
   const adapter = createWebCommandAdapter(hooks)
   const turns: Promise<void>[] = []
-  webCommands.set(adapter, { hooks, turns })
+  webCommands.set(adapter, { hooks, turns, chatId, projectId: input.projectId })
   try {
     // The one difference from Telegram: a web chat has its own agent session,
     // so starting fresh here clears that one and leaves the chat's alone.
@@ -1112,7 +1155,8 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
       const label = t.name ?? t.prompt.slice(0, 60)
       const mode = t.delivery_mode === 'silent' ? ' [silent]' : ''
       const role = t.role ? ` | Role: ${t.role}` : ''
-      return `[${t.status}${mode}] ${t.id}: ${label}\nSchedule: ${t.schedule} | Next: ${new Date(t.next_run * 1000).toLocaleString()}${role}`
+      const project = getProject(t.chat_id, t.project_id)
+      return `[${t.status}${mode}] ${t.id}: ${label}\nSchedule: ${t.schedule} | Next: ${new Date(t.next_run * 1000).toLocaleString()}${role}${project ? ` | Project: ${project.name}` : ''}`
     })
     await adapter.sendMessage(chatId, lines.join('\n\n'))
     return
@@ -1145,7 +1189,7 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
     const env = (await import('./env.js')).readEnvFile()
     const tz = env['TIMEZONE'] ?? 'America/New_York'
     const nextRun = computeNextRun(cron, tz)
-    createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, tz, false, roleArg === 'full' ? null : roleArg)
+    createTask(id, chatId, prompt, cron, nextRun, name ?? undefined, deliveryMode, tz, false, roleArg === 'full' ? null : roleArg, commandProject(adapter, chatId)?.id ?? null)
     await adapter.sendMessage(
       chatId,
       `Task created: ${id}${name ? ` (${name})` : ''}\nMode: ${deliveryMode}\nSchedule: ${cron}\nNext run: ${new Date(nextRun * 1000).toLocaleString()}${roleArg && roleArg !== 'full' ? `\nRole: ${roleArg}` : ''}`
@@ -1936,7 +1980,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     return true
   }
   if (cmd === '/newchat' || cmd === '/forget') {
-    clearSession(chatId)
+    clearSession(commandScope(adapter, chatId))
     reloadSkills()
     contextEngine.invalidateCaches()
     pendingSupport.delete(chatId)
@@ -2013,11 +2057,19 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     return true
   }
   if (cmd === '/decide' || cmd === '/decisions') {
-    await adapter.sendMessage(chatId, decisionCommand(chatId, cmd, trimmed.slice(cmd.length).trim()))
+    await adapter.sendMessage(chatId, decisionCommand(commandScope(adapter, chatId), cmd, trimmed.slice(cmd.length).trim()))
+    return true
+  }
+  if (cmd === '/project') {
+    const text = projectCommand(
+      { chatId, current: commandProject(adapter, chatId), web: webCommands.has(adapter), remove: (id) => removeProject(chatId, id) },
+      trimmed.slice(cmd.length).trim(),
+    )
+    await adapter.sendMessage(chatId, text)
     return true
   }
   if (cmd === '/memory') {
-    const memories = getMemoriesForChat(chatId, 10)
+    const memories = getMemoriesForChat(commandScope(adapter, chatId), 10)
     if (memories.length === 0) {
       await adapter.sendMessage(chatId, 'No memories stored yet.')
     } else {
@@ -2172,6 +2224,7 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'model', description: 'Pick the AI model for this chat' },
   { command: 'effort', description: 'Set how hard I think before answering' },
   { command: 'private', description: 'Keep client names on this machine' },
+  { command: 'project', description: 'Projects: their own instructions, chats and memory' },
   { command: 'memory', description: 'Show recent stored memories' },
   { command: 'decisions', description: 'Pinned decisions (list/remove)' },
   { command: 'decide', description: 'Pin a decision for this chat' },

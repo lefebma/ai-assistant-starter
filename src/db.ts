@@ -9,6 +9,7 @@ import { initEffectJournalTables } from './assurance/effect-journal.js'
 import { initRunStateTables } from './assurance/run-state.js'
 import { initPrivacyTables } from './privacy/schema.js'
 import { initDecisionTables } from './memory/decision-schema.js'
+import { initProjectTables } from './projects/schema.js'
 
 let db: Database.Database
 
@@ -292,6 +293,10 @@ export function initDatabase(): void {
   if (!colNames.has('run_key')) {
     d.exec('ALTER TABLE scheduled_tasks ADD COLUMN run_key TEXT')
   }
+  // The project a job belongs to (card #281). NULL is General.
+  if (!colNames.has('project_id')) {
+    d.exec('ALTER TABLE scheduled_tasks ADD COLUMN project_id TEXT')
+  }
 
   initEmailAlertTables(d)
   initProactiveTables(d)
@@ -299,6 +304,7 @@ export function initDatabase(): void {
   initRunStateTables(d)
   initPrivacyTables(d)
   initDecisionTables(d)
+  initProjectTables(d)
 }
 
 // --- App state (one-shot install flags) ---
@@ -492,6 +498,7 @@ export interface ScheduledTask {
   delivery_mode: 'announce' | 'silent'
   timezone: string
   run_once: number
+  project_id: string | null
   /** Role the unattended run is limited to (card #195); null for every tool. */
   role?: string | null
   /** Run key of the run in flight or waiting on a retry (card #234); null when idle. */
@@ -511,13 +518,14 @@ export function createTask(
   // every customer's scheduled tasks to the author's own city.
   timezone = installTimezone(),
   runOnce = false,
-  role: string | null = null
+  role: string | null = null,
+  projectId: string | null = null
 ): void {
   const d = getDb()
   d.prepare(
-    `INSERT INTO scheduled_tasks (id, chat_id, name, prompt, schedule, next_run, delivery_mode, timezone, run_once, role, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
-  ).run(id, chatId, name ?? null, prompt, schedule, nextRun, deliveryMode, timezone, runOnce ? 1 : 0, role, now())
+    `INSERT INTO scheduled_tasks (id, chat_id, name, prompt, schedule, next_run, delivery_mode, timezone, run_once, role, project_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`
+  ).run(id, chatId, name ?? null, prompt, schedule, nextRun, deliveryMode, timezone, runOnce ? 1 : 0, role, projectId, now())
 }
 
 /** Set or clear (null) the role a task runs with. False when there is no such task. */

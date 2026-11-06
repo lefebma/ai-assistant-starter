@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.73.0 - 2026-11-06
+
+- **New: projects keep your work in separate spaces.** A project has a name, standing instructions, and its own chats, memory, pinned decisions and scheduled tasks, so one client's work stays with that client. In the web app, press the plus next to Projects. In chat, send `/project new Acme` to start one, `/project instructions` and your text to tell your assistant how to work in it, `/project Acme` to go back in, and `/project off` to come back to General. Nothing from a project reaches your other chats, and nothing from them reaches it.
+
 ## 1.72.2 - 2026-11-06
 
 - **Fixed: text you paste is kept as outside text.** Long text pasted into the web chat was remembered as your own words, so a pasted email could come back later as something you said. It is now remembered as outside text, like a forwarded message.

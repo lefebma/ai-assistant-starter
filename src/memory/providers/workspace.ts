@@ -1,3 +1,4 @@
+import { chatOfScope } from '../../projects/store.js'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { PROJECT_ROOT } from '../../env.js'
@@ -79,7 +80,7 @@ export class WorkspaceProvider implements ContextProvider {
     const frags: ContextFragment[] = []
 
     for (const entry of entries) {
-      const chatHint = entry.chatIds.includes(String(chatId))
+      const chatHint = entry.chatIds.includes(chatOfScope(String(chatId)))
       // Lookarounds rather than \b: a name ending in a non-word character
       // ("john[dev]") has no word boundary after it, so \b would never match.
       const nameHit = firstNames(entry).some((n) =>

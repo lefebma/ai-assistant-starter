@@ -14,6 +14,7 @@
  */
 import { OPENAI_API_KEY } from '../config.js'
 import { isManagedAi } from '../ai-limit.js'
+import { projectBlock, scopeFor } from '../projects/store.js'
 import { cancelLiveForChat, createLiveSession, endLiveSession, liveRuntimeSupported, memoryChatId, type EndedCall, type Turn } from '../voice-live.js'
 import { logger } from '../logger.js'
 import { addMessage, getConversation, listMessages, updateConversation, type MessageRow } from './conversations.js'
@@ -28,6 +29,8 @@ export interface VoiceChatStart {
   chatId: string
   /** The conversation's latest messages, for both models. */
   chatContext: string
+  memoryScope?: string
+  project?: string
   /** Text the assistant wants in the chat rather than read aloud. */
   deliver(text: string): Promise<boolean>
   onEnded(call: EndedCall): void
@@ -54,6 +57,8 @@ const realDeps: VoiceChatDeps = {
   start: (input) =>
     createLiveSession(input.sdp, input.voice, input.chatId, (_chat, text) => input.deliver(text), {
       chatContext: input.chatContext,
+      memoryScope: input.memoryScope,
+      project: input.project,
       onEnded: input.onEnded,
     }) as Promise<{ session?: { id?: string }; transport?: { sdp?: string } }>,
   end: (sessionId, chatId) => endLiveSession(sessionId, memoryChatId(chatId)),
@@ -227,6 +232,7 @@ export async function startWebCall(input: { chatId: string; conversationId: stri
   if (activeCallFor(input.chatId, input.conversationId)) throw new VoiceChatError(409, 'call_active')
   let markDone!: () => void
   const done = new Promise<void>((r) => (markDone = r))
+  const scope = scopeFor(input.chatId, getConversation(input.chatId, input.conversationId)?.projectId)
   const call: WebCall = { sessionId: '', chatId: input.chatId, conversationId: input.conversationId, deliveries: [], finished: false, added: 0, done, markDone }
   // Hold the conversation's place before the first await, so a second start
   // (another tab, a double tap) sees it and gets 409 instead of a second call.
@@ -239,6 +245,9 @@ export async function startWebCall(input: { chatId: string; conversationId: stri
       voice: input.voice,
       chatId: input.chatId,
       chatContext: chatContextFor(listMessages(input.conversationId)),
+      // A call in a project stays in it (card #281).
+      memoryScope: scope,
+      project: projectBlock(scope) || undefined,
       async deliver(text) {
         // During the call it waits, to sit in the transcript where it was said.
         // After the call (a lookup that outlived it) it goes straight in.

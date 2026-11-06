@@ -39,7 +39,12 @@
 
     <div class="panel-scroll">
       <section class="side-section" aria-labelledby="projects-title">
-        <h2 id="projects-title" class="side-title">Projects</h2>
+        <div class="side-head">
+          <h2 id="projects-title" class="side-title">Projects</h2>
+          <button type="button" id="project-add" class="icon-btn" aria-label="New project" title="New project">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
         <ul id="projects" class="project-list"></ul>
       </section>
 
@@ -268,6 +273,28 @@
     </section>
     <p id="settings-version" class="settings-version"></p>
   </div>
+</dialog>
+
+<dialog id="project-dialog" class="project-dialog" aria-labelledby="project-dialog-title">
+  <form id="project-form" autocomplete="off">
+    <h2 id="project-dialog-title">New project</h2>
+    <p class="project-hint">A project keeps its own instructions, chats, memory and scheduled tasks. Nothing in it reaches your other work.</p>
+    <label class="project-field">
+      <span>Name</span>
+      <input id="project-name" type="text" maxlength="80" required>
+    </label>
+    <label class="project-field">
+      <span>Instructions</span>
+      <textarea id="project-instructions" rows="10" maxlength="8000" placeholder="How should I work in this project? Who is it for, what tone, what to always or never do."></textarea>
+    </label>
+    <p id="project-note" class="note" role="status"></p>
+    <div class="project-actions">
+      <button type="button" id="project-delete" class="small-btn danger" hidden>Delete project</button>
+      <span class="project-spacer"></span>
+      <button type="button" id="project-cancel" class="small-btn ghost">Cancel</button>
+      <button type="submit" id="project-save" class="small-btn">Save</button>
+    </div>
+  </form>
 </dialog>
 
 </body>
