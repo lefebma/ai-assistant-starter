@@ -156,7 +156,8 @@ describe('sending attachments', () => {
     const id = await newConv()
     const pasted = 'line one\n  indented two\nline three'
     await (await post(`/api/web/conversations/${id}/chat`, { text: 'Summarise', pastes: [pasted] })).text()
-    expect(rt.calls[0]!.message).toContain(`lines, saved at ${join(UPLOADS, 'chat', id, 'pasted-text.txt')}]\n<pasted-text>\n${pasted}\n</pasted-text>\nSummarise`)
+    expect(rt.calls[0]!.message).toContain(`lines, saved at ${join(UPLOADS, 'chat', id, 'pasted-text.txt')}]\n<untrusted-pasted-text-`)
+    expect(rt.calls[0]!.message).toMatch(new RegExp(`<untrusted-pasted-text-\\w+>\\n${pasted}\\n</untrusted-pasted-text-\\w+>\\nSummarise`))
     const [user] = conv.listMessages(id)
     expect(user!.files).toEqual([{ path: join(UPLOADS, 'chat', id, 'pasted-text.txt'), name: 'pasted-text.txt', kind: 'document', pasted: true }])
     expect(readFileSync(user!.files[0]!.path, 'utf-8')).toBe(pasted)

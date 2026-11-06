@@ -151,7 +151,7 @@ describe('SpaceRoute behind the real gate', () => {
     expect(route.policyFor('temp-grant')).toEqual(DENY_ALL)
   })
 
-  it('a second AuditLog on the same file breaks the chain, so the route must share the gate\'s', async () => {
+  it('a second AuditLog on the same file keeps the chain whole', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'havn-space-audit-'))
     const { AuditLog } = await import('../src/assurance/audit-log.js')
     const a = new AuditLog({ dir, workspace: CWD })
@@ -159,7 +159,7 @@ describe('SpaceRoute behind the real gate', () => {
     a.append({ runId: 'x', actor: 't', action: 'Bash', outcome: 'allowed', detail: '1' })
     b.append({ runId: 'x', actor: 't', action: 'space.dispatch', outcome: 'allowed', detail: '2' })
     a.append({ runId: 'x', actor: 't', action: 'Bash', outcome: 'allowed', detail: '3' })
-    expect(new AuditLog({ dir, workspace: CWD }).verify().issues.length).toBeGreaterThan(0)
+    expect(new AuditLog({ dir, workspace: CWD }).verify().issues).toEqual([])
   })
 
   it('records dispatch and exit on the host, and the audit chain still verifies', async () => {

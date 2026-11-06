@@ -90,6 +90,10 @@ describe('tool calls become evidence', () => {
   it('reads shell commands for what they did, compound ones included', () => {
     expect(evidenceTypes('Bash', { command: 'gog gmail search "is:unread" --max 20' })).toEqual(expect.arrayContaining(['mail.read', 'source.read']))
     expect(evidenceTypes('Bash', { command: 'node dist/scripts/ms-mail.js inbox --top 10 && node /x/ms-mail.js draft --to a@b' })).toEqual(expect.arrayContaining(['mail.read', 'mail.drafted']))
+    // The account can come before the subcommand (review).
+    expect(evidenceTypes('Bash', { command: 'gog --account a@b.co gmail read 12' })).toContain('mail.read')
+    expect(evidenceTypes('Bash', { command: 'gog -a a@b.co --json calendar events' })).toContain('calendar.read')
+    expect(evidenceTypes('Bash', { command: 'gog --account a@b.co gmail send' })).not.toContain('mail.read')
     expect(evidenceTypes('Bash', { command: 'gog calendar events --today' })).toEqual(expect.arrayContaining(['calendar.read', 'source.read']))
     expect(evidenceTypes('bash', { command: 'curl -s https://example.com' })).toEqual(expect.arrayContaining(['web.read']))
     expect(evidenceTypes('WebSearch', { query: 'x' })).toEqual(['web.read', 'source.read'])

@@ -131,6 +131,11 @@ export function getItem(conversationId: string, id: number): QueueItem | null {
   return r ? toItem(r) : null
 }
 
+/** A click that will never run gives its card back, so the owner can answer it again. */
+function freeCard(messageId: number): void {
+  db().prepare('UPDATE web_messages SET buttons_used = NULL WHERE id = ?').run(messageId)
+}
+
 /** The row an earlier send with this id made, if any. */
 export function findByClientId(conversationId: string, clientId: string): QueueItem | null {
   if (!clientId) return null
@@ -143,7 +148,10 @@ export function findByClientId(conversationId: string, clientId: string): QueueI
  * everything in the chat, the waiting web messages included. Returns how many.
  */
 export function dropQueuedForChat(chatId: string): number {
-  return db().prepare("DELETE FROM web_queue WHERE chat_id = ? AND state = 'queued'").run(chatId).changes
+  const d = db()
+  const clicks = d.prepare("SELECT clicked_message_id AS id FROM web_queue WHERE chat_id = ? AND state = 'queued' AND clicked_message_id IS NOT NULL").all(chatId) as { id: number }[]
+  for (const c of clicks) freeCard(c.id)
+  return d.prepare("DELETE FROM web_queue WHERE chat_id = ? AND state = 'queued'").run(chatId).changes
 }
 
 /** Waiting messages, oldest first. */
@@ -205,6 +213,8 @@ export function editQueued(conversationId: string, id: number, text: string): Ch
 
 /** Take a waiting message off the queue. Refused once its turn has started. */
 export function removeQueued(conversationId: string, id: number): ChangeResult {
+  const clicked = getItem(conversationId, id)
+  if (clicked?.state === 'queued' && clicked.clickedMessageId !== null) freeCard(clicked.clickedMessageId)
   return change(conversationId, id, "DELETE FROM web_queue WHERE id = ? AND conversation_id = ? AND state = 'queued'")
 }
 

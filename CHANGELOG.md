@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.72.1 - 2026-11-05
+
+- **Fixed: text you paste is kept as outside text.** Long text pasted into the web chat was remembered as your own words, so a pasted email could come back later as something you said. It is now remembered as outside text, like a forwarded message.
+- **Fixed: a sender's name is no longer saved as your words.** The name on a forwarded message or a reply is set by that person. It now stays out of what is remembered as yours.
+- **Fixed: a Pin tap you take back leaves the card usable.** Removing a queued tap in the web chat, or `/cancel` dropping it, left the card used with nothing pinned. The card now works again.
+- **Fixed: a reply that is only a decision card is no longer lost.** Your message is saved to memory, and if the card cannot be sent you get a line saying how to pin it with `/decide` instead of silence.
+- **Fixed: email read with the account named first is recognised.** `gog --account you@example.com gmail read` now counts as reading mail, for memory and for scheduled job checks.
+- **Fixed: the audit log could fork, and shipping then went quiet.** `enable-egress --prove` writes to the log from a second process. The service then reused those numbers and the witness stopped receiving events, with nothing logged. The service now carries on after the last line on disk, and a broken chain is logged as a send failure.
+
 ## 1.72.0 - 2026-11-05
 
 - **New: your assistant suggests what you have not tried yet.** Now and then, at a quiet moment, you get one short tip: what a feature does and one thing to try. Tips fit your setup (connect a calendar first, then hear about meeting briefings), stop once you use the feature, and never turn anything on for you. After an update, you hear about the one or two new things most useful to you. No more than one a day and three a week, never in your quiet hours or in the middle of a conversation, and they use none of your AI allowance. Send `/tips` for the next one and a list of those you have seen, `/tips less` for one a week, `/tips off` to stop them. Tap Not for me, or send `/tips hide`, and that tip does not come back. In the web app the latest tip shows as a quiet card above the chat.

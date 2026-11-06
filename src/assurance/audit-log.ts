@@ -19,8 +19,9 @@
  * that witness.
  *
  * Card #196 wired it into the tool path (audit-trail.ts). The chain head is
- * tracked in memory from the last line on disk, so an append never rereads a
- * log. A synchronous witness is optional: the off-box one is asynchronous, and
+ * tracked in memory and checked against the last line on disk before each
+ * append, because a second process (`enable-egress --prove`) can write to the
+ * same log while the service runs. A synchronous witness is optional: the off-box one is asynchronous, and
  * ships `eventsAfter(seq)` from the append-only file itself, so the file is
  * the outbox and nothing the agent can edit sits between it and the witness.
  */
@@ -165,6 +166,13 @@ export class AuditLog {
 
   /** Links to the tracked head; the head moves only once the local write succeeded. */
   append(input: AuditInput): AuditEvent {
+    // Another process may have written since: carry on after its last event,
+    // or this one would reuse a number and fork the chain.
+    const tail = tailOf(this.file)
+    if (tail.last && tail.last.seq > this.head.seq) {
+      this.head = { seq: tail.last.seq, hash: tail.last.hash }
+      this.torn = tail.torn
+    }
     const base = { seq: this.head.seq + 1, ts: new Date().toISOString(), ...input, prevHash: this.head.hash }
     const event: AuditEvent = { ...base, hash: hashOf(base) }
     this.witness?.append(event)

@@ -16,6 +16,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { getFileRoots, resolveVisible } from './files.js'
 import { MAX_UPLOAD_BYTES } from './file-routes.js'
 import type { StoredFile } from './conversations.js'
+import { wrapUntrusted } from '../prompt-safety.js'
 
 export const MAX_ATTACHMENTS = 10
 export const MAX_PASTES = 5
@@ -139,7 +140,7 @@ export function attachmentTurnText(text: string, files: Attached[]): string {
   const parts: string[] = []
   for (const f of files) {
     if (f.kind === 'photo') parts.push(`[Photo attached: ${f.path}]`)
-    else if (f.pasted) parts.push(`[Pasted text, ${lineCount(f.text ?? '')} lines, saved at ${f.path}]\n<pasted-text>\n${f.text ?? ''}\n</pasted-text>`)
+    else if (f.pasted) parts.push(`[Pasted text, ${lineCount(f.text ?? '')} lines, saved at ${f.path}]\n${wrapUntrusted('pasted-text', f.text ?? '', Number.MAX_SAFE_INTEGER)}`)
     else parts.push(`[Document attached: ${f.name} at ${f.path}]`)
   }
   const photos = files.filter((f) => f.kind === 'photo').length

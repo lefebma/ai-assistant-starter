@@ -119,6 +119,15 @@ describe('owner reply while the AI allowance is used up', () => {
     }
   })
 
+  it('a reply that is only a decision card still saves the turn (review)', async () => {
+    h.runAgent.mockResolvedValue({ text: '[[decision: invoices | Send to billing]]', newSessionId: 's1' })
+    const { sent, say } = harness()
+    await say('send invoices to billing from now on')
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('Send to billing')
+    expect(h.saveTurn).toHaveBeenCalledTimes(1)
+  })
+
   it('leaves the normal reply path alone', async () => {
     h.runAgent.mockResolvedValue({ text: 'all good', newSessionId: 's1' })
     const { sent, say } = harness()

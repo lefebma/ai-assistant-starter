@@ -40,7 +40,11 @@ export function recallLine(m: Pick<Memory, 'origin' | 'content'>, maxLen = 400):
 export function ownerWords(text: string): string {
   // A wrapper closes only with its own label and id (the backreference); its
   // content has every other block tag defanged, so it cannot close early.
-  return text.replace(/<(untrusted-[\w-]+)>[\s\S]*?<\/\1>/g, '[quoted text]')
+  return text
+    .replace(/<(untrusted-[\w-]+)>[\s\S]*?<\/\1>/g, '[quoted text]')
+    // The sender picks their own name, so the lines naming it are not the owner's words.
+    .replace(/^This message was forwarded from .*$/gm, '[forwarded]')
+    .replace(/^In reply to a message from .*$/gm, 'In reply to a message:')
 }
 
 /** True when the owner's message carried quoted or forwarded text. */

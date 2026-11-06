@@ -377,8 +377,9 @@ describe('S3 stale, malicious and cross-chat memory', () => {
     const summary = rows.find(r => r.content.startsWith('Assistant responded: Summary of the vendor email'))!
     expect(summary.origin).toBe('untrusted')
     // The owner's row holds only the owner's words; the forwarded text is its own untrusted row.
-    const own = rows.find(r => r.content.includes('forwarded from Ledger Sync'))!
+    const own = rows.find(r => r.content.includes('[forwarded]'))!
     expect(own.origin).toBe('owner')
+    expect(own.content).not.toContain('Ledg') // the sender's name is theirs, not the owner's
     expect(own.content).not.toContain('archive@ledger-sync.example')
     expect(own.sector).toBe('episodic') // the vendor's "always" no longer promotes the owner's row
     const fwd = rows.find(r => r.content.startsWith('Quoted or forwarded text:'))!

@@ -26,6 +26,15 @@ describe('audit log tamper resistance (card 169)', () => {
     expect(log.verify()).toEqual({ ok: true, issues: [], events: 2 })
   })
 
+  it('carries on after events another process wrote, so the chain cannot fork', () => {
+    const service = new AuditLog({ dir: auditDir, workspace })
+    service.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'one' })
+    const other = new AuditLog({ dir: auditDir, workspace })
+    other.append({ ...ctx(), action: 'egress', outcome: 'allowed', detail: 'prove' })
+    expect(service.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'two' }).seq).toBe(3)
+    expect(service.verify()).toEqual({ ok: true, issues: [], events: 3 })
+  })
+
   it('detects an edited line, a truncation, and a deleted log', () => {
     const witness = new MemorySink()
     const log = new AuditLog({ dir: auditDir, workspace, witness })

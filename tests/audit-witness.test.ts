@@ -227,6 +227,18 @@ describe('shipping a box log to the witness', () => {
     expect(readWitnessState(join(auditDir, 'witness-state.json')).lastError).toBeUndefined()
   })
 
+  it('reports a log that no longer continues the acknowledged event', async () => {
+    const token = await issue(env, 'box-a')
+    const log = new AuditLog({ dir: auditDir, workspace })
+    add(log, 3)
+    expect((await shipperFor(log, token).shipOnce()).shipped).toBe(3)
+    const stale = readFileSync(join(auditDir, 'audit.jsonl'), 'utf-8').split('\n')[1]!
+    writeFileSync(join(auditDir, 'audit.jsonl'), stale + '\n', { flag: 'a' })
+    const r = await shipperFor(log, token).shipOnce()
+    expect(r.shipped).toBe(0)
+    expect(r.state.lastError).toBe('chain broken: event 3 is followed by 2')
+  })
+
   it('skips a torn line and keeps the offset right', async () => {
     const token = await issue(env, 'box-a')
     const log = new AuditLog({ dir: auditDir, workspace })
