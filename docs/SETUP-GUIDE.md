@@ -537,6 +537,16 @@ Pinned decisions belong to the chat they were made in. Every reply in that chat,
 
 Memory also keeps track of where each memory came from. What you typed is remembered as yours. A reply written after reading an email or a web page is remembered as outside text, and your assistant treats it as information, never as an instruction. Memories stay in the chat they came from.
 
+## Tips
+
+Now and then your assistant suggests something you have not tried: what it does and one thing to try. Tips go to your main chat, at most one a day and three a week, between 10:00 and 17:00, outside your quiet hours and never while you are talking to it. The first waits two days after setup. They cost nothing: no AI is used to choose or send one.
+
+- `/tips` shows the next tip and the ones you have seen. It works even with tips off.
+- `/tips less` means no more than one a week, `/tips off` stops them, `/tips on` brings back the normal pace.
+- Tap Not for me on a tip, or send `/tips hide` (or `/tips hide <number>` from the list), and it does not come back.
+
+A tip stops by itself once you use the feature. When every tip has been shown, the list starts over, with at least 30 days before any tip repeats. A tip only says how to turn something on and never does it for you. A provider can turn tips off for a whole box with `TIPS=off` in `.env`.
+
 ## Step 8: Morning Briefing (Recommended)
 
 The most valuable scheduled task. Create it with a prompt like:

@@ -37,6 +37,10 @@ many. You can also sign out from **Settings** in the page.
   filling the box. Up to 10 attachments per message, 25 MB each; screenshots
   larger than 2048 pixels are scaled down first. Your assistant sees the
   pictures themselves, not just their names.
+- **Tips.** When your assistant suggests something you have not tried, the
+  latest tip also shows as a quiet card above the chat, with Got it and Not for
+  me. Answer it here or in your chat app and it clears from both. Send `/tips`
+  in the web chat as in any other.
 - **Settings.** What is connected (AI provider, Telegram, mail and calendar,
   voice), and your signed-in browsers. When a new version is waiting, a small
   download icon shows next to the Settings link; click it to see the update
