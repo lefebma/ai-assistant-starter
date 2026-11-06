@@ -2298,6 +2298,7 @@ async function loadTip() {
   } catch {
     // no card this visit
   }
+  state.tipIds = tip ? tip.ids : []
   $('tip-text').textContent = tip ? tip.text : ''
   $('tip-try').textContent = tip ? tip.tryIt : ''
   show($('tip-card'), !!tip)
@@ -2306,7 +2307,7 @@ async function loadTip() {
 async function answerTip(action) {
   show($('tip-card'), false)
   try {
-    await api.post('/api/web/tips', { action })
+    await api.post('/api/web/tips', { action, ids: state.tipIds })
   } catch {
     // hidden for this visit; it comes back on the next load
   }

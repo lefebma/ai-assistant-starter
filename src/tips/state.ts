@@ -33,7 +33,8 @@ export interface TipState {
 const KEY = 'tips.state'
 const DAY_MS = 86_400_000
 const WEEK_MS = 7 * DAY_MS
-const MAX_CARDS = 20
+/** Years of cards at the normal pace. A card forgotten here would send its click to the model. */
+const MAX_CARDS = 200
 
 /** Not a full day: "one a day" must not slide later each day until it falls out of the window. */
 export const MIN_GAP_MS = 20 * 3_600_000
@@ -158,10 +159,14 @@ export function holdReason(s: TipState, m: Moment): string | null {
   return null
 }
 
-/** Whether a paced tip is allowed on top of holdReason. */
-export function paceAllows(s: TipState, nowMs: number): boolean {
-  if (nowMs - s.startedAt < FIRST_TIP_HOLD_MS) return false
+/** The week has room. An update tip waits for this too, so `less` stays one a week. */
+export function weekAllows(s: TipState, nowMs: number): boolean {
   return s.sends.filter((t) => nowMs - t < WEEK_MS).length < WEEKLY_CAP[s.pace]
+}
+
+/** The new-box hold is over. Update tips do not wait for it. */
+export function holdPassed(s: TipState, nowMs: number): boolean {
+  return nowMs - s.startedAt >= FIRST_TIP_HOLD_MS
 }
 
 function noteShown(s: TipState, ids: string[], nowMs: number): void {

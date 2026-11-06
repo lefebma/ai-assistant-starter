@@ -22,14 +22,16 @@ registerWebRoutes([
     auth: true,
     async handler(ctx) {
       if (ctx.chatId !== PRIMARY_CHAT_ID) return sendError(ctx.res, 403, 'forbidden')
-      let action: unknown
+      let body: { action?: unknown; ids?: unknown }
       try {
-        action = ((await readJsonCapped(ctx.req)) as { action?: unknown }).action
+        body = (await readJsonCapped(ctx.req)) as typeof body
       } catch (err) {
         return sendError(ctx.res, err instanceof BodyError ? err.status : 400, 'bad_body')
       }
+      const { action, ids } = body
       if (action !== 'ok' && action !== 'hide') return sendError(ctx.res, 400, 'bad_action')
-      answerWebTip(action === 'hide')
+      if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) return sendError(ctx.res, 400, 'bad_ids')
+      answerWebTip(ids as string[], action === 'hide')
       sendJson(ctx.res, 200, { ok: true })
     },
   },

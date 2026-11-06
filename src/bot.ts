@@ -31,7 +31,7 @@ import { resolveTurnRuntime } from './runtime/index.js'
 import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
-import { noteAsked, noteOwnerMessage, resolveTipClick, tipsCommand, TIP_BUTTONS } from './tips/control.js'
+import { noteAsked, noteOwnerActive, noteOwnerMessage, resolveTipClick, tipsCommand, TIP_BUTTONS } from './tips/control.js'
 import { tipContext } from './tips/context.js'
 import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, extractDecisionMarkers, ledgerBlock, outcomeText, proposalCard, proposalHint, proposeDecision, resolveProposal, setProposalCard } from './memory/decisions.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
@@ -269,6 +269,7 @@ async function runTurn(
   opts: TurnOpts,
   signal: AbortSignal
 ): Promise<void> {
+  noteOwnerActive(isPrimaryChat(chatId))
   // Always-on skill catalog so the assistant knows its full toolbox and can route
   // to a skill even when the message lacks a literal trigger word. Kept as its
   // own block (not via ContextEngine) so it bypasses the "prior conversation
@@ -604,11 +605,11 @@ async function resolveDecisionClick(adapter: PlatformAdapter, chatId: string, ca
 async function handleTipsCommand(adapter: PlatformAdapter, chatId: string, arg: string, cardPrefix = ''): Promise<void> {
   const r = tipsCommand(isPrimaryChat(chatId), arg, await tipContext(chatId), adapter.supportsButtons)
   const cardId = await adapter.sendMessage(chatId, r.text, r.tipIds && adapter.supportsButtons ? { buttons: TIP_BUTTONS } : undefined)
-  if (r.tipIds) noteAsked(r.tipIds, cardId ? `${cardPrefix}${cardId}` : null)
+  if (r.tipIds) noteAsked(r.tipIds, cardId ? `${cardPrefix}${chatId}:${cardId}` : null)
 }
 
 async function answerTipClick(adapter: PlatformAdapter, chatId: string, cardId: string, label: string): Promise<boolean> {
-  const reply = resolveTipClick(cardId, label)
+  const reply = resolveTipClick(isPrimaryChat(chatId), cardId, label)
   if (reply === null) return false
   await adapter.sendMessage(chatId, reply)
   return true
@@ -734,6 +735,11 @@ function trackWebTurn(key: string, chatId: string): () => void {
   }
 }
 
+/** A web turn of this chat is running or waiting. Web turns have their own lane, so isChatBusy misses them. */
+export function webTurnBusy(chatId: string): boolean {
+  return [...webTurnChats.values()].some((e) => e.chatId === chatId)
+}
+
 /** Stop every web turn, running or queued, that belongs to this chat. */
 export function cancelWebTurnsForChat(chatId: string): CancelResult {
   let stoppedActive = false
@@ -784,6 +790,7 @@ export function cancelWebTurn(conversationId: string): CancelResult {
 async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): Promise<WebTurnResult> {
   const { chatId, text, framing, sessionId } = input
   if (signal.aborted) return { text: null, cancelled: true }
+  noteOwnerActive(isPrimaryChat(chatId))
   markLane(key, 'chat')
   try {
     const skillIndex = buildSkillIndex()
@@ -1033,7 +1040,7 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
       if (input.clickedMessageId !== undefined && (await resolveDecisionClick(adapter, chatId, `${input.conversationId}:${input.clickedMessageId}`, click[1]!))) {
         return { handled: true, clearSession: false }
       }
-      if (input.clickedMessageId !== undefined && (await answerTipClick(adapter, chatId, `web:${input.clickedMessageId}`, click[1]!))) {
+      if (input.clickedMessageId !== undefined && (await answerTipClick(adapter, chatId, `web:${chatId}:${input.clickedMessageId}`, click[1]!))) {
         return { handled: true, clearSession: false }
       }
       const picked = await modelForClick(`web:${input.conversationId}`, click[1]!)
@@ -2282,7 +2289,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       // it, so the same card can never send the same email twice.
       const answer = async () => {
         if (msg.messageId && (await resolveDecisionClick(adapter, chatId, msg.messageId, label))) return
-        if (msg.messageId && (await answerTipClick(adapter, chatId, msg.messageId, label))) return
+        if (msg.messageId && (await answerTipClick(adapter, chatId, `${chatId}:${msg.messageId}`, label))) return
         if (await resolveModelClick(adapter, chatId, label)) return
         if (await resolveEffortClick(adapter, chatId, label)) return
         if (await resolveSupportAction(adapter, chatId, label)) return

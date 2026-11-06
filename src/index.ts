@@ -42,6 +42,7 @@ import { startTips } from './tips/service.js'
 import { isChatBusy } from './agent.js'
 import { tipContext } from './tips/context.js'
 import { lastOwnerMessage } from './tips/control.js'
+import { webTurnBusy } from './bot.js'
 import { discoverCalendars } from './proactive/calendar.js'
 import { relatedThreads } from './proactive/threads.js'
 import { DAILY_DECISION_CAP, decide as decideBriefing } from './proactive/decide.js'
@@ -366,6 +367,7 @@ async function main(): Promise<void> {
 
   // Tips (card #273). No model and no network, so nothing here can cost
   // anything; off for the whole box with TIPS=off.
+  const runningVersion = getCurrentVersion()
   const stopTips = PRIMARY_CHAT_ID && TIPS_ENABLED
     ? startTips({
         context: () => tipContext(PRIMARY_CHAT_ID),
@@ -375,11 +377,11 @@ async function main(): Promise<void> {
             adapter.formatText(text),
             adapter.supportsButtons ? { buttons } : undefined
           )
-          return adapter.supportsButtons && id ? id : null
+          return adapter.supportsButtons && id ? `${PRIMARY_CHAT_ID}:${id}` : null
         },
         buttons: adapter.supportsButtons,
-        currentVersion: getCurrentVersion,
-        busy: () => isChatBusy(PRIMARY_CHAT_ID),
+        currentVersion: () => runningVersion,
+        busy: () => isChatBusy(PRIMARY_CHAT_ID) || webTurnBusy(PRIMARY_CHAT_ID),
         lastOwnerMs: lastOwnerMessage,
         now: () => new Date(),
         tz: emailAlertsTz,

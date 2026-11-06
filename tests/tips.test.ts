@@ -14,11 +14,11 @@ const quiet = vi.hoisted(() => ({ value: null as { start: string; end: string } 
 import { getDb, initDatabase } from '../src/db.js'
 import { TIPS, type Tip, type TipContext } from '../src/tips/catalog.js'
 import {
-  emptyState, holdReason, isNewer, loadState, markUsed, nextTip, paceAllows, recordSent, saveState, triedBy, updateTips,
+  emptyState, holdPassed, holdReason, isNewer, loadState, markUsed, nextTip, recordSent, weekAllows, saveState, triedBy, updateTips,
   FIRST_TIP_HOLD_MS, MIN_GAP_MS, OWNER_IDLE_MS, REPEAT_GAP_MS, type Moment, type TipState,
 } from '../src/tips/state.js'
 import { tipTick, type TipDeps } from '../src/tips/service.js'
-import { answerWebTip, lastOwnerMessage, noteAsked, noteOwnerMessage, resolveTipClick, tipsCommand, webTip } from '../src/tips/control.js'
+import { answerWebTip, lastOwnerMessage, noteAsked, noteOwnerActive, noteOwnerMessage, resolveTipClick, tipsCommand, webTip } from '../src/tips/control.js'
 
 const DAY = 86_400_000
 const NOW = Date.UTC(2026, 10, 10, 16, 0) // 11:00 in Toronto
@@ -115,11 +115,11 @@ describe('when a tip may go out', () => {
 
   it('caps the week by pace, and waits two days on a new box', () => {
     const sends = [NOW - 6 * DAY, NOW - 4 * DAY]
-    expect(paceAllows(started({ sends }), NOW)).toBe(true)
-    expect(paceAllows(started({ sends: [...sends, NOW - DAY] }), NOW)).toBe(false)
-    expect(paceAllows(started({ pace: 'less', sends: [NOW - 3 * DAY] }), NOW)).toBe(false)
-    expect(paceAllows(started({ pace: 'less', sends: [NOW - 8 * DAY] }), NOW)).toBe(true)
-    expect(paceAllows(started({ startedAt: NOW - FIRST_TIP_HOLD_MS + 1 }), NOW)).toBe(false)
+    expect(weekAllows(started({ sends }), NOW)).toBe(true)
+    expect(weekAllows(started({ sends: [...sends, NOW - DAY] }), NOW)).toBe(false)
+    expect(weekAllows(started({ pace: 'less', sends: [NOW - 3 * DAY] }), NOW)).toBe(false)
+    expect(weekAllows(started({ pace: 'less', sends: [NOW - 8 * DAY] }), NOW)).toBe(true)
+    expect(holdPassed(started({ startedAt: NOW - FIRST_TIP_HOLD_MS + 1 }), NOW)).toBe(false)
   })
 })
 
@@ -184,6 +184,28 @@ describe('a tick', () => {
     const later = deps({ now: () => new Date(NOW + DAY) })
     await tipTick(later)
     expect(later.sent.join()).not.toContain('New in')
+  })
+
+  it('holds an update tip while the week is full, so less stays one a week', async () => {
+    saveState(started({ pace: 'less', version: '1.71.0', sends: [NOW - 3 * DAY] }))
+    const d = deps()
+    expect(await tipTick(d)).toBe('held')
+    expect(loadState().version).toBe('1.71.0')
+    const later = deps({ now: () => new Date(NOW + 5 * DAY) })
+    expect(await tipTick(later)).toBe('update')
+  })
+
+  it('reads the clock after the connections, so a slow read cannot pass the cutoff', async () => {
+    saveState(started())
+    let clock = NOW
+    const d = deps({
+      now: () => new Date(clock),
+      context: async () => {
+        clock = Date.UTC(2026, 10, 10, 22, 30) // 17:30 in Toronto
+        return CTX
+      },
+    })
+    expect(await tipTick(d)).toBe('held')
   })
 
   it('holds an update tip through quiet hours and sends it after', async () => {
@@ -293,12 +315,14 @@ describe('answering a tip', () => {
     await tipTick(deps())
     const id = loadState().current!.ids[0]!
     expect(webTip(NOW)).not.toBeNull()
-    expect(resolveTipClick('other-card', 'Got it')).toBeNull()
-    expect(resolveTipClick('card-1', 'Send')).toBeNull()
-    expect(resolveTipClick('card-1', 'Got it')).toBe('Okay.')
+    expect(resolveTipClick(true, 'other-card', 'Got it')).toBeNull()
+    expect(resolveTipClick(true, 'card-1', 'Send')).toBeNull()
+    expect(resolveTipClick(false, 'card-1', 'Not for me')).toContain('main chat')
+    expect(loadState().tips[id]?.status).toBeUndefined()
+    expect(resolveTipClick(true, 'card-1', 'Got it')).toBe('Okay.')
     expect(webTip(NOW)).toBeNull()
     expect(loadState().tips[id]?.status).toBeUndefined()
-    resolveTipClick('card-1', 'Not for me')
+    resolveTipClick(true, 'card-1', 'Not for me')
     expect(loadState().tips[id]?.status).toBe('dismissed')
   })
 
@@ -307,9 +331,24 @@ describe('answering a tip', () => {
     await tipTick(deps())
     expect(webTip(NOW + 8 * DAY)).toBeNull()
     const id = loadState().current!.ids[0]!
-    answerWebTip(true, NOW)
+    answerWebTip([id], true, NOW)
     expect(loadState().tips[id]?.status).toBe('dismissed')
     expect(webTip(NOW)).toBeNull()
+  })
+
+  it('a card left open cannot answer a newer tip', async () => {
+    saveState(started())
+    await tipTick(deps())
+    const newer = loadState().current!.ids[0]!
+    answerWebTip(['an-older-tip'], true, NOW)
+    expect(loadState().tips[newer]?.status).toBeUndefined()
+    expect(webTip(NOW)?.ids).toEqual([newer])
+  })
+
+  it('keeps a card for as long as its buttons can be tapped', () => {
+    const s = started()
+    for (let i = 0; i < 150; i++) recordSent(s, ['a'], `card-${i}`, NOW, false)
+    expect(s.cards.some((c) => c.card === 'card-0')).toBe(true)
   })
 })
 
@@ -321,6 +360,8 @@ describe('noticing the owner', () => {
     expect(loadState().tips['model']?.status).toBe('done')
     noteOwnerMessage(false, 'hello', 2000)
     expect(lastOwnerMessage()).toBe(1000)
+    noteOwnerActive(true, 3000)
+    expect(lastOwnerMessage()).toBe(3000)
     expect(JSON.stringify(loadState())).not.toContain('hello')
   })
 })

@@ -20,9 +20,14 @@ const PACE_REPLY: Record<Pace, string> = {
 let lastOwnerMs = 0
 export const lastOwnerMessage = (): number => lastOwnerMs
 
+/** The owner did something in the main chat: a message, a voice note, a photo, a tap. */
+export function noteOwnerActive(primary: boolean, nowMs: number = Date.now()): void {
+  if (primary) lastOwnerMs = nowMs
+}
+
 /** Every text the owner sends comes through here. Nothing about it is kept. */
 export function noteOwnerMessage(primary: boolean, text: string, nowMs: number = Date.now()): void {
-  if (primary) lastOwnerMs = nowMs
+  noteOwnerActive(primary, nowMs)
   const tried = triedBy(text)
   if (tried.length === 0) return
   const s = loadState()
@@ -94,11 +99,11 @@ export function noteAsked(ids: string[], card: string | null, nowMs: number = Da
  * A tap on a tip's button. Null when the card is not a tip. Handled here so a
  * click never reaches the model.
  */
-export function resolveTipClick(cardId: string, label: string): string | null {
+export function resolveTipClick(primary: boolean, cardId: string, label: string): string | null {
   if (label !== GOT_IT && label !== NOT_FOR_ME) return null
-  const s = loadState()
-  const card = s.cards.find((c) => c.card === cardId)
+  const card = loadState().cards.find((c) => c.card === cardId)
   if (!card) return null
+  if (!primary) return label === NOT_FOR_ME ? PRIMARY_ONLY : 'Okay.'
   return answerTips(card.ids, label === NOT_FOR_ME)
 }
 
@@ -114,16 +119,18 @@ function answerTips(ids: string[], hide: boolean): string {
 }
 
 /** The web app's quiet card: what is showing, and its two answers. */
-export function webTip(nowMs: number = Date.now()): { text: string; tryIt: string } | null {
+export function webTip(nowMs: number = Date.now()): { ids: string[]; text: string; tryIt: string } | null {
   const s = loadState()
   // One the owner asked for is already in front of them.
   const tips = s.current?.asked ? [] : currentTips(s, nowMs)
   if (tips.length === 0) return null
-  return { text: tips.map((t) => t.text).join(' '), tryIt: tips.map((t) => t.tryIt).join(' ') }
+  return { ids: tips.map((t) => t.id), text: tips.map((t) => t.text).join(' '), tryIt: tips.map((t) => t.tryIt).join(' ') }
 }
 
-export function answerWebTip(hide: boolean, nowMs: number = Date.now()): void {
-  answerTips(currentTips(loadState(), nowMs).map((t) => t.id), hide)
+/** The page names the tips it showed, so a card left open cannot answer a newer one. */
+export function answerWebTip(ids: string[], hide: boolean, nowMs: number = Date.now()): void {
+  const known = currentTips(loadState(), nowMs).map((t) => t.id)
+  answerTips(ids.filter((id) => known.includes(id)), hide)
 }
 
 export { TIP_BUTTONS }

@@ -9,7 +9,7 @@ import { logger } from '../logger.js'
 import { localHour } from '../update/notice.js'
 import { getQuietHours, quietUntil } from '../proactive/settings.js'
 import type { TipContext } from './catalog.js'
-import { holdReason, isNewer, loadState, markUsed, nextTip, paceAllows, recordSent, saveState, updateTips, type TipState } from './state.js'
+import { holdReason, isNewer, loadState, markUsed, nextTip, holdPassed, recordSent, saveState, updateTips, weekAllows, type TipState } from './state.js'
 import { TIP_BUTTONS, renderTip, renderUpdateTips } from './text.js'
 
 export const TICK_MS = 30 * 60_000
@@ -20,6 +20,7 @@ export interface TipDeps {
   /** Sends to the owner's chat. Returns the card's id when it has buttons. */
   send: (text: string, buttons: string[]) => Promise<string | null>
   buttons: boolean
+  /** The version this process is running, fixed at start. Never the file on disk: an update applied but not yet restarted must not count as told. */
   currentVersion: () => string
   busy: () => boolean
   lastOwnerMs: () => number
@@ -34,14 +35,13 @@ function everShown(s: TipState): boolean {
 export type TickOutcome = 'first-run' | 'held' | 'update' | 'paced' | 'nothing' | 'failed'
 
 export async function tipTick(deps: TipDeps): Promise<TickOutcome> {
-  const now = deps.now()
-  const nowMs = now.getTime()
   const version = deps.currentVersion()
   const first = loadState()
+  const startMs = deps.now().getTime()
 
   // A new box, or one meeting tips for the first time: nothing to catch up on.
   if (!first.startedAt) {
-    first.startedAt = nowMs
+    first.startedAt = startMs
     first.version = version
     saveState(first)
     return 'first-run'
@@ -59,6 +59,9 @@ export async function tipTick(deps: TipDeps): Promise<TickOutcome> {
   // across a wait: a tick must not write an old pace back.
   const ctx = await deps.context()
   const s = loadState()
+  // Taken after the wait too, so a slow read cannot carry a tip past 17:00.
+  const now = deps.now()
+  const nowMs = now.getTime()
   if (markUsed(s, ctx)) saveState(s)
 
   const hold = holdReason(s, {
@@ -90,6 +93,7 @@ export async function tipTick(deps: TipDeps): Promise<TickOutcome> {
     return true
   }
 
+  if (!weekAllows(s, nowMs)) return 'held'
   if (isNewer(version, s.version)) {
     const tips = updateTips(s, ctx, nowMs)
     if (tips.length > 0) return (await send(renderUpdateTips(version, tips, opts), tips.map((t) => t.id), version)) ? 'update' : 'failed'
@@ -97,7 +101,7 @@ export async function tipTick(deps: TipDeps): Promise<TickOutcome> {
     saveState(s)
   }
 
-  if (!paceAllows(s, nowMs)) return 'held'
+  if (!holdPassed(s, nowMs)) return 'held'
   const tip = nextTip(s, ctx, nowMs)
   if (!tip) return 'nothing'
   return (await send(renderTip(tip, opts), [tip.id])) ? 'paced' : 'failed'
