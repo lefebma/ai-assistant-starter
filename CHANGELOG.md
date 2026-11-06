@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.72.1 - 2026-11-06
+
+- **Fixed: the activity log can no longer lose its place during an update.** If an update or a second program wrote to your assistant's activity log while the assistant was running, the log could number two different entries the same, and the off-box copy then stopped taking new entries and warned you every hour. The log now picks up from the latest entry each time it writes, so the record stays one unbroken chain.
+
 ## 1.72.0 - 2026-11-05
 
 - **New: your assistant suggests what you have not tried yet.** Now and then, at a quiet moment, you get one short tip: what a feature does and one thing to try. Tips fit your setup (connect a calendar first, then hear about meeting briefings), stop once you use the feature, and never turn anything on for you. After an update, you hear about the one or two new things most useful to you. No more than one a day and three a week, never in your quiet hours or in the middle of a conversation, and they use none of your AI allowance. Send `/tips` for the next one and a list of those you have seen, `/tips less` for one a week, `/tips off` to stop them. Tap Not for me, or send `/tips hide`, and that tip does not come back. In the web app the latest tip shows as a quiet card above the chat.
