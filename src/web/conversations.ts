@@ -112,6 +112,11 @@ export function deleteConversation(chatId: string, id: string): boolean {
   })()
 }
 
+/** Messages stored for a conversation that has just been deleted. */
+export function purgeMessages(id: string): void {
+  getDb().prepare('DELETE FROM web_messages WHERE conversation_id = ?').run(id)
+}
+
 export function addMessage(
   convId: string,
   role: 'user' | 'assistant',

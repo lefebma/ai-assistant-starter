@@ -525,6 +525,20 @@ Once the service is running, message your bot:
 4. **"What's on my calendar today?"** - Test calendar integration
 5. **"/schedule create 'Good morning! Here is your daily briefing.' '0 7 * * *' --name 'Morning Briefing'"** - Set up your first scheduled task
 
+## Projects
+
+A project keeps one client or topic apart from everything else: its own standing instructions, chats, memory, pinned decisions and scheduled tasks. What your assistant learns inside a project stays inside it, and it reads nothing from your other chats while in one.
+
+- `/project new Acme` starts a project and goes into it. `/project` shows where you are and lists your projects.
+- `/project instructions` followed by your text sets how your assistant works in the project, for example the client, the tone and what to always or never do. Up to 8,000 characters. `/project instructions` on its own shows them.
+- `/project Acme` goes in, and `/project off` comes back to General. Your place in each project is kept.
+- `/project rename New name` renames the project you are in.
+- `/project delete Acme` says what will be removed. `/project delete Acme confirm` removes the project, its chats, memory, pinned decisions and scheduled tasks for good.
+
+A scheduled job set up while you are in a project belongs to it and follows its instructions. Projects belong to one chat, so a group's projects are separate from yours, and anyone in the group can change them. The brain folder and shared workspaces are not divided by project.
+
+In the web app, press the plus next to Projects to add one and the pencil on a project to edit it. A chat started in a project stays in it, and your project in Telegram and your open chat in the web app do not affect each other.
+
 ## Decisions your assistant keeps
 
 Long chats get trimmed, so something you settled early on ("send invoice reminders to billing@, not Priya", "the late fee is waived") can fall out of what your assistant sees. Pin it and it stays.

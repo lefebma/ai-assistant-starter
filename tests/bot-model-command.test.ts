@@ -86,7 +86,7 @@ describe('/model in a chat', () => {
     expect(getChatModel('owner')).toBe('opus')
     expect(h.runAgent).not.toHaveBeenCalled()
     await send({ text: 'hello' })
-    expect(h.runAgent.mock.calls.at(-1)![8]).toEqual({ model: 'opus', chatId: 'owner' })
+    expect(h.runAgent.mock.calls.at(-1)![8]).toEqual({ model: 'opus', chatId: 'owner', scope: 'owner' })
   })
 
   it('lists typed choices where there are no buttons', async () => {

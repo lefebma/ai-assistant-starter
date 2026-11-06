@@ -194,6 +194,27 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .small-btn.danger:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
 
 /* ---------- projects ---------- */
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.side-head .icon-btn { width: 28px; height: 28px; }
+.project-edit { width: 28px; height: 28px; opacity: 0.7; }
+.project-row:hover .project-edit, .project-edit:focus-visible { opacity: 1; }
+.project-dialog {
+  width: min(560px, calc(100vw - 32px)); padding: 20px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink);
+}
+.project-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.project-dialog h2 { margin: 0 0 6px; font-size: 17px; }
+.project-hint { margin: 0 0 14px; color: var(--ink-soft); font-size: 13px; }
+.project-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: 13px; font-weight: 550; }
+.project-field input, .project-field textarea {
+  width: 100%; padding: 8px 10px; font-weight: 400;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--bg); resize: vertical;
+}
+.project-field input:focus, .project-field textarea:focus { outline: none; border-color: var(--accent); }
+.project-actions { display: flex; align-items: center; gap: 8px; }
+.project-spacer { flex: 1; }
 
 .project-list, .chat-list, .goal-list, .tree, .tree ul, .conn-list, .dev-list { list-style: none; margin: 0; padding: 0; }
 

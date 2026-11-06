@@ -23,7 +23,10 @@ const TITLE_CHARS = 70
  * root. The containment check is the backstop if the mapping ever changes.
  */
 export function transcriptDirFor(chatId: string, root: string = TRANSCRIPT_ROOT()): string {
-  const safe = chatId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'voice'
+  // A project goes by its own id: a long Teams chat id would cut it off below (card #281).
+  const at = chatId.lastIndexOf('::project::')
+  const key = at < 0 ? chatId : `project-${chatId.slice(at + '::project::'.length)}`
+  const safe = key.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120) || 'voice'
   const base = resolve(root)
   const dir = resolve(base, safe)
   if (!dir.startsWith(base + sep)) throw new Error('voice transcript path escaped its root')

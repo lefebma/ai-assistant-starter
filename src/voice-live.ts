@@ -381,6 +381,8 @@ export { transcriptDirFor } from './voice-history.js'
 export interface VoiceCallRecord {
   sessionId: string
   chatId: string
+  /** Where its memory goes; the chat when absent (card #281). */
+  memoryScope?: string
   startedAt: Date
   endedAt: Date
   turns: Turn[]
@@ -407,7 +409,10 @@ const zonedTime = (d: Date, timeZone: string, opts: Intl.DateTimeFormatOptions) 
  * the user never spoke saves nothing. Returns the transcript path or null.
  */
 export async function saveVoiceCall(call: VoiceCallRecord, deps: VoiceCallDeps = {}): Promise<string | null> {
-  const dir = deps.dir ?? transcriptDirFor(call.chatId)
+  // A project's calls live with it, and stay out of other chats' notes (card #281).
+  // Loaded here, not at the top: it pulls in the store, which voice tests do not set up.
+  if (call.memoryScope && (await import('./projects/store.js')).scopeGone(call.memoryScope)) return null
+  const dir = deps.dir ?? transcriptDirFor(call.memoryScope ?? call.chatId)
   const timeZone = deps.timezone ?? installTimezone()
   const writeFile = deps.writeFile ?? ((path: string, content: string) => {
     mkdirSync(dir, { recursive: true })
@@ -448,12 +453,12 @@ export async function saveVoiceCall(call: VoiceCallRecord, deps: VoiceCallDeps =
     while (i < turns.length && turns[i].who === 'assistant') reply.push(turns[i++].text.trim())
     const userText = user.join(' ')
     if (userText.length <= 20) continue // the same threshold chat uses, measured before the prefix
-    await saveTurn(call.chatId, `(by voice) ${userText}`, reply.join(' '))
+    await saveTurn(call.memoryScope ?? call.chatId, `(by voice) ${userText}`, reply.join(' '))
   }
 
   const said = userSaid.join(' / ')
   insert(
-    call.chatId,
+    call.memoryScope ?? call.chatId,
     `Voice call on ${when} (~${minutes} min, ${lookups}). The user said: ${said.length > 240 ? said.slice(0, 240) + '...' : said} [transcript: ${relative(PROJECT_ROOT, path)}]`,
     'episodic',
   )
@@ -501,7 +506,7 @@ let engine: ContextEngine | undefined
  * The assistant as the delegation backend: one Claude session per live call,
  * with the same skill index and memory context a chat message gets.
  */
-export function createAssistantBackend(chatId: string = memoryChatId(null)): RunBackend {
+export function createAssistantBackend(chatId: string = memoryChatId(null), scope: string = chatId): RunBackend {
   let sessionId: string | undefined
   return async (prompt, signal) => {
     // The answer is spoken by the voice service, real names and all (card #187).
@@ -509,9 +514,9 @@ export function createAssistantBackend(chatId: string = memoryChatId(null)): Run
     const privacy = await import('./privacy/index.js')
     if (privacy.privacyOnFor(chatId)) return privacy.PRIVATE_VOICE_NOTICE
     engine ??= createDefaultEngine()
-    const memoryContext = await engine.buildContext(chatId, prompt).catch(() => '')
+    const memoryContext = await engine.buildContext(scope, prompt).catch(() => '')
     const full = [buildSkillIndex(), memoryContext, prompt].filter(Boolean).join('\n\n')
-    const { text, newSessionId } = await withActor(`live-voice:${chatId}`, () => runAgent(full, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { chatId }))
+    const { text, newSessionId } = await withActor(`live-voice:${chatId}`, () => runAgent(full, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { chatId, scope }))
     if (signal.aborted) {
       // Never resume a session a cancelled run touched: resuming it right after
       // the abort failed with error_during_execution and then an unhandled
@@ -599,6 +604,9 @@ export interface EndedCall {
 export interface LiveCallOptions {
   /** The web chat this call was started from, as plain lines, for both models. */
   chatContext?: string
+  /** The project that chat is in (card #281): its memory, and its block for both models. */
+  memoryScope?: string
+  project?: string
   /** Runs once when the call is over, however it ended. */
   onEnded?: (call: EndedCall) => void
 }
@@ -648,7 +656,7 @@ async function createSession(
   const chat = memoryChatId(chatId)
   let recent = ''
   try {
-    recent = recentCallsNote(chat)
+    recent = recentCallsNote(options.memoryScope ?? chat)
   } catch (err) {
     logger.warn({ err }, 'could not read recent voice calls')
   }
@@ -659,7 +667,7 @@ async function createSession(
     body: JSON.stringify({
       session: {
         model: LIVE_MODEL,
-        instructions: buildLiveInstructions(who, personalityExcerpt(), recent, options.chatContext ?? ''),
+        instructions: [buildLiveInstructions(who, personalityExcerpt(), recent, options.chatContext ?? ''), options.project].filter(Boolean).join('\n\n'),
         audio: { output: { voice: chosenVoice } },
         delegation: { type: 'client' },
       },
@@ -675,8 +683,8 @@ async function createSession(
   const sessionId = result.session?.id
   if (!sessionId) throw new LiveSessionError(502, 'no_session_id')
   logger.info({ sessionId, voice: chosenVoice, chatId, recentCalls: !!recent }, 'live session created')
-  const preamble = [backendPreamble(who.owner), chatContextNote(options.chatContext ?? '')].filter(Boolean).join('\n\n')
-  attachSideband(sessionId, preamble, chat, deliver, options.onEnded)
+  const preamble = [backendPreamble(who.owner), options.project, chatContextNote(options.chatContext ?? '')].filter(Boolean).join('\n\n')
+  attachSideband(sessionId, preamble, chat, deliver, options.onEnded, options.memoryScope)
   return result
 }
 
@@ -722,6 +730,7 @@ function attachSideband(
   chatId: string,
   deliver?: (chatId: string, text: string) => Promise<boolean>,
   onEnded?: (call: EndedCall) => void,
+  memoryScope?: string,
 ): void {
   sweepBridges()
   const ws = new WebSocket(sidebandUrl(sessionId), {
@@ -732,7 +741,7 @@ function attachSideband(
   }
   const bridge = createLiveBridge({
     send,
-    runBackend: createAssistantBackend(chatId),
+    runBackend: createAssistantBackend(chatId, memoryScope),
     preamble,
     // 'voice' is the no-chat fallback (no primary chat configured): nowhere to send.
     deliver: deliver && chatId !== 'voice' ? (text) => deliver(chatId, text) : undefined,
@@ -753,7 +762,7 @@ function attachSideband(
     } catch (err) {
       logger.error({ err, sessionId }, 'live call end hook failed')
     }
-    saveVoiceCall({ sessionId, chatId, startedAt, endedAt, turns: bridge.turns(), delegations: bridge.metrics().length, billedSeconds })
+    saveVoiceCall({ sessionId, chatId, memoryScope, startedAt, endedAt, turns: bridge.turns(), delegations: bridge.metrics().length, billedSeconds })
       .then((path) => {
         if (path) logger.info({ sessionId, path }, 'live call saved to memory')
         pruneVoiceTranscripts()

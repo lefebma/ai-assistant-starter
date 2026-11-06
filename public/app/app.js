@@ -256,7 +256,17 @@ function renderProjects() {
       icon: 'plus',
       click: () => newChat(p.id),
     })
-    item.append(h('div', { class: 'project-row' }, toggle, add))
+    const edit = p.own
+      ? h('button', {
+          type: 'button',
+          class: 'icon-btn project-edit',
+          title: 'Edit ' + p.name,
+          'aria-label': 'Edit ' + p.name,
+          icon: 'edit',
+          click: () => openProjectDialog(p),
+        })
+      : null
+    item.append(h('div', { class: 'project-row' }, toggle, edit, add))
     if (open) {
       const ul = h('ul', { class: 'chat-list' })
       if (!chats.length) ul.append(h('li', { class: 'chat-empty', text: 'No chats yet.' }))
@@ -289,6 +299,70 @@ function renderProjects() {
     list.append(item)
   }
 }
+
+// A project's name and standing instructions (card #281).
+let editingProject = null
+
+function openProjectDialog(p) {
+  editingProject = p
+  $('project-dialog-title').textContent = p ? p.name : 'New project'
+  $('project-name').value = p ? p.name : ''
+  $('project-instructions').value = p ? p.instructions || '' : ''
+  $('project-delete').hidden = !p
+  note($('project-note'), '')
+  closeDrawers()
+  $('project-dialog').showModal()
+  $('project-name').focus()
+}
+
+function projectError(err) {
+  const code = err && err.code
+  if (code === 'name_taken') return 'You already have a project with that name.'
+  if (code === 'name_reserved') return 'That word is used by the /project command. Pick another name.'
+  if (code === 'name_too_many') return 'You have reached the limit of projects.'
+  if (code === 'instructions_too_long') return 'Those instructions are over the 8,000 character limit.'
+  return friendly(err, 'Could not save that project.')
+}
+
+async function saveProject(e) {
+  e.preventDefault()
+  const name = $('project-name').value
+  const instructions = $('project-instructions').value
+  try {
+    let id = editingProject && editingProject.id
+    if (!id) id = (await api.post('/api/web/projects', { name })).project.id
+    await api.post('/api/web/projects/' + encodeURIComponent(id), { name, instructions })
+    state.expanded.add(id)
+    $('project-dialog').close()
+    await loadProjects()
+    syncProjectLabel()
+  } catch (err) {
+    note($('project-note'), projectError(err))
+  }
+}
+
+async function deleteProject() {
+  const p = editingProject
+  if (!p) return
+  if (!window.confirm('Delete "' + p.name + '"? Its instructions, chats, memory, pinned decisions and scheduled tasks are all removed. This cannot be undone.')) return
+  try {
+    await api.post('/api/web/projects/' + encodeURIComponent(p.id) + '/delete')
+  } catch (err) {
+    if (err.status !== 404) return note($('project-note'), projectError(err))
+  }
+  $('project-dialog').close()
+  if (state.current && state.current.projectId === p.id) setCurrent(null, [])
+  await loadProjects()
+}
+
+function syncProjectLabel() {
+  if (state.current) $('chat-project').textContent = projectName(state.current.projectId)
+}
+
+$('project-add').addEventListener('click', () => openProjectDialog(null))
+$('project-form').addEventListener('submit', saveProject)
+$('project-cancel').addEventListener('click', () => $('project-dialog').close())
+$('project-delete').addEventListener('click', deleteProject)
 
 function toggleProject(id) {
   if (state.expanded.has(id)) state.expanded.delete(id)
@@ -877,7 +951,11 @@ function turnView(convId, userMsg) {
           if (d.effort !== undefined) state.current.effort = d.effort
           renderPickers()
         }
+        // /project may have changed the list.
+        loadProjects()
         finishWith(null)
+        // /project delete from inside the project: this chat went with it.
+        if (d.gone) setCurrent(null, [])
       }
       else if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
       else finishWith(d.message)

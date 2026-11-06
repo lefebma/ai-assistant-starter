@@ -11,12 +11,14 @@
  * Checking and moving are separate steps, so a message refused before the
  * turn starts (busy, a bad file) leaves every upload where it was.
  */
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, linkSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, renameSync, statSync, writeFileSync, linkSync, unlinkSync } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { getFileRoots, resolveVisible } from './files.js'
+import { conversationDir, getFileRoots, removeConversationFiles, resolveVisible } from './files.js'
 import { MAX_UPLOAD_BYTES } from './file-routes.js'
 import type { StoredFile } from './conversations.js'
 import { wrapUntrusted } from '../prompt-safety.js'
+
+export { conversationDir, removeConversationFiles }
 
 export const MAX_ATTACHMENTS = 10
 export const MAX_PASTES = 5
@@ -81,10 +83,6 @@ export function planAttachments(attachments: unknown, pastes: unknown): { ok: tr
   return { ok: true, plan: { uploads, pastes: (texts as string[]).filter((t) => t.trim()) } }
 }
 
-export function conversationDir(conversationId: string): string {
-  return join(getFileRoots().uploadsDir, 'chat', conversationId)
-}
-
 /** A name in `dir` that is not taken yet: `name`, then `stem-1.ext`, ... */
 function freeName(dir: string, name: string): string {
   const dot = extname(name)
@@ -120,12 +118,6 @@ export function commitAttachments(conversationId: string, plan: AttachPlan): Att
     out.push({ path: dest, name: basename(dest), kind: 'document', pasted: true, text })
   })
   return out
-}
-
-/** Delete a conversation's attachments with it. */
-export function removeConversationFiles(conversationId: string): void {
-  if (!/^[\w-]+$/.test(conversationId)) return
-  rmSync(conversationDir(conversationId), { recursive: true, force: true })
 }
 
 const lineCount = (t: string) => t.split('\n').length

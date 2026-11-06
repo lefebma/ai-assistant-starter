@@ -14,6 +14,7 @@ import { buildAuditPrompt } from './audit/report.js'
 import { logger } from './logger.js'
 import { aiPausedForBackground, readAiLimit, recoveryDueAt } from './ai-limit.js'
 import { ledgerBlock } from './memory/decisions.js'
+import { projectBlock, scopeFor } from './projects/store.js'
 import { dashboardDataFile } from './cockpit/paths.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
@@ -417,13 +418,14 @@ export async function runDueTasks(): Promise<void> {
       )
       // Picked up after a restart cut it off (card #234): tell the model so.
       // The chat's pinned decisions hold for its scheduled jobs too (card #235).
-      const ledger = ledgerBlock(task.chat_id)
-      const checked = (ledger ? `${ledger}\n\n` : '') + expanded + obligationNote(obligations)
+      // A job in a project runs with its instructions and decisions (card #281).
+      const scope = scopeFor(task.chat_id, task.project_id)
+      const checked = [projectBlock(scope), ledgerBlock(scope), expanded].filter(Boolean).join('\n\n') + obligationNote(obligations)
       const prompt = resuming ? continuationPrompt(checked, 'because the assistant restarted') : checked
       // Every tool call rereads the task (card #230): pausing, deleting or
       // re-roling the job takes effect at the next call, not the next run.
       const grant = taskGrant(task.id, getTask)
-      const { text, aiPaused, newSessionId } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', controller.signal, scopeOf(task), { chatId: task.chat_id }))))
+      const { text, aiPaused, newSessionId } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(prompt, undefined, undefined, undefined, undefined, 'cron', controller.signal, scopeOf(task), { chatId: task.chat_id, scope }))))
       // Cancelled: cancelWhere already recorded it and the command already
       // replied. Nothing to deliver, defer or delete.
       if (controller.signal.aborted) {
@@ -461,7 +463,7 @@ export async function runDueTasks(): Promise<void> {
             try {
               // Same run key: the first attempt's evidence still counts.
               retryRun = trackRun(runKey, runObligations(now));
-              ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now), { chatId: task.chat_id })))))
+              ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now), { chatId: task.chat_id, scope: scopeFor(task.chat_id, now.project_id) })))))
             } catch (err) {
               try { retryRun?.authority.fail(String(err)) } catch { /* already closed */ }
               throw err

@@ -310,4 +310,44 @@ describe('web chat', () => {
     expect((await post(`/api/web/conversations/${a}/delete`)).status).toBe(200)
     expect(conv.listMessages(a)).toEqual([])
   })
+
+  it('runs a chat in a project with its instructions, and keeps other chats out (card #281)', async () => {
+    const created = (await (await post('/api/web/projects', { name: 'Acme' })).json()) as any
+    const pid = created.project.id
+    expect((await post(`/api/web/projects/${pid}`, { instructions: 'Write in French.' })).status).toBe(200)
+    expect((await post('/api/web/projects', { name: 'acme' })).status).toBe(400)
+    expect((await post(`/api/web/projects/${pid}`, { instructions: 'x'.repeat(8001) })).status).toBe(400)
+
+    const list = (await (await fetch(`${base()}/api/web/projects`, { headers: H() })).json()) as any[]
+    expect(list.find((p) => p.id === pid)).toMatchObject({ name: 'Acme', own: true, instructions: 'Write in French.' })
+
+    const r = useRuntime()
+    const inProject = conv.createConversation('4242', pid).id
+    await chat(inProject, 'What should the letter say?')
+    expect(r.calls[0]!.message).toContain('Write in French.')
+    const general = await newConv()
+    await chat(general, 'And something else entirely?')
+    expect(r.calls[1]!.message).not.toContain('Write in French.')
+
+    ;(await import('../src/db.js')).addAuthorizedChat('777', 'other', '4242')
+    const other = sessionFor('777')
+    expect((await post(`/api/web/projects/${pid}`, { name: 'Mine' }, other)).status).toBe(404)
+    expect((await post(`/api/web/projects/${pid}/delete`, {}, other)).status).toBe(404)
+    const theirs = (await (await fetch(`${base()}/api/web/projects`, { headers: H(other) })).json()) as any[]
+    expect(theirs.map((p) => p.id)).not.toContain(pid)
+
+    expect((await post(`/api/web/projects/${pid}/delete`)).status).toBe(200)
+    expect(conv.getConversation('4242', inProject)).toBeNull()
+    expect(conv.getConversation('4242', general)).not.toBeNull()
+  })
+
+  it('leaves nothing behind when /project delete is typed inside the project (card #281)', async () => {
+    useRuntime()
+    const created = (await (await post('/api/web/projects', { name: 'Doomed' })).json()) as any
+    const id = conv.createConversation('4242', created.project.id).id
+    const evs = await chat(id, '/project delete Doomed confirm')
+    expect(evs.at(-1)).toMatchObject({ name: 'done', data: { gone: true } })
+    expect(conv.getConversation('4242', id)).toBeNull()
+    expect(conv.listMessages(id)).toEqual([])
+  })
 })

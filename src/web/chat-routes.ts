@@ -13,6 +13,7 @@ import { PIN_BUTTONS, extractDecisionMarkers, proposalCard, proposalHint, propos
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
+import { scopeFor } from '../projects/store.js'
 import { registerWebRoutes, type WebContext } from './http.js'
 import { sendJson, sendError, readJsonCapped, openSse, BodyError } from './respond.js'
 import { voiceNoteFor, endCallsForConversation } from './voice-chat.js'
@@ -23,6 +24,7 @@ import {
   listConversations,
   updateConversation,
   deleteConversation,
+  purgeMessages,
   addMessage,
   listMessages,
   getMessageForChat,
@@ -213,6 +215,7 @@ async function answer(
       conversationId: id,
       text: turnText,
       framing: [framingFor(current.projectId), voiceNote].filter(Boolean).join('\n\n'),
+      scope: scopeFor(chatId, current.projectId),
       sessionId: current.sessionId || undefined,
       model: current.model || undefined,
       effort: (current.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | undefined,
@@ -253,11 +256,12 @@ async function answer(
     // the first proposal rides this reply as its Pin and Skip when the reply
     // has no buttons of its own; any other is offered as a /decide line.
     const [card, ...others] = replyLabels.length ? [undefined, ...proposals] : proposals
-    const offers = [card ? proposalCard(card, chatId) : '', ...others.map((p) => p && proposalHint(p))]
+    const scope = scopeFor(chatId, conv.projectId)
+    const offers = [card ? proposalCard(card, scope) : '', ...others.map((p) => p && proposalHint(p))]
     const labels = card ? PIN_BUTTONS : replyLabels
     const content = [cleanText, ...notes, ...offers].filter(Boolean).join('\n\n')
     const mid = addMessage(id, 'assistant', content, files, labels)
-    if (card) setProposalCard(proposeDecision(chatId, card.topic, card.text), `${id}:${mid}`)
+    if (card) setProposalCard(proposeDecision(chatId, card.topic, card.text, scope), `${id}:${mid}`)
     return { kind: 'reply', mid }
   }
 
@@ -272,6 +276,7 @@ async function answer(
       text,
       clickedMessageId,
       fromQueue,
+      projectId: conv.projectId,
       model: (getConversation(chatId, id) ?? conv).model || undefined,
       effort: (getConversation(chatId, id) ?? conv).effort || undefined,
       hooks: {
@@ -305,6 +310,14 @@ async function answer(
       },
     })
     if (cmd.handled) {
+      // /project delete typed inside the project: the chat went with it, so
+      // the command and its reply must not stay behind (card #281).
+      if (!getConversation(chatId, id)) {
+        purgeMessages(id)
+        sse.writeEvent('done', { cancelled: false, command: true, gone: true })
+        sse.close()
+        return
+      }
       storeUser()
       if (cmd.clearSession) updateConversation(chatId, id, { sessionId: '' })
       if (cmd.model !== undefined) updateConversation(chatId, id, { model: cmd.model })

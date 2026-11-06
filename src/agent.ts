@@ -68,7 +68,7 @@ export async function runAgent(
   lane: RuntimeLane = 'chat',
   signal?: AbortSignal,
   scope?: RunScope,
-  opts?: { model?: string; effort?: 'low' | 'medium' | 'high' | 'xhigh'; chatId?: string }
+  opts?: { model?: string; effort?: 'low' | 'medium' | 'high' | 'xhigh'; chatId?: string; /** The project scope of this turn, for subagent briefs (card #281). */ scope?: string }
 ): Promise<AgentRunResult> {
   // One turn is one run for the effect journal (card #229), unless the caller
   // already named the run: a scheduled job or an approval card.
@@ -96,7 +96,7 @@ export async function runAgent(
   // run with no chat is private whenever any chat is.
   // The turn context notes what its tools read (memory provenance) and which
   // chat it is for (pinned decisions in subagent briefs), card #235.
-  const { result, reads } = await withTurn(opts?.chatId, () => withPrivacy(privacyOnFor(opts?.chatId), () => withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
+  const { result, reads } = await withTurn(opts?.scope ?? opts?.chatId, () => withPrivacy(privacyOnFor(opts?.chatId), () => withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
     message,
     sessionId: resumeId,
     onTyping,
