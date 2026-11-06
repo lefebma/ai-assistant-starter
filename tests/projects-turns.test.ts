@@ -39,6 +39,14 @@ function harness() {
   }
 }
 
+/** The next turn waits until released, whichever of the two happens first. */
+function hold(result: unknown): () => void {
+  let release = () => {}
+  const gate = new Promise<void>((res) => { release = res })
+  h.runAgent.mockImplementationOnce(async () => { await gate; return result })
+  return release
+}
+
 const inProject = async (bot: ReturnType<typeof harness>, name: string) => {
   await bot.say(`/project new ${name}`)
   return activeProject('owner')!
@@ -81,8 +89,7 @@ describe('a project in the message path', () => {
     const bot = harness()
     const p = await inProject(bot, 'Acme')
     const acme = scopeFor('owner', p.id)
-    let release = () => {}
-    h.runAgent.mockImplementationOnce(() => new Promise((res) => { release = () => res({ text: 'First reply, long enough to save.', aiPaused: false, reads: [] }) }))
+    const release = hold({ text: 'First reply, long enough to save.', aiPaused: false, reads: [] })
     await bot.send('First message of the morning')
     await bot.send('Second message, still waiting')
     await bot.send('/project off')
@@ -109,8 +116,7 @@ describe('a project in the message path', () => {
     const a = await inProject(bot, 'Acme')
     const acme = scopeFor('owner', a.id)
     await bot.say('/project off')
-    let release = () => {}
-    h.runAgent.mockImplementationOnce(() => new Promise((res) => { release = () => res({ text: 'Long enough to be saved in memory.', newSessionId: 'late', aiPaused: false, reads: [] }) }))
+    const release = hold({ text: 'Long enough to be saved in memory.', newSessionId: 'late', aiPaused: false, reads: [] })
     await bot.say('/project Acme')
     await bot.send('A turn in Acme, still running')
     await bot.send('/project off')
@@ -126,8 +132,7 @@ describe('a project in the message path', () => {
   it('does not run a message that waited for a project now deleted', async () => {
     const bot = harness()
     await inProject(bot, 'Acme')
-    let release = () => {}
-    h.runAgent.mockImplementationOnce(() => new Promise((res) => { release = () => res({ text: 'General reply, long enough to save.', aiPaused: false, reads: [] }) }))
+    const release = hold({ text: 'General reply, long enough to save.', aiPaused: false, reads: [] })
     await bot.send('First message in Acme, running')
     await bot.send('Second message in Acme, waiting')
     await bot.send('/project delete Acme confirm')
