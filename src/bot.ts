@@ -434,6 +434,7 @@ async function runTurn(
     if (!response && proposals.length) {
       // The reply was only a proposed decision: the card is the answer.
       if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
+      if (!opts.skipMemory) await saveConversationTurn(chatId, rawText, '', { reads })
       await sendDecisionCards(adapter, chatId, proposals)
       return
     }
@@ -587,6 +588,7 @@ async function sendDecisionCards(adapter: PlatformAdapter, chatId: string, propo
       if (cardId) setProposalCard(id, cardId)
     } catch (err) {
       logger.warn({ err: String(err), chatId }, 'Could not send a decision card')
+      await adapter.sendMessage(chatId, proposalHint(p)).catch(() => undefined)
     }
   }
 }

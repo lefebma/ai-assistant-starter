@@ -122,7 +122,13 @@ export class WitnessShipper {
     }
     for (;;) {
       const { events, ends } = this.pending(state)
-      if (!events.length) break
+      if (!events.length) {
+        // Something follows the acknowledged event but does not continue it:
+        // say so, or shipping just goes quiet.
+        const next = this.log.readFrom(state.offset, 1).events[0]
+        if (next) return fail(`chain broken: event ${state.ackedSeq} is followed by ${next.seq}`)
+        break
+      }
       let res: Response
       try {
         res = await this.fetchImpl(`${this.url}/v1/append`, {

@@ -65,6 +65,12 @@ function words(segment: string): string[] {
   const t = segment.replace(/^(?:\s*[A-Za-z_]\w*=\S*\s+)+/, '').trim().split(/\s+/).filter(Boolean)
   if ((t[0] === 'node' || t[0] === 'npx') && t[1]) t.shift()
   if (t[0]) t[0] = t[0].split('/').pop()!
+  // `gog --account x gmail read` is the same command as `gog gmail read`.
+  if (t[0] === 'gog') {
+    let i = 1
+    while (t[i]?.startsWith('-')) i += /^(?:--account|--acct|-a|--client)$/.test(t[i]!) ? 2 : 1
+    t.splice(1, i - 1)
+  }
   return t
 }
 

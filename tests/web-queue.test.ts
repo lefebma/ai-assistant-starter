@@ -500,6 +500,24 @@ describe('web chat queue', () => {
     expect(rt.calls.at(-1)).toBe('[button_click]: Yes')
   })
 
+  it('a queued click taken back leaves its card usable (review)', async () => {
+    const r = useRuntime()
+    r.buttons = '\n[[buttons: Yes | No]]'
+    const id = await newConv()
+    await (await post(`/api/web/conversations/${id}/chat`, { text: 'ask' })).text()
+    r.buttons = ''
+    const a = gate()
+    const first = await startHeld(id, 'A', a.promise)
+    const click = await enqueue(id, '[button_click]: Yes', 'k')
+    expect((await post(`/api/web/conversations/${id}/queue/${click.item.id}/delete`)).status).toBe(200)
+    const again = await post(`/api/web/conversations/${id}/chat`, { text: '[button_click]: No', clientId: 'k2' })
+    expect(again.status).toBe(202)
+    a.open()
+    await (await first).text()
+    await untilIdle(id, 6)
+    expect(rt.calls.at(-1)).toBe('[button_click]: No')
+  })
+
   it('a click mid-turn waits its turn even while /support waits for a description', async () => {
     const r = useRuntime()
     r.buttons = '\n[[buttons: Yes | No]]'
