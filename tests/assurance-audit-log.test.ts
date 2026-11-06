@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, truncateSync, symlinkSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, truncateSync, symlinkSync, mkdirSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AuditLog, FileSink, MemorySink, guardAction, detectTraceErasure } from '../src/assurance/audit-log.js'
@@ -12,6 +12,38 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 const ctx = (over = {}) => ({ runId: 'r1', actor: 'havn', ...over })
+
+describe('audit log with two writers on one file (card 291)', () => {
+  it('extends one chain instead of forking it', () => {
+    const witness = new MemorySink()
+    const a = new AuditLog({ dir: auditDir, workspace, witness })
+    a.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'a1' })
+    // A second process opens the same file later and writes while `a` sits idle with a stale head.
+    const b = new AuditLog({ dir: auditDir, workspace, witness })
+    b.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'b2' })
+    b.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'b3' })
+    const e = a.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'a4' })
+    expect(e.seq).toBe(4)
+    expect(a.verify()).toEqual({ ok: true, issues: [], events: 4 })
+  })
+
+  it('does not let a wiped file pull the head back below what was written', () => {
+    const log = new AuditLog({ dir: auditDir, workspace, witness: new MemorySink() })
+    for (let i = 0; i < 3; i++) log.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: `c${i}` })
+    rmSync(join(auditDir, 'audit.jsonl'))
+    expect(log.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'after-wipe' }).seq).toBe(4)
+  })
+
+  it('clears a stale lock left by a crashed writer', () => {
+    const log = new AuditLog({ dir: auditDir, workspace, witness: new MemorySink() })
+    log.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'x' })
+    const lock = join(auditDir, 'audit.lock')
+    writeFileSync(lock, '')
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(lock, old, old)
+    expect(log.append({ ...ctx(), action: 'bash', outcome: 'allowed', detail: 'y' }).seq).toBe(2)
+  })
+})
 
 describe('audit log tamper resistance (card 169)', () => {
   it('refuses to live inside the agent workspace', () => {
