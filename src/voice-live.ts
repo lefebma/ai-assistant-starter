@@ -409,7 +409,10 @@ const zonedTime = (d: Date, timeZone: string, opts: Intl.DateTimeFormatOptions) 
  * the user never spoke saves nothing. Returns the transcript path or null.
  */
 export async function saveVoiceCall(call: VoiceCallRecord, deps: VoiceCallDeps = {}): Promise<string | null> {
-  const dir = deps.dir ?? transcriptDirFor(call.chatId)
+  // A project's calls live with it, and stay out of other chats' notes (card #281).
+  // Loaded here, not at the top: it pulls in the store, which voice tests do not set up.
+  if (call.memoryScope && (await import('./projects/store.js')).scopeGone(call.memoryScope)) return null
+  const dir = deps.dir ?? transcriptDirFor(call.memoryScope ?? call.chatId)
   const timeZone = deps.timezone ?? installTimezone()
   const writeFile = deps.writeFile ?? ((path: string, content: string) => {
     mkdirSync(dir, { recursive: true })
@@ -653,7 +656,7 @@ async function createSession(
   const chat = memoryChatId(chatId)
   let recent = ''
   try {
-    recent = recentCallsNote(chat)
+    recent = recentCallsNote(options.memoryScope ?? chat)
   } catch (err) {
     logger.warn({ err }, 'could not read recent voice calls')
   }

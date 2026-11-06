@@ -24,6 +24,7 @@ import {
   listConversations,
   updateConversation,
   deleteConversation,
+  purgeMessages,
   addMessage,
   listMessages,
   getMessageForChat,
@@ -309,6 +310,14 @@ async function answer(
       },
     })
     if (cmd.handled) {
+      // /project delete typed inside the project: the chat went with it, so
+      // the command and its reply must not stay behind (card #281).
+      if (!getConversation(chatId, id)) {
+        purgeMessages(id)
+        sse.writeEvent('done', { cancelled: false, command: true, gone: true })
+        sse.close()
+        return
+      }
       storeUser()
       if (cmd.clearSession) updateConversation(chatId, id, { sessionId: '' })
       if (cmd.model !== undefined) updateConversation(chatId, id, { model: cmd.model })

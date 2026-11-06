@@ -463,7 +463,7 @@ export async function runDueTasks(): Promise<void> {
             try {
               // Same run key: the first attempt's evidence still counts.
               retryRun = trackRun(runKey, runObligations(now));
-              ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now), { chatId: task.chat_id })))))
+              ({ text: retryText, aiPaused: retryPaused } = await withActor(`job:${task.id}`, () => withRun(runKey, () => withGrant(grant, () => runAgent(continuationPrompt(prompt), newSessionId, undefined, undefined, undefined, 'cron', retry.controller.signal, scopeOf(now), { chatId: task.chat_id, scope: scopeFor(task.chat_id, now.project_id) })))))
             } catch (err) {
               try { retryRun?.authority.fail(String(err)) } catch { /* already closed */ }
               throw err

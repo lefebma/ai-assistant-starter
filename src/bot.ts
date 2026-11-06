@@ -5,7 +5,7 @@
  */
 
 import { resolve } from 'node:path'
-import { writeFileSync, existsSync, readFileSync, copyFileSync } from 'node:fs'
+import { writeFileSync, existsSync, readFileSync, copyFileSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
@@ -37,7 +37,8 @@ import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, extractDecisionMark
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
-import { activeProject, clearChatSessions, deleteProjectRows, getProject, projectBlock, scopeFor, setActiveProject, type Project } from './projects/store.js'
+import { activeProject, clearChatSessions, deleteProjectRows, getProject, projectBlock, scopeFor, scopeGone, setActiveProject, type Project } from './projects/store.js'
+import { transcriptDirFor } from './voice-history.js'
 import { projectCommand } from './projects/command.js'
 import { synthesizeSpeech, transcribeAudio, voiceCapabilities } from './voice.js'
 import { mintWebLink, revokeAllWebSessions, webAppUrl } from './web/sessions.js'
@@ -279,6 +280,10 @@ async function runTurn(
 ): Promise<void> {
   noteOwnerActive(isPrimaryChat(chatId))
   const scope = opts.scope ?? chatId
+  if (scopeGone(scope)) {
+    await adapter.sendMessage(chatId, 'That project was deleted while this message was waiting, so I did not run it.').catch(() => {})
+    return
+  }
   // Always-on skill catalog so the assistant knows its full toolbox and can route
   // to a skill even when the message lacks a literal trigger word. Kept as its
   // own block (not via ContextEngine) so it bypasses the "prior conversation
@@ -417,7 +422,7 @@ async function runTurn(
 
     // /newchat can arrive mid-turn now that turns run off the message loop.
     // If the session was cleared while this turn ran, don't write the old one back.
-    const clearedMidTurn = sessionId !== undefined && getSession(scope) == null
+    const clearedMidTurn = (sessionId !== undefined && getSession(scope) == null) || scopeGone(scope)
     if (newSessionId && !clearedMidTurn) {
       setSession(scope, newSessionId)
     }
@@ -586,6 +591,7 @@ async function runTurn(
 
 /** One card per proposed decision. Only a tap on Pin writes the ledger. */
 async function sendDecisionCards(adapter: PlatformAdapter, chatId: string, proposals: Array<{ topic: string | null; text: string }>, scope: string = chatId): Promise<void> {
+  if (scopeGone(scope)) return
   for (const p of proposals) {
     try {
       if (!adapter.supportsButtons) {
@@ -676,6 +682,7 @@ export function runShortcutTurn(chatId: string, rawText: string): Promise<string
 }
 
 async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal, scope: string): Promise<string | null> {
+  if (scopeGone(scope)) return 'That project was deleted.'
   markLane(chatId, 'chat')
   try {
     const skillIndex = buildSkillIndex()
@@ -689,7 +696,7 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
-    const clearedMidTurn = sessionId !== undefined && getSession(scope) == null
+    const clearedMidTurn = (sessionId !== undefined && getSession(scope) == null) || scopeGone(scope)
     if (newSessionId && !clearedMidTurn) setSession(scope, newSessionId)
     if (!clearedMidTurn) bumpSessionMessageCount(scope)
     if (text) await saveConversationTurn(scope, rawText, text, { reads })
@@ -963,10 +970,11 @@ const commandScope = (adapter: PlatformAdapter, chatId: string): string => scope
 /** Delete a project and all it owns, stopping anything of it still running. */
 export function removeProject(chatId: string, id: string): boolean {
   if (!getProject(chatId, id)) return false
-  if (activeProject(chatId)?.id === id) {
-    turnQueue.cancel(chatId)
-    setActiveProject(chatId, null)
-  }
+  // A chat turn of this project that is running or waiting is left to end:
+  // the queue is shared with General and other projects, and scopeGone keeps
+  // it from writing anything back.
+  if (activeProject(chatId)?.id === id) setActiveProject(chatId, null)
+  const transcripts = transcriptDirFor(scopeFor(chatId, id))
   const chats = listConversations(chatId, id)
   for (const c of chats) {
     cancelWebTurn(c.id)
@@ -975,6 +983,7 @@ export function removeProject(chatId: string, id: string): boolean {
   }
   for (const t of getAllTasks()) if (t.chat_id === chatId && t.project_id === id) cancelScheduledTask(t.id)
   for (const c of deleteProjectRows(chatId, id) ?? []) removeConversationFiles(c)
+  rmSync(transcripts, { recursive: true, force: true })
   return true
 }
 

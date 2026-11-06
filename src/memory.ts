@@ -7,6 +7,7 @@ import {
   type Memory,
 } from './db.js'
 import { logger } from './logger.js'
+import { scopeGone } from './projects/store.js'
 import { hasQuoted, ownerWords, recallLine, replyOrigin } from './memory/provenance.js'
 
 const SEMANTIC_PATTERN = /\b(my|i am|i'm|i prefer|remember|always|never)\b/i
@@ -58,6 +59,9 @@ export async function saveConversationTurn(
   assistantMsg: string,
   opts: { reads?: string[] } = {}
 ): Promise<void> {
+  // A project deleted while this turn ran stays deleted (card #281).
+  if (scopeGone(chatId)) return
+
   // Skip very short messages or commands
   if (userMsg.length <= 20 || userMsg.startsWith('/')) return
 

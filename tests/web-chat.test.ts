@@ -340,4 +340,14 @@ describe('web chat', () => {
     expect(conv.getConversation('4242', inProject)).toBeNull()
     expect(conv.getConversation('4242', general)).not.toBeNull()
   })
+
+  it('leaves nothing behind when /project delete is typed inside the project (card #281)', async () => {
+    useRuntime()
+    const created = (await (await post('/api/web/projects', { name: 'Doomed' })).json()) as any
+    const id = conv.createConversation('4242', created.project.id).id
+    const evs = await chat(id, '/project delete Doomed confirm')
+    expect(evs.at(-1)).toMatchObject({ name: 'done', data: { gone: true } })
+    expect(conv.getConversation('4242', id)).toBeNull()
+    expect(conv.listMessages(id)).toEqual([])
+  })
 })

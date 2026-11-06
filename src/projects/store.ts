@@ -127,6 +127,14 @@ export function projectOfScope(scope: string | undefined): Project | null {
   return at < 0 ? null : getProject(chatOfScope(scope), scope.slice(at + SEP.length))
 }
 
+/**
+ * True for the scope of a project that has been deleted. A turn that was
+ * running or waiting when it went keeps its scope, and must not write it back.
+ */
+export function scopeGone(scope: string): boolean {
+  return scope.includes(SEP) && !projectOfScope(scope)
+}
+
 /** Rides every turn in a project, outside history, so trimming cannot drop it. */
 export function projectBlock(scope: string | undefined): string {
   const p = projectOfScope(scope)

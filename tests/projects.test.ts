@@ -23,11 +23,14 @@ import {
   projectOfScope,
   renameProject,
   scopeFor,
+  scopeGone,
   setActiveProject,
   setInstructions,
   type Project,
 } from '../src/projects/store.js'
 import { briefWithDecisions, ledgerBlock, liveDecisions, pinDecision, proposeDecision, resolveProposal, setProposalCard } from '../src/memory/decisions.js'
+import { saveConversationTurn } from '../src/memory.js'
+import { saveVoiceCall, recentCallsNote, transcriptDirFor } from '../src/voice-live.js'
 import { createConversation, listConversations } from '../src/web/conversations.js'
 
 const CHAT = '100'
@@ -221,6 +224,31 @@ describe('/project', () => {
   })
 })
 
+describe('voice calls in a project', () => {
+  const call = (memoryScope: string) => ({ sessionId: 'sess-abcdef' + memoryScope.length, chatId: CHAT, memoryScope, startedAt: new Date(), endedAt: new Date(), turns: [{ who: 'user' as const, text: 'The quartz contract is due on Friday, please note it.' }, { who: 'assistant' as const, text: 'Noted.' }], delegations: 0 })
+
+  it('keeps the transcript and memory with the project, out of General and other projects', async () => {
+    const a = scopeFor(CHAT, make('Acme').id)
+    const b = scopeFor(CHAT, make('Beta').id)
+    expect(await saveVoiceCall(call(a) as never)).toContain(transcriptDirFor(a))
+    expect(transcriptDirFor(a)).not.toBe(transcriptDirFor(CHAT))
+    const long = 'x'.repeat(150)
+    expect(transcriptDirFor(`${long}::project::one`)).not.toBe(transcriptDirFor(`${long}::project::two`))
+    expect(recentCallsNote(a)).toContain('quartz')
+    expect(recentCallsNote(CHAT)).not.toContain('quartz')
+    expect(recentCallsNote(b)).not.toContain('quartz')
+    expect(getRecentMemories(CHAT, 5)).toEqual([])
+  })
+
+  it('saves nothing for a project deleted during the call', async () => {
+    const p = make('Acme')
+    const scope = scopeFor(CHAT, p.id)
+    deleteProjectRows(CHAT, p.id)
+    expect(await saveVoiceCall(call(scope) as never)).toBeNull()
+    expect(getRecentMemories(scope, 5)).toEqual([])
+  })
+})
+
 describe('deleting a project', () => {
   it('removes what it owns and nothing else', () => {
     const p = make('Acme')
@@ -244,6 +272,17 @@ describe('deleting a project', () => {
     expect(getSession(scope)).toBeNull()
     expect(listConversations(CHAT).map((c) => c.id)).toEqual([other.id])
     expect(getAllTasks().map((t) => t.id)).toEqual(['t2'])
+  })
+
+  it('keeps a late turn from writing a deleted project\'s memory back', async () => {
+    const p = make('Acme')
+    const scope = scopeFor(CHAT, p.id)
+    expect(scopeGone(scope)).toBe(false)
+    expect(scopeGone(CHAT)).toBe(false)
+    deleteProjectRows(CHAT, p.id)
+    expect(scopeGone(scope)).toBe(true)
+    await saveConversationTurn(scope, 'A message long enough to be remembered here', 'A reply long enough to be remembered as well, yes.')
+    expect(getRecentMemories(scope, 5)).toEqual([])
   })
 
   it('will not touch another chat\'s project', () => {

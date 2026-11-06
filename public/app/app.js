@@ -954,6 +954,8 @@ function turnView(convId, userMsg) {
         // /project may have changed the list.
         loadProjects()
         finishWith(null)
+        // /project delete from inside the project: this chat went with it.
+        if (d.gone) setCurrent(null, [])
       }
       else if (d.cancelled) finishWith({ id: 0, role: 'assistant', content: acc ? stripMarkers(acc) + '\n\n*Stopped.*' : '*Stopped.*', files: [], buttons: [] })
       else finishWith(d.message)

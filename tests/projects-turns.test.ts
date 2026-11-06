@@ -104,6 +104,39 @@ describe('a project in the message path', () => {
     expect(getSession('owner')).toBe('general')
   })
 
+  it('leaves a turn of a deleted project running, writes nothing back, and spares the rest of the queue', async () => {
+    const bot = harness()
+    const a = await inProject(bot, 'Acme')
+    const acme = scopeFor('owner', a.id)
+    await bot.say('/project off')
+    let release = () => {}
+    h.runAgent.mockImplementationOnce(() => new Promise((res) => { release = () => res({ text: 'Long enough to be saved in memory.', newSessionId: 'late', aiPaused: false, reads: [] }) }))
+    await bot.say('/project Acme')
+    await bot.send('A turn in Acme, still running')
+    await bot.send('/project off')
+    await bot.send('A question for General, waiting')
+    await bot.send('/project delete Acme confirm')
+    release()
+    await turnsIdle()
+    expect(h.runAgent).toHaveBeenCalledTimes(2)
+    expect(h.runAgent.mock.calls[1]![8]).toMatchObject({ scope: 'owner' })
+    expect(getSession(acme)).toBeNull()
+  })
+
+  it('does not run a message that waited for a project now deleted', async () => {
+    const bot = harness()
+    await inProject(bot, 'Acme')
+    let release = () => {}
+    h.runAgent.mockImplementationOnce(() => new Promise((res) => { release = () => res({ text: 'General reply, long enough to save.', aiPaused: false, reads: [] }) }))
+    await bot.send('First message in Acme, running')
+    await bot.send('Second message in Acme, waiting')
+    await bot.send('/project delete Acme confirm')
+    release()
+    await turnsIdle()
+    expect(h.runAgent).toHaveBeenCalledTimes(1)
+    expect(bot.sent.join('\n')).toContain('did not run it')
+  })
+
   it('removes a project on a confirmed delete and lands in General', async () => {
     const bot = harness()
     const p = await inProject(bot, 'Acme')
