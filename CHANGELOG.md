@@ -1,13 +1,17 @@
 # Changelog
 
-## 1.72.1 - 2026-11-05
+## 1.72.2 - 2026-11-06
 
 - **Fixed: text you paste is kept as outside text.** Long text pasted into the web chat was remembered as your own words, so a pasted email could come back later as something you said. It is now remembered as outside text, like a forwarded message.
 - **Fixed: a sender's name is no longer saved as your words.** The name on a forwarded message or a reply is set by that person. It now stays out of what is remembered as yours.
 - **Fixed: a Pin tap you take back leaves the card usable.** Removing a queued tap in the web chat, or `/cancel` dropping it, left the card used with nothing pinned. The card now works again.
 - **Fixed: a reply that is only a decision card is no longer lost.** Your message is saved to memory, and if the card cannot be sent you get a line saying how to pin it with `/decide` instead of silence.
 - **Fixed: email read with the account named first is recognised.** `gog --account you@example.com gmail read` now counts as reading mail, for memory and for scheduled job checks.
-- **Fixed: the audit log could fork, and shipping then went quiet.** `enable-egress --prove` writes to the log from a second process. The service then reused those numbers and the witness stopped receiving events, with nothing logged. The service now carries on after the last line on disk, and a broken chain is logged as a send failure.
+- **Fixed: a break in the activity log is now reported.** When the off-box copy could not take the next entry because the numbers did not follow on, sending stopped with nothing logged. It now shows up as a send failure.
+
+## 1.72.1 - 2026-11-06
+
+- **Fixed: the activity log can no longer lose its place during an update.** If an update or a second program wrote to your assistant's activity log while the assistant was running, the log could number two different entries the same, and the off-box copy then stopped taking new entries and warned you every hour. The log now picks up from the latest entry each time it writes, so the record stays one unbroken chain.
 
 ## 1.72.0 - 2026-11-05
 

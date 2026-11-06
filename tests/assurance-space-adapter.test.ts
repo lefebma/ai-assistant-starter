@@ -151,7 +151,7 @@ describe('SpaceRoute behind the real gate', () => {
     expect(route.policyFor('temp-grant')).toEqual(DENY_ALL)
   })
 
-  it('a second AuditLog on the same file keeps the chain whole', async () => {
+  it('a second AuditLog on the same file extends the chain instead of forking it (card 291)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'havn-space-audit-'))
     const { AuditLog } = await import('../src/assurance/audit-log.js')
     const a = new AuditLog({ dir, workspace: CWD })
