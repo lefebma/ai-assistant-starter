@@ -24,7 +24,7 @@ A row in `projects`: id, the owning chat, name, instructions, timestamps. It own
 
 ## Web app
 
-The sidebar gets a New project button. A project row opens a project page with its name, instructions, chats and a delete action. Folder projects (`projects/**/STATE.md`) stay as they are: listed, read-only, and sharing General's memory.
+The sidebar gets a New project button, and a project row gets an edit button. Both open a dialog with the name and instructions; editing also offers delete. The chats stay in the sidebar under the project. A full project page like Claude desktop's is a later step. Folder projects (`projects/**/STATE.md`) stay as they are: listed, read-only, and sharing General's memory.
 
 ## Builder's calls
 

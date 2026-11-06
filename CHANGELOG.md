@@ -2,7 +2,7 @@
 
 ## 1.73.0 - 2026-11-06
 
-- **New: projects keep your work in separate spaces.** A project has a name, standing instructions, and its own chats, memory, pinned decisions and scheduled tasks, so one client's work stays with that client. In the web app, press the plus next to Projects. In chat, send `/project new Acme` to start one, `/project instructions` and your text to tell your assistant how to work in it, `/project Acme` to go back in, and `/project off` to come back to General. Nothing from a project reaches your other chats, and nothing from them reaches it.
+- **New: projects keep your work in separate spaces.** A project has a name, standing instructions, and its own chats, memory, pinned decisions and scheduled tasks, so one client's work stays with that client. In the web app, press the plus next to Projects. In chat, send `/project new Acme` to start one, `/project instructions` and your text to tell your assistant how to work in it, `/project Acme` to go back in, and `/project off` to come back to General. Its memory stays inside it, and the memory of your other chats stays out.
 
 ## 1.72.2 - 2026-11-06
 
