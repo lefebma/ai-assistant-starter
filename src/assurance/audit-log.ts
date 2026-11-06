@@ -24,7 +24,7 @@
  * ships `eventsAfter(seq)` from the append-only file itself, so the file is
  * the outbox and nothing the agent can edit sits between it and the witness.
  */
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -71,6 +71,25 @@ export class FileSink implements AuditSink {
 }
 
 const GENESIS = '0'.repeat(64)
+
+const LOCK_STALE_MS = 10_000
+const LOCK_WAIT_MS = 5_000
+
+/** A lock file taken with O_EXCL. A holder that died is cleared after LOCK_STALE_MS. Never throws: past LOCK_WAIT_MS the write goes ahead unlocked, because a lost audit event is worse than a rare fork the checker will flag. */
+function acquireLock(path: string): () => void {
+  const deadline = Date.now() + LOCK_WAIT_MS
+  for (;;) {
+    try {
+      closeSync(openSync(path, 'wx', 0o600))
+      return () => { try { unlinkSync(path) } catch { /* already gone */ } }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return () => {}
+      try { if (Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) { unlinkSync(path); continue } } catch { /* raced */ }
+      if (Date.now() > deadline) return () => {}
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+    }
+  }
+}
 
 export function hashOf(e: Omit<AuditEvent, 'hash'>): string {
   return createHash('sha256').update(JSON.stringify([e.seq, e.ts, e.runId, e.actor, e.action, e.outcome, e.detail, e.prevHash])).digest('hex')
@@ -163,17 +182,34 @@ export class AuditLog {
     })
   }
 
-  /** Links to the tracked head; the head moves only once the local write succeeded. */
+  /**
+   * Links to the chain head; the head moves only once the local write succeeded.
+   *
+   * Another process can write the same file (an update's restart overlap, a CLI,
+   * a second instance), so the head read at construction goes stale. Under a
+   * lock, take the file's own last event whenever it is past ours, so two
+   * writers extend one chain instead of forking it (two different events with
+   * the same seq stall the witness for good). A file that is behind or empty
+   * (wiped or truncated) never pulls the head back: the witness rule still wins.
+   */
   append(input: AuditInput): AuditEvent {
-    const base = { seq: this.head.seq + 1, ts: new Date().toISOString(), ...input, prevHash: this.head.hash }
-    const event: AuditEvent = { ...base, hash: hashOf(base) }
-    this.witness?.append(event)
     mkdirSync(this.dir, { recursive: true, mode: 0o700 })
-    // After a torn write, start a fresh line so this event is not glued to it.
-    appendFileSync(this.file, (this.torn ? '\n' : '') + JSON.stringify(event) + '\n', { mode: 0o600 })
-    this.torn = false
-    this.head = { seq: event.seq, hash: event.hash }
-    return event
+    const release = acquireLock(join(this.dir, 'audit.lock'))
+    try {
+      const tail = tailOf(this.file)
+      if (tail.last && tail.last.seq > this.head.seq) this.head = { seq: tail.last.seq, hash: tail.last.hash }
+      if (tail.last) this.torn = tail.torn
+      const base = { seq: this.head.seq + 1, ts: new Date().toISOString(), ...input, prevHash: this.head.hash }
+      const event: AuditEvent = { ...base, hash: hashOf(base) }
+      this.witness?.append(event)
+      // After a torn write, start a fresh line so this event is not glued to it.
+      appendFileSync(this.file, (this.torn ? '\n' : '') + JSON.stringify(event) + '\n', { mode: 0o600 })
+      this.torn = false
+      this.head = { seq: event.seq, hash: event.hash }
+      return event
+    } finally {
+      release()
+    }
   }
 
   /**
