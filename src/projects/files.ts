@@ -58,7 +58,8 @@ function candidates(name: string): string[] {
 
 export function addProjectFile(projectId: string, rawName: string, source: { path: string } | { text: string }): { name: string } | { error: AddFileError } {
   const clean = sanitizeUploadName(rawName)
-  if (!clean) return { error: 'bad_name' }
+  // A .part name is hidden from the list, so it would dodge the caps and could not be removed.
+  if (!clean || clean.endsWith('.part')) return { error: 'bad_name' }
   const size = 'text' in source ? Buffer.byteLength(source.text) : statSync(source.path).size
   if (size > limits.fileBytes) return { error: 'too_big' }
   const existing = listProjectFiles(projectId)

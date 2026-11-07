@@ -118,3 +118,11 @@ describe('project files', () => {
     expect(cmd(null, 'files')).toContain('Go into a project first')
   })
 })
+
+describe('project files names', () => {
+  it('refuses a .part name, which the list would hide', () => {
+    const p = make('Parts')
+    expect(addProjectFile(p.id, 'x.part', { text: 'hi' })).toEqual({ error: 'bad_name' })
+    expect(listProjectFiles(p.id)).toEqual([])
+  })
+})
