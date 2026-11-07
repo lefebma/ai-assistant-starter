@@ -265,6 +265,12 @@ code { font-family: var(--mono); font-size: 0.9em; }
   white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 var(--sans); color: var(--ink);
   background: var(--bg-deep); border-radius: var(--radius-sm);
 }
+.import-detail { grid-column: 2; }
+.import-files-label { margin: 8px 0 2px; font-size: 13px; font-weight: 550; }
+.import-files {
+  margin: 0; padding: 6px 10px 6px 26px; max-height: 160px; overflow: auto;
+  font-size: 13px; overflow-wrap: anywhere; background: var(--bg-deep); border-radius: var(--radius-sm);
+}
 .import-row.result { grid-template-columns: 1fr; }
 .import-row.result > * { grid-column: 1; }
 .import-tag {

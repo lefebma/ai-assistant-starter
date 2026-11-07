@@ -564,10 +564,13 @@ const IMPORT_ERRORS = {
   corrupt: 'This file could not be opened. Download projects-000.zip again and try once more.',
   too_large: 'This file is too large to import.',
   import_expired: 'This import timed out. Upload the file again.',
+  // An earlier try may have landed before the connection dropped, which spends the import.
+  unconfirmed: 'We could not confirm this import. Check your projects list before trying again.',
 }
 
 // gen moves on whenever the view resets, so an answer for an earlier upload is dropped.
-const importState = { id: '', rows: [], picked: new Set(), busy: false, finished: false, gen: 0 }
+// lost: an Import press got no answer at all, so the box may have run it.
+const importState = { id: '', rows: [], picked: new Set(), busy: false, finished: false, lost: false, gen: 0 }
 
 function importStep(step) {
   show($('import-upload'), step === 'upload')
@@ -587,6 +590,7 @@ function resetImport() {
   importState.picked = new Set()
   importState.busy = false
   importState.finished = false
+  importState.lost = false
   $('import-rows').replaceChildren()
   $('import-results').replaceChildren()
   importNote('')
@@ -641,18 +645,27 @@ function renderImportRows() {
       already ? h('span', { class: 'import-tag', text: 'Already here' }) : null,
       r.starter ? h('span', { class: 'import-tag', text: "Claude's example" }) : null
     )
-    const text = r.instructions
-      ? h('pre', { class: 'import-instructions', text: r.instructions, hidden: true })
-      : null
-    const toggle = text
+    // What the owner's tick approves: the instructions and the names its files will be saved under.
+    const fileNames = r.fileNames || []
+    const detail =
+      r.instructions || fileNames.length
+        ? h(
+            'div',
+            { class: 'import-detail', hidden: true },
+            r.instructions ? h('pre', { class: 'import-instructions', text: r.instructions }) : null,
+            fileNames.length ? h('p', { class: 'import-files-label', text: 'Files:' }) : null,
+            fileNames.length ? h('ul', { class: 'import-files' }, fileNames.map((f) => h('li', { text: f }))) : null
+          )
+        : null
+    const toggle = detail
       ? h('button', {
           type: 'button',
           class: 'link-btn',
           text: 'Show',
           'aria-expanded': 'false',
           click: (e) => {
-            const open = text.hidden
-            text.hidden = !open
+            const open = detail.hidden
+            detail.hidden = !open
             e.currentTarget.textContent = open ? 'Hide' : 'Show'
             e.currentTarget.setAttribute('aria-expanded', String(open))
           },
@@ -661,9 +674,8 @@ function renderImportRows() {
     const meta = h(
       'span',
       { class: 'import-meta' },
-      r.hasInstructions ? 'Instructions: yes ' : 'Instructions: none',
-      toggle,
-      ' · ' + (r.files ? plural(r.files, 'file', 'files') : 'No files')
+      (r.hasInstructions ? 'Instructions: yes' : 'Instructions: none') + ' · ' + (r.files ? plural(r.files, 'file', 'files') : 'No files') + (toggle ? ' ' : ''),
+      toggle
     )
     list.append(
       h(
@@ -673,7 +685,7 @@ function renderImportRows() {
         name,
         meta,
         r.warnings.map((w) => h('span', { class: 'import-warn', text: w })),
-        text
+        detail
       )
     )
   }
@@ -751,10 +763,13 @@ async function runImportNow() {
     await loadProjects()
   } catch (err) {
     if (err.code === 'import_expired') {
+      const lost = importState.lost
       importState.finished = true
       resetImport()
-      importNote(IMPORT_ERRORS.import_expired)
+      importNote(lost ? IMPORT_ERRORS.unconfirmed : IMPORT_ERRORS.import_expired)
     } else {
+      // A network failure means no answer came back, not that the box refused it.
+      if (err instanceof TypeError) importState.lost = true
       importNote(friendly(err, 'Could not import. Try again.'))
     }
   } finally {

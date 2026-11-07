@@ -546,7 +546,7 @@ A project can hold files, up to 50 of them, 25 MB each and 250 MB in all. Add an
 ### Bring your projects over from Claude
 
 1. In Claude, open Settings, then Privacy, and choose Export data. The screens change from time to time, so look for the data export if they differ. When the email arrives, it gives you several download links (conversations, memories, projects and others), each a separate file ending in `-000.zip`, and the links last 24 hours.
-2. Download only the file called `projects-000.zip`. Upload it as it is, without unzipping it.
+2. Download only the file called `projects-000.zip`. Upload it as it is, without unzipping it. If your Mac opened it into a folder, right-click the folder, choose Compress, and upload that file.
 3. In the web app, choose New project, then Import from Claude, and upload `projects-000.zip`.
 4. Tick the projects you want and read each one's instructions, then import.
 
