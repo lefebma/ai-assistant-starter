@@ -18,8 +18,10 @@ import {
   cancelImport,
   docFileName,
   importInstructions,
+  pendingImportsForTest,
   previewImport,
   runImport,
+  setImportHooksForTest,
   sweepImportTmp,
   type PreviewRow,
   type ResultRow,
@@ -27,6 +29,8 @@ import {
 import { buildZip } from './zip-fixture.js'
 
 const CHAT = '300'
+const FULL_FAILED = 'Instructions are longer than 8,000 characters. The first part went in, but the full text could not be saved as a file.'
+const sourceRows = (uuid: string) => (getDb().prepare('SELECT COUNT(*) AS n FROM projects WHERE source = ?').get(`claude:${uuid}`) as { n: number }).n
 const OVERFLOW = 'Instructions are longer than 8,000 characters. The first part goes in and the full text is saved as the file Full instructions.md.'
 
 let tmp: string
@@ -63,6 +67,9 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'project-import-'))
   setFileRootsForTest({ root: tmp, uploadsDir: join(tmp, 'uploads') })
   setProjectFileLimitsForTest()
+  setImportHooksForTest(null)
+  vi.useRealTimers()
+  sweepImportTmp(Number.POSITIVE_INFINITY) // forget every earlier test's previews
   rmSync(IMPORT_TMP_DIR, { recursive: true, force: true })
 })
 afterAll(() => {
@@ -126,6 +133,13 @@ describe('previewImport', () => {
     expect(rows[0]!.warnings).toEqual([OVERFLOW])
   })
 
+  it('warns about more than 50 files', async () => {
+    const docs = Array.from({ length: 51 }, (_, i) => ({ filename: `d${i}.md`, content: 'x' }))
+    const { rows } = await preview([{ uuid: 'm', docs }, { uuid: 'f', docs: docs.slice(0, 50) }])
+    expect(rows[0]!.warnings).toEqual(['This project has 51 files. The first 50 come across.'])
+    expect(rows[1]!.warnings).toEqual([])
+  })
+
   it('marks a project already imported in this chat, and only this chat', async () => {
     const first = await preview([{ uuid: 'a', name: 'Acme' }])
     run(first.importId, ['a'])
@@ -181,31 +195,62 @@ describe('runImport', () => {
 
   it('skips a project already imported, and a whole import run twice', async () => {
     const first = await preview([{ uuid: 'a', name: 'Acme' }])
-    const second = await preview([{ uuid: 'a', name: 'Acme' }, { uuid: 'b', name: 'Beta' }])
     run(first.importId, ['a'])
+    const second = await preview([{ uuid: 'a', name: 'Acme' }, { uuid: 'b', name: 'Beta' }])
     expect(run(second.importId, ['a', 'b']).map((r) => r.status)).toEqual(['skipped', 'created'])
     const third = await preview([{ uuid: 'a', name: 'Acme' }, { uuid: 'b', name: 'Beta' }])
     expect(run(third.importId, ['a', 'b']).map((r) => r.status)).toEqual(['skipped', 'skipped'])
     expect(listChatProjects(CHAT)).toHaveLength(2)
   })
 
-  it('makes one project from two previews of the same zip run together', async () => {
+  it('lets only the latest preview of a chat run, so two tabs make one project', async () => {
     const zip = zipOf([{ uuid: 'a', name: 'Acme' }])
     const one = await previewImport(CHAT, zip)
     const two = await previewImport(CHAT, zip)
     if ('error' in one || 'error' in two) throw new Error('preview failed')
     const [r1, r2] = await Promise.all([Promise.resolve().then(() => runImport(CHAT, one.importId, ['a'])), Promise.resolve().then(() => runImport(CHAT, two.importId, ['a']))])
     const statuses = [r1, r2].map((r) => ('rows' in r ? r.rows[0]!.status : r.error)).sort()
-    expect(statuses).toEqual(['created', 'skipped'])
-    expect(listChatProjects(CHAT)).toHaveLength(1)
+    expect(statuses).toEqual(['created', 'import_expired'])
+    expect(sourceRows('a')).toBe(1)
   })
 
-  it('treats a unique index hit on source as skipped', async () => {
+  it('treats a unique index hit on source as skipped when another tab wins after the check', async () => {
     const { importId } = await preview([{ uuid: 'a', name: 'Acme' }])
-    // Another tab wins between the check and the insert.
     const insert = getDb().prepare('INSERT INTO projects (id, chat_id, name, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, ?)')
-    insert.run('other', CHAT, 'Elsewhere', 1, 1, 'claude:a')
-    expect(run(importId, ['a'])[0]!.status).toBe('skipped')
+    // Runs after the already-imported check, right before the insert, so the INSERT is what throws.
+    setImportHooksForTest({ beforeCreate: () => { if (!sourceRows('a')) insert.run('other', CHAT, 'Elsewhere', 1, 1, 'claude:a') } })
+    const [row] = run(importId, ['a'])
+    expect(row).toEqual({ uuid: 'a', name: 'Acme', status: 'skipped', leftOut: [] })
+    expect(sourceRows('a')).toBe(1)
+    expect(listChatProjects(CHAT).map((p) => p.name)).toEqual(['Elsewhere'])
+  })
+
+  it('carries on after a project throws once its row exists, and reports what did not land', async () => {
+    const { importId } = await preview([
+      { uuid: 'a', name: 'Acme', prompt_template: 'Be brief.', docs: [{ filename: 'n.md', content: 'x' }] },
+      { uuid: 'b', name: 'Beta' },
+    ])
+    setImportHooksForTest({ afterCreate: (id) => { if (getProject(CHAT, id)?.name === 'Acme') throw new Error('disk gone') } })
+    const rows = run(importId, ['a', 'b'])
+    expect(rows[0]).toMatchObject({ uuid: 'a', name: 'Acme', status: 'created', leftOut: ['n.md'] })
+    expect(getProject(CHAT, rows[0]!.projectId)).not.toBeNull()
+    expect(rows[1]).toMatchObject({ uuid: 'b', status: 'created' })
+  })
+
+  it('fails a project that throws before its row exists, and carries on', async () => {
+    const { importId } = await preview([{ uuid: 'a', name: 'Acme' }, { uuid: 'b', name: 'Beta' }])
+    setImportHooksForTest({ beforeCreate: (source) => { if (source === 'claude:a') throw new Error('boom') } })
+    const rows = run(importId, ['a', 'b'])
+    expect(rows[0]).toEqual({ uuid: 'a', name: 'Acme', status: 'failed', reason: 'This project could not be created.', leftOut: [] })
+    expect(rows[1]).toMatchObject({ uuid: 'b', status: 'created' })
+    expect(sourceRows('a')).toBe(0)
+  })
+
+  it('does not claim the full instructions were saved when the file is refused', async () => {
+    setProjectFileLimitsForTest({ fileBytes: 100 })
+    const { importId } = await preview([{ uuid: 'l', name: 'Long', prompt_template: 'z'.repeat(9000) }])
+    const [row] = run(importId, ['l'])
+    expect(row).toMatchObject({ status: 'created', reason: FULL_FAILED, leftOut: ['Full instructions.md'] })
   })
 
   it('brings back a project the owner deleted', async () => {
@@ -326,6 +371,36 @@ describe('the import and its temp file', () => {
     sweepImportTmp()
     expect(existsSync(old)).toBe(false)
     expect(existsSync(fresh)).toBe(true)
+  })
+
+  it('replaces a chat\'s earlier preview and removes its file, leaving other chats alone', async () => {
+    const first = await preview([{ uuid: 'a', name: 'Acme' }])
+    const other = await preview([{ uuid: 'o', name: 'Other' }], '999')
+    const second = await preview([{ uuid: 'b', name: 'Beta' }])
+    expect(existsSync(first.zip)).toBe(false)
+    expect(runImport(CHAT, first.importId, ['a'])).toEqual({ error: 'import_expired' })
+    expect(run(second.importId, ['b'])[0]!.status).toBe('created')
+    expect(run(other.importId, ['o'], '999')[0]!.status).toBe('created')
+  })
+
+  it.each([
+    ['previewImport', async () => {
+      // A fresh upload: dated now, on the moved clock.
+      const zip = zipOf([{ uuid: 'z' }])
+      utimesSync(zip, Date.now() / 1000, Date.now() / 1000)
+      await previewImport(CHAT, zip)
+    }],
+    ['runImport', async () => { runImport(CHAT, 'none', []) }],
+    ['cancelImport', async () => { cancelImport(CHAT, 'none') }],
+  ])('drops pending previews over an hour old at %s', async (name, call) => {
+    const old = await preview([{ uuid: 'a' }], '999')
+    expect(pendingImportsForTest()).toBe(1)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000)
+    await call()
+    expect(pendingImportsForTest()).toBe(name === 'previewImport' ? 1 : 0)
+    expect(existsSync(old.zip)).toBe(false)
+    expect(runImport('999', old.importId, ['a'])).toEqual({ error: 'import_expired' })
   })
 
   it('expires an import left over an hour', async () => {

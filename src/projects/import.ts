@@ -15,7 +15,7 @@ import { STORE_DIR } from '../config.js'
 import { getDb } from '../db.js'
 import { logger } from '../logger.js'
 import { parseClaudeExport, type ExportProject, type ParseError } from './claude-export.js'
-import { addProjectFile } from './files.js'
+import { MAX_PROJECT_FILES, addProjectFile } from './files.js'
 import { MAX_INSTRUCTIONS, MAX_NAME, MAX_PROJECTS, cleanName, createProject, setInstructions } from './store.js'
 
 export const IMPORT_TMP_DIR = join(STORE_DIR, 'import-tmp')
@@ -25,6 +25,8 @@ const FULL_INSTRUCTIONS = 'Full instructions.md'
 const UNTITLED = 'Untitled project'
 
 const OVERFLOW_WARNING = `Instructions are longer than ${MAX_INSTRUCTIONS.toLocaleString('en-US')} characters. The first part goes in and the full text is saved as the file ${FULL_INSTRUCTIONS}.`
+const FULL_FAILED = `Instructions are longer than ${MAX_INSTRUCTIONS.toLocaleString('en-US')} characters. The first part went in, but the full text could not be saved as a file.`
+const manyFiles = (n: number) => `This project has ${n} files. The first ${MAX_PROJECT_FILES} come across.`
 const TWICE = 'This project appears twice in the file.'
 const LIMIT = `You have reached the limit of ${MAX_PROJECTS} projects.`
 const NOT_CREATED = 'This project could not be created.'
@@ -57,6 +59,26 @@ interface Pending {
 }
 
 const pending = new Map<string, Pending>()
+
+/** Test seams: run just before a project row is inserted, and just after. */
+let hooks: { beforeCreate?: (source: string) => void; afterCreate?: (projectId: string) => void } = {}
+export function setImportHooksForTest(next: typeof hooks | null): void {
+  hooks = next ?? {}
+}
+
+export const pendingImportsForTest = (): number => pending.size
+
+function dropPending(id: string): void {
+  const job = pending.get(id)
+  if (!job) return
+  pending.delete(id)
+  removeFile(job.zipPath)
+}
+
+/** Parsed exports can be large; none is kept past an hour. */
+function dropExpired(now: number = Date.now()): void {
+  for (const [id, p] of pending) if (now - p.at > MAX_AGE_MS) dropPending(id)
+}
 
 /**
  * The description above the template, as one text. Over the cap, the part
@@ -107,7 +129,7 @@ function removeFile(path: string): void {
 
 /** Delete temp uploads over an hour old, and forget imports left that long. */
 export function sweepImportTmp(now: number = Date.now()): void {
-  for (const [id, p] of pending) if (now - p.at > MAX_AGE_MS) pending.delete(id)
+  dropExpired(now)
   let names: string[]
   try {
     names = readdirSync(IMPORT_TMP_DIR)
@@ -137,6 +159,12 @@ export async function previewImport(chatId: string, zipPath: string): Promise<{ 
     logger.info({ code: parsed.code }, 'Claude import refused')
     return { error: parsed.code }
   }
+  // One review at a time per chat: a newer upload replaces the earlier one.
+  for (const [id, p] of pending) {
+    if (p.chatId !== chatId) continue
+    pending.delete(id)
+    if (p.zipPath !== zipPath) removeFile(p.zipPath)
+  }
   const importId = randomUUID()
   pending.set(importId, { chatId, zipPath, projects: parsed.projects, at: Date.now() })
   const rows = firstOfEach(parsed.projects).map((p): PreviewRow => {
@@ -149,7 +177,7 @@ export async function previewImport(chatId: string, zipPath: string): Promise<{ 
       files: p.docs.length,
       starter: p.starter,
       status: alreadyImported(chatId, p.uuid) ? 'already' : 'new',
-      warnings: full ? [OVERFLOW_WARNING] : [],
+      warnings: [...(full ? [OVERFLOW_WARNING] : []), ...(p.docs.length > MAX_PROJECT_FILES ? [manyFiles(p.docs.length)] : [])],
       instructions: text,
     }
   })
@@ -165,6 +193,7 @@ function createNamed(chatId: string, base: string, source: string): Created {
     const suffix = i === 1 ? '' : i === 2 ? ' (Claude)' : ` (Claude ${i - 1})`
     const name = suffix ? `${base.slice(0, MAX_NAME - suffix.length).trimEnd()}${suffix}` : base
     let r: ReturnType<typeof createProject>
+    hooks.beforeCreate?.(source)
     try {
       r = createProject(chatId, name, Date.now(), source)
     } catch (err) {
@@ -180,35 +209,59 @@ function createNamed(chatId: string, base: string, source: string): Created {
   return { error: 'failed', reason: NOT_CREATED }
 }
 
+const docName = (doc: { filename: string }, i: number) => (doc.filename ? docFileName(doc.filename) : `Document ${i + 1}.txt`)
+
+/**
+ * One project. Anything that throws once its row exists still answers
+ * `created`, with every file that did not land in `leftOut`; before that,
+ * `failed`. Either way the next project carries on.
+ */
 function importOne(chatId: string, p: ExportProject): ResultRow {
   const base = baseName(p.name)
-  if (alreadyImported(chatId, p.uuid)) return { uuid: p.uuid, name: base, status: 'skipped', leftOut: [] }
-  if (projectCount(chatId) >= MAX_PROJECTS) return { uuid: p.uuid, name: base, status: 'failed', reason: LIMIT, leftOut: [] }
-
-  const made = createNamed(chatId, base, sourceOf(p.uuid))
-  if ('error' in made) return { uuid: p.uuid, name: base, status: made.error, ...(made.reason ? { reason: made.reason } : {}), leftOut: [] }
-
-  const leftOut: string[] = []
-  const add = (name: string, text: string) => {
-    try {
-      if ('error' in addProjectFile(made.id, name, { text })) leftOut.push(name)
-    } catch (err) {
-      logger.warn({ code: (err as NodeJS.ErrnoException).code }, 'Claude import could not write a file')
-      leftOut.push(name)
-    }
-  }
-
+  let made: { id: string; name: string } | null = null
   const { instructions, full } = importInstructions(p.description, p.template)
-  if (instructions) setInstructions(chatId, made.id, instructions)
-  // First, so the docs cannot crowd it out of the file limit.
-  if (full) add(FULL_INSTRUCTIONS, full)
-  p.docs.forEach((doc, i) => {
-    const name = doc.filename ? docFileName(doc.filename) : `Document ${i + 1}.txt`
-    if (doc.content === '') leftOut.push(name)
-    else add(name, doc.content)
-  })
+  const planned = [...(full ? [FULL_INSTRUCTIONS] : []), ...p.docs.map(docName)]
+  const written = new Set<string>()
+  const leftOut: string[] = []
+  try {
+    if (alreadyImported(chatId, p.uuid)) return { uuid: p.uuid, name: base, status: 'skipped', leftOut: [] }
+    if (projectCount(chatId) >= MAX_PROJECTS) return { uuid: p.uuid, name: base, status: 'failed', reason: LIMIT, leftOut: [] }
 
-  return { uuid: p.uuid, name: made.name, status: 'created', ...(full ? { reason: OVERFLOW_WARNING } : {}), projectId: made.id, leftOut }
+    const r = createNamed(chatId, base, sourceOf(p.uuid))
+    if ('error' in r) return { uuid: p.uuid, name: base, status: r.error, ...(r.reason ? { reason: r.reason } : {}), leftOut: [] }
+    made = r
+    const id = r.id
+    hooks.afterCreate?.(id)
+
+    const add = (name: string, text: string): boolean => {
+      try {
+        if (!('error' in addProjectFile(id, name, { text }))) {
+          written.add(name)
+          return true
+        }
+      } catch (err) {
+        logger.warn({ code: (err as NodeJS.ErrnoException).code }, 'Claude import could not write a file')
+      }
+      leftOut.push(name)
+      return false
+    }
+
+    if (instructions) setInstructions(chatId, id, instructions)
+    // First, so the docs cannot crowd it out of the file limit.
+    const fullSaved = full ? add(FULL_INSTRUCTIONS, full) : false
+    p.docs.forEach((doc, i) => {
+      const name = docName(doc, i)
+      if (doc.content === '') leftOut.push(name)
+      else add(name, doc.content)
+    })
+    const reason = full ? (fullSaved ? OVERFLOW_WARNING : FULL_FAILED) : undefined
+    return { uuid: p.uuid, name: r.name, status: 'created', ...(reason ? { reason } : {}), projectId: id, leftOut }
+  } catch (err) {
+    logger.warn({ code: (err as { code?: string }).code }, 'Claude import stopped part way through a project')
+    if (!made) return { uuid: p.uuid, name: base, status: 'failed', reason: NOT_CREATED, leftOut: [] }
+    const missing = planned.filter((n) => !written.has(n) && !leftOut.includes(n))
+    return { uuid: p.uuid, name: made.name, status: 'created', projectId: made.id, leftOut: [...leftOut, ...missing] }
+  }
 }
 
 /**
@@ -216,6 +269,7 @@ function importOne(chatId: string, p: ExportProject): ResultRow {
  * each. The import is spent and its temp file removed when this returns.
  */
 export function runImport(chatId: string, importId: string, uuids: string[]): { rows: ResultRow[] } | { error: 'import_expired' } {
+  dropExpired()
   const job = pending.get(importId)
   if (!job || job.chatId !== chatId || Date.now() - job.at > MAX_AGE_MS) return { error: 'import_expired' }
   pending.delete(importId)
@@ -242,8 +296,6 @@ export function runImport(chatId: string, importId: string, uuids: string[]): { 
 
 /** Drop an import the owner backed out of. Another chat's id does nothing. */
 export function cancelImport(chatId: string, importId: string): void {
-  const job = pending.get(importId)
-  if (!job || job.chatId !== chatId) return
-  pending.delete(importId)
-  removeFile(job.zipPath)
+  dropExpired()
+  if (pending.get(importId)?.chatId === chatId) dropPending(importId)
 }
