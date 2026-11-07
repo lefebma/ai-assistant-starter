@@ -61,6 +61,7 @@ import { rotationConfig, needsRotation, rotateSession } from './session-rotation
 import { abortAllScheduledRuns, cancelScheduledForChat, cancelScheduledTask, computeNextRun } from './scheduler.js'
 import { createTurnQueue, describeCancel, type CancelResult } from './turn-queue.js'
 import { logger } from './logger.js'
+import { removeProjectFiles } from './projects/files.js'
 import { commandWord } from './infra/command-text.js'
 import { CronExpressionParser } from 'cron-parser'
 import { launchChrome, stopChrome, getBrowserStatus, isCdpAvailable } from './browser.js'
@@ -983,6 +984,7 @@ export function removeProject(chatId: string, id: string): boolean {
   }
   for (const t of getAllTasks()) if (t.chat_id === chatId && t.project_id === id) cancelScheduledTask(t.id)
   for (const c of deleteProjectRows(chatId, id) ?? []) removeConversationFiles(c)
+  removeProjectFiles(id)
   rmSync(transcripts, { recursive: true, force: true })
   return true
 }

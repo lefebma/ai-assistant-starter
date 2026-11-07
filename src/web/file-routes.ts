@@ -5,9 +5,9 @@ import { randomBytes } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import { registerWebRoutes } from './http.js'
 import { sendJson, sendError } from './respond.js'
-import { getFileRoots, listDir, resolveVisible, sanitizeUploadName } from './files.js'
+import { MAX_UPLOAD_BYTES, getFileRoots, listDir, resolveVisible, sanitizeUploadName } from './files.js'
 
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+export { MAX_UPLOAD_BYTES }
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
 
 const TEXT_EXT = new Set(['.md', '.txt', '.json', '.csv', '.html', '.htm'])
