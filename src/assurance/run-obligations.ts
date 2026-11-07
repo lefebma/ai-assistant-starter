@@ -24,7 +24,8 @@ import { canonicalTool, type RoleSpec } from './roles.js'
 import { noteReads } from '../memory/turn-context.js'
 import { PROJECT_ROOT } from '../config.js'
 import { getFileRoots } from '../web/files.js'
-import { resolve, sep } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { dropRunState, loadRunState, openRun } from './run-state.js'
 
 /** Effectively unlimited: reading the inbox twice is fine, it is not a send. */
@@ -68,19 +69,60 @@ const WEB_TOOLS = ['WebSearch', 'WebFetch', 'mcp__playwright__browser_navigate',
  * roots, and a module-level constant would keep the old one.
  */
 function projectsRoot(): string {
-  return resolve(getFileRoots().uploadsDir, 'projects')
+  return realish(resolve(getFileRoots().uploadsDir, 'projects'))
 }
 
-/** True when a file tool's path lands inside the projects folder (.. and relative paths resolved). */
-function inProjectFiles(input: unknown): boolean {
+/** realpath of a path, or of its nearest existing parent plus the rest, so a symlink is judged by where it points. */
+function realish(p: string): string {
+  const tail: string[] = []
+  let cur = p
+  for (;;) {
+    try { return join(realpathSync(cur), ...tail.reverse()) } catch { /* not there yet */ }
+    const up = dirname(cur)
+    if (up === cur) return p
+    tail.push(basename(cur))
+    cur = up
+  }
+}
+
+const within = (path: string, dir: string) => path === dir || path.startsWith(dir + sep)
+
+/** The first path a file tool names, resolved against the run's working directory. */
+function toolPath(input: unknown, cwd: string): string | undefined {
   const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   const p = [o.file_path, o.path].find((x): x is string => typeof x === 'string' && x.length > 0)
-  return !!p && resolve(PROJECT_ROOT, p).startsWith(projectsRoot() + sep)
+  return p === undefined ? undefined : realish(resolve(cwd, p))
 }
 
-/** True when a shell command names the projects folder, by full path or as uploads/projects/. */
+/** True when a file tool's path lands inside the projects folder (.. , symlinks and relative paths resolved). */
+function inProjectFiles(input: unknown, cwd: string): boolean {
+  const p = toolPath(input, cwd)
+  return !!p && within(p, projectsRoot())
+}
+
+/**
+ * A search or listing (Grep, Glob, LS) reads project files when its root is
+ * inside the projects folder or above it: a search with no path covers the
+ * working directory, which holds uploads/projects.
+ */
+function searchesProjectFiles(input: unknown, cwd: string): boolean {
+  const root = projectsRoot()
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const base = toolPath(input, cwd) ?? realish(resolve(cwd))
+  if (within(base, root) || within(root, base)) return true
+  // A glob that names the folder itself, from a root that is not above it.
+  if (typeof o.pattern === 'string') {
+    const lead = o.pattern.split(/[*?[{]/)[0]
+    const at = realish(resolve(base, lead || '.'))
+    if (within(at, root) || within(root, at)) return true
+  }
+  return false
+}
+
+/** True when a shell command names the projects folder, by full path or as uploads/projects. */
 function mentionsProjectFiles(cmd: string): boolean {
-  return cmd.includes(projectsRoot() + sep) || /(?:^|[\s/'"=])uploads\/projects\//.test(cmd)
+  const abs = resolve(getFileRoots().uploadsDir, 'projects')
+  return cmd.includes(abs) || cmd.includes(projectsRoot()) || /(?:^|[\s/'"=])uploads\/projects(?![\w-])/.test(cmd)
 }
 
 /** "node /x/dist/scripts/ms-mail.js read 12" -> ["ms-mail.js", "read", "12"]. */
@@ -159,23 +201,24 @@ function certainSegments(cmd: string, stdout: string | undefined): string[] {
  * saved, calendar read, web read); see certainSegments. `output` is what the
  * tool returned. Exported for tests.
  */
-export function evidenceTypes(tool: string, input: unknown, output?: unknown): string[] {
+export function evidenceTypes(tool: string, input: unknown, output?: unknown, cwd: string = PROJECT_ROOT): string[] {
   const name = canonicalTool(tool)
   const out = new Set<string>()
   if (WEB_TOOLS.includes(name)) out.add('web.read')
   if (name === 'Write' || name === 'Edit') out.add('file.written')
   // A project file holds text the owner may have imported from elsewhere: an outside read.
-  if (name === 'Read' && inProjectFiles(input)) out.add('file.read')
+  if (name === 'Read' && inProjectFiles(input, cwd)) out.add('file.read')
+  if ((name === 'Grep' || name === 'Glob' || name === 'LS') && searchesProjectFiles(input, cwd)) out.add('file.read')
   if (name === 'Bash') {
     const cmd = typeof input === 'object' && input && typeof (input as { command?: unknown }).command === 'string' ? (input as { command: string }).command : ''
+    // Any mention counts, even in a command that failed or may not have run:
+    // missing a read is the failure, over-counting is not.
+    if (mentionsProjectFiles(cmd)) out.add('file.read')
     const res = typeof output === 'object' && output ? output as { stdout?: unknown; interrupted?: unknown; backgroundTaskId?: unknown } : undefined
     // Interrupted, or still running in the background: it has not finished.
     if (res?.interrupted === true || res?.backgroundTaskId) return []
     const stdout = typeof output === 'string' ? output : typeof res?.stdout === 'string' ? res.stdout : undefined
-    const certain = certainSegments(cmd, stdout)
-    // Quoted text is flattened inside a segment, so the whole command is checked for the path.
-    if (certain.length && mentionsProjectFiles(cmd)) out.add('file.read')
-    for (const seg of certain) {
+    for (const seg of certainSegments(cmd, stdout)) {
       const w = words(seg)
       if (starts(w, MAIL_READ)) out.add('mail.read')
       if (starts(w, MAIL_DRAFT)) out.add('mail.drafted')
@@ -220,15 +263,15 @@ export function trackRun(runKey: string, obligations: Obligation[]): TrackedRun 
  * tracked run (chat, the owner at a terminal) it does nothing. Never throws:
  * evidence is bookkeeping and must not break a tool call.
  */
-export function recordToolEvidence(callId: string, tool: string, input: unknown, output?: unknown, runKey: string | undefined = currentRun()): number {
+export function recordToolEvidence(callId: string, tool: string, input: unknown, output?: unknown, runKey: string | undefined = currentRun(), cwd?: string): number {
   // What the turn read, for its memory's provenance (card #235). Any turn, tracked or not.
-  try { noteReads(evidenceTypes(tool, input, output)) } catch { /* never break the tool path */ }
+  try { noteReads(evidenceTypes(tool, input, output, cwd)) } catch { /* never break the tool path */ }
   if (!runKey || !callId) return 0
   const authority = active.get(runKey)
   if (!authority) return 0
   let accepted = 0
   try {
-    const types = evidenceTypes(tool, input, output)
+    const types = evidenceTypes(tool, input, output, cwd)
     for (const o of authority.snapshot().obligations) {
       if (!types.includes(o.evidenceType)) continue
       const r = authority.record({ eventId: `${callId}:${o.id}`, runId: runKey, origin: 'tool', evidenceType: o.evidenceType, obligationId: o.id })

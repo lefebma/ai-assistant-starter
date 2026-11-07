@@ -84,6 +84,11 @@ describe('enforce mode, Claude runtime', () => {
     }
   })
 
+  it('the gate lets an ai-sdk read_file of a project file through (card #280)', async () => {
+    const { gateToolCall } = await import('../src/assurance/scope-gate.js')
+    expect(gateToolCall({ session: 's4', tool: 'read_file', input: { path: 'workspace/uploads/projects/p1/notes.md' }, cwd: '/tmp' })).toEqual({ allow: true })
+  })
+
   it('allows ordinary work', async () => {
     const out = await guardHook({
       hook_event_name: 'PreToolUse', session_id: 's2', transcript_path: '', cwd: '/tmp',

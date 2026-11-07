@@ -30,7 +30,9 @@ import { BUILTIN_ROLES } from '../src/assurance/roles.js'
 import { getFileRoots, setFileRootsForTest } from '../src/web/files.js'
 import { replyOrigin } from '../src/memory/provenance.js'
 import { PROJECT_ROOT } from '../src/config.js'
-import { relative } from 'node:path'
+import { relative, join } from 'node:path'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 rmSync(process.env.AGENT_STORE_DIR!, { recursive: true, force: true })
 
@@ -378,6 +380,42 @@ describe('reading a project file is an outside read (card #280)', () => {
     expect(evidenceTypes('Read', { file_path: `${uploads}/projects-other/a.md` })).not.toContain('file.read')
     expect(evidenceTypes('Read', { file_path: `${uploads}/projects/p1/../p2/b.md` })).toContain('file.read')
     expect(getFileRoots().uploadsDir).toBe(uploads)
+  })
+
+  it('Grep, Glob and LS count when their root is in or above the projects folder', () => {
+    setFileRootsForTest({ root: PROJECT_ROOT, uploadsDir: `${PROJECT_ROOT}/workspace/uploads` })
+    const up = `${PROJECT_ROOT}/workspace/uploads`
+    expect(evidenceTypes('Grep', { pattern: 'x', path: `${up}/projects/p1` })).toContain('file.read')
+    expect(evidenceTypes('Grep', { pattern: 'x' })).toContain('file.read')
+    expect(evidenceTypes('Grep', { pattern: 'x', path: `${PROJECT_ROOT}/src` })).not.toContain('file.read')
+    expect(evidenceTypes('Glob', { pattern: 'workspace/uploads/projects/**' })).toContain('file.read')
+    expect(evidenceTypes('Glob', { pattern: `${up}/projects/**`, path: `${PROJECT_ROOT}/src` })).toContain('file.read')
+    expect(evidenceTypes('Glob', { pattern: '*.ts', path: `${PROJECT_ROOT}/src` })).not.toContain('file.read')
+    expect(evidenceTypes('LS', { path: up })).toContain('file.read')
+  })
+
+  it('any shell segment that names the folder counts, certain or not', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Bash', { command: 'false || cat uploads/projects/p1/a.md' }, 'x')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'ls uploads/projects' }, 'x')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: `ls ${uploads}/projects` }, 'x')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'ls uploads/projects-old' }, 'x')).not.toContain('file.read')
+  })
+
+  it('judges symlinks by where they point and relative paths by the run cwd', () => {
+    const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'havn-fr-')))
+    const ups = join(tmp, 'uploads')
+    mkdirSync(join(ups, 'projects', 'p1'), { recursive: true })
+    mkdirSync(join(tmp, 'elsewhere'))
+    writeFileSync(join(ups, 'projects', 'p1', 'a.md'), 'x')
+    writeFileSync(join(tmp, 'elsewhere', 'b.md'), 'x')
+    symlinkSync(join(ups, 'projects', 'p1', 'a.md'), join(tmp, 'elsewhere', 'link.md'))
+    symlinkSync(join(tmp, 'elsewhere', 'b.md'), join(ups, 'projects', 'p1', 'out.md'))
+    setFileRootsForTest({ root: tmp, uploadsDir: ups })
+    expect(evidenceTypes('Read', { file_path: join(tmp, 'elsewhere', 'link.md') })).toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: join(ups, 'projects', 'p1', 'out.md') })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: 'p1/a.md' }, undefined, join(ups, 'projects'))).toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: 'p1/a.md' })).not.toContain('file.read')
   })
 
   it('a reply built on such a read is stored as untrusted', () => {

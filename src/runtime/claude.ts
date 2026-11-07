@@ -109,7 +109,7 @@ function cgroupSpawn(): { spawnClaudeCodeProcess?: typeof spawnInToolsCgroup } {
  * prove nothing. Outside a tracked scheduled run this does nothing.
  */
 export const evidenceHook = async (input: HookInput): Promise<HookJSONOutput> => {
-  if (input.hook_event_name === 'PostToolUse') recordToolEvidence(input.tool_use_id, input.tool_name, input.tool_input, input.tool_response)
+  if (input.hook_event_name === 'PostToolUse') recordToolEvidence(input.tool_use_id, input.tool_name, input.tool_input, input.tool_response, undefined, input.cwd)
   return {}
 }
 

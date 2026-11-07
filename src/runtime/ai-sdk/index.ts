@@ -147,7 +147,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
               if (!v.allow) return v.reason
               const out = await execute(input, opts)
               // A call that returned (did not throw) proves what it did (card #197).
-              if (!toolFailed(name, out)) recordToolEvidence(toolCallId(opts), name, input, out)
+              if (!toolFailed(name, out)) recordToolEvidence(toolCallId(opts), name, input, out, undefined, cwd)
               return out
             },
           },
