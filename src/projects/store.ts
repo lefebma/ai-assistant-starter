@@ -25,6 +25,8 @@ export interface Project {
   instructions: string
   createdAt: number
   updatedAt: number
+  /** Where an imported project came from, e.g. `claude:<uuid>`; null when made here. */
+  source: string | null
 }
 
 interface Raw {
@@ -33,9 +35,10 @@ interface Raw {
   instructions: string
   created_at: number
   updated_at: number
+  source: string | null
 }
 
-const toProject = (r: Raw): Project => ({ id: r.id, name: r.name, instructions: r.instructions, createdAt: r.created_at, updatedAt: r.updated_at })
+const toProject = (r: Raw): Project => ({ id: r.id, name: r.name, instructions: r.instructions, createdAt: r.created_at, updatedAt: r.updated_at, source: r.source ?? null })
 
 /** Words `/project` keeps for itself, so a project can always be reached by name. */
 const RESERVED = new Set(['new', 'off', 'general', 'instructions', 'files', 'rename', 'delete'])
@@ -63,14 +66,15 @@ export function getProject(chatId: string, id: string | null | undefined): Proje
   return r ? toProject(r) : null
 }
 
-export function createProject(chatId: string, rawName: string, now: number = Date.now()): { project: Project } | { error: NameError } {
+/** A `source` already used in this chat makes the insert throw (unique index). */
+export function createProject(chatId: string, rawName: string, now: number = Date.now(), source?: string): { project: Project } | { error: NameError } {
   const name = cleanName(rawName)
   const error = nameError(chatId, name)
   if (error) return { error }
   const count = getDb().prepare('SELECT COUNT(*) AS n FROM projects WHERE chat_id = ?').get(chatId) as { n: number }
   if (count.n >= MAX_PROJECTS) return { error: 'too_many' }
   const id = randomUUID()
-  getDb().prepare('INSERT INTO projects (id, chat_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, chatId, name, now, now)
+  getDb().prepare('INSERT INTO projects (id, chat_id, name, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, ?)').run(id, chatId, name, now, now, source ?? null)
   return { project: getProject(chatId, id)! }
 }
 
