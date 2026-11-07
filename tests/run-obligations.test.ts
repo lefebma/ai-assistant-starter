@@ -452,6 +452,38 @@ describe('reading a project file is an outside read (card #280)', () => {
     expect(evidenceTypes('Read', { file_path: join(tmp, 'UPLOADS', 'PROJECTS', 'p1', 'a.md') })).toContain('file.read')
   })
 
+  it('shell ids OR their values and are capped; an evicted id fails closed', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    evidenceTypes('Bash', { command: `tail -f ${proj}` }, { backgroundTaskId: 'or-1' })
+    evidenceTypes('Bash', { command: 'sleep 1' }, { backgroundTaskId: 'or-1' })
+    expect(evidenceTypes('BashOutput', { bash_id: 'or-1' })).toContain('file.read')
+    evidenceTypes('Bash', { command: 'sleep 1' }, { backgroundTaskId: 'cap-0' })
+    expect(evidenceTypes('BashOutput', { bash_id: 'cap-0' })).not.toContain('file.read')
+    for (let n = 1; n <= 500; n++) evidenceTypes('Bash', { command: 'sleep 1' }, { backgroundTaskId: `cap-${n}` })
+    expect(evidenceTypes('BashOutput', { bash_id: 'cap-0' })).toContain('file.read')
+    expect(evidenceTypes('BashOutput', { bash_id: 'cap-500' })).not.toContain('file.read')
+  })
+
+  it('wrappers, cd, unknown flags, redirections, sh -c and git grep are handled', () => {
+    setFileRootsForTest({ root: PROJECT_ROOT, uploadsDir: `${PROJECT_ROOT}/workspace/uploads` })
+    const ev = (command: string, cwd = PROJECT_ROOT) => evidenceTypes('Bash', { command }, 'x', cwd).includes('file.read')
+    const src = `${PROJECT_ROOT}/src`
+    expect(ev('cd workspace/uploads && find p -name x', src)).toBe(true)
+    expect(ev('cd src && grep -r foo .', src)).toBe(true)
+    expect(ev('grep -r -A 3 foo x.ts', src)).toBe(false)
+    expect(ev('grep -r -A 3 foo x.ts', PROJECT_ROOT)).toBe(true)
+    expect(ev('grep -r foo src 2>/dev/null')).toBe(false)
+    expect(ev('grep -r foo 2> /dev/null')).toBe(true)
+    expect(ev('sudo rg foo', PROJECT_ROOT)).toBe(true)
+    expect(ev('env A=1 timeout 5 rg foo')).toBe(true)
+    expect(ev('nice -n 5 nohup find .')).toBe(true)
+    expect(ev('xargs -0 grep -r foo')).toBe(true)
+    expect(ev("sh -c 'grep -r foo .'", src)).toBe(true)
+    expect(ev("bash -c 'echo hi'", src)).toBe(false)
+    expect(ev('git grep foo')).toBe(true)
+    expect(ev('git status')).toBe(false)
+  })
+
   it('a reply built on such a read is stored as untrusted', () => {
     expect(replyOrigin(['file.read'])).toBe('untrusted')
   })

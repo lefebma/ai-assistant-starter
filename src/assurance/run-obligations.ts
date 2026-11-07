@@ -137,20 +137,66 @@ function reachesProjectFiles(p: string, cwd: string): boolean {
 }
 
 const RECURSIVE_ALWAYS = new Set(['rg', 'ag', 'ack', 'find', 'tar', 'zip'])
+const SEARCHERS = /^(?:grep|egrep|fgrep|rg|ag|ack)$/
+const WALKER_NAME = /\b(?:grep|egrep|fgrep|rg|ag|ack|find|tar|zip)\b|\bls\s+-\w*R/
+/** Flags that take no argument, so what follows them is a pattern or a path. */
+const SAFE_SHORT = new Set('rRinlLcvwxshHoEFP')
+const SAFE_LONG = new Set(['--recursive', '--ignore-case', '--line-number', '--count', '--files-with-matches', '--hidden', '--no-ignore', '--no-heading', '--smart-case'])
+const WRAPPERS = new Set(['sudo', 'env', 'command', 'xargs', 'timeout', 'nice', 'nohup', 'time'])
+
+function flagIsSafe(f: string): boolean {
+  return f.startsWith('--') ? SAFE_LONG.has(f) : [...f.slice(1)].every((c) => SAFE_SHORT.has(c))
+}
+
+/** One command's words with env assignments, redirections and wrappers (sudo, env, timeout...) taken off. */
+function commandWords(seg: string): string[] {
+  let toks = (seg.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^['"]|['"]$/g, ''))
+  const noRedir: string[] = []
+  for (let i = 0; i < toks.length; i++) {
+    if (/^\d*[<>]/.test(toks[i])) { if (/^\d*(?:>>?|<)$/.test(toks[i])) i++; continue }
+    noRedir.push(toks[i])
+  }
+  toks = noRedir
+  for (;;) {
+    while (toks.length && /^[A-Za-z_]\w*=/.test(toks[0])) toks.shift()
+    const w = toks[0]?.split('/').pop()
+    if (!w || !WRAPPERS.has(w)) return toks
+    toks.shift()
+    if (w === 'nice' && toks[0] === '-n') toks.splice(0, 2)
+    while (toks.length && (toks[0].startsWith('-') || (w === 'env' && /^[A-Za-z_]\w*=/.test(toks[0])))) toks.shift()
+    if (w === 'timeout' && toks.length && /^\d/.test(toks[0])) toks.shift()
+  }
+}
 
 /**
- * A shell command that walks directories (grep -r, rg, find, ls -R, tar, zip)
- * reads project files when it runs with no path from a cwd at or above the
- * folder, or names a path that is. Quoting is only roughly understood: this
- * leans towards counting.
+ * A shell command that walks directories (grep -r, rg, find, ls -R, tar, zip,
+ * git grep) reads project files when it runs with no path from a cwd at or
+ * above the folder, or names a path that is. Quoting is only roughly
+ * understood, and where it is unclear this counts: a cd before a walker, an
+ * unknown flag, a glob or variable in a path, and sh -c strings that name a
+ * walker all count. Known limit: anything cleverer (aliases, functions,
+ * scripts that walk by themselves) is not seen.
  */
 function walksProjectFiles(cmd: string, cwd: string): boolean {
+  let sawCd = false
   for (const seg of cmd.split(/&&|\|\||[;|&\n]/)) {
-    const toks = (seg.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^['"]|['"]$/g, ''))
-    while (toks.length && /^[A-Za-z_]\w*=/.test(toks[0])) toks.shift()
-    const prog = toks.shift()?.split('/').pop()
+    const toks = commandWords(seg)
+    let prog = toks.shift()?.split('/').pop()
     if (!prog) continue
-    const args = toks
+    if (prog === 'cd' || prog === 'pushd') { sawCd = true; continue }
+    if ((prog === 'sh' || prog === 'bash' || prog === 'zsh') && toks.includes('-c')) {
+      const inner = toks[toks.indexOf('-c') + 1] ?? ''
+      if (mentionsProjectFiles(inner) || WALKER_NAME.test(inner)) return true
+      continue
+    }
+    let args = toks
+    if (prog === 'git') {
+      const i = args.findIndex((a) => !a.startsWith('-'))
+      if (i < 0 || args[i] !== 'grep') continue
+      prog = 'grep'
+      args = args.slice(i + 1)
+      args = ['-r', ...args]
+    }
     const flags = args.filter((a) => a.startsWith('-') && a.length > 1)
     const short = flags.filter((f) => !f.startsWith('--')).map((f) => f.slice(1)).join('')
     const recursive =
@@ -158,6 +204,7 @@ function walksProjectFiles(cmd: string, cwd: string): boolean {
       (/^(?:grep|egrep|fgrep)$/.test(prog) && (/[rR]/.test(short) || flags.some((f) => f === '--recursive' || f === '--dereference-recursive'))) ||
       (prog === 'ls' && /R/.test(short))
     if (!recursive) continue
+    if (sawCd) return true
     let paths: string[]
     if (prog === 'find') {
       const i = args.findIndex((a) => a.startsWith('-') || a === '(' || a === '!')
@@ -166,16 +213,27 @@ function walksProjectFiles(cmd: string, cwd: string): boolean {
     } else {
       let pos = args.filter((a) => !a.startsWith('-'))
       // The first positional is the pattern for the searchers, unless -e/-f supplied it.
-      if (/^(?:grep|egrep|fgrep|rg|ag|ack)$/.test(prog) && !flags.some((f) => /^-[a-zA-Z]*[ef]$|^--(?:regexp|file)/.test(f))) pos = pos.slice(1)
+      if (SEARCHERS.test(prog) && !flags.some((f) => /^-[a-zA-Z]*[ef]$|^--(?:regexp|file)/.test(f))) pos = pos.slice(1)
       paths = pos.length ? pos : ['.']
+      // A flag that may take an argument makes the positionals unreliable: search '.' too.
+      if (SEARCHERS.test(prog) && flags.some((f) => !flagIsSafe(f))) paths.push('.')
     }
     if (paths.some((p) => reachesProjectFiles(p, cwd))) return true
   }
   return false
 }
 
-// Background shells seen this process: id -> did the command touch project files.
+// Background shells seen this process: id -> did any command under it touch project files.
+const SHELL_CAP = 500
 const shellTouched = new Map<string, boolean>()
+
+/** Remember a background shell; once true stays true, the oldest is evicted past the cap (an evicted id fails closed). */
+function noteShell(id: string, touched: boolean): void {
+  const prior = shellTouched.get(id) ?? false
+  shellTouched.delete(id)
+  shellTouched.set(id, prior || touched)
+  while (shellTouched.size > SHELL_CAP) shellTouched.delete(shellTouched.keys().next().value as string)
+}
 
 /** "node /x/dist/scripts/ms-mail.js read 12" -> ["ms-mail.js", "read", "12"]. */
 function words(segment: string): string[] {
@@ -278,7 +336,7 @@ export function evidenceTypes(tool: string, input: unknown, output?: unknown, cw
     // Interrupted, or still running in the background: it has not finished.
     // The command may already have printed project text, so file.read stays.
     if (res?.interrupted === true || res?.backgroundTaskId) {
-      if (res?.backgroundTaskId) shellTouched.set(String(res.backgroundTaskId), touched)
+      if (res?.backgroundTaskId) noteShell(String(res.backgroundTaskId), touched)
       return out.has('file.read') ? ['file.read'] : []
     }
     const stdout = typeof output === 'string' ? output : typeof res?.stdout === 'string' ? res.stdout : undefined
