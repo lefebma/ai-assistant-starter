@@ -43,7 +43,7 @@ registerWebRoutes([
   },
   {
     method: 'POST',
-    pattern: /^\/api\/web\/projects\/([^/]+)$/,
+    pattern: /^\/api\/web\/projects\/(?!import$)([^/]+)$/,
     auth: true,
     async handler(ctx) {
       const id = ctx.params[0]!

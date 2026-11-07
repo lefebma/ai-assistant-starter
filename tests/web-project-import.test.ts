@@ -10,6 +10,7 @@ vi.mock('../src/config.js', async (orig) => ({
 }))
 
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setFileRootsForTest } from '../src/web/files.js'
@@ -106,12 +107,16 @@ describe('project import routes', () => {
   })
 
   it('refuses a declared length over the cap and a wrong media type', async () => {
-    const big = await fetch(url(), {
-      method: 'POST',
-      headers: { Cookie: cookie, 'X-Havn-Web': '1', 'Content-Type': 'application/octet-stream', 'Content-Length': String(101 * 1024 * 1024) },
-      body: 'x',
-    }).catch(() => null)
-    if (big) expect(big.status).toBe(413)
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        { host: '127.0.0.1', port, path: '/api/web/projects/import', method: 'POST',
+          headers: { Cookie: cookie, 'X-Havn-Web': '1', 'Content-Type': 'application/octet-stream', 'Content-Length': String(101 * 1024 * 1024) } },
+        (res) => { res.resume(); resolve(res.statusCode ?? 0); req.destroy() },
+      )
+      req.on('error', (e) => { if (!req.destroyed) reject(e) })
+      req.flushHeaders()
+    })
+    expect(status).toBe(413)
     const t = await upload(zip('a'), 'application/json')
     expect(t.status).toBe(415)
     expect(tmpFiles()).toEqual([])

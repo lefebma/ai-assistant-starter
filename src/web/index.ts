@@ -5,7 +5,6 @@
  */
 import './http.js'
 import './chat-routes.js'
-// Before project-goal-routes: its POST /projects/:id would otherwise match /projects/import.
 import './project-import-routes.js'
 import './project-goal-routes.js'
 import './file-routes.js'
