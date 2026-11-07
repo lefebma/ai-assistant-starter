@@ -418,6 +418,40 @@ describe('reading a project file is an outside read (card #280)', () => {
     expect(evidenceTypes('Read', { file_path: 'p1/a.md' })).not.toContain('file.read')
   })
 
+  it('interrupted and background shells keep file.read; BashOutput follows the shell', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Bash', { command: `cat ${proj}` }, { stdout: 'x', interrupted: true })).toEqual(['file.read'])
+    expect(evidenceTypes('Bash', { command: 'sleep 9' }, { backgroundTaskId: 'bg-clean' })).toEqual([])
+    expect(evidenceTypes('Bash', { command: `tail -f ${proj}` }, { backgroundTaskId: 'bg-dirty' })).toEqual(['file.read'])
+    expect(evidenceTypes('BashOutput', { bash_id: 'bg-dirty' })).toContain('file.read')
+    expect(evidenceTypes('BashOutput', { bash_id: 'bg-clean' })).not.toContain('file.read')
+    expect(evidenceTypes('BashOutput', { bash_id: 'never-seen' })).toContain('file.read')
+  })
+
+  it('recursive shell searches count from a cwd at or above the folder', () => {
+    setFileRootsForTest({ root: PROJECT_ROOT, uploadsDir: `${PROJECT_ROOT}/workspace/uploads` })
+    const ev = (command: string, cwd = PROJECT_ROOT) => evidenceTypes('Bash', { command }, 'x', cwd).includes('file.read')
+    expect(ev('grep -r secret .')).toBe(true)
+    expect(ev('grep -rn secret')).toBe(true)
+    expect(ev('rg foo')).toBe(true)
+    expect(ev('find . -name x')).toBe(true)
+    expect(ev('ls -R')).toBe(true)
+    expect(ev('grep -r foo $DIR')).toBe(true)
+    expect(ev('grep -r foo workspace/*')).toBe(true)
+    expect(ev('find src -name x')).toBe(false)
+    expect(ev('ls src')).toBe(false)
+    expect(ev('grep foo README.md')).toBe(false)
+    expect(ev('grep -r foo .', `${PROJECT_ROOT}/src`)).toBe(false)
+    expect(ev('rg foo', `${PROJECT_ROOT}/workspace/uploads/projects/p1`)).toBe(true)
+  })
+
+  it.runIf(process.platform === 'darwin')('compares case-insensitively on darwin', () => {
+    const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'havn-case-')))
+    mkdirSync(join(tmp, 'Uploads', 'projects', 'p1'), { recursive: true })
+    setFileRootsForTest({ root: tmp, uploadsDir: join(tmp, 'Uploads') })
+    expect(evidenceTypes('Read', { file_path: join(tmp, 'UPLOADS', 'PROJECTS', 'p1', 'a.md') })).toContain('file.read')
+  })
+
   it('a reply built on such a read is stored as untrusted', () => {
     expect(replyOrigin(['file.read'])).toBe('untrusted')
   })

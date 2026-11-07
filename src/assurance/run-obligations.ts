@@ -77,7 +77,7 @@ function realish(p: string): string {
   const tail: string[] = []
   let cur = p
   for (;;) {
-    try { return join(realpathSync(cur), ...tail.reverse()) } catch { /* not there yet */ }
+    try { return join(realpathSync.native(cur), ...tail.reverse()) } catch { /* not there yet */ }
     const up = dirname(cur)
     if (up === cur) return p
     tail.push(basename(cur))
@@ -85,7 +85,9 @@ function realish(p: string): string {
   }
 }
 
-const within = (path: string, dir: string) => path === dir || path.startsWith(dir + sep)
+/** Case-insensitive filesystems (macOS, Windows) compare lower-cased. */
+const fold = (p: string) => (process.platform === 'darwin' || process.platform === 'win32' ? p.toLowerCase() : p)
+const within = (path: string, dir: string) => { const a = fold(path), d = fold(dir); return a === d || a.startsWith(d + sep) }
 
 /** The first path a file tool names, resolved against the run's working directory. */
 function toolPath(input: unknown, cwd: string): string | undefined {
@@ -124,6 +126,56 @@ function mentionsProjectFiles(cmd: string): boolean {
   const abs = resolve(getFileRoots().uploadsDir, 'projects')
   return cmd.includes(abs) || cmd.includes(projectsRoot()) || /(?:^|[\s/'"=])uploads\/projects(?![\w-])/.test(cmd)
 }
+
+/** True when a path (resolved against cwd) is in or above the projects folder. */
+function reachesProjectFiles(p: string, cwd: string): boolean {
+  if (/[*?[{$`]/.test(p)) return true // a glob or variable could expand to it: fail closed
+  const home = process.env.HOME ?? ''
+  const at = realish(resolve(cwd, p.startsWith('~') && home ? join(home, p.slice(1)) : p))
+  const root = projectsRoot()
+  return within(at, root) || within(root, at)
+}
+
+const RECURSIVE_ALWAYS = new Set(['rg', 'ag', 'ack', 'find', 'tar', 'zip'])
+
+/**
+ * A shell command that walks directories (grep -r, rg, find, ls -R, tar, zip)
+ * reads project files when it runs with no path from a cwd at or above the
+ * folder, or names a path that is. Quoting is only roughly understood: this
+ * leans towards counting.
+ */
+function walksProjectFiles(cmd: string, cwd: string): boolean {
+  for (const seg of cmd.split(/&&|\|\||[;|&\n]/)) {
+    const toks = (seg.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^['"]|['"]$/g, ''))
+    while (toks.length && /^[A-Za-z_]\w*=/.test(toks[0])) toks.shift()
+    const prog = toks.shift()?.split('/').pop()
+    if (!prog) continue
+    const args = toks
+    const flags = args.filter((a) => a.startsWith('-') && a.length > 1)
+    const short = flags.filter((f) => !f.startsWith('--')).map((f) => f.slice(1)).join('')
+    const recursive =
+      RECURSIVE_ALWAYS.has(prog) ||
+      (/^(?:grep|egrep|fgrep)$/.test(prog) && (/[rR]/.test(short) || flags.some((f) => f === '--recursive' || f === '--dereference-recursive'))) ||
+      (prog === 'ls' && /R/.test(short))
+    if (!recursive) continue
+    let paths: string[]
+    if (prog === 'find') {
+      const i = args.findIndex((a) => a.startsWith('-') || a === '(' || a === '!')
+      paths = i < 0 ? args : args.slice(0, i)
+      if (!paths.length) paths = ['.']
+    } else {
+      let pos = args.filter((a) => !a.startsWith('-'))
+      // The first positional is the pattern for the searchers, unless -e/-f supplied it.
+      if (/^(?:grep|egrep|fgrep|rg|ag|ack)$/.test(prog) && !flags.some((f) => /^-[a-zA-Z]*[ef]$|^--(?:regexp|file)/.test(f))) pos = pos.slice(1)
+      paths = pos.length ? pos : ['.']
+    }
+    if (paths.some((p) => reachesProjectFiles(p, cwd))) return true
+  }
+  return false
+}
+
+// Background shells seen this process: id -> did the command touch project files.
+const shellTouched = new Map<string, boolean>()
 
 /** "node /x/dist/scripts/ms-mail.js read 12" -> ["ms-mail.js", "read", "12"]. */
 function words(segment: string): string[] {
@@ -209,14 +261,26 @@ export function evidenceTypes(tool: string, input: unknown, output?: unknown, cw
   // A project file holds text the owner may have imported from elsewhere: an outside read.
   if (name === 'Read' && inProjectFiles(input, cwd)) out.add('file.read')
   if ((name === 'Grep' || name === 'Glob' || name === 'LS') && searchesProjectFiles(input, cwd)) out.add('file.read')
+  if (name === 'BashOutput' || name === 'TaskOutput') {
+    // Output of a background shell: counts if that shell's command touched the folder,
+    // or if we never saw it start (a restart, another process): fail closed.
+    const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+    const id = [o.bash_id, o.shell_id, o.task_id, o.id].find((x) => typeof x === 'string' || typeof x === 'number')
+    if (id === undefined || shellTouched.get(String(id)) !== false) out.add('file.read')
+  }
   if (name === 'Bash') {
     const cmd = typeof input === 'object' && input && typeof (input as { command?: unknown }).command === 'string' ? (input as { command: string }).command : ''
     // Any mention counts, even in a command that failed or may not have run:
     // missing a read is the failure, over-counting is not.
-    if (mentionsProjectFiles(cmd)) out.add('file.read')
+    const touched = mentionsProjectFiles(cmd) || walksProjectFiles(cmd, cwd)
+    if (touched) out.add('file.read')
     const res = typeof output === 'object' && output ? output as { stdout?: unknown; interrupted?: unknown; backgroundTaskId?: unknown } : undefined
     // Interrupted, or still running in the background: it has not finished.
-    if (res?.interrupted === true || res?.backgroundTaskId) return []
+    // The command may already have printed project text, so file.read stays.
+    if (res?.interrupted === true || res?.backgroundTaskId) {
+      if (res?.backgroundTaskId) shellTouched.set(String(res.backgroundTaskId), touched)
+      return out.has('file.read') ? ['file.read'] : []
+    }
     const stdout = typeof output === 'string' ? output : typeof res?.stdout === 'string' ? res.stdout : undefined
     for (const seg of certainSegments(cmd, stdout)) {
       const w = words(seg)
