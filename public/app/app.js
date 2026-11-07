@@ -300,16 +300,158 @@ function renderProjects() {
   }
 }
 
-// A project's name and standing instructions (card #281).
+// A project's name, standing instructions and files (cards #281, #280).
 let editingProject = null
+// The dialog's Files list: { name, size } on the box, or, on a new project,
+// { name, size, file } held until Save creates the project.
+let dialogFiles = []
+let filesBusy = false
+let savingProject = false
+
+const MAX_PROJECT_FILE_BYTES = 25 * 1024 * 1024
+
+function formatSize(bytes) {
+  const n = Number(bytes) || 0
+  if (n < 1024) return n + (n === 1 ? ' byte' : ' bytes')
+  if (n < 1024 * 1024) return Math.max(1, Math.round(n / 1024)) + ' KB'
+  const mb = n / (1024 * 1024)
+  return (mb < 10 ? mb.toFixed(1) : String(Math.round(mb))) + ' MB'
+}
+
+function projectFilesPath(id) {
+  return '/api/web/projects/' + encodeURIComponent(id) + '/files'
+}
+
+/** Plain words for a project file that did not go in. */
+function fileError(err, name) {
+  const code = err && err.code
+  if (code === 'too_large' || (err && err.status === 413)) return name + ' is larger than 25 MB.'
+  if (code === 'too_many') return 'A project can hold 50 files, so ' + name + ' did not go in.'
+  if (code === 'project_full') return 'This project has no room for ' + name + '.'
+  if (code === 'bad_name') return name + ' has a name that cannot be used. Rename it and try again.'
+  if (err && err.status === 401) return ''
+  if (err instanceof TypeError) return 'Cannot reach your assistant, so ' + name + ' did not upload.'
+  return name + ' did not upload. Try again.'
+}
+
+function renderDialogFiles() {
+  const list = $('project-files')
+  list.replaceChildren()
+  for (const f of dialogFiles) {
+    list.append(
+      h(
+        'li',
+        { class: 'pfile' + (f.uploading ? ' uploading' : '') },
+        f.file || !editingProject
+          ? h('span', { class: 'pfile-name', text: f.name, title: f.name })
+          : h('a', { class: 'pfile-name', text: f.name, title: 'Download ' + f.name, href: projectFilesPath(editingProject.id) + '/' + encodeURIComponent(f.name), download: f.name }),
+        h('span', { class: 'pfile-size', text: f.uploading ? 'Uploading' : formatSize(f.size) }),
+        h('button', {
+          type: 'button',
+          class: 'icon-btn',
+          title: 'Remove ' + f.name,
+          'aria-label': 'Remove ' + f.name,
+          icon: 'trash',
+          disabled: f.uploading || filesBusy,
+          click: () => removeDialogFile(f),
+        })
+      )
+    )
+  }
+}
+
+async function loadDialogFiles() {
+  const p = editingProject
+  if (!p) return
+  try {
+    const r = await api.get(projectFilesPath(p.id))
+    if (editingProject !== p) return
+    dialogFiles = (r && r.files) || []
+  } catch (err) {
+    if (editingProject !== p) return
+    note($('project-note'), err.status === 401 ? '' : 'Could not load the files.')
+  }
+  renderDialogFiles()
+}
+
+async function removeDialogFile(f) {
+  if (f.file) {
+    dialogFiles = dialogFiles.filter((x) => x !== f)
+    return renderDialogFiles()
+  }
+  const p = editingProject
+  if (!p || !window.confirm('Remove "' + f.name + '" from this project?')) return
+  try {
+    await api.post(projectFilesPath(p.id) + '/delete', { name: f.name })
+  } catch (err) {
+    if (err.status !== 404) note($('project-note'), friendly(err, 'Could not remove ' + f.name + '.'))
+  }
+  await loadDialogFiles()
+}
+
+/** Upload files one by one. Resolves to the messages for those that did not go in. */
+async function uploadProjectFiles(id, files) {
+  const problems = []
+  for (const file of files) {
+    if (file.size > MAX_PROJECT_FILE_BYTES) {
+      problems.push(file.name + ' is larger than 25 MB.')
+      continue
+    }
+    try {
+      await api.sendFile(projectFilesPath(id) + '?name=' + encodeURIComponent(file.name), file)
+    } catch (err) {
+      const text = fileError(err, file.name)
+      if (text) problems.push(text)
+    }
+  }
+  return problems
+}
+
+async function addDialogFiles(list) {
+  const files = [...(list || [])]
+  if (!files.length) return
+  note($('project-note'), '')
+  if (!editingProject) {
+    // A new project: hold them until Save creates it.
+    const problems = []
+    for (const file of files) {
+      if (file.size > MAX_PROJECT_FILE_BYTES) problems.push(file.name + ' is larger than 25 MB.')
+      else dialogFiles.push({ name: file.name, size: file.size, file })
+    }
+    note($('project-note'), problems.join('\n'))
+    return renderDialogFiles()
+  }
+  const p = editingProject
+  filesBusy = true
+  dialogFiles.push(...files.map((file) => ({ name: file.name, size: file.size, uploading: true })))
+  renderDialogFiles()
+  const problems = await uploadProjectFiles(p.id, files)
+  filesBusy = false
+  if (editingProject !== p) return
+  note($('project-note'), problems.join('\n'))
+  await loadDialogFiles()
+}
+
+function showProjectForm() {
+  show($('project-form'))
+  show($('import-view'), false)
+  $('project-dialog').setAttribute('aria-labelledby', 'project-dialog-title')
+}
 
 function openProjectDialog(p) {
   editingProject = p
+  dialogFiles = []
+  filesBusy = false
+  resetImport()
+  showProjectForm()
   $('project-dialog-title').textContent = p ? p.name : 'New project'
   $('project-name').value = p ? p.name : ''
   $('project-instructions').value = p ? p.instructions || '' : ''
   $('project-delete').hidden = !p
+  show($('project-import-offer'), !p)
   note($('project-note'), '')
+  renderDialogFiles()
+  if (p) loadDialogFiles()
   closeDrawers()
   $('project-dialog').showModal()
   $('project-name').focus()
@@ -326,25 +468,51 @@ function projectError(err) {
 
 async function saveProject(e) {
   e.preventDefault()
+  if (savingProject || filesBusy) return
   const name = $('project-name').value
   const instructions = $('project-instructions').value
+  const held = dialogFiles.filter((f) => f.file).map((f) => f.file)
+  savingProject = true
+  $('project-save').disabled = true
   try {
     let id = editingProject && editingProject.id
     if (!id) id = (await api.post('/api/web/projects', { name })).project.id
-    await api.post('/api/web/projects/' + encodeURIComponent(id), { name, instructions })
+    const r = await api.post('/api/web/projects/' + encodeURIComponent(id), { name, instructions })
     state.expanded.add(id)
-    $('project-dialog').close()
+    let problems = []
+    if (held.length) {
+      // The project exists now: from here on the dialog edits it.
+      editingProject = (r && r.project) || { id, name, instructions, own: true }
+      $('project-dialog-title').textContent = editingProject.name
+      $('project-delete').hidden = false
+      show($('project-import-offer'), false)
+      dialogFiles = dialogFiles.map((f) => (f.file ? { name: f.name, size: f.size, uploading: true } : f))
+      filesBusy = true
+      renderDialogFiles()
+      problems = await uploadProjectFiles(id, held)
+      filesBusy = false
+    }
     await loadProjects()
     syncProjectLabel()
+    if (problems.length) {
+      note($('project-note'), 'The project is saved. ' + problems.join('\n'))
+      await loadDialogFiles()
+    } else {
+      $('project-dialog').close()
+    }
   } catch (err) {
+    filesBusy = false
     note($('project-note'), projectError(err))
+  } finally {
+    savingProject = false
+    $('project-save').disabled = false
   }
 }
 
 async function deleteProject() {
   const p = editingProject
   if (!p) return
-  if (!window.confirm('Delete "' + p.name + '"? Its instructions, chats, memory, pinned decisions and scheduled tasks are all removed. This cannot be undone.')) return
+  if (!window.confirm('Delete "' + p.name + '"? Its instructions, files, chats, memory, pinned decisions and scheduled tasks are all removed. This cannot be undone.')) return
   try {
     await api.post('/api/web/projects/' + encodeURIComponent(p.id) + '/delete')
   } catch (err) {
@@ -359,10 +527,267 @@ function syncProjectLabel() {
   if (state.current) $('chat-project').textContent = projectName(state.current.projectId)
 }
 
+/** Drag files onto a zone; onFiles gets the FileList. */
+function dropTarget(zone, onFiles) {
+  let depth = 0
+  const carries = (e) => [...(e.dataTransfer?.types || [])].includes('Files')
+  zone.addEventListener('dragenter', (e) => {
+    if (!carries(e)) return
+    e.preventDefault()
+    depth++
+    zone.classList.add('dropping')
+  })
+  zone.addEventListener('dragover', (e) => {
+    if (!carries(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  })
+  zone.addEventListener('dragleave', (e) => {
+    if (!carries(e)) return
+    depth = Math.max(0, depth - 1)
+    if (!depth) zone.classList.remove('dropping')
+  })
+  zone.addEventListener('drop', (e) => {
+    if (!carries(e)) return
+    e.preventDefault()
+    depth = 0
+    zone.classList.remove('dropping')
+    onFiles(e.dataTransfer.files)
+  })
+}
+
+// ---------- Import from Claude (card #280) ----------
+
+const IMPORT_ERRORS = {
+  manifest: 'That is the list of download links. Open it from your email and download projects-000.zip.',
+  not_projects: "This doesn't look like the projects file.",
+  corrupt: 'This file could not be opened. Download projects-000.zip again and try once more.',
+  too_large: 'This file is too large to import.',
+  import_expired: 'This import timed out. Upload the file again.',
+}
+
+// gen moves on whenever the view resets, so an answer for an earlier upload is dropped.
+const importState = { id: '', rows: [], picked: new Set(), busy: false, finished: false, gen: 0 }
+
+function importStep(step) {
+  show($('import-upload'), step === 'upload')
+  show($('import-review'), step === 'review')
+  show($('import-result'), step === 'result')
+  show($('import-run'), step === 'review')
+  show($('import-done'), step === 'result')
+  show($('import-cancel'), step !== 'result')
+}
+
+/** Forget the import on the page, and on the box when one is waiting there. */
+function resetImport() {
+  if (importState.id && !importState.finished) api.post('/api/web/projects/import/' + encodeURIComponent(importState.id) + '/cancel').catch(() => {})
+  importState.gen++
+  importState.id = ''
+  importState.rows = []
+  importState.picked = new Set()
+  importState.busy = false
+  importState.finished = false
+  $('import-rows').replaceChildren()
+  $('import-results').replaceChildren()
+  importNote('')
+  importStep('upload')
+}
+
+function openImport() {
+  resetImport()
+  show($('project-form'), false)
+  show($('import-view'))
+  $('project-dialog').setAttribute('aria-labelledby', 'import-title')
+  $('import-pick').focus()
+}
+
+/** The import view's status line; calm says it is progress or good news, not a problem. */
+function importNote(text, calm = false) {
+  $('import-note').classList.toggle('calm', calm)
+  note($('import-note'), text)
+}
+
+function plural(n, one, many) {
+  return n + ' ' + (n === 1 ? one : many)
+}
+
+function syncImportButton() {
+  const n = importState.picked.size
+  $('import-run').disabled = importState.busy || n === 0
+  $('import-run').textContent = n ? 'Import ' + plural(n, 'project', 'projects') : 'Import'
+}
+
+function renderImportRows() {
+  const list = $('import-rows')
+  list.replaceChildren()
+  for (const r of importState.rows) {
+    const already = r.status === 'already'
+    const box = h('input', {
+      type: 'checkbox',
+      id: 'import-pick-' + r.uuid,
+      checked: importState.picked.has(r.uuid),
+      disabled: already,
+      'aria-label': 'Import ' + r.name,
+    })
+    box.addEventListener('change', () => {
+      if (box.checked) importState.picked.add(r.uuid)
+      else importState.picked.delete(r.uuid)
+      syncImportButton()
+    })
+    const name = h(
+      'label',
+      { class: 'import-name', for: box.id },
+      r.name,
+      already ? h('span', { class: 'import-tag', text: 'Already here' }) : null,
+      r.starter ? h('span', { class: 'import-tag', text: "Claude's example" }) : null
+    )
+    const text = r.instructions
+      ? h('pre', { class: 'import-instructions', text: r.instructions, hidden: true })
+      : null
+    const toggle = text
+      ? h('button', {
+          type: 'button',
+          class: 'link-btn',
+          text: 'Show',
+          'aria-expanded': 'false',
+          click: (e) => {
+            const open = text.hidden
+            text.hidden = !open
+            e.currentTarget.textContent = open ? 'Hide' : 'Show'
+            e.currentTarget.setAttribute('aria-expanded', String(open))
+          },
+        })
+      : null
+    const meta = h(
+      'span',
+      { class: 'import-meta' },
+      r.hasInstructions ? 'Instructions: yes ' : 'Instructions: none',
+      toggle,
+      ' · ' + (r.files ? plural(r.files, 'file', 'files') : 'No files')
+    )
+    list.append(
+      h(
+        'li',
+        { class: 'import-row' + (already ? ' off' : '') },
+        box,
+        name,
+        meta,
+        r.warnings.map((w) => h('span', { class: 'import-warn', text: w })),
+        text
+      )
+    )
+  }
+  syncImportButton()
+}
+
+async function uploadImport(list) {
+  const file = list && list[0]
+  if (!file || importState.busy) return
+  importState.busy = true
+  const gen = importState.gen
+  importNote('Reading ' + file.name + '...', true)
+  try {
+    const r = await api.sendFile('/api/web/projects/import', file)
+    if (gen !== importState.gen) {
+      // The dialog closed meanwhile: drop this one on the box too.
+      if (r && r.importId) api.post('/api/web/projects/import/' + encodeURIComponent(r.importId) + '/cancel').catch(() => {})
+      return
+    }
+    importState.id = r.importId
+    importState.rows = r.rows || []
+    importState.picked = new Set(importState.rows.filter((x) => x.status === 'new' && !x.starter).map((x) => x.uuid))
+    const notes = []
+    if (!importState.rows.length) notes.push('There are no projects in this file.')
+    if (r.unreadable > 0) notes.push(r.unreadable === 1 ? '1 project in the file could not be read.' : r.unreadable + ' projects in the file could not be read.')
+    importNote(notes.join('\n'))
+    importStep('review')
+    importState.busy = false
+    renderImportRows()
+  } catch (err) {
+    if (gen !== importState.gen) return
+    importState.busy = false
+    importNote(IMPORT_ERRORS[err.code] || (err.status === 413 ? IMPORT_ERRORS.too_large : friendly(err, 'Could not read that file. Try again.')))
+  }
+}
+
+function renderImportResults(rows) {
+  const list = $('import-results')
+  list.replaceChildren()
+  for (const r of rows) {
+    const status =
+      r.status === 'created'
+        ? h('span', { class: 'import-ok', text: 'Imported' })
+        : r.status === 'skipped'
+          ? h('span', { class: 'import-meta', text: 'Already here, so it was left as it is.' })
+          : h('span', { class: 'import-error', text: 'Not imported. ' + (r.reason || 'Something went wrong.') })
+    list.append(
+      h(
+        'li',
+        { class: 'import-row result' },
+        h('span', { class: 'import-name', text: r.name }),
+        status,
+        // On an imported project the reason is a note, not a failure.
+        r.status === 'created' && r.reason ? h('span', { class: 'import-warn', text: r.reason }) : null,
+        r.leftOut && r.leftOut.length ? h('span', { class: 'import-warn', text: 'Left out: ' + r.leftOut.join(', ') }) : null
+      )
+    )
+  }
+}
+
+async function runImportNow() {
+  if (importState.busy || !importState.id || !importState.picked.size) return
+  importState.busy = true
+  syncImportButton()
+  importNote('Importing...', true)
+  try {
+    const r = await api.post('/api/web/projects/import/' + encodeURIComponent(importState.id), { uuids: [...importState.picked] })
+    importState.finished = true
+    const rows = (r && r.rows) || []
+    const made = rows.filter((x) => x.status === 'created')
+    for (const x of made) if (x.projectId) state.expanded.add(x.projectId)
+    renderImportResults(rows)
+    importNote(made.length ? 'Imported ' + plural(made.length, 'project', 'projects') + '.' : 'Nothing was imported.', made.length > 0)
+    importStep('result')
+    await loadProjects()
+  } catch (err) {
+    if (err.code === 'import_expired') {
+      importState.finished = true
+      resetImport()
+      importNote(IMPORT_ERRORS.import_expired)
+    } else {
+      importNote(friendly(err, 'Could not import. Try again.'))
+    }
+  } finally {
+    importState.busy = false
+    syncImportButton()
+    $('import-done').focus()
+  }
+}
+
 $('project-add').addEventListener('click', () => openProjectDialog(null))
 $('project-form').addEventListener('submit', saveProject)
 $('project-cancel').addEventListener('click', () => $('project-dialog').close())
 $('project-delete').addEventListener('click', deleteProject)
+$('project-pick').addEventListener('click', () => $('project-file-input').click())
+$('project-file-input').addEventListener('change', () => {
+  const files = [...$('project-file-input').files]
+  $('project-file-input').value = ''
+  addDialogFiles(files)
+})
+dropTarget($('project-drop'), addDialogFiles)
+$('project-import-open').addEventListener('click', openImport)
+$('import-pick').addEventListener('click', () => $('import-input').click())
+$('import-input').addEventListener('change', () => {
+  const files = [...$('import-input').files]
+  $('import-input').value = ''
+  uploadImport(files)
+})
+dropTarget($('import-drop'), uploadImport)
+$('import-run').addEventListener('click', runImportNow)
+$('import-cancel').addEventListener('click', () => $('project-dialog').close())
+$('import-done').addEventListener('click', () => $('project-dialog').close())
+// However the dialog closes (Cancel, Escape), a waiting import is dropped on the box too.
+$('project-dialog').addEventListener('close', resetImport)
 
 function toggleProject(id) {
   if (state.expanded.has(id)) state.expanded.delete(id)

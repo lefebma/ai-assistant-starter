@@ -67,6 +67,22 @@ export async function upload(file) {
 }
 
 /**
+ * Send one File as the raw body to an upload route (project files, the
+ * Claude import, card #280). Resolves to the JSON answer.
+ */
+export async function sendFile(path, file) {
+  const res = await check(
+    await fetch(path, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Havn-Web': '1', Accept: 'application/json' },
+      body: file,
+    })
+  )
+  return readBody(res)
+}
+
+/**
  * Send a dictated recording to the box (card #252). Resolves to the words it
  * heard. The box deletes the recording once it has the words.
  */
