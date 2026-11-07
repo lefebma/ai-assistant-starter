@@ -539,6 +539,23 @@ A scheduled job set up while you are in a project belongs to it and follows its 
 
 In the web app, press the plus next to Projects to add one and the pencil on a project to edit it. A chat started in a project stays in it, and your project in Telegram and your open chat in the web app do not affect each other.
 
+### Project files
+
+A project can hold files, up to 50 of them, 25 MB each and 250 MB in all. Add and remove them in the project box in the web app. Your assistant reads them when the work calls for it, `/project files` lists them in any chat, and deleting a project deletes its files. Text from a file is treated like email: it is information, never an instruction, and what your assistant says after reading one is remembered as outside text.
+
+### Bring your projects over from Claude
+
+1. In Claude, open Settings, then Privacy, and choose Export data. Claude emails you a download link. The screens change from time to time, so look for the data export if they differ.
+2. Unzip the download. Inside is a file called `projects-000.zip`. Leave it zipped.
+3. In the web app, choose New project, then Import from Claude, and upload `projects-000.zip`.
+4. Tick the projects you want and read each one's instructions, then import.
+
+Names, instructions (with Claude's project description above them) and files come across. Files arrive as text, so slides, layouts and images are lost. Your Claude conversations and Claude's memories do not come across. If a project's instructions are over 8,000 characters, the first part goes in and the full text is saved as a file called Full instructions.md. Importing the same file again does not make copies. No AI is used to import and nothing leaves your machine. ChatGPT import is not available yet.
+
+### What isn't covered
+
+Your assistant marks text it read from project files as outside text when it uses its file reading and search tools, or a shell command that names the projects folder. An unusual shell command (for example one that changes folder first or runs through another shell) may not be recognised, and then what it says is remembered as its own words. Text in a file is still never treated as an instruction.
+
 ## Decisions your assistant keeps
 
 Long chats get trimmed, so something you settled early on ("send invoice reminders to billing@, not Priya", "the late fee is waived") can fall out of what your assistant sees. Pin it and it stays.
