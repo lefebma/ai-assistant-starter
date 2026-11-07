@@ -95,7 +95,7 @@ New project also offers **Import from Claude**. `/project files` lists a project
 
 ### Zip handling
 
-Only entries matching `^projects/[^/]+\.json$` are read, into memory, and an entry's name is never used as a path. At most 2,000 entries, 50 MB an entry uncompressed, 500 MB in all; passing a limit stops the read and refuses the file. This is a hostile file until proven otherwise: the customer may have been sent it by someone else.
+Only entries matching `^(?:[^/]+/)?projects/[^/]+\.json$` are read (one leading folder is allowed, because a Mac unzips the download into `projects-000/` and Finder's Compress keeps that folder), into memory, and an entry's name is never used as a path. At most 2,000 entries, 50 MB an entry uncompressed, 500 MB in all; passing a limit stops the read and refuses the file. This is a hostile file until proven otherwise: the customer may have been sent it by someone else.
 
 Imported instructions go straight into the block that rules every turn in that project, so the review step shows them and the owner's tick is what approves them. Text that would close the block is already neutralised.
 

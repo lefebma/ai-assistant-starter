@@ -21,6 +21,10 @@ import { MAX_INSTRUCTIONS, MAX_NAME, MAX_PROJECTS, cleanName, createProject, set
 export const IMPORT_TMP_DIR = join(STORE_DIR, 'import-tmp')
 
 const MAX_AGE_MS = 60 * 60 * 1000
+const SWEEP_EVERY_MS = 10 * 60 * 1000
+/** The review shows this much of a project's instructions; the whole text still goes in. */
+export const MAX_REVIEW_INSTRUCTIONS = 200_000
+const REVIEW_CUT = '(Longer than shown. The full text will be saved as a file.)'
 const FULL_INSTRUCTIONS = 'Full instructions.md'
 const UNTITLED = 'Untitled project'
 
@@ -36,6 +40,8 @@ export interface PreviewRow {
   name: string
   hasInstructions: boolean
   files: number
+  /** The names the docs will be saved under, so the owner's tick approves them too. */
+  fileNames: string[]
   starter: boolean
   status: 'new' | 'already'
   warnings: string[]
@@ -60,13 +66,29 @@ interface Pending {
 
 const pending = new Map<string, Pending>()
 
-/** Test seams: run just before a project row is inserted, and just after. */
-let hooks: { beforeCreate?: (source: string) => void; afterCreate?: (projectId: string) => void } = {}
+/** Test seams: run just before a project row is inserted, just after, and after each doc (with the name it was saved under, or ''). */
+let hooks: { beforeCreate?: (source: string) => void; afterCreate?: (projectId: string) => void; afterFile?: (savedName: string) => void } = {}
 export function setImportHooksForTest(next: typeof hooks | null): void {
   hooks = next ?? {}
 }
 
 export const pendingImportsForTest = (): number => pending.size
+
+/**
+ * Pending reviews and temp uploads also go on a timer, so an export nobody
+ * comes back to does not sit in memory until the next upload. Started by
+ * the first preview; unref'd so it never keeps the process alive.
+ */
+let sweeper: NodeJS.Timeout | null = null
+function startSweeper(): void {
+  if (sweeper) return
+  sweeper = setInterval(() => sweepImportTmp(), SWEEP_EVERY_MS)
+  sweeper.unref()
+}
+export function stopImportSweepForTest(): void {
+  if (sweeper) clearInterval(sweeper)
+  sweeper = null
+}
 
 function dropPending(id: string): void {
   const job = pending.get(id)
@@ -100,6 +122,8 @@ export function importInstructions(description: string, template: string): { ins
 export function docFileName(filename: string): string {
   return /\.(md|txt|csv)$/i.test(filename) ? filename : `${filename}.txt`
 }
+
+const docName = (doc: { filename: string }, i: number) => (doc.filename ? docFileName(doc.filename) : `Document ${i + 1}.txt`)
 
 const sourceOf = (uuid: string) => `claude:${uuid}`
 
@@ -153,6 +177,7 @@ export function sweepImportTmp(now: number = Date.now()): void {
  */
 export async function previewImport(chatId: string, zipPath: string): Promise<{ importId: string; rows: PreviewRow[]; unreadable: number } | { error: ParseError }> {
   sweepImportTmp()
+  startSweeper()
   const parsed = await parseClaudeExport(zipPath)
   if (!parsed.ok) {
     removeFile(zipPath)
@@ -175,10 +200,11 @@ export async function previewImport(chatId: string, zipPath: string): Promise<{ 
       name: baseName(p.name),
       hasInstructions: text !== '',
       files: p.docs.length,
+      fileNames: p.docs.map(docName),
       starter: p.starter,
       status: alreadyImported(chatId, p.uuid) ? 'already' : 'new',
       warnings: [...(full ? [OVERFLOW_WARNING] : []), ...(p.docs.length > MAX_PROJECT_FILES ? [manyFiles(p.docs.length)] : [])],
-      instructions: text,
+      instructions: text.length > MAX_REVIEW_INSTRUCTIONS ? `${text.slice(0, MAX_REVIEW_INSTRUCTIONS)}\n${REVIEW_CUT}` : text,
     }
   })
   logger.info({ projects: rows.length, unreadable: parsed.unreadable }, 'Claude import previewed')
@@ -209,8 +235,6 @@ function createNamed(chatId: string, base: string, source: string): Created {
   return { error: 'failed', reason: NOT_CREATED }
 }
 
-const docName = (doc: { filename: string }, i: number) => (doc.filename ? docFileName(doc.filename) : `Document ${i + 1}.txt`)
-
 /**
  * One project. Anything that throws once its row exists still answers
  * `created`, with every file that did not land in `leftOut`; before that,
@@ -221,7 +245,9 @@ function importOne(chatId: string, p: ExportProject): ResultRow {
   let made: { id: string; name: string } | null = null
   const { instructions, full } = importInstructions(p.description, p.template)
   const planned = [...(full ? [FULL_INSTRUCTIONS] : []), ...p.docs.map(docName)]
-  const written = new Set<string>()
+  // By place in `planned`: a file can be saved under another name than planned (a clash, a cleaned name).
+  const written = new Map<number, string>()
+  const settled = new Set<number>()
   const leftOut: string[] = []
   try {
     if (alreadyImported(chatId, p.uuid)) return { uuid: p.uuid, name: base, status: 'skipped', leftOut: [] }
@@ -233,10 +259,13 @@ function importOne(chatId: string, p: ExportProject): ResultRow {
     const id = r.id
     hooks.afterCreate?.(id)
 
-    const add = (name: string, text: string): boolean => {
+    const add = (at: number, text: string): boolean => {
+      const name = planned[at]!
+      settled.add(at)
       try {
-        if (!('error' in addProjectFile(id, name, { text }))) {
-          written.add(name)
+        const saved = addProjectFile(id, name, { text })
+        if (!('error' in saved)) {
+          written.set(at, saved.name)
           return true
         }
       } catch (err) {
@@ -245,21 +274,25 @@ function importOne(chatId: string, p: ExportProject): ResultRow {
       leftOut.push(name)
       return false
     }
+    const first = full ? 1 : 0
 
     if (instructions) setInstructions(chatId, id, instructions)
     // First, so the docs cannot crowd it out of the file limit.
-    const fullSaved = full ? add(FULL_INSTRUCTIONS, full) : false
+    const fullSaved = full ? add(0, full) : false
     p.docs.forEach((doc, i) => {
-      const name = docName(doc, i)
-      if (doc.content === '') leftOut.push(name)
-      else add(name, doc.content)
+      const at = first + i
+      if (doc.content === '') {
+        settled.add(at)
+        leftOut.push(planned[at]!)
+      } else add(at, doc.content)
+      hooks.afterFile?.(written.get(at) ?? '')
     })
     const reason = full ? (fullSaved ? OVERFLOW_WARNING : FULL_FAILED) : undefined
     return { uuid: p.uuid, name: r.name, status: 'created', ...(reason ? { reason } : {}), projectId: id, leftOut }
   } catch (err) {
     logger.warn({ code: (err as { code?: string }).code }, 'Claude import stopped part way through a project')
     if (!made) return { uuid: p.uuid, name: base, status: 'failed', reason: NOT_CREATED, leftOut: [] }
-    const missing = planned.filter((n) => !written.has(n) && !leftOut.includes(n))
+    const missing = planned.filter((_, at) => !settled.has(at))
     return { uuid: p.uuid, name: made.name, status: 'created', projectId: made.id, leftOut: [...leftOut, ...missing] }
   }
 }

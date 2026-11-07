@@ -15,6 +15,7 @@ import { listProjectFiles, projectFilesDir, setProjectFileLimitsForTest } from '
 import { MAX_INSTRUCTIONS, MAX_NAME, MAX_PROJECTS, createProject, deleteProjectRows, getProject, listChatProjects } from '../src/projects/store.js'
 import {
   IMPORT_TMP_DIR,
+  MAX_REVIEW_INSTRUCTIONS,
   cancelImport,
   docFileName,
   importInstructions,
@@ -22,6 +23,7 @@ import {
   previewImport,
   runImport,
   setImportHooksForTest,
+  stopImportSweepForTest,
   sweepImportTmp,
   type PreviewRow,
   type ResultRow,
@@ -121,11 +123,28 @@ describe('previewImport', () => {
       { uuid: 'e', name: 'Empty' },
     ])
     expect(rows).toEqual([
-      { uuid: 's', name: 'How to use Claude', hasInstructions: false, files: 0, starter: true, status: 'new', warnings: [], instructions: '' },
-      { uuid: 'a', name: 'Acme', hasInstructions: true, files: 1, starter: false, status: 'new', warnings: [], instructions: 'About this project: A shop' },
-      { uuid: 'e', name: 'Empty', hasInstructions: false, files: 0, starter: false, status: 'new', warnings: [], instructions: '' },
+      { uuid: 's', name: 'How to use Claude', hasInstructions: false, files: 0, fileNames: [], starter: true, status: 'new', warnings: [], instructions: '' },
+      { uuid: 'a', name: 'Acme', hasInstructions: true, files: 1, fileNames: ['n.md'], starter: false, status: 'new', warnings: [], instructions: 'About this project: A shop' },
+      { uuid: 'e', name: 'Empty', hasInstructions: false, files: 0, fileNames: [], starter: false, status: 'new', warnings: [], instructions: '' },
     ])
     expect(listChatProjects(CHAT)).toEqual([])
+  })
+
+  it('names each doc as it will be saved', async () => {
+    const { rows } = await preview([{ uuid: 'd', docs: [
+      { filename: 'deck.pptx', content: 'a' },
+      { filename: '', content: 'b' },
+      { filename: 'notes.md', content: 'c' },
+    ] }])
+    expect(rows[0]!.fileNames).toEqual(['deck.pptx.txt', 'Document 2.txt', 'notes.md'])
+  })
+
+  it('shows at most 200,000 characters of instructions and says so', async () => {
+    const long = 'z'.repeat(MAX_REVIEW_INSTRUCTIONS + 5)
+    const { rows } = await preview([{ uuid: 'big', prompt_template: long }, { uuid: 'fit', prompt_template: 'z'.repeat(MAX_REVIEW_INSTRUCTIONS) }])
+    expect(MAX_REVIEW_INSTRUCTIONS).toBe(200_000)
+    expect(rows[0]!.instructions).toBe(`${'z'.repeat(MAX_REVIEW_INSTRUCTIONS)}\n(Longer than shown. The full text will be saved as a file.)`)
+    expect(rows[1]!.instructions).toBe('z'.repeat(MAX_REVIEW_INSTRUCTIONS))
   })
 
   it('warns about long instructions', async () => {
@@ -244,6 +263,20 @@ describe('runImport', () => {
     expect(rows[0]).toEqual({ uuid: 'a', name: 'Acme', status: 'failed', reason: 'This project could not be created.', leftOut: [] })
     expect(rows[1]).toMatchObject({ uuid: 'b', status: 'created' })
     expect(sourceRows('a')).toBe(0)
+  })
+
+  it('counts a doc saved under another name as landed when the project stops part way', async () => {
+    const { importId } = await preview([{ uuid: 'a', name: 'Acme', docs: [
+      { filename: 'n.md', content: 'one' },
+      { filename: 'n.md', content: 'two' },
+      { filename: 'm.md', content: 'three' },
+    ] }])
+    const saved: string[] = []
+    setImportHooksForTest({ afterFile: (name) => { saved.push(name); if (name === 'n-1.md') throw new Error('disk gone') } })
+    const [row] = run(importId, ['a'])
+    expect(saved).toEqual(['n.md', 'n-1.md'])
+    expect(row).toMatchObject({ status: 'created', leftOut: ['m.md'] })
+    expect(listProjectFiles(row!.projectId!).map((f) => f.name).sort()).toEqual(['n-1.md', 'n.md'])
   })
 
   it('does not claim the full instructions were saved when the file is refused', async () => {
@@ -401,6 +434,24 @@ describe('the import and its temp file', () => {
     expect(pendingImportsForTest()).toBe(name === 'previewImport' ? 1 : 0)
     expect(existsSync(old.zip)).toBe(false)
     expect(runImport('999', old.importId, ['a'])).toEqual({ error: 'import_expired' })
+  })
+
+  it('drops a review left over an hour on its own timer, with no further upload', async () => {
+    stopImportSweepForTest()
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      const { importId, zip } = await preview([{ uuid: 'a', name: 'Acme' }])
+      expect(pendingImportsForTest()).toBe(1)
+      vi.advanceTimersByTime(60 * 60 * 1000)
+      expect(pendingImportsForTest()).toBe(1)
+      vi.advanceTimersByTime(10 * 60 * 1000)
+      expect(pendingImportsForTest()).toBe(0)
+      expect(existsSync(zip)).toBe(false)
+      expect(runImport(CHAT, importId, ['a'])).toEqual({ error: 'import_expired' })
+    } finally {
+      stopImportSweepForTest()
+      vi.useRealTimers()
+    }
   })
 
   it('expires an import left over an hour', async () => {

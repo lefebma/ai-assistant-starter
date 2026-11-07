@@ -113,7 +113,7 @@ describe('parseClaudeExport', () => {
       { name: '/abs.json', data: project('evil3') },
       { name: 'projects/../escape.json', data: project('evil4') },
       { name: 'projects\\back.json', data: project('evil5') },
-      { name: 'other/projects/c.json', data: project('evil6') },
+      { name: 'a/b/projects/c.json', data: project('evil6') },
       { name: 'projects/c.txt', data: project('evil7') },
       { name: 'projects/', data: '' },
       { name: 'projects/real.json', data: project('real') },
@@ -126,6 +126,19 @@ describe('parseClaudeExport', () => {
     expect(r.projects.map(p => p.uuid)).toEqual(['real'])
     expect(readdirSync(dir).sort()).toEqual(before)
     expect(readdirSync(join(dir, '..')).filter(f => !parentBefore.includes(f) && /evil|escape|abs|back/.test(f))).toEqual([])
+  })
+
+  it('reads a zip re-made from the folder a Mac unzipped it into', async () => {
+    const path = writeZip([
+      { name: 'projects-000/', data: '' },
+      { name: 'projects-000/projects/', data: '' },
+      { name: 'projects-000/projects/mac.json', data: project('mac') },
+      { name: '__MACOSX/projects-000/projects/._mac.json', data: 'resource fork' },
+    ])
+    const r = await parseClaudeExport(path)
+    expect(r).toMatchObject({ ok: true, unreadable: 0 })
+    if (!r.ok) return
+    expect(r.projects.map(p => p.uuid)).toEqual(['mac'])
   })
 
   it('answers manifest for the download-links JSON', async () => {

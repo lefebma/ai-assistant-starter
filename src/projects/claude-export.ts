@@ -2,8 +2,9 @@
  * Claude export parser (card #280). Reads the `projects-000.zip` a customer
  * downloads from Claude and uploads here. The file may be hostile, so:
  *
- * - only entries named `projects/<name>.json` are read, into memory; an
- *   entry's name is matched and then dropped, never used as a path;
+ * - only entries named `projects/<name>.json`, or that one folder down, are
+ *   read, into memory; an entry's name is matched and then dropped, never
+ *   used as a path;
  * - sizes are checked against what the zip declares and again against the
  *   bytes that really come out of the inflater, and the first limit passed
  *   stops the read and refuses the file;
@@ -41,7 +42,8 @@ export function setZipLimitsForTest(next: Partial<typeof ZIP_LIMITS> | null): vo
   limits = { ...ZIP_LIMITS, ...(next ?? {}) }
 }
 
-const PROJECT_ENTRY = /^projects\/[^/]+\.json$/
+/** `projects/<name>.json`, or one folder down: a Mac unzips the download into `projects-000/`, and Compress keeps that folder. */
+const PROJECT_ENTRY = /^(?:[^/]+\/)?projects\/[^/]+\.json$/
 
 /** The manifest of download links is small; anything bigger is not one. */
 const MANIFEST_MAX_BYTES = 5 * 1024 * 1024
