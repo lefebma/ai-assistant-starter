@@ -22,6 +22,9 @@ import { currentRun } from './effect-journal.js'
 import type { AuthorityFacet, Obligation, Verdict } from './obligations.js'
 import { canonicalTool, type RoleSpec } from './roles.js'
 import { noteReads } from '../memory/turn-context.js'
+import { PROJECT_ROOT } from '../config.js'
+import { getFileRoots } from '../web/files.js'
+import { resolve, sep } from 'node:path'
 import { dropRunState, loadRunState, openRun } from './run-state.js'
 
 /** Effectively unlimited: reading the inbox twice is fine, it is not a send. */
@@ -59,6 +62,26 @@ const MAIL_DRAFT = ['gog gmail drafts create', 'gog gmail drafts update', 'ms-ma
 const CALENDAR_READ = ['gog calendar events', 'gog calendar list', 'ms-calendar.js today', 'ms-calendar.js range']
 const WEB_COMMANDS = ['curl', 'wget']
 const WEB_TOOLS = ['WebSearch', 'WebFetch', 'mcp__playwright__browser_navigate', 'mcp__playwright__browser_snapshot']
+
+/**
+ * The folder project files live in. Resolved at call time: tests swap the
+ * roots, and a module-level constant would keep the old one.
+ */
+function projectsRoot(): string {
+  return resolve(getFileRoots().uploadsDir, 'projects')
+}
+
+/** True when a file tool's path lands inside the projects folder (.. and relative paths resolved). */
+function inProjectFiles(input: unknown): boolean {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const p = [o.file_path, o.path].find((x): x is string => typeof x === 'string' && x.length > 0)
+  return !!p && resolve(PROJECT_ROOT, p).startsWith(projectsRoot() + sep)
+}
+
+/** True when a shell command names the projects folder, by full path or as uploads/projects/. */
+function mentionsProjectFiles(cmd: string): boolean {
+  return cmd.includes(projectsRoot() + sep) || /(?:^|[\s/'"=])uploads\/projects\//.test(cmd)
+}
 
 /** "node /x/dist/scripts/ms-mail.js read 12" -> ["ms-mail.js", "read", "12"]. */
 function words(segment: string): string[] {
@@ -141,13 +164,18 @@ export function evidenceTypes(tool: string, input: unknown, output?: unknown): s
   const out = new Set<string>()
   if (WEB_TOOLS.includes(name)) out.add('web.read')
   if (name === 'Write' || name === 'Edit') out.add('file.written')
+  // A project file holds text the owner may have imported from elsewhere: an outside read.
+  if (name === 'Read' && inProjectFiles(input)) out.add('file.read')
   if (name === 'Bash') {
     const cmd = typeof input === 'object' && input && typeof (input as { command?: unknown }).command === 'string' ? (input as { command: string }).command : ''
     const res = typeof output === 'object' && output ? output as { stdout?: unknown; interrupted?: unknown; backgroundTaskId?: unknown } : undefined
     // Interrupted, or still running in the background: it has not finished.
     if (res?.interrupted === true || res?.backgroundTaskId) return []
     const stdout = typeof output === 'string' ? output : typeof res?.stdout === 'string' ? res.stdout : undefined
-    for (const seg of certainSegments(cmd, stdout)) {
+    const certain = certainSegments(cmd, stdout)
+    // Quoted text is flattened inside a segment, so the whole command is checked for the path.
+    if (certain.length && mentionsProjectFiles(cmd)) out.add('file.read')
+    for (const seg of certain) {
       const w = words(seg)
       if (starts(w, MAIL_READ)) out.add('mail.read')
       if (starts(w, MAIL_DRAFT)) out.add('mail.drafted')

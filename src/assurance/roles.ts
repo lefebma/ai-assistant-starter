@@ -55,7 +55,7 @@ export interface RoleSpec {
    * What a run under this role owes before it counts as done (card #197).
    * Built-in roles have defaults in run-obligations.ts; every run also owes
    * running to the end. evidenceType is one of mail.read, mail.drafted,
-   * calendar.read, web.read, source.read, file.written.
+   * calendar.read, web.read, source.read, file.written, file.read.
    */
   obligations?: Obligation[]
 }

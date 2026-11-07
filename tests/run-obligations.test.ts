@@ -27,6 +27,10 @@ import {
 } from '../src/assurance/run-obligations.js'
 import { loadRunState } from '../src/assurance/run-state.js'
 import { BUILTIN_ROLES } from '../src/assurance/roles.js'
+import { getFileRoots, setFileRootsForTest } from '../src/web/files.js'
+import { replyOrigin } from '../src/memory/provenance.js'
+import { PROJECT_ROOT } from '../src/config.js'
+import { relative } from 'node:path'
 
 rmSync(process.env.AGENT_STORE_DIR!, { recursive: true, force: true })
 
@@ -336,5 +340,47 @@ describe('runs never stay open, and a closed one does not haunt the next', () =>
       await vi.advanceTimersByTimeAsync(10 * 60_000 + 1)
       expect(loadRunState(`job:o-14@${t14.next_run}`)?.terminal?.status).toBe('failed')
     } finally { vi.useRealTimers() }
+  })
+})
+
+describe('reading a project file is an outside read (card #280)', () => {
+  const uploads = '/tmp/havn-test-uploads'
+  const proj = `${uploads}/projects/p1/a.md`
+  afterEach(() => setFileRootsForTest(null))
+
+  it('Read and read_file of a project file give file.read, absolute or relative', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Read', { file_path: proj })).toContain('file.read')
+    expect(evidenceTypes('read_file', { path: proj })).toContain('file.read')
+    expect(evidenceTypes('read_file', { path: relative(PROJECT_ROOT, proj) })).toContain('file.read')
+    // It is not a mail, web or calendar read, so a briefing does not count it.
+    expect(evidenceTypes('Read', { file_path: proj })).not.toContain('source.read')
+  })
+
+  it('follows the roots at call time', () => {
+    setFileRootsForTest({ root: '/tmp/x', uploadsDir: '/tmp/other-uploads' })
+    expect(evidenceTypes('Read', { file_path: proj })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: '/tmp/other-uploads/projects/p1/a.md' })).toContain('file.read')
+  })
+
+  it('a shell read of a project file gives file.read', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Bash', { command: `cat ${proj}` }, 'text')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: `cat "${proj}"` }, 'text')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'cat workspace/uploads/projects/p1/a.md' }, 'text')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'ls /tmp' }, 'text')).not.toContain('file.read')
+  })
+
+  it('other files and paths that .. out of the projects folder do not count', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Read', { file_path: `${PROJECT_ROOT}/README.md` })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: `${uploads}/projects/../chat/c1/a.md` })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: `${uploads}/projects-other/a.md` })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: `${uploads}/projects/p1/../p2/b.md` })).toContain('file.read')
+    expect(getFileRoots().uploadsDir).toBe(uploads)
+  })
+
+  it('a reply built on such a read is stored as untrusted', () => {
+    expect(replyOrigin(['file.read'])).toBe('untrusted')
   })
 })
