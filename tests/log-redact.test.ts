@@ -209,3 +209,23 @@ describe('deep fallback keeps the structural rules', () => {
     expect(out).not.toContain('not-in-the-env-list')
   })
 })
+
+describe('secret-named keys also blank long numbers, and the fallback scrubs keys', () => {
+  it('blanks a numeric PIN under a secret-named key but not a short count', () => {
+    const out = scrub.deep({ password: 48151623, token: 42, maxTokens: 4096, req: { authorization: 123456789012 } }) as Record<string, any>
+    expect(out.password).toBe(REDACTED)
+    expect(out.token).toBe(42)
+    expect(out.maxTokens).toBe(4096)
+    expect(out.req.authorization).toBe(REDACTED)
+  })
+
+  it('does the same past the walk limit', () => {
+    const out = JSON.stringify(scrub.deep({ a: { b: { c: { d: { e: { f: { g: { h: { password: 48151623 } } } } } } } } }))
+    expect(out).not.toContain('48151623')
+  })
+
+  it('scrubs a secret used as an object key past the walk limit', () => {
+    const out = JSON.stringify(scrub.deep({ a: { b: { c: { d: { e: { f: { g: { h: { [API_KEY]: 1 } } } } } } } } }))
+    expect(out).not.toContain(API_KEY)
+  })
+})

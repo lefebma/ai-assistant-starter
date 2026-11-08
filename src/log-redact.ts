@@ -65,6 +65,17 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/**
+ * A value that must be blanked because of the key it sits under: any string, and a number
+ * or bigint long enough to be a secret (a PIN or one-time code, not a counter or a count).
+ */
+function blankedByKey(key: string, v: unknown): boolean {
+  if (!SECRET_KEY.test(key)) return false
+  if (typeof v === 'string') return v.length >= 1
+  if (typeof v === 'number' || typeof v === 'bigint') return String(v).length >= 6
+  return false
+}
+
 export interface Scrubber {
   string(s: string): string
   deep<T>(value: T): T
@@ -110,11 +121,13 @@ export function createScrubber(initialSecrets: string[] = []): Scrubber {
   function flatten(value: unknown): string {
     try {
       const json = JSON.stringify(value, (key, v) => {
+        if (blankedByKey(key, v)) return REDACTED
         if (typeof v === 'bigint') return String(v)
-        if (typeof v !== 'string') return v
-        return SECRET_KEY.test(key) && v.length >= 1 ? REDACTED : string(v)
+        return typeof v === 'string' ? string(v) : v
       })
-      return json ?? ''
+      // One more pass over the finished text, so a secret sitting in an object KEY, or a
+      // key=value pair the replacer could not see as one, is still caught.
+      return string(json ?? '')
     } catch {
       return REDACTED
     }
@@ -143,7 +156,7 @@ export function createScrubber(initialSecrets: string[] = []): Scrubber {
       if (Array.isArray(value)) return value.map((v) => deep(v, depth + 1, seen)) as unknown as T
       const out: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        out[k] = SECRET_KEY.test(k) && typeof v === 'string' && v.length >= 1 ? REDACTED : deep(v, depth + 1, seen)
+        out[k] = blankedByKey(k, v) ? REDACTED : deep(v, depth + 1, seen)
       }
       return out as T
     } catch {
