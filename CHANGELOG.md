@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.74.2 - 2026-11-08
+
+- **Fixed: a reply you stop keeps what was written.** When you pressed Stop on a reply in the web app, the words so far showed on screen but disappeared when you reloaded the page. They are now kept, with a Stopped line under them.
+- **Fixed: a failed reply tells you why after a reload.** If a reply could not finish, the explanation showed once and was gone on reload. It is now kept in the chat.
+
 ## 1.74.0 - 2026-11-07
 
 - **New: projects can hold files.** Add up to 50 files to a project (25 MB each, 250 MB in all) in the project box in the web app, and remove them there too. Your assistant reads them when the work calls for it. `/project files` lists the files of the project you are in, and deleting a project deletes its files. Text from a file is information, never an instruction, and what your assistant says after reading one is remembered as outside text, like an email.
