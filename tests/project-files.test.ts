@@ -101,7 +101,8 @@ describe('project files', () => {
     expect(block).toContain('\n- a.md\n</project>')
   })
 
-  it('projectBlock keeps a hostile file name inside the framed list, where it cannot close the block', () => {
+  // Windows does not allow these characters in a file name, so the file cannot be made there.
+  it.skipIf(process.platform === 'win32')('projectBlock keeps a hostile file name inside the framed list, where it cannot close the block', () => {
     const p = make('Hostile')
     const dir = projectFilesDir(p.id)
     mkdirSync(dir, { recursive: true })

@@ -29,6 +29,8 @@ function writeZip(entries: FixtureEntry[]): string {
 }
 
 function openFds(): number {
+  // Windows has neither folder, so there the closes run but are not counted.
+  if (process.platform === 'win32') return 0
   try { return readdirSync('/dev/fd').length } catch { return readdirSync('/proc/self/fd').length }
 }
 

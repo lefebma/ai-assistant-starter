@@ -121,10 +121,14 @@ function searchesProjectFiles(input: unknown, cwd: string): boolean {
   return false
 }
 
+/** On Windows a path can be written with either slash and with or without its drive. Elsewhere a backslash is an escape, so text is left alone. */
+const shellForm = (s: string) => (process.platform === 'win32' ? s.replace(/\\/g, '/').replace(/\b[a-z]:(?=\/)/gi, '') : s)
+
 /** True when a shell command names the projects folder, by full path or as uploads/projects. */
-function mentionsProjectFiles(cmd: string): boolean {
-  const abs = resolve(getFileRoots().uploadsDir, 'projects')
-  return cmd.includes(abs) || cmd.includes(projectsRoot()) || /(?:^|[\s/'"=])uploads\/projects(?![\w-])/.test(cmd)
+function mentionsProjectFiles(rawCmd: string): boolean {
+  const cmd = shellForm(rawCmd)
+  const abs = shellForm(resolve(getFileRoots().uploadsDir, 'projects'))
+  return cmd.includes(abs) || cmd.includes(shellForm(projectsRoot())) || /(?:^|[\s/'"=])uploads\/projects(?![\w-])/.test(cmd)
 }
 
 /** True when a path (resolved against cwd) is in or above the projects folder. */
