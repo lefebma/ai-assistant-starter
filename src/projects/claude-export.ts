@@ -42,8 +42,12 @@ export function setZipLimitsForTest(next: Partial<typeof ZIP_LIMITS> | null): vo
   limits = { ...ZIP_LIMITS, ...(next ?? {}) }
 }
 
-/** `projects/<name>.json`, or one folder down: a Mac unzips the download into `projects-000/`, and Compress keeps that folder. */
-const PROJECT_ENTRY = /^(?:[^/]+\/)?projects\/[^/]+\.json$/
+/**
+ * `projects/<name>.json`, or one folder down: a Mac unzips the download into
+ * `projects-000/`, and Compress keeps that folder. Compress also adds
+ * `__MACOSX/` and `._<name>` companions, which are not projects.
+ */
+const PROJECT_ENTRY = /^(?!__MACOSX\/)(?:[^/]+\/)?projects\/(?!\._)[^/]+\.json$/
 
 /** The manifest of download links is small; anything bigger is not one. */
 const MANIFEST_MAX_BYTES = 5 * 1024 * 1024

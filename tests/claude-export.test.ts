@@ -141,6 +141,24 @@ describe('parseClaudeExport', () => {
     expect(r.projects.map(p => p.uuid)).toEqual(['mac'])
   })
 
+  it('skips the hidden files a Mac adds when it zips a folder', async () => {
+    const path = writeZip([
+      { name: 'projects/mac.json', data: project('mac') },
+      { name: 'projects/._mac.json', data: 'resource fork' },
+      { name: '__MACOSX/projects/._mac.json', data: 'resource fork' },
+      { name: '__MACOSX/projects/mac.json', data: 'resource fork' },
+    ])
+    const r = await parseClaudeExport(path)
+    expect(r).toMatchObject({ ok: true, unreadable: 0 })
+    if (!r.ok) return
+    expect(r.projects.map(p => p.uuid)).toEqual(['mac'])
+  })
+
+  it('answers not_projects when the only matches are hidden Mac files', async () => {
+    const path = writeZip([{ name: '__MACOSX/projects/._mac.json', data: 'resource fork' }])
+    expect(await parseClaudeExport(path)).toEqual({ ok: false, code: 'not_projects' })
+  })
+
   it('answers manifest for the download-links JSON', async () => {
     const path = join(dir, 'manifest.json')
     writeFileSync(path, JSON.stringify({ data_files: [{ category: 'projects', url: 'https://example.invalid/projects-000.zip' }] }))
