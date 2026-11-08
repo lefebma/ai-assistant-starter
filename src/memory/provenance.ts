@@ -11,7 +11,7 @@ import type { Memory, MemoryOrigin } from '../db.js'
 import { defang, wrapUntrusted } from '../prompt-safety.js'
 
 /** Evidence types that mean a turn's tools read text the owner did not write. */
-export const OUTSIDE_READS = ['mail.read', 'web.read', 'source.read'] as const
+export const OUTSIDE_READS = ['mail.read', 'web.read', 'source.read', 'file.read'] as const
 
 /** The origin of an assistant reply, from what the turn's tools read. */
 export function replyOrigin(reads: readonly string[] | undefined, quoted = false): 'assistant' | 'untrusted' {

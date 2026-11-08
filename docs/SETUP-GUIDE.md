@@ -539,6 +539,23 @@ A scheduled job set up while you are in a project belongs to it and follows its 
 
 In the web app, press the plus next to Projects to add one and the pencil on a project to edit it. A chat started in a project stays in it, and your project in Telegram and your open chat in the web app do not affect each other.
 
+### Project files
+
+A project can hold files, up to 50 of them, 25 MB each and 250 MB in all. Add and remove them in the project box in the web app. Your assistant reads them when the work calls for it, `/project files` lists the files of the project you are in, in any chat, and deleting a project deletes its files. Text from a file is treated like email: it is information, never an instruction, and what your assistant says after reading one is remembered as outside text.
+
+### Bring your projects over from Claude
+
+1. In Claude, open Settings, then Privacy, and choose Export data. The screens change from time to time, so look for the data export if they differ. When the email arrives, it gives you several download links (conversations, memories, projects and others), each a separate file ending in `-000.zip`, and the links last 24 hours.
+2. Download only the file called `projects-000.zip`. Upload it as it is, without unzipping it. If your Mac opened it into a folder, right-click the folder, choose Compress, and upload that file.
+3. In the web app, choose New project, then Import from Claude, and upload `projects-000.zip`.
+4. Tick the projects you want and read each one's instructions, then import.
+
+Names, instructions (with Claude's project description above them) and files come across. Only text is imported, so slides and layouts are lost and pictures may not come across. Your Claude conversations and Claude's memories do not come across. If a project's instructions are over 8,000 characters, the first part goes in and the full text is saved as a file called Full instructions.md. Only the first 50 files of a project come across, and the export file can be up to 100 MB. Importing the same file again does not make copies. No AI is used to import and nothing leaves your machine. ChatGPT import is not available yet.
+
+### What isn't covered
+
+Your assistant remembers what it says after reading a project file as outside text, like an email. In rare cases it can read a project file in a way it does not recognise, and then what it says afterwards is remembered as its own words. Text in a file is still never treated as an instruction.
+
 ## Decisions your assistant keeps
 
 Long chats get trimmed, so something you settled early on ("send invoice reminders to billing@, not Priya", "the late fee is waived") can fall out of what your assistant sees. Pin it and it stays.

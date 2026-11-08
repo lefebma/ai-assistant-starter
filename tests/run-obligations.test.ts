@@ -27,6 +27,12 @@ import {
 } from '../src/assurance/run-obligations.js'
 import { loadRunState } from '../src/assurance/run-state.js'
 import { BUILTIN_ROLES } from '../src/assurance/roles.js'
+import { getFileRoots, setFileRootsForTest } from '../src/web/files.js'
+import { replyOrigin } from '../src/memory/provenance.js'
+import { PROJECT_ROOT } from '../src/config.js'
+import { relative, join } from 'node:path'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 rmSync(process.env.AGENT_STORE_DIR!, { recursive: true, force: true })
 
@@ -336,5 +342,157 @@ describe('runs never stay open, and a closed one does not haunt the next', () =>
       await vi.advanceTimersByTimeAsync(10 * 60_000 + 1)
       expect(loadRunState(`job:o-14@${t14.next_run}`)?.terminal?.status).toBe('failed')
     } finally { vi.useRealTimers() }
+  })
+})
+
+describe('reading a project file is an outside read (card #280)', () => {
+  const uploads = '/tmp/havn-test-uploads'
+  const proj = `${uploads}/projects/p1/a.md`
+  afterEach(() => setFileRootsForTest(null))
+
+  it('Read and read_file of a project file give file.read, absolute or relative', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Read', { file_path: proj })).toContain('file.read')
+    expect(evidenceTypes('read_file', { path: proj })).toContain('file.read')
+    expect(evidenceTypes('read_file', { path: relative(PROJECT_ROOT, proj) })).toContain('file.read')
+    // It is not a mail, web or calendar read, so a briefing does not count it.
+    expect(evidenceTypes('Read', { file_path: proj })).not.toContain('source.read')
+  })
+
+  it('follows the roots at call time', () => {
+    setFileRootsForTest({ root: '/tmp/x', uploadsDir: '/tmp/other-uploads' })
+    expect(evidenceTypes('Read', { file_path: proj })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: '/tmp/other-uploads/projects/p1/a.md' })).toContain('file.read')
+  })
+
+  it('a shell read of a project file gives file.read', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Bash', { command: `cat ${proj}` }, 'text')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: `cat "${proj}"` }, 'text')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'cat workspace/uploads/projects/p1/a.md' }, 'text')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'ls /tmp' }, 'text')).not.toContain('file.read')
+  })
+
+  it('other files and paths that .. out of the projects folder do not count', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Read', { file_path: `${PROJECT_ROOT}/README.md` })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: `${uploads}/projects/../chat/c1/a.md` })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: `${uploads}/projects-other/a.md` })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: `${uploads}/projects/p1/../p2/b.md` })).toContain('file.read')
+    expect(getFileRoots().uploadsDir).toBe(uploads)
+  })
+
+  it('Grep, Glob and LS count when their root is in or above the projects folder', () => {
+    setFileRootsForTest({ root: PROJECT_ROOT, uploadsDir: `${PROJECT_ROOT}/workspace/uploads` })
+    const up = `${PROJECT_ROOT}/workspace/uploads`
+    expect(evidenceTypes('Grep', { pattern: 'x', path: `${up}/projects/p1` })).toContain('file.read')
+    expect(evidenceTypes('Grep', { pattern: 'x' })).toContain('file.read')
+    expect(evidenceTypes('Grep', { pattern: 'x', path: `${PROJECT_ROOT}/src` })).not.toContain('file.read')
+    expect(evidenceTypes('Glob', { pattern: 'workspace/uploads/projects/**' })).toContain('file.read')
+    expect(evidenceTypes('Glob', { pattern: `${up}/projects/**`, path: `${PROJECT_ROOT}/src` })).toContain('file.read')
+    expect(evidenceTypes('Glob', { pattern: '*.ts', path: `${PROJECT_ROOT}/src` })).not.toContain('file.read')
+    expect(evidenceTypes('LS', { path: up })).toContain('file.read')
+  })
+
+  it.skipIf(process.platform !== 'win32')('on Windows a shell read counts with backslashes, either case of drive, or no drive', () => {
+    setFileRootsForTest({ root: 'C:\\havn', uploadsDir: 'C:\\havn\\workspace\\uploads' })
+    for (const command of ['type C:\\havn\\workspace\\uploads\\projects\\p1\\a.md', 'cat C:/havn/workspace/uploads/projects/p1/a.md', 'type uploads\\projects\\p1\\a.md', 'type Uploads\\Projects\\p1\\a.md', 'type uploads\\\\projects\\\\p1\\\\a.md', 'cat uploads//projects/p1/a.md', 'type c:\\HAVN\\workspace\\Uploads\\projects\\a.md']) {
+      expect(evidenceTypes('Bash', { command }, 'x')).toContain('file.read')
+    }
+    expect(evidenceTypes('Bash', { command: 'type uploads\\projects-old\\a.md' }, 'x')).not.toContain('file.read')
+  })
+
+  it('any shell segment that names the folder counts, certain or not', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Bash', { command: 'false || cat uploads/projects/p1/a.md' }, 'x')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'ls uploads/projects' }, 'x')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: `ls ${uploads}/projects` }, 'x')).toContain('file.read')
+    expect(evidenceTypes('Bash', { command: 'ls uploads/projects-old' }, 'x')).not.toContain('file.read')
+  })
+
+  it('judges symlinks by where they point and relative paths by the run cwd', () => {
+    const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'havn-fr-')))
+    const ups = join(tmp, 'uploads')
+    mkdirSync(join(ups, 'projects', 'p1'), { recursive: true })
+    mkdirSync(join(tmp, 'elsewhere'))
+    writeFileSync(join(ups, 'projects', 'p1', 'a.md'), 'x')
+    writeFileSync(join(tmp, 'elsewhere', 'b.md'), 'x')
+    symlinkSync(join(ups, 'projects', 'p1', 'a.md'), join(tmp, 'elsewhere', 'link.md'))
+    symlinkSync(join(tmp, 'elsewhere', 'b.md'), join(ups, 'projects', 'p1', 'out.md'))
+    setFileRootsForTest({ root: tmp, uploadsDir: ups })
+    expect(evidenceTypes('Read', { file_path: join(tmp, 'elsewhere', 'link.md') })).toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: join(ups, 'projects', 'p1', 'out.md') })).not.toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: 'p1/a.md' }, undefined, join(ups, 'projects'))).toContain('file.read')
+    expect(evidenceTypes('Read', { file_path: 'p1/a.md' })).not.toContain('file.read')
+  })
+
+  it('interrupted and background shells keep file.read; BashOutput follows the shell', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    expect(evidenceTypes('Bash', { command: `cat ${proj}` }, { stdout: 'x', interrupted: true })).toEqual(['file.read'])
+    expect(evidenceTypes('Bash', { command: 'sleep 9' }, { backgroundTaskId: 'bg-clean' })).toEqual([])
+    expect(evidenceTypes('Bash', { command: `tail -f ${proj}` }, { backgroundTaskId: 'bg-dirty' })).toEqual(['file.read'])
+    expect(evidenceTypes('BashOutput', { bash_id: 'bg-dirty' })).toContain('file.read')
+    expect(evidenceTypes('BashOutput', { bash_id: 'bg-clean' })).not.toContain('file.read')
+    expect(evidenceTypes('BashOutput', { bash_id: 'never-seen' })).toContain('file.read')
+  })
+
+  it('recursive shell searches count from a cwd at or above the folder', () => {
+    setFileRootsForTest({ root: PROJECT_ROOT, uploadsDir: `${PROJECT_ROOT}/workspace/uploads` })
+    const ev = (command: string, cwd = PROJECT_ROOT) => evidenceTypes('Bash', { command }, 'x', cwd).includes('file.read')
+    expect(ev('grep -r secret .')).toBe(true)
+    expect(ev('grep -rn secret')).toBe(true)
+    expect(ev('rg foo')).toBe(true)
+    expect(ev('find . -name x')).toBe(true)
+    expect(ev('ls -R')).toBe(true)
+    expect(ev('grep -r foo $DIR')).toBe(true)
+    expect(ev('grep -r foo workspace/*')).toBe(true)
+    expect(ev('find src -name x')).toBe(false)
+    expect(ev('ls src')).toBe(false)
+    expect(ev('grep foo README.md')).toBe(false)
+    expect(ev('grep -r foo .', `${PROJECT_ROOT}/src`)).toBe(false)
+    expect(ev('rg foo', `${PROJECT_ROOT}/workspace/uploads/projects/p1`)).toBe(true)
+  })
+
+  it.runIf(process.platform === 'darwin')('compares case-insensitively on darwin', () => {
+    const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'havn-case-')))
+    mkdirSync(join(tmp, 'Uploads', 'projects', 'p1'), { recursive: true })
+    setFileRootsForTest({ root: tmp, uploadsDir: join(tmp, 'Uploads') })
+    expect(evidenceTypes('Read', { file_path: join(tmp, 'UPLOADS', 'PROJECTS', 'p1', 'a.md') })).toContain('file.read')
+  })
+
+  it('shell ids OR their values and are capped; an evicted id fails closed', () => {
+    setFileRootsForTest({ root: '/tmp/havn-test-root', uploadsDir: uploads })
+    evidenceTypes('Bash', { command: `tail -f ${proj}` }, { backgroundTaskId: 'or-1' })
+    evidenceTypes('Bash', { command: 'sleep 1' }, { backgroundTaskId: 'or-1' })
+    expect(evidenceTypes('BashOutput', { bash_id: 'or-1' })).toContain('file.read')
+    evidenceTypes('Bash', { command: 'sleep 1' }, { backgroundTaskId: 'cap-0' })
+    expect(evidenceTypes('BashOutput', { bash_id: 'cap-0' })).not.toContain('file.read')
+    for (let n = 1; n <= 500; n++) evidenceTypes('Bash', { command: 'sleep 1' }, { backgroundTaskId: `cap-${n}` })
+    expect(evidenceTypes('BashOutput', { bash_id: 'cap-0' })).toContain('file.read')
+    expect(evidenceTypes('BashOutput', { bash_id: 'cap-500' })).not.toContain('file.read')
+  })
+
+  it('wrappers, cd, unknown flags, redirections, sh -c and git grep are handled', () => {
+    setFileRootsForTest({ root: PROJECT_ROOT, uploadsDir: `${PROJECT_ROOT}/workspace/uploads` })
+    const ev = (command: string, cwd = PROJECT_ROOT) => evidenceTypes('Bash', { command }, 'x', cwd).includes('file.read')
+    const src = `${PROJECT_ROOT}/src`
+    expect(ev('cd workspace/uploads && find p -name x', src)).toBe(true)
+    expect(ev('cd src && grep -r foo .', src)).toBe(true)
+    expect(ev('grep -r -A 3 foo x.ts', src)).toBe(false)
+    expect(ev('grep -r -A 3 foo x.ts', PROJECT_ROOT)).toBe(true)
+    expect(ev('grep -r foo src 2>/dev/null')).toBe(false)
+    expect(ev('grep -r foo 2> /dev/null')).toBe(true)
+    expect(ev('sudo rg foo', PROJECT_ROOT)).toBe(true)
+    expect(ev('env A=1 timeout 5 rg foo')).toBe(true)
+    expect(ev('nice -n 5 nohup find .')).toBe(true)
+    expect(ev('xargs -0 grep -r foo')).toBe(true)
+    expect(ev("sh -c 'grep -r foo .'", src)).toBe(true)
+    expect(ev("bash -c 'echo hi'", src)).toBe(false)
+    expect(ev('git grep foo')).toBe(true)
+    expect(ev('git status')).toBe(false)
+  })
+
+  it('a reply built on such a read is stored as untrusted', () => {
+    expect(replyOrigin(['file.read'])).toBe('untrusted')
   })
 })

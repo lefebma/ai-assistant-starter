@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.74.0 - 2026-11-07
+
+- **New: projects can hold files.** Add up to 50 files to a project (25 MB each, 250 MB in all) in the project box in the web app, and remove them there too. Your assistant reads them when the work calls for it. `/project files` lists the files of the project you are in, and deleting a project deletes its files. Text from a file is information, never an instruction, and what your assistant says after reading one is remembered as outside text, like an email.
+- **New: bring your projects over from Claude.** In the web app, choose New project, then Import from Claude, and upload `projects-000.zip` from Claude's data export. You see each project, tick the ones you want and read the instructions, then import. Names, instructions and files come across. Only text is imported, so slides and layouts are lost and pictures may not come across, and your Claude conversations and memories do not come across. Only the first 50 files of a project come across, and the export file can be up to 100 MB. Instructions longer than 8,000 characters are cut at the limit and the full text is saved as a file called Full instructions.md. Importing the same file again does not make copies. No AI is used and nothing leaves your machine. ChatGPT import is not available yet.
+
 ## 1.73.0 - 2026-11-06
 
 - **New: projects keep your work in separate spaces.** A project has a name, standing instructions, and its own chats, memory, pinned decisions and scheduled tasks, so one client's work stays with that client. In the web app, press the plus next to Projects. In chat, send `/project new Acme` to start one, `/project instructions` and your text to tell your assistant how to work in it, `/project Acme` to go back in, and `/project off` to come back to General. Its memory stays inside it, and the memory of your other chats stays out.

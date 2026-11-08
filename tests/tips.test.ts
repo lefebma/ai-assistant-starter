@@ -26,7 +26,7 @@ const TZ = 'America/Toronto'
 
 const CTX: TipContext = {
   mail: true, calendar: true, gmailAccounts: 1, briefingOn: false, travelOn: false, timingOn: false,
-  emailAlertsOn: false, scheduledTasks: 0, decisions: 0, voiceReplies: false,
+  emailAlertsOn: false, scheduledTasks: 0, decisions: 0, voiceReplies: false, importedProjects: false,
 }
 
 const MOMENT: Moment = { nowMs: NOW, localHour: 11, inQuietHours: false, busy: false, lastOwnerMs: 0 }

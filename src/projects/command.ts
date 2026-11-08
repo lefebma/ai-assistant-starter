@@ -15,6 +15,7 @@ import {
   type NameError,
   type Project,
 } from './store.js'
+import { listProjectFiles } from './files.js'
 
 export interface ProjectCommandInput {
   chatId: string
@@ -84,6 +85,14 @@ export function projectCommand(input: ProjectCommandInput, arg: string): string 
     const r = setInstructions(chatId, current.id, rest)
     if (r === 'too_long') return `That is ${rest.length} characters. The limit is ${MAX_INSTRUCTIONS}.`
     return r === 'ok' ? `Saved. I will follow these in everything in ${current.name}.` : needProject(input)
+  }
+
+  if (sub === 'files') {
+    if (!current) return input.web ? 'This chat is not in a project.' : 'Go into a project first. Send /project and a name to go in.'
+    const files = listProjectFiles(current.id)
+    if (!files.length) return 'This project has no files yet. Add them in the web app.'
+    const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`)
+    return `Files in ${current.name}:\n${files.map((f) => `- ${f.name} (${kb(f.size)})`).join('\n')}`
   }
 
   if (sub === 'rename') {

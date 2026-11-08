@@ -26,6 +26,8 @@ export interface TipContext {
   decisions: number
   /** Spoken replies can be produced on this box. */
   voiceReplies: boolean
+  /** A project here was brought in from another assistant. */
+  importedProjects: boolean
 }
 
 export interface Tip {
@@ -214,6 +216,14 @@ export const TIPS: Tip[] = [
     text: 'A project keeps one client or topic apart, with its own instructions and memory.',
     tryIt: 'Send /project new and a name, then /project instructions and how I should work.',
     commands: ['/project'],
+  },
+  {
+    id: 'import-claude-projects',
+    since: '1.74.0',
+    text: 'Moving from Claude? You can bring your projects here, with their instructions and files.',
+    tryIt: 'In the web app, choose New project, then Import from Claude.',
+    used: (c) => c.importedProjects,
+    phrases: /\bimport\b.*\bclaude\b/i,
   },
   {
     id: 'tips',

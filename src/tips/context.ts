@@ -5,7 +5,7 @@
  */
 import { getSettings as getAlertSettings } from '../email-alerts/store.js'
 import { getSettings as getProactiveSettings } from '../proactive/settings.js'
-import { getAllTasks } from '../db.js'
+import { getAllTasks, getDb } from '../db.js'
 import { liveDecisions } from '../memory/decisions.js'
 import { connectionDeps } from '../web/connections.js'
 import { voiceCapabilities } from '../voice.js'
@@ -36,5 +36,9 @@ export async function tipContext(chatId: string): Promise<TipContext> {
     scheduledTasks: attempt(() => getAllTasks().length, 0),
     decisions: attempt(() => liveDecisions(chatId).length, 0),
     voiceReplies: attempt(() => voiceCapabilities().tts, false),
+    importedProjects: attempt(
+      () => !!getDb().prepare('SELECT 1 FROM projects WHERE chat_id = ? AND source IS NOT NULL LIMIT 1').get(chatId),
+      false,
+    ),
   }
 }

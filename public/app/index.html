@@ -287,6 +287,17 @@
       <span>Instructions</span>
       <textarea id="project-instructions" rows="10" maxlength="8000" placeholder="How should I work in this project? Who is it for, what tone, what to always or never do."></textarea>
     </label>
+    <div class="project-field">
+      <span id="project-files-title">Files</span>
+      <ul id="project-files" class="pfile-list" aria-labelledby="project-files-title"></ul>
+      <div id="project-drop" class="drop-zone">
+        <span>Drop files here or</span>
+        <button type="button" id="project-pick" class="small-btn">Choose files</button>
+        <input id="project-file-input" type="file" multiple hidden>
+      </div>
+      <span class="field-help">Reference files your assistant can read when the work calls for them. Up to 50 files, 25 MB each.</span>
+    </div>
+    <p id="project-import-offer" class="project-hint">Already have projects in Claude? <button type="button" id="project-import-open" class="link-btn">Import from Claude</button></p>
     <p id="project-note" class="note" role="status"></p>
     <div class="project-actions">
       <button type="button" id="project-delete" class="small-btn danger" hidden>Delete project</button>
@@ -295,6 +306,31 @@
       <button type="submit" id="project-save" class="small-btn">Save</button>
     </div>
   </form>
+  <section id="import-view" class="import-view" aria-labelledby="import-title" hidden>
+    <h2 id="import-title">Import from Claude</h2>
+    <div id="import-upload">
+      <p class="project-hint">In Claude, open Settings, then Privacy, then Export data. When the email arrives, download only the file called projects-000.zip and upload it here. If your Mac opened it into a folder, right-click the folder, choose Compress, and upload that file.</p>
+      <div id="import-drop" class="drop-zone">
+        <span>Drop projects-000.zip here or</span>
+        <button type="button" id="import-pick" class="small-btn">Choose file</button>
+        <input id="import-input" type="file" accept=".zip,application/zip" hidden>
+      </div>
+    </div>
+    <div id="import-review" hidden>
+      <p class="project-hint">Tick the projects to bring across. Read the instructions before you import: they guide every chat in that project.</p>
+      <ul id="import-rows" class="import-list" aria-label="Projects in the file"></ul>
+    </div>
+    <div id="import-result" hidden>
+      <ul id="import-results" class="import-list" aria-label="Import results"></ul>
+    </div>
+    <p id="import-note" class="note" role="status"></p>
+    <div class="project-actions">
+      <span class="project-spacer"></span>
+      <button type="button" id="import-cancel" class="small-btn ghost">Cancel</button>
+      <button type="button" id="import-run" class="small-btn" hidden>Import</button>
+      <button type="button" id="import-done" class="small-btn" hidden>Done</button>
+    </div>
+  </section>
 </dialog>
 
 </body>

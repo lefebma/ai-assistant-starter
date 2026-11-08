@@ -22,6 +22,10 @@ import { currentRun } from './effect-journal.js'
 import type { AuthorityFacet, Obligation, Verdict } from './obligations.js'
 import { canonicalTool, type RoleSpec } from './roles.js'
 import { noteReads } from '../memory/turn-context.js'
+import { PROJECT_ROOT } from '../config.js'
+import { getFileRoots } from '../web/files.js'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { dropRunState, loadRunState, openRun } from './run-state.js'
 
 /** Effectively unlimited: reading the inbox twice is fine, it is not a send. */
@@ -59,6 +63,181 @@ const MAIL_DRAFT = ['gog gmail drafts create', 'gog gmail drafts update', 'ms-ma
 const CALENDAR_READ = ['gog calendar events', 'gog calendar list', 'ms-calendar.js today', 'ms-calendar.js range']
 const WEB_COMMANDS = ['curl', 'wget']
 const WEB_TOOLS = ['WebSearch', 'WebFetch', 'mcp__playwright__browser_navigate', 'mcp__playwright__browser_snapshot']
+
+/**
+ * The folder project files live in. Resolved at call time: tests swap the
+ * roots, and a module-level constant would keep the old one.
+ */
+function projectsRoot(): string {
+  return realish(resolve(getFileRoots().uploadsDir, 'projects'))
+}
+
+/** realpath of a path, or of its nearest existing parent plus the rest, so a symlink is judged by where it points. */
+function realish(p: string): string {
+  const tail: string[] = []
+  let cur = p
+  for (;;) {
+    try { return join(realpathSync.native(cur), ...tail.reverse()) } catch { /* not there yet */ }
+    const up = dirname(cur)
+    if (up === cur) return p
+    tail.push(basename(cur))
+    cur = up
+  }
+}
+
+/** Case-insensitive filesystems (macOS, Windows) compare lower-cased. */
+const fold = (p: string) => (process.platform === 'darwin' || process.platform === 'win32' ? p.toLowerCase() : p)
+const within = (path: string, dir: string) => { const a = fold(path), d = fold(dir); return a === d || a.startsWith(d + sep) }
+
+/** The first path a file tool names, resolved against the run's working directory. */
+function toolPath(input: unknown, cwd: string): string | undefined {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const p = [o.file_path, o.path].find((x): x is string => typeof x === 'string' && x.length > 0)
+  return p === undefined ? undefined : realish(resolve(cwd, p))
+}
+
+/** True when a file tool's path lands inside the projects folder (.. , symlinks and relative paths resolved). */
+function inProjectFiles(input: unknown, cwd: string): boolean {
+  const p = toolPath(input, cwd)
+  return !!p && within(p, projectsRoot())
+}
+
+/**
+ * A search or listing (Grep, Glob, LS) reads project files when its root is
+ * inside the projects folder or above it: a search with no path covers the
+ * working directory, which holds uploads/projects.
+ */
+function searchesProjectFiles(input: unknown, cwd: string): boolean {
+  const root = projectsRoot()
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const base = toolPath(input, cwd) ?? realish(resolve(cwd))
+  if (within(base, root) || within(root, base)) return true
+  // A glob that names the folder itself, from a root that is not above it.
+  if (typeof o.pattern === 'string') {
+    const lead = o.pattern.split(/[*?[{]/)[0]
+    const at = realish(resolve(base, lead || '.'))
+    if (within(at, root) || within(root, at)) return true
+  }
+  return false
+}
+
+/** On Windows a path can use either slash, doubled when escaped, any case, and with or without its drive. Elsewhere a backslash is an escape, so text is left alone. */
+const shellForm = (s: string) => (process.platform === 'win32' ? s.replace(/[\\/]+/g, '/').replace(/\b[a-z]:(?=\/)/gi, '').toLowerCase() : s)
+
+/** True when a shell command names the projects folder, by full path or as uploads/projects. */
+function mentionsProjectFiles(rawCmd: string): boolean {
+  const cmd = shellForm(rawCmd)
+  const abs = shellForm(resolve(getFileRoots().uploadsDir, 'projects'))
+  return cmd.includes(abs) || cmd.includes(shellForm(projectsRoot())) || /(?:^|[\s/'"=])uploads\/projects(?![\w-])/.test(cmd)
+}
+
+/** True when a path (resolved against cwd) is in or above the projects folder. */
+function reachesProjectFiles(p: string, cwd: string): boolean {
+  if (/[*?[{$`]/.test(p)) return true // a glob or variable could expand to it: fail closed
+  const home = process.env.HOME ?? ''
+  const at = realish(resolve(cwd, p.startsWith('~') && home ? join(home, p.slice(1)) : p))
+  const root = projectsRoot()
+  return within(at, root) || within(root, at)
+}
+
+const RECURSIVE_ALWAYS = new Set(['rg', 'ag', 'ack', 'find', 'tar', 'zip'])
+const SEARCHERS = /^(?:grep|egrep|fgrep|rg|ag|ack)$/
+const WALKER_NAME = /\b(?:grep|egrep|fgrep|rg|ag|ack|find|tar|zip)\b|\bls\s+-\w*R/
+/** Flags that take no argument, so what follows them is a pattern or a path. */
+const SAFE_SHORT = new Set('rRinlLcvwxshHoEFP')
+const SAFE_LONG = new Set(['--recursive', '--ignore-case', '--line-number', '--count', '--files-with-matches', '--hidden', '--no-ignore', '--no-heading', '--smart-case'])
+const WRAPPERS = new Set(['sudo', 'env', 'command', 'xargs', 'timeout', 'nice', 'nohup', 'time'])
+
+function flagIsSafe(f: string): boolean {
+  return f.startsWith('--') ? SAFE_LONG.has(f) : [...f.slice(1)].every((c) => SAFE_SHORT.has(c))
+}
+
+/** One command's words with env assignments, redirections and wrappers (sudo, env, timeout...) taken off. */
+function commandWords(seg: string): string[] {
+  let toks = (seg.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^['"]|['"]$/g, ''))
+  const noRedir: string[] = []
+  for (let i = 0; i < toks.length; i++) {
+    if (/^\d*[<>]/.test(toks[i])) { if (/^\d*(?:>>?|<)$/.test(toks[i])) i++; continue }
+    noRedir.push(toks[i])
+  }
+  toks = noRedir
+  for (;;) {
+    while (toks.length && /^[A-Za-z_]\w*=/.test(toks[0])) toks.shift()
+    const w = toks[0]?.split('/').pop()
+    if (!w || !WRAPPERS.has(w)) return toks
+    toks.shift()
+    if (w === 'nice' && toks[0] === '-n') toks.splice(0, 2)
+    while (toks.length && (toks[0].startsWith('-') || (w === 'env' && /^[A-Za-z_]\w*=/.test(toks[0])))) toks.shift()
+    if (w === 'timeout' && toks.length && /^\d/.test(toks[0])) toks.shift()
+  }
+}
+
+/**
+ * A shell command that walks directories (grep -r, rg, find, ls -R, tar, zip,
+ * git grep) reads project files when it runs with no path from a cwd at or
+ * above the folder, or names a path that is. Quoting is only roughly
+ * understood, and where it is unclear this counts: a cd before a walker, an
+ * unknown flag, a glob or variable in a path, and sh -c strings that name a
+ * walker all count. Known limit: anything cleverer (aliases, functions,
+ * scripts that walk by themselves) is not seen.
+ */
+function walksProjectFiles(cmd: string, cwd: string): boolean {
+  let sawCd = false
+  for (const seg of cmd.split(/&&|\|\||[;|&\n]/)) {
+    const toks = commandWords(seg)
+    let prog = toks.shift()?.split('/').pop()
+    if (!prog) continue
+    if (prog === 'cd' || prog === 'pushd') { sawCd = true; continue }
+    if ((prog === 'sh' || prog === 'bash' || prog === 'zsh') && toks.includes('-c')) {
+      const inner = toks[toks.indexOf('-c') + 1] ?? ''
+      if (mentionsProjectFiles(inner) || WALKER_NAME.test(inner)) return true
+      continue
+    }
+    let args = toks
+    if (prog === 'git') {
+      const i = args.findIndex((a) => !a.startsWith('-'))
+      if (i < 0 || args[i] !== 'grep') continue
+      prog = 'grep'
+      args = args.slice(i + 1)
+      args = ['-r', ...args]
+    }
+    const flags = args.filter((a) => a.startsWith('-') && a.length > 1)
+    const short = flags.filter((f) => !f.startsWith('--')).map((f) => f.slice(1)).join('')
+    const recursive =
+      RECURSIVE_ALWAYS.has(prog) ||
+      (/^(?:grep|egrep|fgrep)$/.test(prog) && (/[rR]/.test(short) || flags.some((f) => f === '--recursive' || f === '--dereference-recursive'))) ||
+      (prog === 'ls' && /R/.test(short))
+    if (!recursive) continue
+    if (sawCd) return true
+    let paths: string[]
+    if (prog === 'find') {
+      const i = args.findIndex((a) => a.startsWith('-') || a === '(' || a === '!')
+      paths = i < 0 ? args : args.slice(0, i)
+      if (!paths.length) paths = ['.']
+    } else {
+      let pos = args.filter((a) => !a.startsWith('-'))
+      // The first positional is the pattern for the searchers, unless -e/-f supplied it.
+      if (SEARCHERS.test(prog) && !flags.some((f) => /^-[a-zA-Z]*[ef]$|^--(?:regexp|file)/.test(f))) pos = pos.slice(1)
+      paths = pos.length ? pos : ['.']
+      // A flag that may take an argument makes the positionals unreliable: search '.' too.
+      if (SEARCHERS.test(prog) && flags.some((f) => !flagIsSafe(f))) paths.push('.')
+    }
+    if (paths.some((p) => reachesProjectFiles(p, cwd))) return true
+  }
+  return false
+}
+
+// Background shells seen this process: id -> did any command under it touch project files.
+const SHELL_CAP = 500
+const shellTouched = new Map<string, boolean>()
+
+/** Remember a background shell; once true stays true, the oldest is evicted past the cap (an evicted id fails closed). */
+function noteShell(id: string, touched: boolean): void {
+  const prior = shellTouched.get(id) ?? false
+  shellTouched.delete(id)
+  shellTouched.set(id, prior || touched)
+  while (shellTouched.size > SHELL_CAP) shellTouched.delete(shellTouched.keys().next().value as string)
+}
 
 /** "node /x/dist/scripts/ms-mail.js read 12" -> ["ms-mail.js", "read", "12"]. */
 function words(segment: string): string[] {
@@ -136,16 +315,34 @@ function certainSegments(cmd: string, stdout: string | undefined): string[] {
  * saved, calendar read, web read); see certainSegments. `output` is what the
  * tool returned. Exported for tests.
  */
-export function evidenceTypes(tool: string, input: unknown, output?: unknown): string[] {
+export function evidenceTypes(tool: string, input: unknown, output?: unknown, cwd: string = PROJECT_ROOT): string[] {
   const name = canonicalTool(tool)
   const out = new Set<string>()
   if (WEB_TOOLS.includes(name)) out.add('web.read')
   if (name === 'Write' || name === 'Edit') out.add('file.written')
+  // A project file holds text the owner may have imported from elsewhere: an outside read.
+  if (name === 'Read' && inProjectFiles(input, cwd)) out.add('file.read')
+  if ((name === 'Grep' || name === 'Glob' || name === 'LS') && searchesProjectFiles(input, cwd)) out.add('file.read')
+  if (name === 'BashOutput' || name === 'TaskOutput') {
+    // Output of a background shell: counts if that shell's command touched the folder,
+    // or if we never saw it start (a restart, another process): fail closed.
+    const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+    const id = [o.bash_id, o.shell_id, o.task_id, o.id].find((x) => typeof x === 'string' || typeof x === 'number')
+    if (id === undefined || shellTouched.get(String(id)) !== false) out.add('file.read')
+  }
   if (name === 'Bash') {
     const cmd = typeof input === 'object' && input && typeof (input as { command?: unknown }).command === 'string' ? (input as { command: string }).command : ''
+    // Any mention counts, even in a command that failed or may not have run:
+    // missing a read is the failure, over-counting is not.
+    const touched = mentionsProjectFiles(cmd) || walksProjectFiles(cmd, cwd)
+    if (touched) out.add('file.read')
     const res = typeof output === 'object' && output ? output as { stdout?: unknown; interrupted?: unknown; backgroundTaskId?: unknown } : undefined
     // Interrupted, or still running in the background: it has not finished.
-    if (res?.interrupted === true || res?.backgroundTaskId) return []
+    // The command may already have printed project text, so file.read stays.
+    if (res?.interrupted === true || res?.backgroundTaskId) {
+      if (res?.backgroundTaskId) noteShell(String(res.backgroundTaskId), touched)
+      return out.has('file.read') ? ['file.read'] : []
+    }
     const stdout = typeof output === 'string' ? output : typeof res?.stdout === 'string' ? res.stdout : undefined
     for (const seg of certainSegments(cmd, stdout)) {
       const w = words(seg)
@@ -192,15 +389,15 @@ export function trackRun(runKey: string, obligations: Obligation[]): TrackedRun 
  * tracked run (chat, the owner at a terminal) it does nothing. Never throws:
  * evidence is bookkeeping and must not break a tool call.
  */
-export function recordToolEvidence(callId: string, tool: string, input: unknown, output?: unknown, runKey: string | undefined = currentRun()): number {
+export function recordToolEvidence(callId: string, tool: string, input: unknown, output?: unknown, runKey: string | undefined = currentRun(), cwd?: string): number {
   // What the turn read, for its memory's provenance (card #235). Any turn, tracked or not.
-  try { noteReads(evidenceTypes(tool, input, output)) } catch { /* never break the tool path */ }
+  try { noteReads(evidenceTypes(tool, input, output, cwd)) } catch { /* never break the tool path */ }
   if (!runKey || !callId) return 0
   const authority = active.get(runKey)
   if (!authority) return 0
   let accepted = 0
   try {
-    const types = evidenceTypes(tool, input, output)
+    const types = evidenceTypes(tool, input, output, cwd)
     for (const o of authority.snapshot().obligations) {
       if (!types.includes(o.evidenceType)) continue
       const r = authority.record({ eventId: `${callId}:${o.id}`, runId: runKey, origin: 'tool', evidenceType: o.evidenceType, obligationId: o.id })

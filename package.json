@@ -56,6 +56,7 @@
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
     "playwright": "1.60.0-alpha-1774999321000",
+    "yauzl": "3.4.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -63,6 +64,7 @@
     "@types/mailparser": "3.4.6",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "8.0.2",
+    "@types/yauzl": "3.4.0",
     "marked": "^18.0.2",
     "tsx": "^4.0.0",
     "typescript": "^5.5.0",

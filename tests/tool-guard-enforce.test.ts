@@ -74,6 +74,21 @@ describe('enforce mode, Claude runtime', () => {
     expect((out as any).hookSpecificOutput.permissionDecisionReason).toContain('.env.example')
   })
 
+  it('allows reading a project file (card #280)', async () => {
+    for (const [tool_name, tool_input] of [['Read', { file_path: '/home/havn/havn/workspace/uploads/projects/p1/notes.md' }], ['Bash', { command: 'cat workspace/uploads/projects/p1/notes.md' }]] as const) {
+      const out = await guardHook({
+        hook_event_name: 'PreToolUse', session_id: 's3', transcript_path: '', cwd: '/tmp',
+        tool_name, tool_input, tool_use_id: 't',
+      } as any)
+      expect(out).toEqual({})
+    }
+  })
+
+  it('the gate lets an ai-sdk read_file of a project file through (card #280)', async () => {
+    const { gateToolCall } = await import('../src/assurance/scope-gate.js')
+    expect(gateToolCall({ session: 's4', tool: 'read_file', input: { path: 'workspace/uploads/projects/p1/notes.md' }, cwd: '/tmp' })).toEqual({ allow: true })
+  })
+
   it('allows ordinary work', async () => {
     const out = await guardHook({
       hook_event_name: 'PreToolUse', session_id: 's2', transcript_path: '', cwd: '/tmp',

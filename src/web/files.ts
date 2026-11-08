@@ -43,6 +43,9 @@ const HIDDEN_NAMES = /^(roles\.json|key_pair\.txt(\..*)?)$/i
 
 export const MAX_LIST_ENTRIES = 500
 
+/** One upload, 25 MB. Lives here so non-route code can use it without registering routes. */
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
 interface FileRoots {
   root: string
   uploadsDir: string
