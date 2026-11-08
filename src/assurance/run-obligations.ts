@@ -121,8 +121,8 @@ function searchesProjectFiles(input: unknown, cwd: string): boolean {
   return false
 }
 
-/** On Windows a path can be written with either slash and with or without its drive. Elsewhere a backslash is an escape, so text is left alone. */
-const shellForm = (s: string) => (process.platform === 'win32' ? s.replace(/\\/g, '/').replace(/\b[a-z]:(?=\/)/gi, '') : s)
+/** On Windows a path can use either slash, doubled when escaped, any case, and with or without its drive. Elsewhere a backslash is an escape, so text is left alone. */
+const shellForm = (s: string) => (process.platform === 'win32' ? s.replace(/[\\/]+/g, '/').replace(/\b[a-z]:(?=\/)/gi, '').toLowerCase() : s)
 
 /** True when a shell command names the projects folder, by full path or as uploads/projects. */
 function mentionsProjectFiles(rawCmd: string): boolean {

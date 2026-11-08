@@ -396,7 +396,7 @@ describe('reading a project file is an outside read (card #280)', () => {
 
   it.skipIf(process.platform !== 'win32')('on Windows a shell read counts with backslashes, either case of drive, or no drive', () => {
     setFileRootsForTest({ root: 'C:\\havn', uploadsDir: 'C:\\havn\\workspace\\uploads' })
-    for (const command of ['type C:\\havn\\workspace\\uploads\\projects\\p1\\a.md', 'cat C:/havn/workspace/uploads/projects/p1/a.md', 'type uploads\\projects\\p1\\a.md']) {
+    for (const command of ['type C:\\havn\\workspace\\uploads\\projects\\p1\\a.md', 'cat C:/havn/workspace/uploads/projects/p1/a.md', 'type uploads\\projects\\p1\\a.md', 'type Uploads\\Projects\\p1\\a.md', 'type uploads\\\\projects\\\\p1\\\\a.md', 'cat uploads//projects/p1/a.md', 'type c:\\HAVN\\workspace\\Uploads\\projects\\a.md']) {
       expect(evidenceTypes('Bash', { command }, 'x')).toContain('file.read')
     }
     expect(evidenceTypes('Bash', { command: 'type uploads\\projects-old\\a.md' }, 'x')).not.toContain('file.read')
