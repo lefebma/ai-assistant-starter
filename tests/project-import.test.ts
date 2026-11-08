@@ -64,7 +64,17 @@ function run(importId: string, uuids: string[], chat = CHAT): ResultRow[] {
 }
 
 beforeAll(() => initDatabase())
-beforeEach(() => {
+/** Windows refuses to touch a file while its handle is still closing, so it gets a few tries there. */
+async function removeDir(dir: string): Promise<void> {
+  for (let tries = 0; ; tries++) {
+    try { rmSync(dir, { recursive: true, force: true }); return } catch (e) {
+      if (process.platform !== 'win32' || tries >= 20) throw e
+      await new Promise(r => setTimeout(r, 50))
+    }
+  }
+}
+
+beforeEach(async () => {
   getDb().exec('DELETE FROM projects')
   tmp = mkdtempSync(join(tmpdir(), 'project-import-'))
   setFileRootsForTest({ root: tmp, uploadsDir: join(tmp, 'uploads') })
@@ -72,13 +82,13 @@ beforeEach(() => {
   setImportHooksForTest(null)
   vi.useRealTimers()
   sweepImportTmp(Number.POSITIVE_INFINITY) // forget every earlier test's previews
-  rmSync(IMPORT_TMP_DIR, { recursive: true, force: true })
+  await removeDir(IMPORT_TMP_DIR)
 })
-afterAll(() => {
+afterAll(async () => {
   setFileRootsForTest(null)
   setProjectFileLimitsForTest()
   getDb().close()
-  rmSync(process.env.AGENT_STORE_DIR!, { recursive: true, force: true })
+  await removeDir(process.env.AGENT_STORE_DIR!)
 })
 
 describe('importInstructions', () => {
