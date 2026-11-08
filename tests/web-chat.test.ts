@@ -9,6 +9,7 @@ vi.mock('../src/config.js', async (orig) => ({
 }))
 
 import type { AgentRunOptions, AgentRunResult, AgentRuntime } from '../src/runtime/types.js'
+import { interruptedContent } from '../src/web/chat-routes.js'
 
 class FakeRuntime implements AgentRuntime {
   readonly id = 'fake'
@@ -290,7 +291,7 @@ describe('web chat', () => {
     expect(conv.listMessages(id).filter((m) => m.role === 'user')).toHaveLength(1)
   })
 
-  it('sends an error event and stores nothing when the turn fails', async () => {
+  it('sends an error event and keeps a plain notice when the turn fails, so a reload still shows why', async () => {
     useRuntime()
     rt.run = async () => { throw new Error('boom\n    at secret (/x/y.js:1:1)') }
     const id = await newConv()
@@ -298,7 +299,32 @@ describe('web chat', () => {
     const e = evs.at(-1)!
     expect(e.name).toBe('error')
     expect(e.data.message).not.toContain('/x/y.js')
-    expect(conv.listMessages(id).map((m) => m.role)).toEqual(['user'])
+    const msgs = conv.listMessages(id)
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(msgs[1]!.content).toBe(e.data.message)
+    expect(msgs[1]!.content).not.toContain('/x/y.js')
+  })
+
+  it('keeps the words written so far when Stop ends a reply, marked as stopped', async () => {
+    const r = useRuntime()
+    r.partials = ['First half of the answer', 'First half of the answer, and a bit more [[butt']
+    r.gate = new Promise(() => {})
+    const id = await newConv()
+    const p = post(`/api/web/conversations/${id}/chat`, { text: 'long' })
+    await vi.waitFor(() => expect(rt.calls).toHaveLength(1))
+    await post(`/api/web/conversations/${id}/cancel`)
+    const evs = parseSse(await (await p).text())
+    expect(evs.at(-1)).toEqual({ name: 'done', data: { cancelled: true } })
+    const msgs = conv.listMessages(id)
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(msgs[1]!.content).toBe('First half of the answer, and a bit more\n\n*Stopped.*')
+    expect(msgs[1]!.buttons).toEqual([])
+  })
+
+  it('drops finished and unfinished markers from a stopped reply', () => {
+    expect(interruptedContent('Here you go [[file: a/b.txt]] and [[buttons: Send | Edit]] then [[deci')).toBe('Here you go  and  then\n\n*Stopped.*')
+    expect(interruptedContent('   ')).toBeNull()
+    expect(interruptedContent('[[buttons: Send | Edit]]')).toBeNull()
   })
 
   it('lists newest first and deletes with messages', async () => {
