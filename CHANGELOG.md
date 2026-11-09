@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.75.0 - 2026-11-08
+
+- **New: a choice of colours for the web app.** Settings now has an Appearance section with two palettes: Original, the warm paper and sea green you have today, and Havn, the blues of gethavn.ai. Light or dark still follows your device. Original stays the default, the choice is remembered in each browser, and you can switch back at any time.
+
 ## 1.74.0 - 2026-11-07
 
 - **New: projects can hold files.** Add up to 50 files to a project (25 MB each, 250 MB in all) in the project box in the web app, and remove them there too. Your assistant reads them when the work calls for it. `/project files` lists the files of the project you are in, and deleting a project deletes its files. Text from a file is information, never an instruction, and what your assistant says after reading one is remembered as outside text, like an email.
