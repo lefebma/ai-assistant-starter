@@ -556,7 +556,7 @@ Names, instructions (with Claude's project description above them) and files com
 
 ChatGPT's export holds your conversations but not your project names, instructions or files, so you name each project and paste its instructions yourself. Its conversations come across as files your assistant can read, so it can look back at earlier work in that project.
 
-1. In ChatGPT, open Settings, then Data controls, and choose Export data. The screens change from time to time, so look for the data export if they differ. When the email arrives, download the file. It is large, mostly pictures and voice recordings.
+1. In ChatGPT, open your profile menu, then Settings, then Data controls, choose Export, and confirm. The screens change from time to time, so look for the data export if they differ. ChatGPT sends an email (or a text message) when the export is ready, which can take up to a few days, and the download link lasts 24 hours. Download the file. It is large, mostly pictures and voice recordings. On a ChatGPT Business or Enterprise workspace you cannot export your own data; ask your workspace owner for it.
 2. In the web app, choose New project, then Import from ChatGPT, and choose the file as it is. If your Mac opened it into a folder, open the folder and choose the files whose names start with `conversations`.
 3. The file is read in your browser. Only the conversations inside your ChatGPT projects are sent to your assistant; your other conversations, pictures and recordings stay on your computer.
 4. Each ChatGPT project shows with its conversation titles and dates. Give it a name, open Show to paste its instructions from ChatGPT's project settings if it has any, tick the ones you want, then import.

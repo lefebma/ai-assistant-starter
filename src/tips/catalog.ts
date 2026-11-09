@@ -26,8 +26,10 @@ export interface TipContext {
   decisions: number
   /** Spoken replies can be produced on this box. */
   voiceReplies: boolean
-  /** A project here was brought in from another assistant. */
+  /** A project here was brought in from Claude. */
   importedProjects: boolean
+  /** A project was imported from ChatGPT. */
+  importedFromChatGPT: boolean
 }
 
 export interface Tip {
@@ -224,6 +226,14 @@ export const TIPS: Tip[] = [
     tryIt: 'In the web app, choose New project, then Import from Claude.',
     used: (c) => c.importedProjects,
     phrases: /\bimport\b.*\bclaude\b/i,
+  },
+  {
+    id: 'import-chatgpt-projects',
+    since: '1.76.0',
+    text: 'Moving from ChatGPT? You can bring your projects here, with their past conversations.',
+    tryIt: 'In the web app, choose New project, then Import from ChatGPT.',
+    used: (c) => c.importedFromChatGPT,
+    phrases: /\bimport\b.*\bchat ?gpt\b/i,
   },
   {
     id: 'colours',
