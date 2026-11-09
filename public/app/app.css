@@ -342,7 +342,20 @@ code { font-family: var(--mono); font-size: 0.9em; }
   padding: 9px 4px; border-bottom: 1px solid var(--line); font-size: 14px;
 }
 .import-row:last-child { border-bottom: 0; }
-.import-row input { margin: 4px 0 0; width: 16px; height: 16px; accent-color: var(--accent); }
+.import-row input[type="checkbox"] { margin: 4px 0 0; width: 16px; height: 16px; accent-color: var(--accent); }
+.import-name-input, .import-instructions-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.import-name-input { font-weight: 550; }
+.import-instructions-input { font-size: 13px; resize: vertical; margin-top: 6px; }
+.import-name-input:focus, .import-instructions-input:focus { outline: none; border-color: var(--accent); }
 .import-row.off { color: var(--ink-faint); }
 .import-name { font-weight: 550; overflow-wrap: anywhere; }
 .import-meta, .import-warn, .import-error, .import-ok, .import-instructions { grid-column: 2; font-size: 13px; }

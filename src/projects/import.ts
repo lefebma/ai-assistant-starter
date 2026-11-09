@@ -9,13 +9,15 @@
  * twice. Logs carry counts only: names and content are the owner's.
  */
 import { randomUUID } from 'node:crypto'
-import { readdirSync, rmSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { STORE_DIR } from '../config.js'
 import { getDb } from '../db.js'
 import { logger } from '../logger.js'
 import { parseClaudeExport, type ExportProject, type ParseError } from './claude-export.js'
+import { historyFiles, dayOf, parseChatGPTConversations, UNTITLED_CONVERSATION, type ChatParseError, type ChatProject } from './chatgpt-export.js'
 import { MAX_PROJECT_FILES, addProjectFile } from './files.js'
+import { sanitizeUploadName } from '../web/files.js'
 import { MAX_INSTRUCTIONS, MAX_NAME, MAX_PROJECTS, cleanName, createProject, setInstructions } from './store.js'
 
 export const IMPORT_TMP_DIR = join(STORE_DIR, 'import-tmp')
@@ -32,6 +34,7 @@ const OVERFLOW_WARNING = `Instructions are longer than ${MAX_INSTRUCTIONS.toLoca
 const FULL_FAILED = `Instructions are longer than ${MAX_INSTRUCTIONS.toLocaleString('en-US')} characters. The first part went in, but the full text could not be saved as a file.`
 const manyFiles = (n: number) => `This project has ${n} files. The first ${MAX_PROJECT_FILES} come across.`
 const TWICE = 'This project appears twice in the file.'
+const TWICE_PICKED = 'This project was picked twice.'
 const LIMIT = `You have reached the limit of ${MAX_PROJECTS} projects.`
 const NOT_CREATED = 'This project could not be created.'
 
@@ -57,12 +60,7 @@ export interface ResultRow {
   leftOut: string[]
 }
 
-interface Pending {
-  chatId: string
-  zipPath: string
-  projects: ExportProject[]
-  at: number
-}
+type Pending = { chatId: string; zipPath: string; at: number } & ({ kind: 'claude'; projects: ExportProject[] } | { kind: 'chatgpt'; chat: ChatProject[] })
 
 const pending = new Map<string, Pending>()
 
@@ -128,7 +126,11 @@ const docName = (doc: { filename: string }, i: number) => (doc.filename ? docFil
 const sourceOf = (uuid: string) => `claude:${uuid}`
 
 function alreadyImported(chatId: string, uuid: string): boolean {
-  return !!getDb().prepare('SELECT 1 FROM projects WHERE chat_id = ? AND source = ?').get(chatId, sourceOf(uuid))
+  return sourceTaken(chatId, sourceOf(uuid))
+}
+
+function sourceTaken(chatId: string, source: string): boolean {
+  return !!getDb().prepare('SELECT 1 FROM projects WHERE chat_id = ? AND source = ?').get(chatId, source)
 }
 
 function projectCount(chatId: string): number {
@@ -184,14 +186,14 @@ export async function previewImport(chatId: string, zipPath: string): Promise<{ 
     logger.info({ code: parsed.code }, 'Claude import refused')
     return { error: parsed.code }
   }
-  // One review at a time per chat: a newer upload replaces the earlier one.
+  // One Claude review at a time per chat: a newer upload replaces the earlier one, never a ChatGPT one.
   for (const [id, p] of pending) {
-    if (p.chatId !== chatId) continue
+    if (p.chatId !== chatId || p.kind !== 'claude') continue
     pending.delete(id)
     if (p.zipPath !== zipPath) removeFile(p.zipPath)
   }
   const importId = randomUUID()
-  pending.set(importId, { chatId, zipPath, projects: parsed.projects, at: Date.now() })
+  pending.set(importId, { chatId, zipPath, kind: 'claude', projects: parsed.projects, at: Date.now() })
   const rows = firstOfEach(parsed.projects).map((p): PreviewRow => {
     const { instructions, full } = importInstructions(p.description, p.template)
     const text = full ?? instructions
@@ -214,9 +216,9 @@ export async function previewImport(chatId: string, zipPath: string): Promise<{ 
 type Created = { id: string; name: string } | { error: 'skipped' | 'failed'; reason?: string }
 
 /** Create under the export's name, then `<name> (Claude)`, `(Claude 2)` and on, cut so the suffix fits. */
-function createNamed(chatId: string, base: string, source: string): Created {
+function createNamed(chatId: string, base: string, source: string, label = 'Claude'): Created {
   for (let i = 1; i <= 100; i++) {
-    const suffix = i === 1 ? '' : i === 2 ? ' (Claude)' : ` (Claude ${i - 1})`
+    const suffix = i === 1 ? '' : i === 2 ? ` (${label})` : ` (${label} ${i - 1})`
     const name = suffix ? `${base.slice(0, MAX_NAME - suffix.length).trimEnd()}${suffix}` : base
     let r: ReturnType<typeof createProject>
     hooks.beforeCreate?.(source)
@@ -224,8 +226,8 @@ function createNamed(chatId: string, base: string, source: string): Created {
       r = createProject(chatId, name, Date.now(), source)
     } catch (err) {
       // The unique index on source: another tab got there first.
-      if (alreadyImported(chatId, source.slice('claude:'.length))) return { error: 'skipped' }
-      logger.warn({ code: (err as { code?: string }).code }, 'Claude import could not create a project')
+      if (sourceTaken(chatId, source)) return { error: 'skipped' }
+      logger.warn({ code: (err as { code?: string }).code }, 'Project import could not create a project')
       return { error: 'failed', reason: NOT_CREATED }
     }
     if ('project' in r) return { id: r.project.id, name: r.project.name }
@@ -304,7 +306,7 @@ function importOne(chatId: string, p: ExportProject): ResultRow {
 export function runImport(chatId: string, importId: string, uuids: string[]): { rows: ResultRow[] } | { error: 'import_expired' } {
   dropExpired()
   const job = pending.get(importId)
-  if (!job || job.chatId !== chatId || Date.now() - job.at > MAX_AGE_MS) return { error: 'import_expired' }
+  if (!job || job.kind !== 'claude' || job.chatId !== chatId || Date.now() - job.at > MAX_AGE_MS) return { error: 'import_expired' }
   pending.delete(importId)
   const chosen = new Set(uuids)
   const done = new Set<string>()
@@ -331,4 +333,153 @@ export function runImport(chatId: string, importId: string, uuids: string[]): { 
 export function cancelImport(chatId: string, importId: string): void {
   dropExpired()
   if (pending.get(importId)?.chatId === chatId) dropPending(importId)
+}
+
+// ---------------------------------------------------------------------------
+// Import from ChatGPT (Feature #282). The browser uploads only the
+// conversations in ChatGPT projects, as one JSON array. The export holds no
+// project names or instructions, so the owner gives them in the review.
+
+/** The largest upload the ChatGPT import reads. */
+export const MAX_CHATGPT_UPLOAD = 100 * 1024 * 1024
+/** Titles shown for one project in the review. */
+const MAX_REVIEW_TITLES = 200
+
+export interface ChatPreviewRow {
+  id: string
+  /** A starting name; the owner can change it. */
+  name: string
+  conversations: number
+  from: string
+  to: string
+  titles: string[]
+  /** The names the history will be saved under. */
+  fileNames: string[]
+  status: 'new' | 'already'
+}
+
+export interface ChatPick {
+  id: string
+  name: string
+  instructions: string
+}
+
+const chatSourceOf = (id: string) => `chatgpt:${id}`
+
+/**
+ * Read an uploaded array of ChatGPT conversations and describe the projects
+ * in it. Creates nothing. The upload is removed once read, whatever happens.
+ */
+export function previewChatGPTImport(chatId: string, path: string): { importId: string; rows: ChatPreviewRow[]; unreadable: number } | { error: ChatParseError | 'corrupt' } {
+  sweepImportTmp()
+  startSweeper()
+  let data: unknown
+  try {
+    if (statSync(path).size > MAX_CHATGPT_UPLOAD) return { error: 'too_large' }
+    data = JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, ''))
+  } catch {
+    return { error: 'corrupt' }
+  } finally {
+    removeFile(path)
+  }
+  const parsed = parseChatGPTConversations(data)
+  if (!parsed.ok) {
+    logger.info({ code: parsed.code }, 'ChatGPT import refused')
+    return { error: parsed.code }
+  }
+  // A newer ChatGPT upload replaces an earlier ChatGPT review, never a Claude one in progress.
+  for (const [id, p] of pending) {
+    if (p.chatId !== chatId || p.kind !== 'chatgpt') continue
+    pending.delete(id)
+    removeFile(p.zipPath)
+  }
+  const importId = randomUUID()
+  pending.set(importId, { chatId, zipPath: path, kind: 'chatgpt', chat: parsed.projects, at: Date.now() })
+  const rows = parsed.projects.map((p, i): ChatPreviewRow => {
+    const days = p.conversations.map((c) => dayOf(c.created)).filter(Boolean).sort()
+    return {
+      id: p.id,
+      name: `ChatGPT project ${i + 1}`,
+      conversations: p.conversations.length,
+      from: days[0] ?? '',
+      to: days[days.length - 1] ?? '',
+      titles: p.conversations.slice(0, MAX_REVIEW_TITLES).map((c) => c.title || UNTITLED_CONVERSATION),
+      fileNames: historyFiles(p.conversations).map((f) => sanitizeUploadName(f.name) || f.name),
+      status: sourceTaken(chatId, chatSourceOf(p.id)) ? 'already' : 'new',
+    }
+  })
+  logger.info({ projects: rows.length, unreadable: parsed.unreadable }, 'ChatGPT import previewed')
+  return { importId, rows, unreadable: parsed.unreadable }
+}
+
+function importChatProject(chatId: string, p: ChatProject, pick: ChatPick): ResultRow {
+  const base = cleanName(pick.name).slice(0, MAX_NAME).trim() || UNTITLED
+  const source = chatSourceOf(p.id)
+  let made: { id: string; name: string } | null = null
+  const { instructions, full } = importInstructions('', pick.instructions)
+  const files = [...(full ? [{ name: FULL_INSTRUCTIONS, text: full }] : []), ...historyFiles(p.conversations)]
+  const settled = new Set<number>()
+  const leftOut: string[] = []
+  try {
+    if (sourceTaken(chatId, source)) return { uuid: p.id, name: base, status: 'skipped', leftOut: [] }
+    if (projectCount(chatId) >= MAX_PROJECTS) return { uuid: p.id, name: base, status: 'failed', reason: LIMIT, leftOut: [] }
+    const r = createNamed(chatId, base, source, 'ChatGPT')
+    if ('error' in r) return { uuid: p.id, name: base, status: r.error, ...(r.reason ? { reason: r.reason } : {}), leftOut: [] }
+    made = r
+    hooks.afterCreate?.(r.id)
+    if (instructions) setInstructions(chatId, r.id, instructions)
+    let fullSaved = false
+    files.forEach((f, at) => {
+      settled.add(at)
+      let saved = ''
+      try {
+        const res = addProjectFile(r.id, f.name, { text: f.text })
+        if (!('error' in res)) saved = res.name
+      } catch (err) {
+        logger.warn({ code: (err as NodeJS.ErrnoException).code }, 'ChatGPT import could not write a file')
+      }
+      if (saved) {
+        if (full && at === 0) fullSaved = true
+      } else leftOut.push(f.name)
+      hooks.afterFile?.(saved)
+    })
+    const reason = full ? (fullSaved ? OVERFLOW_WARNING : FULL_FAILED) : undefined
+    return { uuid: p.id, name: r.name, status: 'created', ...(reason ? { reason } : {}), projectId: r.id, leftOut }
+  } catch (err) {
+    logger.warn({ code: (err as { code?: string }).code }, 'ChatGPT import stopped part way through a project')
+    if (!made) return { uuid: p.id, name: base, status: 'failed', reason: NOT_CREATED, leftOut: [] }
+    const missing = files.filter((_, at) => !settled.has(at)).map((f) => f.name)
+    return { uuid: p.id, name: made.name, status: 'created', projectId: made.id, leftOut: [...leftOut, ...missing] }
+  }
+}
+
+/**
+ * Create the chosen ChatGPT projects, in the order of the review, and answer
+ * for each. The import is spent when this returns.
+ */
+export function runChatGPTImport(chatId: string, importId: string, picks: ChatPick[]): { rows: ResultRow[] } | { error: 'import_expired' } {
+  dropExpired()
+  const job = pending.get(importId)
+  if (!job || job.kind !== 'chatgpt' || job.chatId !== chatId || Date.now() - job.at > MAX_AGE_MS) return { error: 'import_expired' }
+  pending.delete(importId)
+  // A project picked twice in one request is refused rather than guessed at.
+  const chosen = new Map<string, ChatPick>()
+  const twice = new Set<string>()
+  for (const p of picks) {
+    if (chosen.has(p.id)) twice.add(p.id)
+    else chosen.set(p.id, p)
+  }
+  const rows: ResultRow[] = []
+  for (const p of job.chat) {
+    const pick = chosen.get(p.id)
+    if (!pick) continue
+    if (twice.has(p.id)) {
+      rows.push({ uuid: p.id, name: cleanName(pick.name).slice(0, MAX_NAME).trim() || UNTITLED, status: 'failed', reason: TWICE_PICKED, leftOut: [] })
+      continue
+    }
+    rows.push(importChatProject(chatId, p, pick))
+  }
+  const count = (s: ResultRow['status']) => rows.filter((r) => r.status === s).length
+  logger.info({ created: count('created'), skipped: count('skipped'), failed: count('failed') }, 'ChatGPT import finished')
+  return { rows }
 }
