@@ -1,9 +1,10 @@
 # Changelog
 
-## 1.76.0 - Unreleased
+## 1.76.0 - 2026-11-09
 
 - **New: bring your projects over from ChatGPT.** In the web app, choose New project, then Import from ChatGPT, and pick the export file ChatGPT emails you, as it arrives. It is read in your browser, and only the conversations inside your ChatGPT projects are sent to your assistant; your other conversations, pictures and voice recordings stay on your computer. ChatGPT's export has no project names, instructions or files, so you name each project, can paste its instructions, and tick the ones you want. Each project's conversations come across as files your assistant can read, one per conversation, or one per month with a list when there are more than 40. Pictures show as `[picture]` and voice messages as their transcript. ChatGPT's memories and conversations outside projects do not come across. Importing the same project again does not make a copy. No AI is used to import. ChatGPT Business and Enterprise members cannot export their own data; their workspace owner can.
 - **Fixed: other people's chats can no longer open your files in the web app.** When someone else signed in to the web app from their own authorized chat, the Files panel showed them every chat's attachments, every project's files and Telegram downloads. Now they see only their own chats, projects and unsent attachments, and your main chat still sees everything. A message can only carry files added in that same chat. One-time effect of the update: an attachment added but not sent before it, or a waiting message with attachments, has to be attached again, and a waiting message retyped.
+- **Changed: a third colour choice in the web app.** Settings, Appearance now also offers Havn 2, alongside Original and Havn. Original stays the default.
 
 ## 1.75.0 - 2026-11-08
 
