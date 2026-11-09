@@ -226,6 +226,13 @@ export const TIPS: Tip[] = [
     phrases: /\bimport\b.*\bclaude\b/i,
   },
   {
+    id: 'colours',
+    since: '1.75.0',
+    text: 'The web app comes in more than one set of colours, and each browser remembers your choice.',
+    tryIt: 'In the web app, open Settings and look under Appearance.',
+    phrases: /\b(colou?rs?|palette)\b/i,
+  },
+  {
     id: 'tips',
     since: '1.72.0',
     text: 'I now suggest things you have not tried yet, no more than a few a week. They come at a quiet moment and stop once you use the feature.',
