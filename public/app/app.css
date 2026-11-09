@@ -63,6 +63,49 @@
   }
 }
 
+/* Havn palette, chosen in Settings: the colours of gethavn.ai. Status colours stay as above. */
+:root[data-palette="havn"] {
+  --bg: #fafafa;
+  --bg-deep: #f1f3fb;
+  --panel: #fdfdff;
+  --surface: #ffffff;
+  --ink: #1c274c;
+  --ink-soft: #424b7a;
+  --ink-faint: #7e86a8;
+  --line: #e0e4f2;
+  --line-strong: #c9d0e8;
+  --accent: #4a61c2;
+  --accent-ink: #ffffff;
+  --accent-soft: #e4e9fa;
+  --user-bubble: #dbe3f9;
+  --off: #6f7795;
+  --off-soft: #ebedf5;
+  --code-bg: #eef0f8;
+  --shadow: 0 1px 2px rgba(28, 39, 76, 0.05), 0 12px 32px -12px rgba(28, 39, 76, 0.16);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="havn"] {
+    --bg: #0c1428;
+    --bg-deep: #080e1e;
+    --panel: #131d38;
+    --surface: #18233f;
+    --ink: #e9ecf9;
+    --ink-soft: #aeb7d6;
+    --ink-faint: #7a85ac;
+    --line: #243156;
+    --line-strong: #33416b;
+    --accent: #9fb2f5;
+    --accent-ink: #0c1428;
+    --accent-soft: #1e2b55;
+    --user-bubble: #2b3b6d;
+    --off: #8a93b4;
+    --off-soft: #1c2745;
+    --code-bg: #0a1124;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  }
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
@@ -791,3 +834,5 @@ code { font-family: var(--mono); font-size: 0.9em; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+.theme-seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.theme-seg .small-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
