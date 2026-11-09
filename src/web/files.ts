@@ -152,7 +152,11 @@ export interface DirEntry {
 }
 
 /** List a visible directory. Null when the path is hidden, missing or not a directory. */
-export function listDir(relPath: string, root: string = roots.root): { entries: DirEntry[] } | null {
+export function listDir(
+  relPath: string,
+  root: string = roots.root,
+  allow: (abs: string) => boolean = () => true,
+): { entries: DirEntry[] } | null {
   const dir = resolveVisible(relPath, root)
   if (!dir || !dir.isDir) return null
   let names: string[]
@@ -166,7 +170,7 @@ export function listDir(relPath: string, root: string = roots.root): { entries: 
     if (isHiddenSegment(name)) continue
     const childRel = dir.rel ? `${dir.rel}/${name}` : name
     const child = resolveVisible(childRel, root)
-    if (!child) continue
+    if (!child || !allow(child.abs)) continue
     try {
       const st = statSync(child.abs)
       entries.push({ name, path: childRel, isDir: child.isDir, size: child.isDir ? 0 : st.size, modifiedAt: Math.floor(st.mtimeMs) })

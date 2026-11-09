@@ -3,8 +3,9 @@
  * from the chat box (pasted, dropped or picked with the paperclip) and long
  * pasted text.
  *
- * An upload lands at the top of the uploads folder, where files older than a
- * day are cleared at startup. Sending moves it into the conversation's own
+ * An upload lands in the sending chat's own tray folder, `uploads/tray/<chat>/`,
+ * where files older than a day are cleared at startup (card #292: a chat can
+ * only send what it uploaded itself). Sending moves it into the conversation's own
  * folder, `uploads/chat/<conversation>/`, so the picture in the chat history
  * still opens next month; deleting the conversation deletes the folder.
  *
@@ -14,6 +15,7 @@
 import { existsSync, mkdirSync, realpathSync, renameSync, statSync, writeFileSync, linkSync, unlinkSync } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { conversationDir, getFileRoots, removeConversationFiles, resolveVisible } from './files.js'
+import { trayDir } from './file-access.js'
 import { MAX_UPLOAD_BYTES } from './file-routes.js'
 import type { StoredFile } from './conversations.js'
 import { wrapUntrusted } from '../prompt-safety.js'
@@ -37,10 +39,10 @@ function within(root: string, abs: string): string | null {
 
 /**
  * Check what the page sent. `attachments` are the paths the upload route
- * returned; each must still be a visible file at the top of the uploads
+ * returned; each must still be a visible file directly in this chat's tray
  * folder. Nothing is moved here.
  */
-export function planAttachments(attachments: unknown, pastes: unknown): { ok: true; plan: AttachPlan } | { ok: false; code: AttachError } {
+export function planAttachments(chatId: string, attachments: unknown, pastes: unknown): { ok: true; plan: AttachPlan } | { ok: false; code: AttachError } {
   const list = attachments ?? []
   const texts = pastes ?? []
   if (!Array.isArray(list) || !Array.isArray(texts)) return { ok: false, code: 'bad_attachments' }
@@ -48,7 +50,8 @@ export function planAttachments(attachments: unknown, pastes: unknown): { ok: tr
   if (list.length > MAX_ATTACHMENTS || texts.length > MAX_PASTES) return { ok: false, code: 'too_many_attachments' }
   if ((texts as string[]).some((t) => t.length > MAX_PASTE_CHARS)) return { ok: false, code: 'paste_too_long' }
 
-  const { root, uploadsDir } = getFileRoots()
+  const { root } = getFileRoots()
+  const uploadsDir = trayDir(chatId)
   let realRoot: string
   let realUploads: string
   try {
@@ -69,7 +72,7 @@ export function planAttachments(attachments: unknown, pastes: unknown): { ok: tr
     } catch {
       return { ok: false, code: 'attachment_missing' }
     }
-    // Only what the upload route wrote: a file directly in the uploads folder.
+    // Only what the upload route wrote for this chat: a file directly in its tray folder.
     if (dirname(real) !== realUploads || basename(real).startsWith('.')) return { ok: false, code: 'bad_attachments' }
     const rel = within(realRoot, real)
     const v = rel ? resolveVisible(rel.split(sep).join('/')) : null

@@ -198,9 +198,18 @@ every chat on the box, or anything secret. It hides:
 These names are hidden wherever they appear, not only at the top. A hidden file
 looks the same in the panel as a file that does not exist. The panel is the only
 thing that hides them: your assistant itself still works with your whole
-folder. Uploads land in `workspace/uploads/`; a file with the same name is kept
-and the new one gets a number added. Anything sent with a chat message moves to
-`workspace/uploads/chat/<conversation>/` and is deleted with the conversation.
+folder. Files you add in the chat box wait in `workspace/uploads/tray/<chat>/`
+until you send them, and are cleared after a day if you never do; a file with
+the same name is kept and the new one gets a number added. Anything sent with a
+chat message moves to `workspace/uploads/chat/<conversation>/` and is deleted
+with the conversation.
+
+**Whose files you see.** The main chat, the owner's, sees everything. When
+someone else signs in from their own chat, the panel shows them, inside
+`workspace/uploads`, only their own chats, their own projects and the files
+they have not sent yet. Another chat's files, and files with no owner such as
+Telegram downloads, answer the same as a missing file. A message can only carry
+files the same chat added.
 
 ## Hosted boxes
 
