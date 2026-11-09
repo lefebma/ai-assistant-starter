@@ -16,6 +16,7 @@ import { setFileRootsForTest } from '../src/web/files.js'
 import { IMPORT_TMP_DIR } from '../src/projects/import.js'
 import { MAX_INSTRUCTIONS } from '../src/projects/store.js'
 import { conversation, day } from './chatgpt-fixture.js'
+import { buildZip } from './zip-fixture.js'
 
 let port = 0
 let server: typeof import('../src/http-server.js')
@@ -181,5 +182,38 @@ describe('ChatGPT import routes', () => {
   it('refuses a wrong media type', async () => {
     const r = await fetch(url(), { method: 'POST', headers: { Cookie: cookies['4244']!, 'X-Havn-Web': '1', 'Content-Type': 'application/json' }, body: '[]' })
     expect(r.status).toBe(415)
+  })
+
+  it('keeps a Claude review and a ChatGPT review apart', async () => {
+    const claudeZip = buildZip([{ name: 'projects/p1.json', data: JSON.stringify({ uuid: 'p1', name: 'From Claude', prompt_template: '', docs: [] }) }])
+    const claude = (await (await fetch(`http://127.0.0.1:${port}/api/web/projects/import`, {
+      method: 'POST',
+      headers: { Cookie: cookies['4244']!, 'X-Havn-Web': '1', 'Content-Type': 'application/octet-stream' },
+      body: claudeZip,
+    })).json()) as { importId: string }
+    const chat = (await (await upload(exportOf('g-p-apart', 'a'))).json()) as Preview
+    // Each id is refused by the other route, and stays usable on its own.
+    expect((await run(claude.importId, [{ id: 'g-p-apart', name: 'x' }])).status).toBe(410)
+    const wrongWay = await fetch(`http://127.0.0.1:${port}/api/web/projects/import/${chat.importId}`, {
+      method: 'POST',
+      headers: { Cookie: cookies['4244']!, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuids: ['g-p-apart'] }),
+    })
+    expect(wrongWay.status).toBe(410)
+    expect((await run(chat.importId, [{ id: 'g-p-apart', name: 'Apart' }])).status).toBe(200)
+    const claudeRun = await fetch(`http://127.0.0.1:${port}/api/web/projects/import/${claude.importId}`, {
+      method: 'POST',
+      headers: { Cookie: cookies['4244']!, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuids: ['p1'] }),
+    })
+    expect(claudeRun.status).toBe(200)
+  })
+
+  it('previews an export with an impossible date instead of failing it', async () => {
+    const odd = conversation({ id: 'odd', project: 'g-p-odd', created: 1e13, messages: [{ role: 'user', text: 'hi', at: 1e30 }] })
+    const r = await upload([odd, ...exportOf('g-p-odd', 'a')])
+    expect(r.status).toBe(200)
+    const pv = (await r.json()) as Preview
+    expect(pv.rows[0]!.conversations).toBe(2)
   })
 })

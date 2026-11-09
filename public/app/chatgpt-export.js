@@ -14,12 +14,20 @@
 export const MAX_ENTRY_BYTES = 300 * 1024 * 1024
 /** The most the box accepts in one upload. */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+/** The most project conversations the box takes in one import. */
+export const MAX_CONVERSATIONS = 20000
+
+let entryLimit = MAX_ENTRY_BYTES
+/** Test hook: lower the per-entry limit; null restores it. */
+export function setEntryLimitForTest(n) {
+  entryLimit = n ?? MAX_ENTRY_BYTES
+}
 /** The zip directory itself; a real one is a few hundred kilobytes. */
 const MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
 
 const CONVERSATIONS = /^(?:[^/]+\/)?conversations(?:-\d+)?\.json$/
 
-/** An error the page can explain: code is not_chatgpt, no_projects, too_large or corrupt. */
+/** An error the page can explain: code is not_chatgpt, no_projects, too_many, too_large or corrupt. */
 export class ExportError extends Error {
   constructor(code) {
     super(code)
@@ -116,9 +124,10 @@ export async function listZip(blob) {
       const len = u16(dir, e + 2)
       if (id === 0x0001) {
         let q = e + 4
-        if (size === 0xffffffff && q + 8 <= e + 4 + len) (size = u64(dir, q)), (q += 8)
-        if (compressed === 0xffffffff && q + 8 <= e + 4 + len) (compressed = u64(dir, q)), (q += 8)
-        if (offset === 0xffffffff && q + 8 <= e + 4 + len) offset = u64(dir, q)
+        const end = Math.min(e + 4 + len, extraEnd)
+        if (size === 0xffffffff && q + 8 <= end) (size = u64(dir, q)), (q += 8)
+        if (compressed === 0xffffffff && q + 8 <= end) (compressed = u64(dir, q)), (q += 8)
+        if (offset === 0xffffffff && q + 8 <= end) offset = u64(dir, q)
       }
       e += 4 + len
     }
@@ -160,7 +169,9 @@ async function readCapped(stream, max) {
 /** One entry's bytes, inflated. */
 export async function readEntry(blob, entry) {
   if (entry.flags & 1) fail('corrupt') // encrypted
-  if (entry.size > MAX_ENTRY_BYTES) fail('too_large')
+  if (entry.size > entryLimit || entry.compressed > entryLimit) fail('too_large')
+  // A stored entry is its own size; a mismatch is a doctored directory.
+  if (entry.method === 0 && entry.compressed !== entry.size) fail('corrupt')
   const head = await bytes(blob, entry.offset, entry.offset + 30)
   if (head.byteLength < 30 || u32(head, 0) !== 0x04034b50) fail('corrupt')
   const start = entry.offset + 30 + u16(head, 26) + u16(head, 28)
@@ -169,7 +180,7 @@ export async function readEntry(blob, entry) {
   const raw = blob.slice(start, end)
   if (entry.method === 0) return new Uint8Array(await raw.arrayBuffer())
   if (entry.method !== 8) fail('corrupt')
-  return readCapped(raw.stream().pipeThrough(new DecompressionStream('deflate-raw')), MAX_ENTRY_BYTES)
+  return readCapped(raw.stream().pipeThrough(new DecompressionStream('deflate-raw')), entryLimit)
 }
 
 function parseConversations(buf) {
@@ -205,13 +216,14 @@ export async function readChatGPTExport(files) {
         for (const c of parseConversations(await readEntry(file, entry))) if (isProject(c)) kept.push(c)
       }
     } else if (/\.json$/i.test(file.name)) {
-      if (file.size > MAX_ENTRY_BYTES) fail('too_large')
+      if (file.size > entryLimit) fail('too_large')
       found += 1
       for (const c of parseConversations(new Uint8Array(await file.arrayBuffer()))) if (isProject(c)) kept.push(c)
     }
   }
   if (!found) fail('not_chatgpt')
   if (!kept.length) fail('no_projects')
+  if (kept.length > MAX_CONVERSATIONS) fail('too_many')
   const blob = new Blob([JSON.stringify(kept)], { type: 'application/octet-stream' })
   if (blob.size > MAX_UPLOAD_BYTES) fail('too_large')
   return { blob, conversations: kept.length }

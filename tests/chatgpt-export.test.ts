@@ -87,6 +87,18 @@ describe('parseChatGPTConversations', () => {
     expect(parseChatGPTConversations([])).toEqual({ ok: false, code: 'no_projects' })
   })
 
+  it('takes milliseconds as such and treats an impossible date as none', () => {
+    const r = ok([
+      conversation({ id: 'ms', created: day('2025-03-14') * 1000, messages: [{ role: 'user', text: 'a' }] }),
+      conversation({ id: 'far', created: 1e15, messages: [{ role: 'user', text: 'b', at: 1e30 }] }),
+    ])
+    const byId = Object.fromEntries(r.projects[0]!.conversations.map((c) => [c.id, c]))
+    expect(byId['ms']!.created).toBe(day('2025-03-14'))
+    expect(byId['far']!.created).toBe(0)
+    expect(() => historyFiles(r.projects[0]!.conversations)).not.toThrow()
+    expect(transcript(byId['far']!)).toContain('# Conversation far')
+  })
+
   it('refuses more conversations than the limit', () => {
     const many = Array.from({ length: CHAT_LIMITS.conversations + 1 }, () => ({}))
     expect(parseChatGPTConversations(many)).toEqual({ ok: false, code: 'too_large' })

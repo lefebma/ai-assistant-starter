@@ -17,6 +17,7 @@ import { logger } from '../logger.js'
 import { parseClaudeExport, type ExportProject, type ParseError } from './claude-export.js'
 import { historyFiles, dayOf, parseChatGPTConversations, UNTITLED_CONVERSATION, type ChatParseError, type ChatProject } from './chatgpt-export.js'
 import { MAX_PROJECT_FILES, addProjectFile } from './files.js'
+import { sanitizeUploadName } from '../web/files.js'
 import { MAX_INSTRUCTIONS, MAX_NAME, MAX_PROJECTS, cleanName, createProject, setInstructions } from './store.js'
 
 export const IMPORT_TMP_DIR = join(STORE_DIR, 'import-tmp')
@@ -185,9 +186,9 @@ export async function previewImport(chatId: string, zipPath: string): Promise<{ 
     logger.info({ code: parsed.code }, 'Claude import refused')
     return { error: parsed.code }
   }
-  // One review at a time per chat: a newer upload replaces the earlier one.
+  // One Claude review at a time per chat: a newer upload replaces the earlier one, never a ChatGPT one.
   for (const [id, p] of pending) {
-    if (p.chatId !== chatId) continue
+    if (p.chatId !== chatId || p.kind !== 'claude') continue
     pending.delete(id)
     if (p.zipPath !== zipPath) removeFile(p.zipPath)
   }
@@ -386,8 +387,9 @@ export function previewChatGPTImport(chatId: string, path: string): { importId: 
     logger.info({ code: parsed.code }, 'ChatGPT import refused')
     return { error: parsed.code }
   }
+  // A newer ChatGPT upload replaces an earlier ChatGPT review, never a Claude one in progress.
   for (const [id, p] of pending) {
-    if (p.chatId !== chatId) continue
+    if (p.chatId !== chatId || p.kind !== 'chatgpt') continue
     pending.delete(id)
     removeFile(p.zipPath)
   }
@@ -402,7 +404,7 @@ export function previewChatGPTImport(chatId: string, path: string): { importId: 
       from: days[0] ?? '',
       to: days[days.length - 1] ?? '',
       titles: p.conversations.slice(0, MAX_REVIEW_TITLES).map((c) => c.title || UNTITLED_CONVERSATION),
-      fileNames: historyFiles(p.conversations).map((f) => f.name),
+      fileNames: historyFiles(p.conversations).map((f) => sanitizeUploadName(f.name) || f.name),
       status: sourceTaken(chatId, chatSourceOf(p.id)) ? 'already' : 'new',
     }
   })

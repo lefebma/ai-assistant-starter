@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildZip } from './zip-fixture.js'
 import { conversation } from './chatgpt-fixture.js'
-import { ExportError, isConversationsName, listZip, readChatGPTExport, readEntry } from '../public/app/chatgpt-export.js'
+import { ExportError, isConversationsName, listZip, readChatGPTExport, readEntry, setEntryLimitForTest } from '../public/app/chatgpt-export.js'
 
 const inProject = (id: string) => conversation({ id, project: 'g-p-aaaa1111', messages: [{ role: 'user', text: 'hi' }] })
 const loose = (id: string) => conversation({ id, project: null, messages: [{ role: 'user', text: 'private' }] })
@@ -128,5 +128,21 @@ describe('readChatGPTExport', () => {
   it('refuses an entry that claims or inflates to more than the limit', async () => {
     const zip = buildZip([{ name: 'conversations.json', data: JSON.stringify([inProject('a')]), declaredSize: 400 * 1024 * 1024 }])
     expect(await code(readChatGPTExport([file(zip, 'export.zip')]))).toBe('too_large')
+  })
+
+  it('stops inflating once an entry passes the limit, whatever the zip claims', async () => {
+    const data = JSON.stringify([inProject('a'), inProject('b')])
+    const zip = buildZip([{ name: 'conversations.json', data, declaredSize: 10 }])
+    setEntryLimitForTest(100)
+    try {
+      expect(await code(readChatGPTExport([file(zip, 'export.zip')]))).toBe('too_large')
+    } finally {
+      setEntryLimitForTest(null)
+    }
+  })
+
+  it('refuses a stored entry whose sizes disagree, so a doctored directory cannot make the tab read gigabytes', async () => {
+    const zip = buildZip([{ name: 'conversations.json', data: JSON.stringify([inProject('a')]), method: 0, declaredSize: 10 }])
+    expect(await code(readChatGPTExport([file(zip, 'export.zip')]))).toBe('corrupt')
   })
 })

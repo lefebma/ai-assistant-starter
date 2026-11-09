@@ -567,6 +567,8 @@ const IMPORT_ERRORS = {
   import_expired: 'This import timed out. Upload the file again.',
   not_chatgpt: "This doesn't look like a ChatGPT export. Choose the zip from ChatGPT's email, or the files inside it whose names start with conversations.",
   no_projects: 'There are no ChatGPT projects in this export. Only conversations inside ChatGPT projects come across.',
+  chatgpt_corrupt: "This export could not be opened. Download it again from ChatGPT's email and try once more.",
+  too_many: 'Your ChatGPT projects hold more than 20,000 conversations, more than one import can take. Contact support for help moving them.',
   // An earlier try may have landed before the connection dropped, which spends the import.
   unconfirmed: 'We could not confirm this import. Check your projects list before trying again.',
 }
@@ -807,7 +809,8 @@ async function uploadChatGPT(files) {
   } catch (err) {
     if (gen !== importState.gen) return
     importState.busy = false
-    importNote(IMPORT_ERRORS[err.code] || (err.status === 413 ? IMPORT_ERRORS.too_large : friendly(err, 'Could not read that export. Try again.')))
+    const known = err.code === 'corrupt' ? IMPORT_ERRORS.chatgpt_corrupt : IMPORT_ERRORS[err.code]
+    importNote(known || (err.status === 413 ? IMPORT_ERRORS.too_large : friendly(err, 'Could not read that export. Try again.')))
   }
 }
 

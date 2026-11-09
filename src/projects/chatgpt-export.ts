@@ -38,13 +38,18 @@ export type ChatParseResult =
   | { ok: true; projects: ChatProject[]; unreadable: number }
   | { ok: false; code: ChatParseError }
 
-export const CHAT_LIMITS = { conversations: 5000, projects: 1000, nodes: 20000 }
+export const CHAT_LIMITS = { conversations: 20000, projects: 1000, nodes: 20000 }
 
 const PROJECT_ID = /^g-p-[A-Za-z0-9-]{1,100}$/
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
-const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
+/** Seconds since 1970. Milliseconds are taken as such; anything else out of range counts as no date. */
+const num = (v: unknown): number => {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return 0
+  const s = v > 1e11 ? v / 1000 : v
+  return s > 0 && s < 1e11 ? s : 0
+}
 
 /** The text of one part of a message, or null when it carries none worth keeping. */
 function partText(part: unknown): string | null {
@@ -151,7 +156,8 @@ export function parseChatGPTConversations(data: unknown): ChatParseResult {
 
 /** `YYYY-MM-DD` in UTC, or '' for no date. */
 export function dayOf(seconds: number): string {
-  return seconds ? new Date(seconds * 1000).toISOString().slice(0, 10) : ''
+  const d = new Date(seconds * 1000)
+  return seconds && Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : ''
 }
 
 export const UNTITLED_CONVERSATION = 'Untitled conversation'
