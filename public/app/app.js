@@ -7,6 +7,7 @@ import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
 import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
 import { voiceCallSupport, createVoiceCall, callProblem } from './voicecall.js'
+import { readChatGPTExport } from './chatgpt-export.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -564,13 +565,21 @@ const IMPORT_ERRORS = {
   corrupt: 'This file could not be opened. Download projects-000.zip again and try once more.',
   too_large: 'This file is too large to import.',
   import_expired: 'This import timed out. Upload the file again.',
+  not_chatgpt: "This doesn't look like a ChatGPT export. Choose the zip from ChatGPT's email, or the files inside it whose names start with conversations.",
+  no_projects: 'There are no ChatGPT projects in this export. Only conversations inside ChatGPT projects come across.',
   // An earlier try may have landed before the connection dropped, which spends the import.
   unconfirmed: 'We could not confirm this import. Check your projects list before trying again.',
 }
 
 // gen moves on whenever the view resets, so an answer for an earlier upload is dropped.
 // lost: an Import press got no answer at all, so the box may have run it.
-const importState = { id: '', rows: [], picked: new Set(), busy: false, finished: false, lost: false, gen: 0 }
+// source: 'claude' or 'chatgpt'. names and instructions: what the owner typed for each ChatGPT project.
+const importState = { source: 'claude', id: '', rows: [], picked: new Set(), names: new Map(), instructions: new Map(), busy: false, finished: false, lost: false, gen: 0 }
+
+const IMPORT_SOURCES = {
+  claude: { title: 'Import from Claude', drop: 'Drop projects-000.zip here or', pick: 'Choose file', accept: '.zip,application/zip', multiple: false },
+  chatgpt: { title: 'Import from ChatGPT', drop: 'Drop the ChatGPT export here or', pick: 'Choose files', accept: '.zip,application/zip,.json,application/json', multiple: true },
+}
 
 function importStep(step) {
   show($('import-upload'), step === 'upload')
@@ -588,6 +597,8 @@ function resetImport() {
   importState.id = ''
   importState.rows = []
   importState.picked = new Set()
+  importState.names = new Map()
+  importState.instructions = new Map()
   importState.busy = false
   importState.finished = false
   importState.lost = false
@@ -597,8 +608,21 @@ function resetImport() {
   importStep('upload')
 }
 
-function openImport() {
+function openImport(source = 'claude') {
   resetImport()
+  importState.source = source
+  const s = IMPORT_SOURCES[source]
+  $('import-title').textContent = s.title
+  $('import-drop-label').textContent = s.drop
+  $('import-pick').textContent = s.pick
+  $('import-input').accept = s.accept
+  $('import-input').multiple = s.multiple
+  show($('import-help-claude'), source === 'claude')
+  show($('import-help-chatgpt'), source === 'chatgpt')
+  $('import-review-hint').textContent =
+    source === 'chatgpt'
+      ? 'Tick the projects to bring across. ChatGPT does not export project names or instructions, so give each one a name, and paste its instructions under Show if you want them. Its conversations come across as files your assistant can read.'
+      : 'Tick the projects to bring across. Read the instructions before you import: they guide every chat in that project.'
   show($('project-form'), false)
   show($('import-view'))
   $('project-dialog').setAttribute('aria-labelledby', 'import-title')
@@ -621,7 +645,72 @@ function syncImportButton() {
   $('import-run').textContent = n ? 'Import ' + plural(n, 'project', 'projects') : 'Import'
 }
 
+function renderChatGPTRows() {
+  const list = $('import-rows')
+  list.replaceChildren()
+  for (const r of importState.rows) {
+    const already = r.status === 'already'
+    const box = h('input', {
+      type: 'checkbox',
+      id: 'import-pick-' + r.id,
+      checked: importState.picked.has(r.id),
+      disabled: already,
+      'aria-label': 'Import ' + (importState.names.get(r.id) || r.name),
+    })
+    box.addEventListener('change', () => {
+      if (box.checked) importState.picked.add(r.id)
+      else importState.picked.delete(r.id)
+      syncImportButton()
+    })
+    const name = h('input', { type: 'text', class: 'import-name-input', maxlength: '80', value: importState.names.get(r.id) ?? r.name, disabled: already, 'aria-label': 'Project name' })
+    name.addEventListener('input', () => {
+      importState.names.set(r.id, name.value)
+      box.setAttribute('aria-label', 'Import ' + (name.value || r.name))
+    })
+    const instr = h('textarea', { class: 'import-instructions-input', rows: '5', disabled: already, 'aria-label': 'Instructions for this project', placeholder: "Paste this project's instructions from ChatGPT, if it has any." })
+    instr.value = importState.instructions.get(r.id) ?? ''
+    instr.addEventListener('input', () => importState.instructions.set(r.id, instr.value))
+    const detail = h(
+      'div',
+      { class: 'import-detail', hidden: true },
+      already ? null : h('p', { class: 'import-files-label', text: 'Instructions (optional):' }),
+      already ? null : instr,
+      h('p', { class: 'import-files-label', text: 'Conversations:' }),
+      h('ul', { class: 'import-files' }, r.titles.map((t) => h('li', { text: t }))),
+      r.fileNames.length ? h('p', { class: 'import-files-label', text: 'Saved as:' }) : null,
+      r.fileNames.length ? h('ul', { class: 'import-files' }, r.fileNames.map((f) => h('li', { text: f }))) : null
+    )
+    const toggle = h('button', {
+      type: 'button',
+      class: 'link-btn',
+      text: 'Show',
+      'aria-expanded': 'false',
+      click: (e) => {
+        const open = detail.hidden
+        detail.hidden = !open
+        e.currentTarget.textContent = open ? 'Hide' : 'Show'
+        e.currentTarget.setAttribute('aria-expanded', String(open))
+      },
+    })
+    const dates = r.from && r.to ? (r.from === r.to ? r.from : r.from + ' to ' + r.to) : ''
+    const latest = r.titles.slice(0, 5).join(' · ')
+    list.append(
+      h(
+        'li',
+        { class: 'import-row' + (already ? ' off' : '') },
+        box,
+        h('span', { class: 'import-name' }, name, already ? h('span', { class: 'import-tag', text: 'Already here' }) : null),
+        h('span', { class: 'import-meta' }, plural(r.conversations, 'conversation', 'conversations') + (dates ? ' · ' + dates : '') + ' ', toggle),
+        latest ? h('span', { class: 'import-meta', text: 'Latest: ' + latest }) : null,
+        detail
+      )
+    )
+  }
+  syncImportButton()
+}
+
 function renderImportRows() {
+  if (importState.source === 'chatgpt') return renderChatGPTRows()
   const list = $('import-rows')
   list.replaceChildren()
   for (const r of importState.rows) {
@@ -692,7 +781,38 @@ function renderImportRows() {
   syncImportButton()
 }
 
+async function uploadChatGPT(files) {
+  if (!files.length || importState.busy) return
+  importState.busy = true
+  const gen = importState.gen
+  importNote('Reading the export on this computer. A large one takes a minute...', true)
+  try {
+    const read = await readChatGPTExport(files)
+    if (gen !== importState.gen) return
+    importNote('Sending ' + plural(read.conversations, 'project conversation', 'project conversations') + ' to your assistant...', true)
+    const r = await api.sendFile('/api/web/projects/chatgpt-import', read.blob)
+    if (gen !== importState.gen) {
+      if (r && r.importId) api.post('/api/web/projects/import/' + encodeURIComponent(r.importId) + '/cancel').catch(() => {})
+      return
+    }
+    importState.id = r.importId
+    importState.rows = r.rows || []
+    importState.picked = new Set(importState.rows.filter((x) => x.status === 'new').map((x) => x.id))
+    const notes = []
+    if (r.unreadable > 0) notes.push(r.unreadable === 1 ? '1 conversation could not be read.' : r.unreadable + ' conversations could not be read.')
+    importNote(notes.join('\n'))
+    importStep('review')
+    importState.busy = false
+    renderImportRows()
+  } catch (err) {
+    if (gen !== importState.gen) return
+    importState.busy = false
+    importNote(IMPORT_ERRORS[err.code] || (err.status === 413 ? IMPORT_ERRORS.too_large : friendly(err, 'Could not read that export. Try again.')))
+  }
+}
+
 async function uploadImport(list) {
+  if (importState.source === 'chatgpt') return uploadChatGPT([...(list || [])])
   const file = list && list[0]
   if (!file || importState.busy) return
   importState.busy = true
@@ -752,7 +872,14 @@ async function runImportNow() {
   syncImportButton()
   importNote('Importing...', true)
   try {
-    const r = await api.post('/api/web/projects/import/' + encodeURIComponent(importState.id), { uuids: [...importState.picked] })
+    const r =
+      importState.source === 'chatgpt'
+        ? await api.post('/api/web/projects/chatgpt-import/' + encodeURIComponent(importState.id), {
+            projects: importState.rows
+              .filter((x) => importState.picked.has(x.id))
+              .map((x) => ({ id: x.id, name: (importState.names.get(x.id) ?? x.name).trim() || x.name, instructions: importState.instructions.get(x.id) ?? '' })),
+          })
+        : await api.post('/api/web/projects/import/' + encodeURIComponent(importState.id), { uuids: [...importState.picked] })
     importState.finished = true
     const rows = (r && r.rows) || []
     const made = rows.filter((x) => x.status === 'created')
@@ -790,7 +917,8 @@ $('project-file-input').addEventListener('change', () => {
   addDialogFiles(files)
 })
 dropTarget($('project-drop'), addDialogFiles)
-$('project-import-open').addEventListener('click', openImport)
+$('project-import-open').addEventListener('click', () => openImport('claude'))
+$('project-import-chatgpt').addEventListener('click', () => openImport('chatgpt'))
 $('import-pick').addEventListener('click', () => $('import-input').click())
 $('import-input').addEventListener('change', () => {
   const files = [...$('import-input').files]

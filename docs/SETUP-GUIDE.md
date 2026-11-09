@@ -550,7 +550,18 @@ A project can hold files, up to 50 of them, 25 MB each and 250 MB in all. Add an
 3. In the web app, choose New project, then Import from Claude, and upload `projects-000.zip`.
 4. Tick the projects you want and read each one's instructions, then import.
 
-Names, instructions (with Claude's project description above them) and files come across. Only text is imported, so slides and layouts are lost and pictures may not come across. Your Claude conversations and Claude's memories do not come across. If a project's instructions are over 8,000 characters, the first part goes in and the full text is saved as a file called Full instructions.md. Only the first 50 files of a project come across, and the export file can be up to 100 MB. Importing the same file again does not make copies. No AI is used to import and nothing leaves your machine. ChatGPT import is not available yet.
+Names, instructions (with Claude's project description above them) and files come across. Only text is imported, so slides and layouts are lost and pictures may not come across. Your Claude conversations and Claude's memories do not come across. If a project's instructions are over 8,000 characters, the first part goes in and the full text is saved as a file called Full instructions.md. Only the first 50 files of a project come across, and the export file can be up to 100 MB. Importing the same file again does not make copies. No AI is used to import and nothing leaves your machine.
+
+### Bring your projects over from ChatGPT
+
+ChatGPT's export holds your conversations but not your project names, instructions or files, so you name each project and paste its instructions yourself. Its conversations come across as files your assistant can read, so it can look back at earlier work in that project.
+
+1. In ChatGPT, open Settings, then Data controls, and choose Export data. The screens change from time to time, so look for the data export if they differ. When the email arrives, download the file. It is large, mostly pictures and voice recordings.
+2. In the web app, choose New project, then Import from ChatGPT, and choose the file as it is. If your Mac opened it into a folder, open the folder and choose the files whose names start with `conversations`.
+3. The file is read in your browser. Only the conversations inside your ChatGPT projects are sent to your assistant; your other conversations, pictures and recordings stay on your computer.
+4. Each ChatGPT project shows with its conversation titles and dates. Give it a name, open Show to paste its instructions from ChatGPT's project settings if it has any, tick the ones you want, then import.
+
+Each conversation becomes a file named with its date and title. A project with more than 40 conversations gets one file per month instead (or per year), plus a list of every conversation and where it is. Pictures show as `[picture]`, and voice messages come across as their transcript. ChatGPT's memories and conversations outside projects do not come across. Importing the same project again does not make a copy. No AI is used to import.
 
 ### What isn't covered
 

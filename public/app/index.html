@@ -308,7 +308,7 @@
       </div>
       <span class="field-help">Reference files your assistant can read when the work calls for them. Up to 50 files, 25 MB each.</span>
     </div>
-    <p id="project-import-offer" class="project-hint">Already have projects in Claude? <button type="button" id="project-import-open" class="link-btn">Import from Claude</button></p>
+    <p id="project-import-offer" class="project-hint">Already have projects in Claude or ChatGPT? <button type="button" id="project-import-open" class="link-btn">Import from Claude</button> or <button type="button" id="project-import-chatgpt" class="link-btn">Import from ChatGPT</button></p>
     <p id="project-note" class="note" role="status"></p>
     <div class="project-actions">
       <button type="button" id="project-delete" class="small-btn danger" hidden>Delete project</button>
@@ -320,15 +320,16 @@
   <section id="import-view" class="import-view" aria-labelledby="import-title" hidden>
     <h2 id="import-title">Import from Claude</h2>
     <div id="import-upload">
-      <p class="project-hint">In Claude, open Settings, then Privacy, then Export data. When the email arrives, download only the file called projects-000.zip and upload it here. If your Mac opened it into a folder, right-click the folder, choose Compress, and upload that file.</p>
+      <p id="import-help-claude" class="project-hint">In Claude, open Settings, then Privacy, then Export data. When the email arrives, download only the file called projects-000.zip and upload it here. If your Mac opened it into a folder, right-click the folder, choose Compress, and upload that file.</p>
+      <p id="import-help-chatgpt" class="project-hint" hidden>In ChatGPT, open Settings, then Data controls, then Export data. When the email arrives, download the file and choose it here as it is. It is large, but it is read on this computer and only the conversations in your ChatGPT projects are sent to your assistant. If your Mac opened it into a folder, open the folder and choose the files whose names start with conversations. ChatGPT does not export project names or instructions, so you name each project and can paste its instructions in the next step.</p>
       <div id="import-drop" class="drop-zone">
-        <span>Drop projects-000.zip here or</span>
+        <span id="import-drop-label">Drop projects-000.zip here or</span>
         <button type="button" id="import-pick" class="small-btn">Choose file</button>
         <input id="import-input" type="file" accept=".zip,application/zip" hidden>
       </div>
     </div>
     <div id="import-review" hidden>
-      <p class="project-hint">Tick the projects to bring across. Read the instructions before you import: they guide every chat in that project.</p>
+      <p id="import-review-hint" class="project-hint">Tick the projects to bring across. Read the instructions before you import: they guide every chat in that project.</p>
       <ul id="import-rows" class="import-list" aria-label="Projects in the file"></ul>
     </div>
     <div id="import-result" hidden>
