@@ -2746,6 +2746,22 @@ $('update-flag').addEventListener('click', () => {
   const section = $('update-section')
   if (!section.hidden) section.scrollIntoView({ block: 'start' })
 })
+function applyPalette(choice) {
+  const root = document.documentElement
+  if (choice === 'havn') root.setAttribute('data-palette', 'havn')
+  else root.removeAttribute('data-palette')
+  try {
+    if (choice === 'havn') localStorage.setItem('havn-palette', 'havn')
+    else localStorage.removeItem('havn-palette')
+  } catch (e) {}
+  for (const b of document.querySelectorAll('[data-palette-choice]')) {
+    b.setAttribute('aria-pressed', String(b.dataset.paletteChoice === (choice === 'havn' ? 'havn' : 'original')))
+  }
+}
+for (const b of document.querySelectorAll('[data-palette-choice]')) {
+  b.addEventListener('click', () => applyPalette(b.dataset.paletteChoice))
+}
+applyPalette(document.documentElement.getAttribute('data-palette') || 'original')
 $('settings-close').addEventListener('click', () => $('settings').close())
 $('settings').addEventListener('click', (e) => {
   if (e.target === $('settings')) $('settings').close()

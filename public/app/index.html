@@ -8,6 +8,7 @@
 <title>Assistant</title>
 <link rel="icon" href="/app/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/app/app.css">
+<script type="module" src="/app/theme.js"></script>
 <script type="module" src="/app/app.js"></script>
 </head>
 <body>
@@ -201,6 +202,15 @@
         <h3 id="update-title">Update</h3>
       </div>
       <p id="update-detail" class="update-detail"></p>
+    </section>
+    <section aria-labelledby="theme-title">
+      <div class="settings-row-head">
+        <h3 id="theme-title">Appearance</h3>
+      </div>
+      <div class="theme-seg" role="group" aria-label="Colour palette">
+        <button type="button" class="small-btn" data-palette-choice="original">Original</button>
+        <button type="button" class="small-btn" data-palette-choice="havn">Havn</button>
+      </div>
     </section>
     <section aria-labelledby="conn-title">
       <div class="settings-row-head">
