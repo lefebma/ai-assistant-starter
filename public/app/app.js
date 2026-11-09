@@ -2746,16 +2746,18 @@ $('update-flag').addEventListener('click', () => {
   const section = $('update-section')
   if (!section.hidden) section.scrollIntoView({ block: 'start' })
 })
+const PALETTES = ['havn', 'havn2']
 function applyPalette(choice) {
   const root = document.documentElement
-  if (choice === 'havn') root.setAttribute('data-palette', 'havn')
+  const saved = PALETTES.includes(choice) ? choice : null
+  if (saved) root.setAttribute('data-palette', saved)
   else root.removeAttribute('data-palette')
   try {
-    if (choice === 'havn') localStorage.setItem('havn-palette', 'havn')
+    if (saved) localStorage.setItem('havn-palette', saved)
     else localStorage.removeItem('havn-palette')
   } catch (e) {}
   for (const b of document.querySelectorAll('[data-palette-choice]')) {
-    b.setAttribute('aria-pressed', String(b.dataset.paletteChoice === (choice === 'havn' ? 'havn' : 'original')))
+    b.setAttribute('aria-pressed', String(b.dataset.paletteChoice === (saved || 'original')))
   }
 }
 for (const b of document.querySelectorAll('[data-palette-choice]')) {
