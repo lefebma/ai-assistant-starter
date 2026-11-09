@@ -215,6 +215,24 @@ describe('the chat box', () => {
     expect(loose.status).toBe(400)
     expect(existsSync(join(UPLOADS, 'voice-note.ogg'))).toBe(true)
   })
+
+  it('lets another chat send its own upload, which moves into its conversation', async () => {
+    const rt = new FakeRuntime()
+    runtimeMod.setAgentRuntime(rt)
+    const own = await upload('777', 'quote.txt')
+    const r = await fetch(`${base()}/api/web/conversations/${otherConv}/chat`, {
+      method: 'POST',
+      headers: { Cookie: cookies['777']!, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'read this', attachments: [own] }),
+    })
+    expect(r.status).toBe(200)
+    await r.text()
+    const moved = join(UPLOADS, 'chat', otherConv, 'quote.txt')
+    expect(existsSync(moved)).toBe(true)
+    expect(existsSync(join(h.root, own))).toBe(false)
+    expect(rt.calls[0]!.message).toContain(`[Document attached: quote.txt at ${moved}]`)
+    expect((await raw('777', `workspace/uploads/chat/${otherConv}/quote.txt`)).status).toBe(200)
+  })
 })
 
 describe('clearing old uploads', () => {
