@@ -42,6 +42,7 @@ const state = {
   projects: [],
   conversations: [],
   expanded: new Set(['']),
+  chatsAll: new Set(), // projects whose full chat history is showing
   current: null, // conversation object
   messages: [],
   busy: new Set(), // conversation ids with a reply in progress, as this page sees it
@@ -229,6 +230,9 @@ async function refreshConversations() {
   }
 }
 
+/** Most chats a sidebar section lists before the three-dots button expands it. */
+const CHAT_LIMIT = 10
+
 function renderProjects() {
   const list = $('projects')
   list.replaceChildren()
@@ -255,7 +259,14 @@ function renderProjects() {
     if (open) {
       const ul = h('ul', { class: 'chat-list' })
       if (!chats.length) ul.append(h('li', { class: 'chat-empty', text: 'No chats yet.' }))
-      for (const c of chats) {
+      const showAll = state.chatsAll.has(p.id)
+      let shown = chats
+      if (!showAll && chats.length > CHAT_LIMIT) {
+        shown = chats.slice(0, CHAT_LIMIT)
+        const cur = state.current && chats.find((c) => c.id === state.current.id)
+        if (cur && !shown.includes(cur)) shown.push(cur)
+      }
+      for (const c of shown) {
         const current = state.current && state.current.id === c.id
         ul.append(
           h(
@@ -275,6 +286,28 @@ function renderProjects() {
               'aria-label': 'Delete chat ' + (c.title || 'New chat'),
               icon: 'trash',
               click: () => deleteChat(c),
+            })
+          )
+        )
+      }
+      if (chats.length > CHAT_LIMIT) {
+        const label = showAll ? 'Show fewer chats' : 'Show all ' + chats.length + ' chats'
+        ul.append(
+          h(
+            'li',
+            { class: 'chat-more' },
+            h('button', {
+              type: 'button',
+              class: 'chat-more-btn',
+              text: showAll ? 'Show less' : '\u22ef',
+              title: label,
+              'aria-label': label,
+              'aria-expanded': String(showAll),
+              click: () => {
+                if (showAll) state.chatsAll.delete(p.id)
+                else state.chatsAll.add(p.id)
+                renderProjects()
+              },
             })
           )
         )

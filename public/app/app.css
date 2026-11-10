@@ -230,6 +230,12 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .chat-delete svg { width: 15px; height: 15px; }
 .chat-item:hover .chat-delete, .chat-item.current .chat-delete, .chat-delete:focus-visible { opacity: 0.8; }
 .chat-delete:hover { color: var(--danger); }
+.chat-more { padding: 0 2px 2px; }
+.chat-more-btn {
+  width: 100%; padding: 4px 8px; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ink-faint); font-size: 14px; letter-spacing: 2px; text-align: left;
+}
+.chat-more-btn:hover { background: var(--bg-deep); color: var(--ink-soft); }
 .chat-empty { padding: 4px 8px 6px; font-size: 13px; color: var(--ink-faint); }
 
 /* ---------- goals ---------- */
