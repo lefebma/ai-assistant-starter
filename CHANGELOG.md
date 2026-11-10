@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.76.2 - 2026-11-09
+
+- **Fixed: managed assistants count AI spend correctly.** On Claude Sonnet 5.5 a managed assistant counted about 2.3 times what Anthropic actually charged, so the 80% heads-up came far too early and spend figures read high. Spend is now worked out from the published prices. The hard limit was never affected.
+
 ## 1.76.1 - 2026-11-09
 
 - **Changed: a paused assistant always answers.** Once a managed assistant had used up its monthly AI allowance and said so, later messages got no reply for up to a day, which looked like it had stopped working. Each one now gets a short note saying it is still paused.

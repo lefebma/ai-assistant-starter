@@ -101,7 +101,7 @@ The assistant's own tools can read its key, the same way they can read any file 
 
 ## At 80% of the cap
 
-The box adds up the cost the assistant engine reports for every call, chat and background alike, by calendar month in UTC (the same month Anthropic's limit uses). The total is in `store/ai-usage.json`. It is an estimate: the hard stop is still the Console limit.
+The box adds up the cost of every call, chat and background alike, using the published price for Claude 5 models (`CLAUDE_PRICES` in `src/ai-usage.ts`, which needs a line for any new model the engine misprices) and the cost the assistant engine reports for the rest, by calendar month in UTC (the same month Anthropic's limit uses). The total is in `store/ai-usage.json`. It is an estimate: the hard stop is still the Console limit.
 
 When the total reaches 80% of the cap, the client gets one message after their next reply: "Heads-up: I've used about 80% of this month's AI allowance. I'll keep working as normal. If it runs out before it renews on November 1, I'll pause until then. Your provider can raise it if you need more." Once a month at most. You get a Telegram alert from Umi at the same point (Marc only, no partner draft).
 

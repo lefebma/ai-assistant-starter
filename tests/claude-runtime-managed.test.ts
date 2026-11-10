@@ -116,6 +116,23 @@ describe('ClaudeAgentRuntime on a managed box', () => {
     expect(readAiUsage()?.usd).toBeCloseTo(0.15, 6)
   })
 
+  it('counts a chat turn and a one-shot at the published price, not the reported total (card #296)', async () => {
+    withKey()
+    const pricedConversation = () =>
+      (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: 'sess-priced' }
+        yield {
+          type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0.5064,
+          modelUsage: { 'claude-sonnet-5-5': { inputTokens: 4, outputTokens: 213, cacheReadInputTokens: 0, cacheCreationInputTokens: 80173, webSearchRequests: 0, costUSD: 0.5064 } },
+        }
+      })()
+    mockQuery.mockReturnValueOnce(pricedConversation()).mockReturnValueOnce(pricedConversation())
+    const rt = new ClaudeAgentRuntime()
+    await rt.run({ message: 'hello' })
+    await rt.runOnce('ping')
+    expect(readAiUsage()?.usd).toBeCloseTo(0.40514, 4)
+  })
+
   it('records the renewal day from a spend-limit result', async () => {
     withKey()
     mockQuery.mockReturnValue((async function* () {

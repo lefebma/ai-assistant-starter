@@ -72,6 +72,53 @@ function currentUsage(storeDir: string, now: Date): AiUsage {
 }
 
 /**
+ * Published dollars per million tokens for the Claude 5 family (card #296). The
+ * SDK charged Sonnet 5.5 at $5/$25 against a real $2/$10, so these replace what
+ * it reports. A new model the SDK misprices needs a line here.
+ */
+const CLAUDE_PRICES: Record<string, { input: number; output: number }> = {
+  'claude-fable-5': { input: 10, output: 50 },
+  'claude-opus-5-5': { input: 4, output: 20 },
+  'claude-opus-5': { input: 5, output: 25 },
+  'claude-sonnet-5-5': { input: 2, output: 10 },
+  'claude-sonnet-5': { input: 2, output: 10 },
+  'claude-haiku-5-5': { input: 0.1, output: 0.5 },
+}
+// Cache writes at the five-minute rate, the only one the SDK uses on a key.
+const CACHE_WRITE_RATE = 1.25
+const CACHE_READ_RATE = 0.1
+const WEB_SEARCH_USD = 0.01
+
+function modelCostUsd(id: string, u: Record<string, unknown>): number | null {
+  const price = CLAUDE_PRICES[id.replace(/\[.*\]$/, '').replace(/-\d{8}$/, '')]
+  if (!price) return typeof u.costUSD === 'number' && Number.isFinite(u.costUSD) ? u.costUSD : null
+  const counts = [u.inputTokens, u.outputTokens, u.cacheCreationInputTokens, u.cacheReadInputTokens, u.webSearchRequests]
+  if (!counts.every((n): n is number => typeof n === 'number' && Number.isFinite(n))) return null
+  const [input, output, cacheWrite, cacheRead, searches] = counts
+  const tokensUsd = input * price.input + output * price.output + cacheWrite * price.input * CACHE_WRITE_RATE + cacheRead * price.input * CACHE_READ_RATE
+  return tokensUsd / 1_000_000 + searches * WEB_SEARCH_USD
+}
+
+/**
+ * What a claude-runtime result event really cost: per model where the event says,
+ * otherwise the event's total. The total comes back unchecked for
+ * recordManagedSpend to accept or refuse.
+ */
+export function claudeTurnCostUsd(event: { total_cost_usd?: unknown; modelUsage?: unknown }): unknown {
+  const models = event.modelUsage
+  if (!models || typeof models !== 'object') return event.total_cost_usd
+  const entries = Object.entries(models as Record<string, Record<string, unknown>>)
+  if (entries.length === 0) return event.total_cost_usd
+  let usd = 0
+  for (const [id, usage] of entries) {
+    const cost = usage && typeof usage === 'object' ? modelCostUsd(id, usage) : null
+    if (cost === null) return event.total_cost_usd
+    usd += cost
+  }
+  return usd
+}
+
+/**
  * Add one call's cost. Never throws: metering must not break a turn. A
  * non-managed box, or a cost that is not a positive number, records nothing.
  */
