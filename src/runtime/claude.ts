@@ -15,7 +15,7 @@ import { currentProxy, withEgress } from '../egress/index.js'
 import { spawnInToolsCgroup } from '../egress/hosted.js'
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
-import { recordManagedSpend } from '../ai-usage.js'
+import { claudeTurnCostUsd, recordManagedSpend } from '../ai-usage.js'
 import { logger } from '../logger.js'
 import {
   AiPausedError,
@@ -397,7 +397,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         },
       })
       for await (const event of conversation) {
-        if (event.type === 'result') recordManagedSpend((event as any).total_cost_usd)
+        if (event.type === 'result') recordManagedSpend(claudeTurnCostUsd(event as any))
         if (event.type === 'result' && event.is_error) {
           const hit = classifyAiError(resultEventText(event))
           if (hit) {
@@ -691,7 +691,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           // is_error set (even subtype 'success') instead of a throw. A limit
           // must pause the box, never be delivered as the answer.
           // Managed lane: count each call's reported cost toward the month (card #159).
-          if (managed && event.type === 'result') recordManagedSpend((event as any).total_cost_usd)
+          if (managed && event.type === 'result') recordManagedSpend(claudeTurnCostUsd(event as any))
 
           if (managed && event.type === 'result' && event.is_error) {
             aiLimitHit = classifyAiError(resultEventText(event))
