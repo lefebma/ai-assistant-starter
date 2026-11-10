@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.76.1 - 2026-11-09
+
+- **Changed: a paused assistant always answers.** Once a managed assistant had used up its monthly AI allowance and said so, later messages got no reply for up to a day, which looked like it had stopped working. Each one now gets a short note saying it is still paused.
+
 ## 1.76.0 - 2026-11-09
 
 - **New: bring your projects over from ChatGPT.** In the web app, choose New project, then Import from ChatGPT, and pick the export file ChatGPT emails you, as it arrives. It is read in your browser, and only the conversations inside your ChatGPT projects are sent to your assistant; your other conversations, pictures and voice recordings stay on your computer. ChatGPT's export has no project names, instructions or files, so you name each project, can paste its instructions, and tick the ones you want. Each project's conversations come across as files your assistant can read, one per conversation, or one per month with a list when there are more than 40. Pictures show as `[picture]` and voice messages as their transcript. ChatGPT's memories and conversations outside projects do not come across. Importing the same project again does not make a copy. No AI is used to import. ChatGPT Business and Enterprise members cannot export their own data; their workspace owner can.

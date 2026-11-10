@@ -24,7 +24,6 @@ export const AI_LIMIT_FILE = 'ai-limit.json'
 export const MANAGED_AI_FILE = 'managed-ai.json'
 
 const DEFAULT_RECOVERY_MS = 15 * 60_000
-const REPEAT_AFTER_MS = 24 * 60 * 60_000
 
 export const FIRST_REPLY =
   "I've reached this month's AI allowance, so I'm paused for now. Your provider has been told and will be in touch."
@@ -179,12 +178,10 @@ export function recoveryDueAt(m: AiLimitMarker, intervalMs: number = DEFAULT_REC
   return (Number.isNaN(last) ? 0 : last) + intervalMs
 }
 
-export function ownerPauseReply(m: AiLimitMarker, now: Date): { text: string; next: AiLimitMarker } | null {
+export function ownerPauseReply(m: AiLimitMarker, now: Date): { text: string; next: AiLimitMarker } {
   const told = m.lastToldAt ? Date.parse(m.lastToldAt) : NaN
-  const stamp = { ...m, lastToldAt: now.toISOString(), toldFull: true }
-  if (!m.toldFull || Number.isNaN(told)) return { text: firstReply(m.resumesAt), next: stamp }
-  if (now.getTime() - told >= REPEAT_AFTER_MS) return { text: repeatReply(m.resumesAt), next: stamp }
-  return null
+  const text = !m.toldFull || Number.isNaN(told) ? firstReply(m.resumesAt) : repeatReply(m.resumesAt)
+  return { text, next: { ...m, lastToldAt: now.toISOString(), toldFull: true } }
 }
 
 /**
