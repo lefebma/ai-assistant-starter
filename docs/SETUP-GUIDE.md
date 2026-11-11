@@ -154,8 +154,9 @@ credentials work rather than merely exist. Drop it for a fast offline check.
 
 Claude on a Claude subscription is the default. To run on OpenAI, Gemini, or a
 self-hosted model instead — or to route scheduled work and chat to different
-engines — see [PROVIDERS.md](PROVIDERS.md). To keep API keys encrypted at rest,
-see [VAULT.md](VAULT.md).
+engines — see [PROVIDERS.md](PROVIDERS.md). On OpenAI, check that it does not train on
+your data: [OPENAI-DATA-PRIVACY.md](OPENAI-DATA-PRIVACY.md). To keep API keys
+encrypted at rest, see [VAULT.md](VAULT.md).
 
 ## Step 2: Connect Email
 

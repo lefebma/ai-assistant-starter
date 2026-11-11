@@ -5,6 +5,9 @@ default and needs no configuration. Everything else runs through the AI SDK runt
 one setting flips the engine, and the assistant keeps all its skills, tools, memory,
 and scheduled tasks.
 
+On OpenAI and want to be sure it does not train on your data? See
+[OPENAI-DATA-PRIVACY.md](OPENAI-DATA-PRIVACY.md).
+
 ## Quick start
 
 In `.env`:
