@@ -39,6 +39,13 @@ Not training is not the same as not keeping.
 
 - **30 days.** By default OpenAI can keep what your assistant sends for up to 30
   days to watch for misuse. It is not used for training in that time.
+- **Your own copy of the calls.** On the same Data controls area, under **Data
+  retention**, **API call logging** decides whether your organization keeps a
+  copy of what your assistant sends, so you can look it over in the OpenAI
+  dashboard. This is separate from training. Choose **Disabled** if you would
+  rather no copy sits in your account, or **Enabled per call** to keep copies
+  only when a call asks for it. OpenAI notes that Responses API calls are
+  logged by default unless the call sets `store=false`, so check what yours says.
 - **Zero data retention.** Some accounts can ask OpenAI for zero data retention,
   which removes the 30-day period. OpenAI has to approve this, and it is meant for
   organizations with strict rules about client data. If you are one of them, ask
@@ -77,6 +84,7 @@ separate path from text, though, so it is worth checking when you change anythin
 ## Checklist
 
 - [ ] Data sharing is **Disabled** for the organization and for every project the assistant uses.
+- [ ] You have chosen how API call logging is set (Data retention page).
 - [ ] You know the 30-day period applies, and you have decided whether you need zero data retention.
 - [ ] If you use ChatGPT, **Improve the model for everyone** is off.
 - [ ] If client names matter, the [privacy filter](PRIVACY.md) is on.
