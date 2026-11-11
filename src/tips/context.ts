@@ -9,6 +9,8 @@ import { getAllTasks, getDb } from '../db.js'
 import { liveDecisions } from '../memory/decisions.js'
 import { connectionDeps } from '../web/connections.js'
 import { voiceCapabilities } from '../voice.js'
+import { OPENAI_API_KEY } from '../config.js'
+import { isManagedAi } from '../ai-limit.js'
 import type { TipContext } from './catalog.js'
 
 function attempt<T>(read: () => T, fallback: T): T {
@@ -44,5 +46,6 @@ export async function tipContext(chatId: string): Promise<TipContext> {
       () => !!getDb().prepare("SELECT 1 FROM projects WHERE chat_id = ? AND source LIKE 'chatgpt:%' LIMIT 1").get(chatId),
       false,
     ),
+    ownOpenAiKey: !!OPENAI_API_KEY && !attempt(() => isManagedAi(), true),
   }
 }

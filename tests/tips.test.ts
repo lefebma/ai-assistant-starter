@@ -26,7 +26,7 @@ const TZ = 'America/Toronto'
 
 const CTX: TipContext = {
   mail: true, calendar: true, gmailAccounts: 1, briefingOn: false, travelOn: false, timingOn: false,
-  emailAlertsOn: false, scheduledTasks: 0, decisions: 0, voiceReplies: false, importedProjects: false, importedFromChatGPT: false,
+  emailAlertsOn: false, scheduledTasks: 0, decisions: 0, voiceReplies: false, importedProjects: false, importedFromChatGPT: false, ownOpenAiKey: false,
 }
 
 const MOMENT: Moment = { nowMs: NOW, localHour: 11, inQuietHours: false, busy: false, lastOwnerMs: 0 }
@@ -81,6 +81,14 @@ describe('which tip', () => {
     expect(nextTip(s, { ...CTX, briefingOn: true }, NOW)?.id).toBe('meeting-briefings')
     markUsed(s, { ...CTX, briefingOn: true })
     expect(nextTip(s, { ...CTX, briefingOn: true }, NOW)?.id).toBe('email-alerts')
+  })
+
+  it('offers the OpenAI data tip only to an owner with their own OpenAI key', () => {
+    const openAi = TIPS.find((t) => t.id === 'openai-data-sharing')!
+    expect(openAi.applies!(CTX)).toBe(false)
+    expect(openAi.applies!({ ...CTX, ownOpenAiKey: true })).toBe(true)
+    expect(triedBy('How do I stop OpenAI training on my data?').map((t) => t.id)).toContain('openai-data-sharing')
+    expect(triedBy('Draft a reply about our data policy').map((t) => t.id)).not.toContain('openai-data-sharing')
   })
 
   it('counts a command or a matching sentence as trying it', () => {
