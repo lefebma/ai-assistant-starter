@@ -115,7 +115,9 @@ IT has to approve new apps: no / yes, and they'll be reachable / don't know
 - **Map each address to its part of
   [CLIENT-EMAIL-ONBOARDING.md](CLIENT-EMAIL-ONBOARDING.md):** Gmail and
   Google Workspace are Part 1, Outlook and Microsoft 365 Part 2, and Yahoo,
-  AOL, iCloud and anything else over IMAP Part 3.
+  AOL, iCloud and anything else over IMAP Part 3. A personal Gmail that
+  can't use Part 1 can connect mail only by app password (Part 3, "Gmail by
+  app password"); ask the client to make that app password before the call.
 - **"Not yet" on sign-in** for an address: leave it off this call and connect
   it later. Don't spend the call on account recovery.
 - **"IT has to approve" or "don't know"** for a company address: confirm the
