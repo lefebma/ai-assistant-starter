@@ -117,4 +117,12 @@ describe('buildNextSteps', () => {
       expect(line).not.toMatch(/ dist\//)
     }
   })
+
+  it('tells OpenAI users to check data sharing, and nobody else (card #299)', () => {
+    const withOpenAi = flatten({ ...BASE, usesOpenAi: true })
+    expect(withOpenAi).toMatch(/platform\.openai\.com/)
+    expect(withOpenAi).toMatch(/Data sharing/)
+    expect(withOpenAi).toMatch(/OPENAI-DATA-PRIVACY\.md/)
+    expect(flatten(BASE)).not.toMatch(/Data sharing/)
+  })
 })
