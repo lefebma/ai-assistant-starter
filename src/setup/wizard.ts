@@ -185,6 +185,22 @@ const PROVIDER_OPTIONS: Array<{ label: string; id: AiProvider; where: string }> 
  * choice the owner was never offered and using words they had no reason to
  * know. Ask it plainly instead, in terms of what someone actually has.
  */
+/**
+ * Shown when OpenAI is the thinking engine. The key belongs to OpenAI's
+ * developer platform, not the ChatGPT app, so ChatGPT's own training switch
+ * does not cover it, and customers who know only the app look in the wrong
+ * place (card #299). Mirrored in templates/web-setup/index.html and
+ * docs/OPENAI-DATA-PRIVACY.md.
+ */
+export const OPENAI_PRIVACY_NOTE =
+  'One more thing about OpenAI: keep it from training on your data.\n' +
+  '  This key works through OpenAI\'s developer platform, not the ChatGPT app, so the\n' +
+  '  privacy switch in ChatGPT does not cover your assistant. After setup, sign in at\n' +
+  '  platform.openai.com, open Settings, Organization, Data controls, and check that\n' +
+  '  Data sharing says Disabled. OpenAI says it does not train on this data unless you\n' +
+  '  turn that on, and it can keep what your assistant sends for up to 30 days.\n' +
+  '  The full steps are in docs/OPENAI-DATA-PRIVACY.md.'
+
 async function askEngine(p: Prompter, hooks?: WizardHooks): Promise<EngineAnswers> {
   p.say(
     'Your assistant needs an account with an AI company to do its thinking.\n' +
@@ -210,6 +226,7 @@ async function askEngine(p: Prompter, hooks?: WizardHooks): Promise<EngineAnswer
   const providerLabel = await p.choice('Whose API key?', PROVIDER_OPTIONS.map((o) => o.label))
   const provider = PROVIDER_OPTIONS.find((o) => o.label === providerLabel) ?? PROVIDER_OPTIONS[0]
   p.say(`Get a key at ${provider.where}`)
+  if (provider.id === 'openai') p.say(OPENAI_PRIVACY_NOTE)
   const key = await p.ask(`${provider.label} API key (leave blank to fill in later)`, '')
 
   // anthropic is the only provider with a default model id; the others must be
@@ -251,6 +268,7 @@ async function askVoice(p: Prompter, keys: Answers['keys']): Promise<void> {
   )
   if (!(await p.yesNo('Enable voice?'))) return
   keys.openai = await p.ask('OpenAI API key (leave blank to fill in later)', '')
+  p.say(OPENAI_PRIVACY_NOTE)
   p.say(liveNodeNote(process.versions.node))
 }
 

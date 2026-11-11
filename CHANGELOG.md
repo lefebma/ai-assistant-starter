@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.77.0 - 2026-11-11
+
+- **New: setup reminds you to keep OpenAI from training on your data.** If you choose OpenAI as your assistant's AI, setup now explains that the key works through OpenAI's developer platform, not the ChatGPT app, so the privacy switch in ChatGPT does not cover it. It tells you where to check: sign in at platform.openai.com, open Settings, Organization, Data controls, and make sure Data sharing says Disabled. The same note shows in the browser setup page, in the list of next steps at the end of setup, and when you add an OpenAI key for voice. A new guide, `docs/OPENAI-DATA-PRIVACY.md`, has the full steps, including what OpenAI still keeps for 30 days and how to turn off training in ChatGPT if you use it too.
+
 ## 1.76.2 - 2026-11-09
 
 - **Fixed: managed assistants count AI spend correctly.** On Claude Sonnet 5.5 a managed assistant counted about 2.3 times what Anthropic actually charged, so the 80% heads-up came far too early and spend figures read high. Spend is now worked out from the published prices. The hard limit was never affected.

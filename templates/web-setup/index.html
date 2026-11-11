@@ -29,6 +29,7 @@
   section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
   label { display: block; font-weight: 600; margin: 14px 0 4px; }
   .hint { font-weight: 400; color: var(--muted); font-size: .9rem; }
+  .note { border-left: 3px solid var(--muted); padding-left: .75rem; margin: .75rem 0; }
   input, select { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
   .choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-weight: 400; cursor: pointer; }
   .choice input { width: auto; margin-top: 4px; }
@@ -111,6 +112,9 @@
         <option value="google">Google (Gemini)</option>
       </select>
       <p class="hint" id="keyWhere"></p>
+      <div class="hint note hidden" id="openaiNote">
+        <b>Keep OpenAI from training on your data.</b> This key works through OpenAI's developer platform, not the ChatGPT app, so the privacy switch in ChatGPT does not cover your assistant. After setup, sign in at platform.openai.com, open Settings, Organization, Data controls, and check that Data sharing says Disabled. OpenAI says it does not train on this data unless you turn that on, and it can keep what your assistant sends for up to 30 days.
+      </div>
       <label for="apiKey">API key</label>
       <input id="apiKey" type="password" autocomplete="off" spellcheck="false">
       <div id="modelBox" class="hidden">
@@ -247,6 +251,7 @@
   function providerChanged() {
     const p = $('provider').value
     $('keyWhere').textContent = WHERE[p]
+    $('openaiNote').classList.toggle('hidden', p !== 'openai')
     $('modelBox').classList.toggle('hidden', !MODELS[p])
     $('model').value = MODELS[p]
   }
