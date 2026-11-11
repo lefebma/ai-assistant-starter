@@ -14,6 +14,12 @@ Console / Azure project) — never the account password. Every step that
 touches the client's actual account is theirs to click through, in their own
 browser.
 
+**Before any of this: checklist returned.** Send the client
+[CLIENT-PRE-CALL-CHECKLIST.md](CLIENT-PRE-CALL-CHECKLIST.md) a few days ahead
+and start only once their answers are back. It tells you which mailboxes,
+which part of this doc each one needs, and whether an IT admin has to be on
+hand.
+
 ---
 
 ## Part 1: Gmail + Google Calendar
