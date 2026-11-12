@@ -24,6 +24,8 @@ export interface ChatConversation {
   created: number
   updated: number
   messages: ChatMessage[]
+  /** True when the thread was longer than CHAT_LIMITS.nodes and its oldest part was left out. */
+  truncated?: boolean
 }
 
 export interface ChatProject {
@@ -32,7 +34,7 @@ export interface ChatProject {
   conversations: ChatConversation[]
 }
 
-export type ChatParseError = 'not_chatgpt' | 'no_projects' | 'too_large'
+export type ChatParseError = 'not_chatgpt' | 'no_projects' | 'too_large' | 'too_many' | 'too_many_projects'
 
 export type ChatParseResult =
   | { ok: true; projects: ChatProject[]; unreadable: number }
@@ -84,7 +86,7 @@ function messageOf(node: unknown): ChatMessage | null {
 }
 
 /** The thread ChatGPT shows: from `current_node` up to the root, oldest first. */
-function threadOf(mapping: Record<string, unknown>, current: string): ChatMessage[] {
+function threadOf(mapping: Record<string, unknown>, current: string): { messages: ChatMessage[]; truncated: boolean } {
   const out: ChatMessage[] = []
   const seen = new Set<string>()
   let id: string = current
@@ -96,7 +98,9 @@ function threadOf(mapping: Record<string, unknown>, current: string): ChatMessag
     if (msg) out.push(msg)
     id = str(node.parent)
   }
-  return out.reverse()
+  // Stopped at the cap with more of the thread above: say so rather than cut it silently.
+  const truncated = seen.size >= CHAT_LIMITS.nodes && !!id && !seen.has(id)
+  return { messages: out.reverse(), truncated }
 }
 
 function conversationOf(v: unknown): { projectId: string; conversation: ChatConversation } | null {
@@ -105,10 +109,10 @@ function conversationOf(v: unknown): { projectId: string; conversation: ChatConv
   if (!PROJECT_ID.test(projectId)) return null
   const id = str(v.conversation_id) || str(v.id)
   if (!id || !isObject(v.mapping)) return null
-  const messages = threadOf(v.mapping, str(v.current_node))
+  const { messages, truncated } = threadOf(v.mapping, str(v.current_node))
   const created = num(v.create_time) || messages.find((m) => m.at)?.at || 0
   const updated = num(v.update_time) || [...messages].reverse().find((m) => m.at)?.at || created
-  return { projectId, conversation: { id, title: str(v.title).trim(), created, updated, messages } }
+  return { projectId, conversation: { id, title: str(v.title).trim(), created, updated, messages, ...(truncated ? { truncated } : {}) } }
 }
 
 /** True when a value looks like one ChatGPT conversation, in or out of a project. */
@@ -122,7 +126,7 @@ const looksLikeConversation = (v: unknown): boolean => isObject(v) && isObject(v
  */
 export function parseChatGPTConversations(data: unknown): ChatParseResult {
   if (!Array.isArray(data)) return { ok: false, code: 'not_chatgpt' }
-  if (data.length > CHAT_LIMITS.conversations) return { ok: false, code: 'too_large' }
+  if (data.length > CHAT_LIMITS.conversations) return { ok: false, code: 'too_many' }
   if (data.length && !data.some(looksLikeConversation)) return { ok: false, code: 'not_chatgpt' }
   const byProject = new Map<string, ChatConversation[]>()
   const seen = new Set<string>()
@@ -139,7 +143,7 @@ export function parseChatGPTConversations(data: unknown): ChatParseResult {
     seen.add(c.conversation.id)
     let list = byProject.get(c.projectId)
     if (!list) {
-      if (byProject.size >= CHAT_LIMITS.projects) return { ok: false, code: 'too_large' }
+      if (byProject.size >= CHAT_LIMITS.projects) return { ok: false, code: 'too_many_projects' }
       list = []
       byProject.set(c.projectId, list)
     }
@@ -169,6 +173,7 @@ export function transcript(c: ChatConversation): string {
   const to = dayOf(c.updated)
   const dates = from && to && from !== to ? `Started ${from}, last message ${to}.` : from ? `${from}.` : ''
   const lines = [`# ${title}`, '', `Imported from ChatGPT.${dates ? ' ' + dates : ''}`]
+  if (c.truncated) lines.push('', `This conversation is longer than ${CHAT_LIMITS.nodes.toLocaleString('en-US')} messages. Only the most recent part came across.`)
   let day = ''
   for (const m of c.messages) {
     const d = dayOf(m.at)

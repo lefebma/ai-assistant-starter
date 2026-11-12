@@ -101,7 +101,26 @@ describe('parseChatGPTConversations', () => {
 
   it('refuses more conversations than the limit', () => {
     const many = Array.from({ length: CHAT_LIMITS.conversations + 1 }, () => ({}))
-    expect(parseChatGPTConversations(many)).toEqual({ ok: false, code: 'too_large' })
+    expect(parseChatGPTConversations(many)).toEqual({ ok: false, code: 'too_many' })
+  })
+
+  it('refuses more projects than the limit with its own code', () => {
+    const projects = Array.from({ length: CHAT_LIMITS.projects + 1 }, (_, i) =>
+      conversation({ id: `c${i}`, project: `g-p-${i}`, messages: [{ role: 'user', text: 'hi' }] }),
+    )
+    expect(parseChatGPTConversations(projects)).toEqual({ ok: false, code: 'too_many_projects' })
+  })
+
+  it('marks a conversation cut at the node cap, and says so in the transcript', () => {
+    const msgs = Array.from({ length: CHAT_LIMITS.nodes + 5 }, (_, i) => ({ role: (i % 2 ? 'assistant' : 'user') as 'user' | 'assistant', text: `m${i}` }))
+    const r = ok([conversation({ id: 'long', project: 'g-p-x', messages: msgs })])
+    const c = r.projects[0]!.conversations[0]!
+    expect(c.truncated).toBe(true)
+    expect(transcript(c)).toContain('This conversation is longer than 20,000 messages. Only the most recent part came across.')
+
+    const short = ok([conversation({ id: 's', project: 'g-p-y', messages: msgs.slice(0, 3) })])
+    expect(short.projects[0]!.conversations[0]!.truncated).toBeUndefined()
+    expect(transcript(short.projects[0]!.conversations[0]!)).not.toContain('most recent part')
   })
 })
 
