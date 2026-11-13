@@ -83,10 +83,12 @@ registerWebRoutes([
   },
 ])
 
-const CHAT_STATUS: Record<'not_chatgpt' | 'no_projects' | 'too_large' | 'corrupt', [number, string]> = {
+const CHAT_STATUS: Record<'not_chatgpt' | 'no_projects' | 'too_large' | 'too_many' | 'too_many_projects' | 'corrupt', [number, string]> = {
   not_chatgpt: [400, 'not_chatgpt'],
   no_projects: [400, 'no_projects'],
   too_large: [413, 'too_large'],
+  too_many: [400, 'too_many'],
+  too_many_projects: [400, 'too_many_projects'],
   corrupt: [400, 'corrupt'],
 }
 
