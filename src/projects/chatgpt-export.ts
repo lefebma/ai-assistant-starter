@@ -10,6 +10,7 @@
  *
  * Nothing here logs: titles and content are the customer's.
  */
+import { closeSync, openSync, readSync } from 'node:fs'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -119,43 +120,185 @@ function conversationOf(v: unknown): { projectId: string; conversation: ChatConv
 const looksLikeConversation = (v: unknown): boolean => isObject(v) && isObject(v.mapping) && ('current_node' in v || 'conversation_id' in v)
 
 /**
- * Parse the uploaded array. Conversations outside projects are ignored (the
- * browser leaves them out anyway); a project conversation that cannot be read
- * is counted. Projects come back newest activity first, conversations newest
- * first within each, and a conversation id seen twice is kept once.
+ * Takes the uploaded conversations one at a time, so the raw export never has
+ * to be held whole (card #300). Conversations outside projects are ignored
+ * (the browser leaves them out anyway); a project conversation that cannot be
+ * read is counted; a conversation id seen twice is kept once.
  */
+export class ChatGPTCollector {
+  private readonly byProject = new Map<string, ChatConversation[]>()
+  private readonly seen = new Set<string>()
+  private unreadable = 0
+  private count = 0
+  private anyConversation = false
+
+  /** Take one element of the array. Returns a code to stop with, or null to carry on. */
+  add(item: unknown): ChatParseError | null {
+    this.count += 1
+    if (this.count > CHAT_LIMITS.conversations) return 'too_many'
+    if (!this.anyConversation && looksLikeConversation(item)) this.anyConversation = true
+    const pid = isObject(item) ? str(item.conversation_template_id) || str(item.gizmo_id) : ''
+    if (!PROJECT_ID.test(pid)) return null
+    const c = conversationOf(item)
+    if (!c) {
+      this.unreadable += 1
+      return null
+    }
+    if (this.seen.has(c.conversation.id)) return null
+    this.seen.add(c.conversation.id)
+    let list = this.byProject.get(c.projectId)
+    if (!list) {
+      if (this.byProject.size >= CHAT_LIMITS.projects) return 'too_many_projects'
+      list = []
+      this.byProject.set(c.projectId, list)
+    }
+    list.push(c.conversation)
+    return null
+  }
+
+  /** Projects newest activity first, conversations newest first within each. */
+  finish(): ChatParseResult {
+    if (this.count && !this.anyConversation) return { ok: false, code: 'not_chatgpt' }
+    if (!this.byProject.size) return { ok: false, code: 'no_projects' }
+    const projects = [...this.byProject].map(([id, conversations]) => ({
+      id,
+      conversations: conversations.sort((a, b) => b.updated - a.updated),
+    }))
+    projects.sort((a, b) => (b.conversations[0]?.updated ?? 0) - (a.conversations[0]?.updated ?? 0))
+    return { ok: true, projects, unreadable: this.unreadable }
+  }
+}
+
+/** Parse the uploaded array when it is already in memory. */
 export function parseChatGPTConversations(data: unknown): ChatParseResult {
   if (!Array.isArray(data)) return { ok: false, code: 'not_chatgpt' }
   if (data.length > CHAT_LIMITS.conversations) return { ok: false, code: 'too_many' }
-  if (data.length && !data.some(looksLikeConversation)) return { ok: false, code: 'not_chatgpt' }
-  const byProject = new Map<string, ChatConversation[]>()
-  const seen = new Set<string>()
-  let unreadable = 0
+  const collector = new ChatGPTCollector()
   for (const item of data) {
-    const pid = isObject(item) ? str(item.conversation_template_id) || str(item.gizmo_id) : ''
-    if (!PROJECT_ID.test(pid)) continue
-    const c = conversationOf(item)
-    if (!c) {
-      unreadable += 1
-      continue
-    }
-    if (seen.has(c.conversation.id)) continue
-    seen.add(c.conversation.id)
-    let list = byProject.get(c.projectId)
-    if (!list) {
-      if (byProject.size >= CHAT_LIMITS.projects) return { ok: false, code: 'too_many_projects' }
-      list = []
-      byProject.set(c.projectId, list)
-    }
-    list.push(c.conversation)
+    const stop = collector.add(item)
+    if (stop) return { ok: false, code: stop }
   }
-  if (!byProject.size) return { ok: false, code: 'no_projects' }
-  const projects = [...byProject].map(([id, conversations]) => ({
-    id,
-    conversations: conversations.sort((a, b) => b.updated - a.updated),
-  }))
-  projects.sort((a, b) => (b.conversations[0]?.updated ?? 0) - (a.conversations[0]?.updated ?? 0))
-  return { ok: true, projects, unreadable }
+  return collector.finish()
+}
+
+const isSpace = (ch: number) => ch === 32 || ch === 10 || ch === 13 || ch === 9 || ch === 0xfeff
+
+/**
+ * Split a JSON array that arrives in pieces into the text of each element.
+ * `push` takes the next piece and returns the elements it completed; `end`
+ * checks the array closed. Throws Error('not_array') for another JSON value,
+ * or Error('bad_json'). The browser keeps the same splitter in public/app/chatgpt-export.js.
+ */
+export class ArraySplitter {
+  private phase = 0 // 0 before '[', 1 inside, 2 after ']'
+  private depth = 0
+  private inString = false
+  private escaped = false
+  private pieces: string[] | null = null
+  private afterComma = false
+
+  push(text: string): string[] {
+    const out: string[] = []
+    let start = this.pieces ? 0 : -1
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charCodeAt(i)
+      if (this.phase === 0) {
+        if (isSpace(ch)) continue
+        // Another JSON value is valid but not an array; anything else is not JSON at all.
+        if (ch !== 91) throw new Error(/[{"\-0-9]/.test(text[i]!) ? 'not_array' : 'bad_json')
+        this.phase = 1
+        this.depth = 1
+        continue
+      }
+      if (this.phase === 2) {
+        if (isSpace(ch)) continue
+        throw new Error('bad_json')
+      }
+      if (this.inString) {
+        if (this.escaped) this.escaped = false
+        else if (ch === 92) this.escaped = true
+        else if (ch === 34) this.inString = false
+        continue
+      }
+      if (this.depth === 1) {
+        if (isSpace(ch) && !this.pieces) continue
+        if (ch === 44 || ch === 93) {
+          if (this.pieces) {
+            this.pieces.push(text.slice(start, i))
+            out.push(this.pieces.join(''))
+            this.pieces = null
+            start = -1
+          } else if (ch === 44 || this.afterComma) throw new Error('bad_json')
+          this.afterComma = ch === 44
+          if (ch === 93) {
+            this.phase = 2
+            this.depth = 0
+          }
+          continue
+        }
+        if (!this.pieces) {
+          this.pieces = []
+          start = i
+        }
+      }
+      if (ch === 34) this.inString = true
+      else if (ch === 123 || ch === 91) this.depth += 1
+      else if (ch === 125 || ch === 93) {
+        this.depth -= 1
+        if (this.depth < 1) throw new Error('bad_json')
+      }
+    }
+    if (this.pieces && start >= 0) this.pieces.push(text.slice(start))
+    return out
+  }
+
+  end(): void {
+    if (this.phase !== 2) throw new Error('bad_json')
+  }
+}
+
+const READ_CHUNK = 1024 * 1024
+
+/**
+ * Parse an uploaded file a megabyte at a time, one conversation at a time, so
+ * only the readable transcripts are kept and never the raw export (card #300).
+ * 'corrupt' means the file is not valid JSON.
+ */
+export function parseChatGPTFile(path: string): ChatParseResult | { ok: false; code: 'corrupt' } {
+  const fd = openSync(path, 'r')
+  try {
+    const buf = Buffer.alloc(READ_CHUNK)
+    const decoder = new TextDecoder('utf-8')
+    const split = new ArraySplitter()
+    const collector = new ChatGPTCollector()
+    const take = (elements: string[]): ChatParseError | 'corrupt' | null => {
+      for (const el of elements) {
+        let item: unknown
+        try {
+          item = JSON.parse(el)
+        } catch {
+          return 'corrupt'
+        }
+        const stop = collector.add(item)
+        if (stop) return stop
+      }
+      return null
+    }
+    try {
+      for (;;) {
+        const n = readSync(fd, buf, 0, READ_CHUNK, null)
+        const stop = take(split.push(decoder.decode(n ? buf.subarray(0, n) : new Uint8Array(0), { stream: n > 0 })))
+        if (stop) return { ok: false, code: stop }
+        if (!n) break
+      }
+      split.end()
+    } catch (err) {
+      return { ok: false, code: (err as Error).message === 'not_array' ? 'not_chatgpt' : 'corrupt' }
+    }
+    return collector.finish()
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /** `YYYY-MM-DD` in UTC, or '' for no date. */
@@ -193,6 +336,8 @@ export interface HistoryFile {
 
 export const MAX_HISTORY_FILES = 40
 export const INDEX_FILE = 'ChatGPT conversations.md'
+/** The largest history file; a bigger one is split into parts. */
+export const HISTORY_FILE_BYTES = 25 * 1024 * 1024
 
 /** Characters of a file name kept for the title, so the whole name stays under 120. */
 const TITLE_CHARS = 80
@@ -230,29 +375,88 @@ export function splitText(text: string, max: number): string[] {
 
 const withPart = (name: string, i: number, n: number) => (n === 1 ? name : name.replace(/\.md$/, ` part ${i + 1}.md`))
 
-function groupFiles(convs: ChatConversation[], key: (c: ChatConversation) => string, maxBytes: number): HistoryFile[] {
-  const groups = new Map<string, ChatConversation[]>()
-  // Oldest first inside a file, so it reads in order.
-  for (const c of [...convs].sort((a, b) => a.created - b.created)) {
-    const k = key(c) || 'undated'
-    const g = groups.get(k)
-    if (g) g.push(c)
-    else groups.set(k, [c])
+type Layout = 'conversation' | 'month' | 'year'
+
+/** Separator between transcripts in a month or year file. */
+const BETWEEN = '\n---\n\n'
+
+/**
+ * Lays out a project's history. With `withText` false only the names are
+ * worked out: each transcript is built once to measure it and dropped, and a
+ * file's text is built only when it is too big for one part. That keeps the
+ * review, which needs only names, from holding every file at once (card #300).
+ */
+class HistoryPlan {
+  private readonly sizes = new Map<ChatConversation, number>()
+
+  constructor(private readonly convs: ChatConversation[], private readonly maxBytes: number) {}
+
+  private bytesOf(c: ChatConversation): number {
+    let n = this.sizes.get(c)
+    if (n === undefined) {
+      n = Buffer.byteLength(transcript(c))
+      this.sizes.set(c, n)
+    }
+    return n
   }
-  const files: HistoryFile[] = []
-  const index: string[] = ['# ChatGPT conversations', '', 'Imported from ChatGPT. Each conversation, newest first, and the file that holds it.', '']
-  const where = new Map<string, string>()
-  for (const [k, list] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
-    const name = `ChatGPT ${k}.md`
-    const text = list.map(transcript).join('\n---\n\n')
-    const parts = splitText(text, maxBytes)
-    parts.forEach((p, i) => files.push({ name: withPart(name, i, parts.length), text: p }))
-    for (const c of list) where.set(c.id, parts.length === 1 ? name : `${name.replace(/\.md$/, '')} (in parts)`)
+
+  /** A file's parts; their text is '' when `withText` is false. */
+  private parts(name: string, make: () => string, bytes: () => number, withText: boolean): HistoryFile[] {
+    if (!withText && bytes() <= this.maxBytes) return [{ name, text: '' }]
+    const pieces = splitText(make(), this.maxBytes)
+    return pieces.map((p, i) => ({ name: withPart(name, i, pieces.length), text: withText ? p : '' }))
   }
-  for (const c of [...convs].sort((a, b) => b.updated - a.updated)) {
-    index.push(`- ${dayOf(c.created) || 'undated'}: ${(c.title || UNTITLED_CONVERSATION).replace(/\s+/g, ' ')} (${where.get(c.id)})`)
+
+  files(layout: Layout, withText: boolean): HistoryFile[] {
+    const oldestFirst = [...this.convs].sort((a, b) => a.created - b.created)
+    if (layout === 'conversation') {
+      const out: HistoryFile[] = []
+      for (const c of oldestFirst) {
+        const day = dayOf(c.created)
+        const name = `ChatGPT ${day ? day + ' ' : ''}${fileTitle(c.title)}.md`
+        out.push(...this.parts(name, () => transcript(c), () => this.bytesOf(c), withText))
+      }
+      return out
+    }
+    const key = (c: ChatConversation) => (layout === 'month' ? dayOf(c.created).slice(0, 7) : dayOf(c.created).slice(0, 4))
+    const groups = new Map<string, ChatConversation[]>()
+    // Oldest first inside a file, so it reads in order.
+    for (const c of oldestFirst) {
+      const k = key(c) || 'undated'
+      const g = groups.get(k)
+      if (g) g.push(c)
+      else groups.set(k, [c])
+    }
+    const files: HistoryFile[] = []
+    const where = new Map<string, string>()
+    for (const [k, list] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
+      const name = `ChatGPT ${k}.md`
+      const made = this.parts(
+        name,
+        () => list.map(transcript).join(BETWEEN),
+        () => list.reduce((n, c) => n + this.bytesOf(c), 0) + BETWEEN.length * (list.length - 1),
+        withText
+      )
+      files.push(...made)
+      for (const c of list) where.set(c.id, made.length === 1 ? name : `${name.replace(/\.md$/, '')} (in parts)`)
+    }
+    let index = ''
+    if (withText) {
+      const lines = ['# ChatGPT conversations', '', 'Imported from ChatGPT. Each conversation, newest first, and the file that holds it.', '']
+      for (const c of [...this.convs].sort((a, b) => b.updated - a.updated)) {
+        lines.push(`- ${dayOf(c.created) || 'undated'}: ${(c.title || UNTITLED_CONVERSATION).replace(/\s+/g, ' ')} (${where.get(c.id)})`)
+      }
+      index = lines.join('\n') + '\n'
+    }
+    return [{ name: INDEX_FILE, text: index }, ...files]
   }
-  return [{ name: INDEX_FILE, text: index.join('\n') + '\n' }, ...files]
+
+  /** One file per conversation when they fit in `slots`; otherwise per month, then per year. */
+  layout(slots: number): Layout {
+    if (this.files('conversation', false).length <= slots) return 'conversation'
+    if (this.files('month', false).length <= slots) return 'month'
+    return 'year'
+  }
 }
 
 /**
@@ -260,21 +464,15 @@ function groupFiles(convs: ChatConversation[], key: (c: ChatConversation) => str
  * fit in `slots`; otherwise one per month with an index, then one per year.
  * A file over `maxBytes` is split into parts.
  */
-export function historyFiles(convs: ChatConversation[], slots: number = MAX_HISTORY_FILES, maxBytes: number = 25 * 1024 * 1024): HistoryFile[] {
+export function historyFiles(convs: ChatConversation[], slots: number = MAX_HISTORY_FILES, maxBytes: number = HISTORY_FILE_BYTES): HistoryFile[] {
   if (!convs.length) return []
-  const single = (): HistoryFile[] => {
-    const out: HistoryFile[] = []
-    for (const c of [...convs].sort((a, b) => a.created - b.created)) {
-      const day = dayOf(c.created)
-      const name = `ChatGPT ${day ? day + ' ' : ''}${fileTitle(c.title)}.md`
-      const parts = splitText(transcript(c), maxBytes)
-      parts.forEach((p, i) => out.push({ name: withPart(name, i, parts.length), text: p }))
-    }
-    return out
-  }
-  const perConversation = single()
-  if (perConversation.length <= slots) return perConversation
-  const byMonth = groupFiles(convs, (c) => dayOf(c.created).slice(0, 7), maxBytes)
-  if (byMonth.length <= slots) return byMonth
-  return groupFiles(convs, (c) => dayOf(c.created).slice(0, 4), maxBytes)
+  const plan = new HistoryPlan(convs, maxBytes)
+  return plan.files(plan.layout(slots), true)
+}
+
+/** The names `historyFiles` would give, without building the files. */
+export function historyFileNames(convs: ChatConversation[], slots: number = MAX_HISTORY_FILES, maxBytes: number = HISTORY_FILE_BYTES): string[] {
+  if (!convs.length) return []
+  const plan = new HistoryPlan(convs, maxBytes)
+  return plan.files(plan.layout(slots), false).map((f) => f.name)
 }
