@@ -41,7 +41,10 @@ export function describeError(err: unknown, account: ImapAccount): string {
     return (
       `${account.provider} refused the sign-in for ${account.address}` +
       `${e.responseText ? ` ("${e.responseText}")` : ''}. ` +
-      `It needs an app password, not the account password; make a new one and store it again.`
+      `It needs an app password, not the account password; make a new one and store it again.` +
+      (account.imap.host === 'imap.gmail.com'
+        ? ` If Google offers no app passwords for this account (work or school accounts, Advanced Protection, security keys only), use /connect gmail instead, or ask the IT admin.`
+        : '')
     )
   }
   if (e?.code === 'ENOTFOUND' || e?.code === 'ECONNREFUSED' || e?.code === 'ETIMEDOUT') {

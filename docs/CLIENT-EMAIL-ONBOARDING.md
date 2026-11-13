@@ -271,9 +271,10 @@ expose one over IMAP.
 
 Presets cover Yahoo (every regional domain, ymail, rocketmail), AOL, iCloud
 (icloud.com, me.com, mac.com), Fastmail, GMX and Zoho. Any other provider
-works if you give its server names. Gmail and Outlook/Hotmail addresses are
-refused with a pointer to Parts 1 and 2: Gmail has a better path, and
-Microsoft has switched app-password sign-in off.
+works if you give its server names. Outlook/Hotmail addresses are refused
+with a pointer to Part 2, since Microsoft has switched app-password sign-in
+off. Gmail addresses get a pointer to Part 1 unless `--app-password` is given
+(see [Gmail by app password](#gmail-by-app-password-mail-only) below).
 
 The skill is installed on every box automatically, so there is nothing to
 copy. The client can do all of this from their chat without you; the steps
@@ -289,6 +290,7 @@ own later.
   Account security → **Generate app password**.
 - **iCloud:** account.apple.com → Sign-In and Security → **App-Specific
   Passwords**.
+- **Gmail** (only on the backup path below): myaccount.google.com/apppasswords.
 
 ### Step B — 👤 CLIENT: put it in the vault from their chat
 
@@ -321,6 +323,39 @@ For a provider without a preset, add its servers:
 `--imap-host imap.example.com --smtp-host smtp.example.com`, plus
 `--imap-port` / `--smtp-port` if they are not 993 and 465 (587 is treated as
 STARTTLS, and the connection is refused if the upgrade fails).
+
+### Gmail by app password (mail only)
+
+A backup to Part 1, not a replacement. Use it when the shared Havn Google app
+can't be used for this client:
+
+- the shared app is nearing its 100-account cap (an app-password connection
+  does not take a place),
+- the client won't approve an app Google labels "unverified", or
+- you want this mailbox not to depend on the sign-in relay.
+
+It is mail only: no calendar and no Drive. Google offers app passwords only
+with two-step sign-in on, and not on work or school accounts, with Advanced
+Protection, or when two-step sign-in uses only security keys. Those clients
+use Part 1 or their IT admin.
+
+Steps A and B as above (the app password comes from
+myaccount.google.com/apppasswords), then Step C with `--app-password`:
+
+```bash
+node dist/scripts/imap-auth.js add --account client@gmail.com --app-password
+```
+
+Google's servers are fixed (imap.gmail.com 993, smtp.gmail.com 465), and
+Gmail files its own Sent copy, so nothing is appended.
+
+**One address, one connection.** `add` refuses an address already connected
+with `/connect gmail`; run `/connect remove gmail <address>` first if the
+client really wants the app password instead. Connecting an address with
+`/connect gmail` later replaces its app-password connection, and the
+confirmation tells the client they can delete that app password. Gmail
+accounts on an older per-client Google project (gog's own sign-ins) are not
+checked: remove one side by hand.
 
 ### Step D — 🧑‍💻 YOU: verify
 

@@ -13,7 +13,8 @@ import { summarise } from '../ms/mail.js'
 import { utcToLocal } from '../ms/time.js'
 import { connect, verifyAccount, type Connection } from './client.js'
 import { draftMail, listInbox, readMail, replyDraft, searchMail, sendDraft } from './mail.js'
-import { isRedirect, presetFor, PRESET_PROVIDERS, type ImapPreset } from './presets.js'
+import { isGmailAddress, isRedirect, presetFor, PRESET_PROVIDERS, type ImapPreset } from './presets.js'
+import { readGmailEntries } from '../connect/gmail-token.js'
 import {
   listAccounts,
   loadAccount,
@@ -90,14 +91,16 @@ export const AUTH_USAGE = `usage: imap-auth <command> --account ADDRESS
   add [--password-stdin]           check the sign-in and connect the mailbox
       [--imap-host H --imap-port N --smtp-host H --smtp-port N --user U]
                                    (server settings only for providers without a preset)
+      [--app-password]             Gmail only, when the owner asks for mail only by
+                                   app password instead of /connect gmail
   status [--check]                 connected mailboxes; --check signs in to each
   remove                           forget a mailbox and its app password
-Presets: ${PRESET_PROVIDERS.join(', ')}. The app password can come from /secret set
+Presets: ${PRESET_PROVIDERS.join(', ')}, and Gmail with --app-password. The app password can come from /secret set
 (see what add prints) or from stdin with --password-stdin.`
 
 /** The servers for an address: the preset, overridden by any flag given. */
 function settingsFor(address: string, flags: Flags): ImapAccount {
-  const preset = presetFor(address)
+  const preset = presetFor(address, { gmailAppPassword: flags['app-password'] === true })
   if (isRedirect(preset)) throw new Error(preset.message)
   const imapHost = str(flags, 'imap-host')
   const smtpHost = str(flags, 'smtp-host')
@@ -135,7 +138,8 @@ function settingsFor(address: string, flags: Flags): ImapAccount {
 }
 
 function howToStorePassword(address: string): string {
-  const preset = presetFor(address)
+  // Only reached for a Gmail address once the owner chose the app password.
+  const preset = presetFor(address, { gmailAppPassword: true })
   const help = preset && !isRedirect(preset) ? preset.appPasswordHelp : "Make an app password in the provider's account security settings."
   const name = passwordSecretName(address)
   return [
@@ -156,6 +160,14 @@ function sameServers(a: ImapAccount, b: ImapAccount): boolean {
 
 async function addAccount(address: string, flags: Flags, deps: ImapCliDeps): Promise<string> {
   const account = settingsFor(address, flags)
+  // One address, one connection. /connect gmail covers the calendar too, so
+  // it wins; connecting it later removes this one (src/connect/box.ts).
+  if (isGmailAddress(address) && readGmailEntries(deps.vault).has(address.trim().toLowerCase())) {
+    throw new Error(
+      `${address} is already connected with /connect gmail, which covers mail and calendar. Nothing changed. ` +
+        `To use an app password instead, run /connect remove gmail ${address} first.`
+    )
+  }
   const fresh = flags['password-stdin'] === true
   const saved = loadAccount(address, deps.vault)
   if (!fresh && saved && !sameServers(saved, account)) {
@@ -208,6 +220,7 @@ async function status(only: string | undefined, check: boolean, deps: ImapCliDep
 export async function runImapAuth(argv: string[], deps: ImapCliDeps): Promise<string> {
   const { cmd, flags } = parse(argv, {
     'password-stdin': 'boolean',
+    'app-password': 'boolean',
     'imap-host': 'string',
     'imap-port': 'string',
     'smtp-host': 'string',
