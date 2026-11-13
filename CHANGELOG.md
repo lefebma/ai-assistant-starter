@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.77.2 - 2026-11-13
+
+- **Fixed: importing a very large ChatGPT export no longer runs out of memory.** Someone with years of ChatGPT history can have a conversations file of hundreds of megabytes. Your browser used to hold several copies of it at once and could crash the tab, and your assistant then read the whole upload in one go. Now both read it one conversation at a time and keep only the conversations in your projects, so a big export either imports or says plainly which limit it hit.
+
 ## 1.77.1 - 2026-11-12
 
 - **Fixed: clearer messages for very large ChatGPT exports.** An export with more conversations or projects than one import can take now says which limit it hit, instead of calling the file too large. A conversation longer than 20,000 messages comes across with its most recent part and a note at the top saying so, instead of being cut without a word.

@@ -9,13 +9,13 @@
  * twice. Logs carry counts only: names and content are the owner's.
  */
 import { randomUUID } from 'node:crypto'
-import { readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { readdirSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { STORE_DIR } from '../config.js'
 import { getDb } from '../db.js'
 import { logger } from '../logger.js'
 import { parseClaudeExport, type ExportProject, type ParseError } from './claude-export.js'
-import { historyFiles, dayOf, parseChatGPTConversations, UNTITLED_CONVERSATION, type ChatParseError, type ChatProject } from './chatgpt-export.js'
+import { historyFiles, historyFileNames, dayOf, parseChatGPTFile, UNTITLED_CONVERSATION, type ChatParseError, type ChatProject } from './chatgpt-export.js'
 import { MAX_PROJECT_FILES, addProjectFile } from './files.js'
 import { sanitizeUploadName } from '../web/files.js'
 import { MAX_INSTRUCTIONS, MAX_NAME, MAX_PROJECTS, cleanName, createProject, setInstructions } from './store.js'
@@ -373,16 +373,16 @@ const chatSourceOf = (id: string) => `chatgpt:${id}`
 export function previewChatGPTImport(chatId: string, path: string): { importId: string; rows: ChatPreviewRow[]; unreadable: number } | { error: ChatParseError | 'corrupt' } {
   sweepImportTmp()
   startSweeper()
-  let data: unknown
+  let parsed: ReturnType<typeof parseChatGPTFile>
   try {
     if (statSync(path).size > MAX_CHATGPT_UPLOAD) return { error: 'too_large' }
-    data = JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, ''))
+    // Read a conversation at a time; only the transcripts are kept (card #300).
+    parsed = parseChatGPTFile(path)
   } catch {
     return { error: 'corrupt' }
   } finally {
     removeFile(path)
   }
-  const parsed = parseChatGPTConversations(data)
   if (!parsed.ok) {
     logger.info({ code: parsed.code }, 'ChatGPT import refused')
     return { error: parsed.code }
@@ -404,7 +404,7 @@ export function previewChatGPTImport(chatId: string, path: string): { importId: 
       from: days[0] ?? '',
       to: days[days.length - 1] ?? '',
       titles: p.conversations.slice(0, MAX_REVIEW_TITLES).map((c) => c.title || UNTITLED_CONVERSATION),
-      fileNames: historyFiles(p.conversations).map((f) => sanitizeUploadName(f.name) || f.name),
+      fileNames: historyFileNames(p.conversations).map((n) => sanitizeUploadName(n) || n),
       status: sourceTaken(chatId, chatSourceOf(p.id)) ? 'already' : 'new',
     }
   })

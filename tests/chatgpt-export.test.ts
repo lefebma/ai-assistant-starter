@@ -1,6 +1,9 @@
 /** Import from ChatGPT (Feature #282): the parser, transcripts and history files. */
-import { describe, it, expect } from 'vitest'
-import { CHAT_LIMITS, INDEX_FILE, historyFiles, parseChatGPTConversations, splitText, transcript, type ChatConversation } from '../src/projects/chatgpt-export.js'
+import { describe, it, expect, afterAll } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { CHAT_LIMITS, INDEX_FILE, historyFileNames, historyFiles, parseChatGPTConversations, parseChatGPTFile, splitText, transcript, type ChatConversation } from '../src/projects/chatgpt-export.js'
 import { conversation, day } from './chatgpt-fixture.js'
 
 const ok = (data: unknown) => {
@@ -190,5 +193,63 @@ describe('splitText', () => {
     const parts = splitText(text, 333)
     expect(parts.join('')).toBe(text)
     for (const p of parts) expect(Buffer.byteLength(p)).toBeLessThanOrEqual(333)
+  })
+})
+
+describe('parseChatGPTFile (card #300)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chatgpt-file-'))
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  let n = 0
+  const write = (text: string) => {
+    const p = join(dir, `upload-${n++}.json`)
+    writeFileSync(p, text)
+    return p
+  }
+
+  it('gives the same projects as parsing the whole array, across read boundaries', () => {
+    const data = [
+      conversation({ id: 'a', project: 'g-p-aaaa1111', messages: [{ role: 'user', text: 'é'.repeat(700_000) + ' ] } , "' }] }),
+      conversation({ id: 'b', project: null, messages: [{ role: 'user', text: 'private' }] }),
+      conversation({ id: 'c', project: 'g-p-bbbb2222', messages: [{ role: 'assistant', text: 'hello' }] }),
+    ]
+    expect(parseChatGPTFile(write('﻿' + JSON.stringify(data, null, 1)))).toEqual(parseChatGPTConversations(data))
+  })
+
+  it('refuses what the whole-array parser refuses', () => {
+    expect(parseChatGPTFile(write('{"projects": []}'))).toEqual({ ok: false, code: 'not_chatgpt' })
+    expect(parseChatGPTFile(write('[{"uuid":"x"}]'))).toEqual({ ok: false, code: 'not_chatgpt' })
+    expect(parseChatGPTFile(write('[]'))).toEqual({ ok: false, code: 'no_projects' })
+    expect(parseChatGPTFile(write('[{"a": 1}, '))).toEqual({ ok: false, code: 'corrupt' })
+    expect(parseChatGPTFile(write('[{"a": }]'))).toEqual({ ok: false, code: 'corrupt' })
+  })
+
+  it('stops at the conversation limit without reading the rest', () => {
+    const one = JSON.stringify(conversation({ id: 'x', project: null, messages: [] }))
+    const text = '[' + Array.from({ length: CHAT_LIMITS.conversations + 1 }, () => one).join(',') + ',{"broken": ]'
+    expect(parseChatGPTFile(write(text))).toEqual({ ok: false, code: 'too_many' })
+  })
+})
+
+describe('historyFileNames (card #300)', () => {
+  const conv = (id: string, created: number, title: string, text = 'hi'): ChatConversation => ({ id, title, created, updated: created, messages: [{ role: 'user', text, at: created }] })
+
+  it('matches the names historyFiles gives, in every layout and when files split', () => {
+    const convs = Array.from({ length: 30 }, (_, i) => conv('c' + i, day(`2024-${String((i % 12) + 1).padStart(2, '0')}-0${(i % 9) + 1}`), 'Talk ' + i, 'line\n'.repeat(i * 40)))
+    for (const [slots, maxBytes] of [[40, 25 * 1024 * 1024], [40, 600], [20, 25 * 1024 * 1024], [20, 900], [3, 25 * 1024 * 1024], [3, 2000]] as const) {
+      expect(historyFileNames(convs, slots, maxBytes), `${slots}/${maxBytes}`).toEqual(historyFiles(convs, slots, maxBytes).map((f) => f.name))
+    }
+    expect(historyFileNames([])).toEqual([])
+  })
+})
+
+describe('parseChatGPTFile on what is not an array', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chatgpt-file-'))
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  it('calls other JSON not_chatgpt and text that is not JSON corrupt, as the whole-file parse did', () => {
+    const p = (t: string, name: string) => (writeFileSync(join(dir, name), t), join(dir, name))
+    expect(parseChatGPTFile(p('"a string"', 'a'))).toEqual({ ok: false, code: 'not_chatgpt' })
+    expect(parseChatGPTFile(p('this is not json', 'b'))).toEqual({ ok: false, code: 'corrupt' })
+    expect(parseChatGPTFile(p('', 'c'))).toEqual({ ok: false, code: 'corrupt' })
+    expect(parseChatGPTFile(p('{"a": 1}', 'd'))).toEqual({ ok: false, code: 'not_chatgpt' })
   })
 })
