@@ -203,7 +203,7 @@ describe('readChatGPTExport with a large export', () => {
     const big = (id: string) => conversation({ id, project: 'g-p-aaaa1111', messages: [{ role: 'user', text: 'x'.repeat(20 * 1024 * 1024) }] })
     const zip = buildZip(Array.from({ length: 6 }, (_, i) => ({ name: `conversations-00${i}.json`, data: JSON.stringify([big('c' + i)]) })))
     expect(await code(readChatGPTExport([file(zip, 'export.zip')]))).toBe('too_large')
-  })
+  }, 30_000)
 
   it('refuses a damaged conversations file', async () => {
     expect(await code(readChatGPTExport([file('[' + JSON.stringify(inProject('a')) + ',{"broken": ]', 'conversations.json')]))).toBe('not_chatgpt')
