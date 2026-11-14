@@ -14,6 +14,9 @@
  *   CLOUDFLARE_ZONE_ID     that zone's id
  *   HAVN_MAPS_URL, HAVN_MAPS_ADMIN_TOKEN   optional: give the box its own maps
  *                          proxy token (card #266, deploy/maps-proxy)
+ *   HAVN_CONNECT_ADMIN_TOKEN optional: register the box with the sign-in relay
+ *                          so /connect works with no SSH (card #216);
+ *                          HAVN_CONNECT_URL overrides https://connect.gethavn.ai
  *
  * --dry-run checks the inputs, renders the user-data and confirms the name is
  * free on Vultr and in DNS, without creating anything.
@@ -39,6 +42,7 @@ import {
 } from '../../src/deploy/provision.js'
 import { resolveSshKey } from '../make-cloud-init.js'
 import { connectBox, mapsAdminFromEnv } from './maps-token.js'
+import { cleanRelayLabel, connectRelayBox, defaultLabel, relayAdminFromEnv } from './relay-box.js'
 
 const USAGE = `Usage: npm run provision -- --client <name> --country <us|ca> --ssh-key <key-or-.pub-path> [options]
 
@@ -46,17 +50,20 @@ const USAGE = `Usage: npm run provision -- --client <name> --country <us|ca> --s
   --country <us|ca>   us: New Jersey (ewr). ca: Toronto (yto).
   --ssh-key <value>   Your SSH public key line, or the path to the .pub file
   --name <text>       Client's first name for the email greeting
+  --label <text>      What the sign-in page calls the assistant (default "Havn assistant for <name>")
   --timezone <tz>     IANA timezone (default America/New_York for us, America/Toronto for ca)
   --ref <ref>         Branch or tag to deploy (default main)
   --dry-run           Check everything, create nothing
 
-Environment: VULTR_API_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID`
+Environment: VULTR_API_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID
+Optional: HAVN_MAPS_URL + HAVN_MAPS_ADMIN_TOKEN (maps), HAVN_CONNECT_ADMIN_TOKEN (sign-in relay)`
 
 const DEFAULT_TZ: Record<Country, string> = { us: 'America/New_York', ca: 'America/Toronto' }
 
 interface Cli {
   spec: ProvisionSpec
   name: string
+  label: string
   dryRun: boolean
 }
 
@@ -67,7 +74,7 @@ export function parseProvisionArgs(argv: string[]): Cli {
     const a = argv[i]!
     if (a === '--dry-run') dryRun = true
     else if (a === '--help' || a === '-h') throw new Error(USAGE)
-    else if (['--client', '--country', '--ssh-key', '--name', '--timezone', '--ref'].includes(a)) {
+    else if (['--client', '--country', '--ssh-key', '--name', '--label', '--timezone', '--ref'].includes(a)) {
       const v = argv[++i]
       if (v === undefined || v.startsWith('--')) throw new Error(`${a} needs a value\n\n${USAGE}`)
       o[a.slice(2)] = v
@@ -77,6 +84,7 @@ export function parseProvisionArgs(argv: string[]): Cli {
     if (!o[req]) throw new Error(`--${req} is required\n\n${USAGE}`)
   }
   const country = o['country']!.toLowerCase() as Country
+  if (o['label'] !== undefined && !cleanRelayLabel(o['label'])) throw new Error('--label must be 1 to 60 characters with no < > " &')
   return {
     spec: {
       client: o['client']!.trim().toLowerCase(),
@@ -86,6 +94,7 @@ export function parseProvisionArgs(argv: string[]): Cli {
       gitRef: o['ref'],
     },
     name: o['name'] ?? '',
+    label: o['label']?.trim() || defaultLabel(o['name'] ?? '', o['client']!.trim().toLowerCase()),
     dryRun,
   }
 }
@@ -137,9 +146,19 @@ async function main(): Promise<void> {
   }
 
   const maps = mapsAdminFromEnv()
+  let relay: ReturnType<typeof relayAdminFromEnv>
+  try {
+    relay = relayAdminFromEnv()
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  }
   const deps: ProvisionDeps = {
     fetch,
     ...(maps ? { connectMaps: (box: string, host: string) => connectBox(maps, box, host) } : {}),
+    ...(relay
+      ? { connectRelay: async (box: string, host: string, address: string) => void (await connectRelayBox(relay!, box, host, address, cli.label)) }
+      : {}),
     vultrApiKey: env('VULTR_API_KEY'),
     cloudflareToken: env('CLOUDFLARE_API_TOKEN'),
     cloudflareZoneId: env('CLOUDFLARE_ZONE_ID'),
