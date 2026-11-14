@@ -196,43 +196,93 @@ secret, and no Cloud project. The app registration ships with the product, so
 the client signs in once and you are done. No step here needs anything
 downloaded onto the box.
 
-### Step A — 🧑‍💻 YOU: start the sign-in on the box
+### Step A — 👤 CLIENT: send `/connect outlook`
 
-```bash
-node dist/scripts/ms-auth.js start --account client@theircompany.com
-```
+On a box with the sign-in relay (every hosted box since v1.64.0), the client
+sends `/connect outlook` in their chat with the assistant. It answers with a
+one-time link that works for ten minutes. They open it on any device, sign in
+with their own Microsoft account and accept. The assistant confirms in the
+chat when the mailbox is connected. Nothing is copied, typed or pasted, and
+nothing runs over SSH.
 
-It prints a Microsoft URL and a short code, then returns straight away. It
-does not sit and wait, so this is safe to run over SSH.
+For a second mailbox they send `/connect outlook` again and sign in with the
+other account. `/connect remove outlook <address>` disconnects one.
 
-### Step B — 👤 CLIENT: sign in
-
-Send them the URL and the code exactly as printed. They open it in any
-browser, including on a phone, enter the code, sign in with their own
-Microsoft account, and approve.
+### Step B — 👤 CLIENT: what they will see
 
 Two things to warn them about in advance:
 
-- The consent screen names the app and marks the **publisher as unverified**.
-  That is expected for an app that is not in Microsoft's commercial
-  marketplace. They can go ahead.
-- If their organization blocks third-party apps, they will see **"needs admin
-  approval"** instead. Their Microsoft 365 administrator has to approve the
-  app once for the tenant. Retrying does not get past it, and neither does
-  starting over. Stop and get the admin.
+- The consent screen names the app and, until Microsoft has verified the
+  publisher, marks it **unverified**. They can go ahead.
+- If their organization blocks apps it has not approved, they see **"Need
+  admin approval"** instead. Retrying and starting over do not get past it.
+  Stop and use [If IT has to approve the app](#if-it-has-to-approve-the-app).
 
-The code is good for **fifteen minutes**. After that, rerun Step A for a fresh
-one.
+### Step C — 🧑‍💻 YOU: only if the link cannot be used (sign-in code)
 
-### Step C — 🧑‍💻 YOU: collect it
+On an install with no relay, or when `/connect outlook` cannot be used, sign
+in with a code instead:
+
+```bash
+node dist/scripts/ms-auth.js start --code --account client@theircompany.com
+```
+
+It prints a Microsoft URL and a short code and returns straight away. Send the
+client both exactly as printed; they open the URL, enter the code, sign in
+and approve. The code works for **fifteen minutes**, so have the client ready
+before you start it. Then collect it:
 
 ```bash
 node dist/scripts/ms-auth.js finish --account client@theircompany.com
 ```
 
-If it reports it is still waiting, they have not finished in the browser yet.
-Ask, then run it again. There is nothing to paste back from the client at any
-point, which is the part that goes wrong most often on the Gmail side.
+If it reports it is still waiting, they have not finished yet: ask, then run it
+again. `--code` is only needed where the relay is set up; without one,
+`ms-auth start` gives the code anyway.
+
+### If IT has to approve the app
+
+A company Microsoft 365 that requires admin approval needs it once for the
+whole company. After that, everyone there signs in normally. The approval
+covers exactly what the app asks for when anyone signs in: reading and writing
+mail, sending mail, reading and writing calendars, and the user's basic
+profile. It gives the app nothing for people who never sign in to it.
+
+Two ways, depending on what the "Need admin approval" screen offers:
+
+1. **The screen has a "Request approval" button.** The client fills in a
+   reason ("Our assistant, Havn, needs to read and draft my email") and sends
+   it. Their IT person approves it in the Microsoft Entra admin center under
+   **Enterprise applications → Admin consent requests**, then the client sends
+   `/connect outlook` again.
+2. **No button.** The IT person approves it directly. They sign in with an
+   administrator account (Cloud Application Administrator or higher) and open:
+
+   `https://login.microsoftonline.com/organizations/adminconsent?client_id=a67bec40-964d-4ea9-99bb-6a1301f217db`
+
+   (`node dist/scripts/ms-auth.js admin-link` prints it for the app this install uses.)
+
+   Microsoft lists the permissions and asks them to accept for the whole
+   organization. Then the client sends `/connect outlook` again. The page
+   Microsoft shows after accepting may be an error from the Havn sign-in
+   service, because it is not expecting that visit; the approval has still
+   been saved.
+
+A note the client can forward to their IT person, as it is:
+
+> Hi, I'm setting up an AI assistant called Havn (gethavn.ai) that works with
+> my Microsoft 365 email and calendar. Our tenant asks for admin approval
+> before I can connect it. Could you approve the app "Havn" (application ID
+> a67bec40-964d-4ea9-99bb-6a1301f217db) for our organization? It asks for
+> delegated permission only: read and write my mail, send mail as me, read and
+> write my calendar, and my basic profile. It only acts for people who sign in
+> to it themselves. You can approve it by signing in as an admin at
+> https://login.microsoftonline.com/organizations/adminconsent?client_id=a67bec40-964d-4ea9-99bb-6a1301f217db
+> or from Enterprise applications in the Entra admin center if I've sent a
+> request. The privacy policy is at https://gethavn.ai/app-privacy. Thanks!
+
+Builds that set their own `MS_CLIENT_ID` replace the application ID in both
+places with their own.
 
 ### Step D — 🧑‍💻 YOU: verify
 
@@ -251,8 +301,8 @@ another account: use that address from then on rather than starting over.
 Message the bot: "check my email," "what's on my calendar today." Restart the
 service if it was already running: `sudo systemctl restart havn`.
 
-For a second mailbox, run the same three steps with the other address. Each is
-stored separately. To disconnect one:
+Each mailbox is stored separately. To disconnect one, the client sends
+`/connect remove outlook <address>`, or on the box:
 `node dist/scripts/ms-auth.js logout --account <address>`.
 
 ### Shipping under your own name

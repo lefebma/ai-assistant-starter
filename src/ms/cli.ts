@@ -25,6 +25,7 @@ import {
   type TokenVault,
 } from './store.js'
 import { utcToLocal } from './time.js'
+import { connectSettings } from '../connect/instance.js'
 
 /**
  * One consent covers mail and calendar. The scripts this replaces signed in
@@ -52,6 +53,26 @@ export interface CliDeps {
   sleep: (ms: number) => Promise<void>
   /** Output that has to appear before the command returns: the sign-in code. */
   print: (text: string) => void
+  /**
+   * True when this install has the sign-in relay, so the owner connects with
+   * /connect outlook: a link, not a fifteen-minute code that has to be typed in.
+   */
+  connectLink?: boolean
+}
+
+/**
+ * Admin consent for the app's configured permissions, in any work tenant.
+ * `organizations` lets the admin's own sign-in pick the tenant.
+ */
+export function adminConsentUrl(clientId: string): string {
+  return `https://login.microsoftonline.com/organizations/adminconsent?client_id=${encodeURIComponent(clientId)}`
+}
+
+/** How the owner connects a mailbox on this install, for the messages that send them there. */
+function howToConnect(account: string, deps: CliDeps): string {
+  return deps.connectLink
+    ? 'Ask the owner to send /connect outlook in this chat and sign in with the link it gives them.'
+    : `Run: ms-auth start --account ${account}`
 }
 
 type Flags = Record<string, string | boolean | undefined>
@@ -110,11 +131,11 @@ function requireConnected(account: string, deps: CliDeps): void {
   if (loadTokens(account, deps.vault)) return
   const others = listAuthedAccounts(deps.vault)
   if (others.length === 0) {
-    throw new Error(`Outlook is not connected. Run: ms-auth start --account ${account}`)
+    throw new Error(`Outlook is not connected. ${howToConnect(account, deps)}`)
   }
   throw new Error(
     `Outlook is not connected for "${account}", but ${others.join(', ')} ${others.length === 1 ? 'is' : 'are'}. ` +
-      `Run the command again with --account ${others[0]}, or ms-auth start --account ${account} to add that mailbox too. ` +
+      `Run the command again with --account ${others[0]}, or connect that mailbox too (${deps.connectLink ? '/connect outlook' : `ms-auth start --account ${account}`}). ` +
       `ms-auth status lists them.`
   )
 }
@@ -151,10 +172,13 @@ function usageOr(cmd: string, usage: string): string {
 // ---------------------------------------------------------------- ms-auth
 
 export const AUTH_USAGE = `usage: ms-auth <command> [--account LABEL]
-  start              show a sign-in code and return straight away
+  start [--code]     show a sign-in code and return straight away; where
+                     /connect outlook is set up, it points there unless --code
   finish [--wait S]  collect a started sign-in, waiting up to S seconds (default 60)
   login              start and finish in one go, for a terminal
   status             which accounts are connected, and as whom
+  admin-link         the link a Microsoft 365 admin opens to approve the app
+                     for their whole organization
   logout             forget an account's stored sign-in`
 
 async function startSignIn(account: string, deps: CliDeps) {
@@ -208,7 +232,9 @@ async function finishSignIn(account: string, deps: CliDeps, waitSecs: number): P
 }
 
 async function authStatus(accounts: string[], deps: CliDeps): Promise<string> {
-  if (accounts.length === 0) return 'No Microsoft account is connected. Run ms-auth start to connect one.'
+  if (accounts.length === 0) {
+    return `No Microsoft account is connected. ${deps.connectLink ? 'Ask the owner to send /connect outlook to connect one.' : 'Run ms-auth start to connect one.'}`
+  }
   const lines: string[] = []
   for (const a of accounts) {
     try {
@@ -222,16 +248,33 @@ async function authStatus(accounts: string[], deps: CliDeps): Promise<string> {
 }
 
 export async function runAuth(argv: string[], deps: CliDeps): Promise<string> {
-  const { cmd, flags } = parse(argv, { wait: 'string' })
+  const { cmd, flags } = parse(argv, { wait: 'string', code: 'boolean' })
   const account = accountOf(flags, deps)
   switch (cmd) {
     case 'start': {
+      // A code expires in fifteen minutes and has to be typed in on another
+      // device; two ran out on a client's setup call. The relay link does not.
+      if (deps.connectLink && flags['code'] !== true) {
+        return [
+          'This assistant connects Outlook with a sign-in link, not a code.',
+          'Ask the owner to send /connect outlook in this chat, open the link it gives them, sign in and accept.',
+          'If that link cannot be used, ms-auth start --code gives a fifteen-minute code instead.',
+        ].join('\n')
+      }
       const p = await startSignIn(account, deps)
       const mins = Math.max(1, Math.round((p.expiresAt - secs(deps)) / 60))
       return [
         `To connect Outlook (${account}): open ${p.verificationUri} and enter the code ${p.userCode}.`,
         `The code works for ${mins} minutes.`,
         `Once signed in: ms-auth finish --account ${account}`,
+      ].join('\n')
+    }
+    case 'admin-link': {
+      const { clientId } = resolveMsConfig(deps.env)
+      return [
+        'For a Microsoft 365 organization that asks for admin approval: an administrator signs in at',
+        adminConsentUrl(clientId),
+        'and accepts for the organization. After that, everyone there connects normally.',
       ].join('\n')
     }
     case 'finish':
@@ -408,6 +451,7 @@ export function realDeps(): CliDeps {
     now: () => Date.now(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     print: (text) => process.stdout.write(`${text}\n`),
+    connectLink: connectSettings() !== null,
   }
 }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.78.0 - 2026-11-14
+
+- **Changed: Outlook connects with a link, not a code, wherever the sign-in service is set up.** When your assistant needs Outlook connected, it now asks you to send `/connect outlook` and tap the link, instead of handing you a code to type in on another device within fifteen minutes. Installs without the sign-in service keep the code, and `ms-auth start --code` still gives one if the link can't be used.
+- **New for providers: steps for companies whose IT has to approve new apps.** `docs/CLIENT-EMAIL-ONBOARDING.md` Part 2 now leads with `/connect outlook` and has a section for Microsoft 365 organizations that show "Need admin approval": the request-approval path, a direct approval link, and a note the client can forward to their IT person as it is. `ms-auth admin-link` prints that link for the app the install uses, and the pre-call checklist points to the note.
+
 ## 1.77.2 - 2026-11-13
 
 - **Fixed: importing a very large ChatGPT export no longer runs out of memory.** Someone with years of ChatGPT history can have a conversations file of hundreds of megabytes. Your browser used to hold several copies of it at once and could crash the tab, and your assistant then read the whole upload in one go. Now both read it one conversation at a time and keep only the conversations in your projects, so a big export either imports or says plainly which limit it hit.
