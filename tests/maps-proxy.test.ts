@@ -17,7 +17,7 @@ import { recordMapsSpend, readAiUsage, AI_USAGE_FILE } from '../src/ai-usage.js'
 import { MANAGED_AI_FILE } from '../src/ai-limit.js'
 import { logger } from '../src/logger.js'
 import { connectScript } from '../scripts/hosted/maps-token.js'
-import { fakeBox } from './box-script-fixture.js'
+import { CAN_RUN_BOX_SCRIPTS, fakeBox } from './box-script-fixture.js'
 
 const ADMIN = 'admin-secret-token'
 const HOME = '12 Private Lane, Oakville ON'
@@ -354,7 +354,7 @@ describe('provisioning a box token', () => {
     expect(s).toContain('vault-cli.js set MAPS_PROXY_TOKEN')
   })
 
-  it('puts the token and URL in the vault and never creates .env, so web setup still runs (card #301)', () => {
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('puts the token and URL in the vault and never creates .env, so web setup still runs (card #301)', () => {
     const box = fakeBox()
     try {
       const r = box.run(connectScript('https://havn-maps.example.workers.dev', 'havn-leif.secretvalue', box.dir))
@@ -366,7 +366,7 @@ describe('provisioning a box token', () => {
     }
   })
 
-  it('on a box set up before #301, drops the old .env URL line and keeps everything else', () => {
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('on a box set up before #301, drops the old .env URL line and keeps everything else', () => {
     const box = fakeBox()
     try {
       writeFileSync(join(box.dir, '.env'), 'BOT_TOKEN=abc\nMAPS_PROXY_URL=https://old.example\nTZ=America/Toronto\n')

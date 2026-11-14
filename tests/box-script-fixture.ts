@@ -1,7 +1,7 @@
 /**
  * Runs a box-side script (the bash a provisioning step sends over ssh) against
  * a fake install folder, with a stand-in vault-cli that records each
- * `set NAME` and the value it read from stdin. Lets a test check what the real
+ * `set NAME` and the value it read from stdin (and answers `list`). Lets a test check what the real
  * script does to .env and the vault instead of only what text it contains.
  */
 import { spawnSync } from 'node:child_process'
@@ -11,6 +11,8 @@ import { dirname, join } from 'node:path'
 
 const FAKE_VAULT_CLI = `
 const [cmd, name] = process.argv.slice(2)
+// list must not read stdin: under bash -s that is the rest of the script.
+if (cmd === 'list') process.exit(0)
 let data = ''
 process.stdin.on('data', (c) => (data += c))
 process.stdin.on('end', () => {
@@ -27,6 +29,9 @@ export interface FakeBox {
   env(): string | null
   cleanup(): void
 }
+
+/** The scripts only ever run on Linux boxes; Windows CI has no bash to run them with. */
+export const CAN_RUN_BOX_SCRIPTS = process.platform !== 'win32'
 
 export function fakeBox(): FakeBox {
   const home = mkdtempSync(join(tmpdir(), 'fake-box-'))

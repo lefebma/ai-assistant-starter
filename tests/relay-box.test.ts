@@ -9,9 +9,10 @@ import {
   registerBox,
   relayAdminFromEnv,
   relayScript,
+  checkScript,
   type RelayAdmin,
 } from '../scripts/hosted/relay-box.js'
-import { fakeBox } from './box-script-fixture.js'
+import { CAN_RUN_BOX_SCRIPTS, fakeBox } from './box-script-fixture.js'
 
 const KEY = 'k'.repeat(43)
 
@@ -83,7 +84,7 @@ describe('relay secrets on the box', () => {
     expect(s).not.toContain('.env')
   })
 
-  it('writes the three /connect secrets to the vault and never creates .env, so web setup still runs', () => {
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('writes the three /connect secrets to the vault and never creates .env, so web setup still runs', () => {
     const box = fakeBox()
     try {
       const r = box.run(relayScript('https://connect.gethavn.ai/', 'havn-leif', KEY))
@@ -95,7 +96,7 @@ describe('relay secrets on the box', () => {
     }
   })
 
-  it('leaves an existing .env alone', () => {
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('leaves an existing .env alone', () => {
     const box = fakeBox()
     try {
       writeFileSync(join(box.dir, '.env'), 'TZ=America/Toronto\n')
@@ -106,16 +107,69 @@ describe('relay secrets on the box', () => {
     }
   })
 
-  it('connectRelayBox registers, then writes; a failed write says the key is unused', async () => {
-    const { a } = relay()
-    const scripts: string[] = []
-    const reg = await connectRelayBox(a, 'havn-leif', '45.77.1.2', 'leif.gethavn.ai', 'L', async (host, s) => {
-      scripts.push(`${host}:${s.includes('CONNECT_HANDOFF_KEY')}`)
-      return { code: 0 }
-    })
-    expect(reg.box).toBe('havn-leif')
-    expect(scripts).toEqual(['45.77.1.2:true'])
-    await expect(connectRelayBox(a, 'havn-leif', '45.77.1.2', 'leif.gethavn.ai', 'L', async () => ({ code: 255 })))
-      .rejects.toThrow(/re-run register/)
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('the check passes on an install and reports the edge', () => {
+    const box = fakeBox()
+    try {
+      const caddy = join(box.dir, 'Caddyfile')
+      expect(box.run(checkScript(box.dir, caddy)).stdout).toContain('EDGE_UNKNOWN')
+      writeFileSync(caddy, 'x {\n\thandle @setup {\n\t}\n}\n')
+      expect(box.run(checkScript(box.dir, caddy)).stdout).toContain('EDGE_MISSING')
+      writeFileSync(caddy, 'x {\n\thandle /connect/handoff {\n\t}\n}\n')
+      const r = box.run(checkScript(box.dir, caddy))
+      expect(r.code, r.stderr).toBe(0)
+      expect(r.stdout).toContain('EDGE_OK')
+      expect(box.run(checkScript(join(box.dir, 'missing'), caddy)).code).not.toBe(0)
+    } finally {
+      box.cleanup()
+    }
+  })
+})
+
+describe('connectRelayBox', () => {
+  /** A box whose check and write answer as told, recording what ran. */
+  function boxRunner(check: { code: number; stdout?: string }, write = { code: 0 }) {
+    const ran: string[] = []
+    const run = async (_host: string, s: string) => {
+      const isCheck = s.includes('vault-cli.js list')
+      ran.push(isCheck ? 'check' : 'write')
+      return isCheck ? check : write
+    }
+    return { ran, run }
+  }
+
+  it('checks the box, registers, then writes, and reports the edge', async () => {
+    const { a, calls } = relay()
+    const b = boxRunner({ code: 0, stdout: 'EDGE_MISSING\n' })
+    const reg = await connectRelayBox(a, 'havn-leif', '45.77.1.2', 'leif.gethavn.ai', 'L', b.run)
+    expect(b.ran).toEqual(['check', 'write'])
+    expect(calls.map((c) => c.method)).toEqual(['POST'])
+    expect(reg.edge).toBe('missing')
+    expect((await connectRelayBox(a, 'havn-leif', 'h', 'leif.gethavn.ai', 'L', boxRunner({ code: 0, stdout: 'EDGE_OK' }).run)).edge).toBe('ok')
+    expect((await connectRelayBox(a, 'havn-leif', 'h', 'leif.gethavn.ai', 'L', boxRunner({ code: 0 }).run)).edge).toBe('unknown')
+  })
+
+  it('never registers a box it cannot reach, so a connected box keeps its key', async () => {
+    const { a, calls } = relay()
+    const b = boxRunner({ code: 255 })
+    await expect(connectRelayBox(a, 'havn-leif', '45.77.1.2', 'leif.gethavn.ai', 'L', b.run)).rejects.toThrow(/Nothing was registered/)
+    expect(calls).toEqual([])
+    expect(b.ran).toEqual(['check'])
+  })
+
+  it('a failed write on an existing box keeps the registration and says /connect stops until a re-run', async () => {
+    const { a, calls } = relay()
+    await expect(connectRelayBox(a, 'havn-leif', 'h', 'leif.gethavn.ai', 'L', boxRunner({ code: 0 }, { code: 1 }).run))
+      .rejects.toThrow(/re-run register and restart/)
+    expect(calls.map((c) => c.method)).toEqual(['POST'])
+  })
+
+  it('a failed write while provisioning removes the registration', async () => {
+    const { a, calls } = relay()
+    await expect(connectRelayBox(a, 'havn-leif', 'h', 'leif.gethavn.ai', 'L', boxRunner({ code: 0 }, { code: 1 }).run, { removeOnFailure: true }))
+      .rejects.toThrow(/registration was removed/)
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'POST https://connect.example.com/admin/boxes/havn-leif',
+      'DELETE https://connect.example.com/admin/boxes/havn-leif',
+    ])
   })
 })

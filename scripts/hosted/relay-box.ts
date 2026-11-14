@@ -16,8 +16,12 @@
  * written to .env, so this runs fine before web setup (card #301), and
  * `npm run provision` does it for a new box when the admin token is set.
  *
- * A box that is already running reads the three secrets once, at start:
- * restart it after registering (`sudo systemctl restart havn` as havn-admin).
+ * register first checks over SSH that the install and its vault CLI are there,
+ * so an unreachable box never gets a new key (re-registering replaces the
+ * key a connected box uses). It also reads the box's Caddyfile and says when
+ * the edge does not pass /connect/handoff yet. A box that is already running
+ * reads the three secrets once, at start: restart it after registering
+ * (`sudo systemctl restart havn` as havn-admin).
  */
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
@@ -106,30 +110,83 @@ echo "sign-in relay connected"
 `
 }
 
-/** Register the box and write its secrets over ssh as havn. Throws with a plain reason. */
+export type BoxRunner = (host: string, script: string) => Promise<{ code: number; stdout?: string; stderr?: string }>
+
+/** Whether the box's Caddy passes the relay's hand-off; unknown before Caddy is set up or when it cannot be read. */
+export type EdgeState = 'ok' | 'missing' | 'unknown'
+
+/**
+ * Run as havn before anything is registered: the install is there and its
+ * vault CLI can run, so a box we cannot write to never gets a new key (which
+ * would cut off a box that is connected today). Also reports the edge.
+ */
+export function checkScript(installDir = '$HOME/havn', caddyfile = '/etc/caddy/Caddyfile'): string {
+  return `set -euo pipefail
+cd "${installDir}"
+test -f dist/scripts/vault-cli.js
+node dist/scripts/vault-cli.js list > /dev/null
+if [ -r "${caddyfile}" ]; then
+  if grep -q '/connect/handoff' "${caddyfile}"; then echo EDGE_OK; else echo EDGE_MISSING; fi
+else
+  echo EDGE_UNKNOWN
+fi
+`
+}
+
+export interface ConnectedBox extends Registration {
+  edge: EdgeState
+}
+
+export interface ConnectOptions {
+  /**
+   * Remove the registration when the box cannot store its key. Right for a box
+   * being provisioned, which has no connection to lose; an existing box keeps
+   * its new registration so a re-run can fix it.
+   */
+  removeOnFailure?: boolean
+}
+
+/** Check the box, register it, then write its secrets over ssh as havn. Throws with a plain reason. */
 export async function connectRelayBox(
   a: RelayAdmin,
   box: string,
   sshHost: string,
   hostname: string,
   label: string,
-  runOnBox: (host: string, script: string) => Promise<{ code: number; stderr?: string }> = sshScript,
-): Promise<Registration> {
+  runOnBox: BoxRunner = sshScript,
+  opts: ConnectOptions = {},
+): Promise<ConnectedBox> {
+  const check = await runOnBox(sshHost, checkScript())
+  if (check.code !== 0) {
+    throw new Error(`Could not reach havn@${sshHost} or its install (exit ${check.code}). Nothing was registered, and any connection the box has today is untouched.`)
+  }
+  const out = check.stdout ?? ''
+  const edge: EdgeState = out.includes('EDGE_OK') ? 'ok' : out.includes('EDGE_MISSING') ? 'missing' : 'unknown'
+
   const reg = await registerBox(a, box, hostname, label)
   const r = await runOnBox(sshHost, relayScript(a.url, box, reg.handoffKey))
   if (r.code !== 0) {
-    throw new Error(`Writing the relay secrets on ${sshHost} failed (exit ${r.code}). The box is registered with a key it does not have; re-run register to replace it.`)
+    if (opts.removeOnFailure) {
+      try {
+        await removeBox(a, box)
+      } catch {
+        throw new Error(`Writing the relay secrets on ${sshHost} failed (exit ${r.code}), and removing the registration failed too. Run: npm run relay-box -- remove ${box}`)
+      }
+      throw new Error(`Writing the relay secrets on ${sshHost} failed (exit ${r.code}). The registration was removed.`)
+    }
+    throw new Error(`Writing the relay secrets on ${sshHost} failed (exit ${r.code}). The relay now holds a key this box does not have, so /connect on it stops working until you re-run register and restart the assistant.`)
   }
-  return reg
+  return { ...reg, edge }
 }
 
-export async function sshScript(host: string, script: string): Promise<{ code: number; stderr?: string }> {
+/** The script goes on stdin; stdout is captured (the scripts never print a secret), stderr shows. */
+export async function sshScript(host: string, script: string): Promise<{ code: number; stdout: string }> {
   const r = spawnSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `havn@${host}`, 'bash -s'], {
     input: script,
     encoding: 'utf-8',
-    stdio: ['pipe', 'inherit', 'inherit'],
+    stdio: ['pipe', 'pipe', 'inherit'],
   })
-  return { code: r.status ?? 255 }
+  return { code: r.status ?? 255, stdout: r.stdout ?? '' }
 }
 
 /** The relay's admin settings from the operator's environment, or null when the token is unset. */
@@ -171,6 +228,11 @@ export async function main(argv: string[]): Promise<void> {
       const [box, sshHost, hostname] = rest as [string, string, string]
       const reg = await connectRelayBox(a, box, sshHost, hostname, label ?? defaultLabel('', box.replace(/^havn-/, '')))
       console.log(`Done. ${box} is registered as "${reg.label}" at ${reg.origin}, and its secrets are in its vault.`)
+      if (reg.edge === 'missing') {
+        console.log(`Its Caddy does not pass /connect/handoff yet, so sign-ins would not arrive. As havn-admin, write the edge again with the flags the box uses, e.g.: sudo node dist/scripts/hosted/enable-teams.js ${hostname} --web`)
+      } else if (reg.edge === 'unknown') {
+        console.log(`Could not read its Caddyfile. Check from outside: curl -X POST https://${hostname}/connect/handoff -d '{}' should answer 401 after the restart; 404 means the edge needs writing again.`)
+      }
       console.log('If the assistant is already running, restart it so /connect sees them: sudo systemctl restart havn (as havn-admin).')
     } else if (cmd === 'remove' && rest.length === 1) {
       await removeBox(a, rest[0]!)

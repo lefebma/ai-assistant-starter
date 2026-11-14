@@ -15,7 +15,7 @@ import {
 import { parseProvisionArgs } from '../scripts/hosted/provision.js'
 import { connectBox } from '../scripts/hosted/maps-token.js'
 import { connectRelayBox } from '../scripts/hosted/relay-box.js'
-import { fakeBox } from './box-script-fixture.js'
+import { CAN_RUN_BOX_SCRIPTS, fakeBox } from './box-script-fixture.js'
 
 const ROOT = resolve(__dirname, '..')
 const templates = {
@@ -202,7 +202,7 @@ describe('provision', () => {
     expect(w3.log).toContain('Sign-in relay: HAVN_CONNECT_ADMIN_TOKEN not set, so /connect is off on this box for now.')
   })
 
-  it('the real maps and relay scripts leave no .env, so enable-setup still turns web setup on (cards #301, #216)', async () => {
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('the real maps and relay scripts leave no .env, so enable-setup still turns web setup on (cards #301, #216)', async () => {
     const box = fakeBox()
     try {
       const w = world()

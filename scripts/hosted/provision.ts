@@ -157,7 +157,7 @@ async function main(): Promise<void> {
     fetch,
     ...(maps ? { connectMaps: (box: string, host: string) => connectBox(maps, box, host) } : {}),
     ...(relay
-      ? { connectRelay: async (box: string, host: string, address: string) => void (await connectRelayBox(relay!, box, host, address, cli.label)) }
+      ? { connectRelay: async (box: string, host: string, address: string) => void (await connectRelayBox(relay!, box, host, address, cli.label, undefined, { removeOnFailure: true })) }
       : {}),
     vultrApiKey: env('VULTR_API_KEY'),
     cloudflareToken: env('CLOUDFLARE_API_TOKEN'),
