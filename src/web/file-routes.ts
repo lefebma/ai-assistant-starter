@@ -1,11 +1,12 @@
-/** Web file routes: lazy tree, preview, and upload. Containment lives in files.ts. */
+/** Web file routes: lazy tree, preview, and upload. Containment lives in files.ts, ownership in file-access.ts. */
 import { createReadStream, createWriteStream, linkSync, mkdirSync, statSync, unlinkSync } from 'node:fs'
 import { extname, join, relative, sep } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import { registerWebRoutes } from './http.js'
 import { sendJson, sendError } from './respond.js'
-import { MAX_UPLOAD_BYTES, getFileRoots, listDir, resolveVisible, sanitizeUploadName } from './files.js'
+import { MAX_UPLOAD_BYTES, getFileRoots, sanitizeUploadName } from './files.js'
+import { listDirForChat, resolveForChat, trayDir } from './file-access.js'
 
 export { MAX_UPLOAD_BYTES }
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
@@ -30,7 +31,7 @@ registerWebRoutes([
     pattern: /^\/api\/web\/files$/,
     auth: true,
     handler(ctx) {
-      const listing = listDir(ctx.url.searchParams.get('path') ?? '')
+      const listing = listDirForChat(ctx.url.searchParams.get('path') ?? '', ctx.chatId)
       if (!listing) return sendError(ctx.res, 404, 'not_found')
       sendJson(ctx.res, 200, listing)
     },
@@ -40,7 +41,7 @@ registerWebRoutes([
     pattern: /^\/api\/web\/files\/raw$/,
     auth: true,
     handler(ctx) {
-      const found = resolveVisible(ctx.url.searchParams.get('path') ?? '')
+      const found = resolveForChat(ctx.url.searchParams.get('path') ?? '', ctx.chatId)
       if (!found || found.isDir) return sendError(ctx.res, 404, 'not_found')
       let size: number
       try {
@@ -88,7 +89,10 @@ registerWebRoutes([
       const declared = Number(req.headers['content-length'])
       if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) return tooLarge(req, res)
 
-      const { root, uploadsDir } = getFileRoots()
+      // Each chat's unsent uploads sit in its own folder, so a send can only
+      // take what that chat uploaded (card #292).
+      const { root } = getFileRoots()
+      const uploadsDir = trayDir(ctx.chatId)
       mkdirSync(uploadsDir, { recursive: true })
       const tmp = join(uploadsDir, `.upload-${randomBytes(8).toString('hex')}.part`)
       const outcome = await streamToFile(req, tmp)

@@ -117,12 +117,12 @@ export function buildAttachmentMessage(kind: AttachmentKind, localPath: string, 
   return parts.join('\n')
 }
 
-export function cleanupOldUploads(maxAgeMs = 24 * 60 * 60 * 1000): void {
+export function cleanupOldUploads(maxAgeMs = 24 * 60 * 60 * 1000, dir: string = UPLOADS_DIR): void {
   try {
-    const files = readdirSync(UPLOADS_DIR)
+    const files = readdirSync(dir)
     const cutoff = Date.now() - maxAgeMs
     for (const file of files) {
-      const filePath = resolve(UPLOADS_DIR, file)
+      const filePath = resolve(dir, file)
       try {
         const stat = statSync(filePath)
         if (stat.mtimeMs < cutoff) {
@@ -134,6 +134,29 @@ export function cleanupOldUploads(maxAgeMs = 24 * 60 * 60 * 1000): void {
     }
   } catch {
     // Uploads dir may not exist yet
+  }
+  // Web chat box uploads wait in uploads/tray/<chat>/ until sent (card #292).
+  try {
+    const trayRoot = resolve(dir, 'tray')
+    const cutoff = Date.now() - maxAgeMs
+    for (const chat of readdirSync(trayRoot)) {
+      const chatDir = resolve(trayRoot, chat)
+      try {
+        if (!statSync(chatDir).isDirectory()) continue
+        for (const file of readdirSync(chatDir)) {
+          const filePath = resolve(chatDir, file)
+          try {
+            if (statSync(filePath).mtimeMs < cutoff) unlinkSync(filePath)
+          } catch {
+            // Skip files we can't stat
+          }
+        }
+      } catch {
+        // vanished while sweeping
+      }
+    }
+  } catch {
+    // No tray yet
   }
 }
 

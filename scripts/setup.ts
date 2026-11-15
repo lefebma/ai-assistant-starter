@@ -299,6 +299,7 @@ async function main(): Promise<void> {
       appEntry: `"${resolve(PROJECT_ROOT, 'dist', 'src', 'index.js')}"`,
       serviceEntry: `"${serviceEntry}"`,
       msAuthEntry: `"${resolve(PROJECT_ROOT, 'dist', 'scripts', 'ms-auth.js')}"`,
+      usesOpenAi: Boolean(answers.keys.openai),
     })
   )) {
     console.log(line)

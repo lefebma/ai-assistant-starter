@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runImapAuth, runImapMail, type ImapCliDeps } from '../src/imap/cli.js'
 import { compose } from '../src/imap/mail.js'
+import { describeError } from '../src/imap/client.js'
 import { isRedirect, presetFor } from '../src/imap/presets.js'
 import {
   accountSecretName,
@@ -68,6 +69,8 @@ describe('presets', () => {
 
   it('sends Gmail and Microsoft addresses to their own connectors', () => {
     expect(isRedirect(presetFor('a@gmail.com'))).toBe(true)
+    const g = presetFor('a@gmail.com', { gmailAppPassword: true })
+    expect(g && !isRedirect(g) && g.provider).toBe('Gmail')
     for (const a of ['a@outlook.com', 'a@hotmail.com', 'a@live.ca', 'a@msn.com']) {
       const p = presetFor(a)
       expect(isRedirect(p) && p.redirect).toBe('outlook')
@@ -149,8 +152,51 @@ describe('imap-auth add', () => {
   })
 
   it('points Gmail and Outlook addresses at their own skills', async () => {
-    await expect(runImapAuth(['add', '--account', 'a@gmail.com'], deps().d)).rejects.toThrow(/Gmail skill/)
+    await expect(runImapAuth(['add', '--account', 'a@gmail.com'], deps().d)).rejects.toThrow(/\/connect gmail/)
+    await expect(runImapAuth(['add', '--account', 'a@gmail.com'], deps().d)).rejects.toThrow(/--app-password/)
     await expect(runImapAuth(['add', '--account', 'a@hotmail.com'], deps().d)).rejects.toThrow(/ms-auth start/)
+  })
+
+  it('connects Gmail by app password only when asked, on Google\'s fixed servers', async () => {
+    const ask = deps()
+    const out = await runImapAuth(['add', '--account', 'Pat@Gmail.com', '--app-password'], ask.d)
+    expect(out).toContain('myaccount.google.com/apppasswords')
+    expect(out).toContain('/connect gmail')
+    expect(out).toContain('/secret set IMAP_PASSWORD_PAT_GMAIL_COM')
+    expect(ask.verified).toEqual([])
+
+    const t = deps({ vault: memVault({ IMAP_PASSWORD_PAT_GMAIL_COM: 'abcdabcdabcdabcd' }) })
+    expect(await runImapAuth(['add', '--account', 'pat@gmail.com', '--app-password'], t.d)).toMatch(/Connected pat@gmail.com \(Gmail\)/)
+    const a = loadAccount('pat@gmail.com', t.vault)!
+    expect(a.imap).toEqual({ host: 'imap.gmail.com', port: 993, secure: true })
+    expect(a.smtp).toEqual({ host: 'smtp.gmail.com', port: 465, secure: true })
+    expect(a.savesSent).toBe(true)
+    await expect(
+      runImapAuth(['add', '--account', 'pat@gmail.com', '--app-password', '--imap-host', 'evil.example', '--smtp-host', 'evil.example'], t.d)
+    ).rejects.toThrow(/fixed/)
+  })
+
+  it('treats googlemail.com as Gmail', async () => {
+    const t = deps({ vault: memVault({ IMAP_PASSWORD_PAT_GOOGLEMAIL_COM: 'pw' }) })
+    await expect(runImapAuth(['add', '--account', 'pat@googlemail.com'], t.d)).rejects.toThrow(/\/connect gmail/)
+    await runImapAuth(['add', '--account', 'pat@googlemail.com', '--app-password'], t.d)
+    expect(loadAccount('pat@googlemail.com', t.vault)!.imap.host).toBe('imap.gmail.com')
+  })
+
+  it('refuses a Gmail address already connected with /connect gmail', async () => {
+    const relay = JSON.stringify({ accounts: { 'pat@gmail.com': { account: 'Pat@gmail.com', accessToken: 'a', refreshToken: 'r', expiresAt: 1 } } })
+    const t = deps({ vault: memVault({ CONNECT_GMAIL: relay, IMAP_PASSWORD_PAT_GMAIL_COM: 'pw' }) })
+    await expect(runImapAuth(['add', '--account', 'PAT@gmail.com', '--app-password'], t.d)).rejects.toThrow(/already connected with \/connect gmail/)
+    expect(t.verified).toEqual([])
+    expect(loadAccount('pat@gmail.com', t.vault)).toBeNull()
+  })
+
+  it('keeps working for a connected Gmail mailbox without the flag', async () => {
+    const t = deps({ vault: memVault({ IMAP_PASSWORD_PAT_GMAIL_COM: 'pw' }) })
+    await runImapAuth(['add', '--account', 'pat@gmail.com', '--app-password'], t.d)
+    expect(await runImapAuth(['status', '--check'], t.d)).toContain('pat@gmail.com: connected and working (Gmail)')
+    await runImapMail(['inbox', '--account', 'pat@gmail.com'], t.d)
+    expect(t.connected).toEqual(['pat@gmail.com'])
   })
 
   it('needs server names for an unknown provider, and uses them when given', async () => {
@@ -275,5 +321,21 @@ describe('imap-mail', () => {
     const v = memVault()
     saveAccount(YAHOO_ACCT, v)
     await expect(runImapMail(['inbox'], deps({ vault: v }).d)).rejects.toThrow(/\/secret set IMAP_PASSWORD_LEIF_YAHOO_COM/)
+  })
+})
+
+describe('sign-in errors', () => {
+  const gmail: ImapAccount = {
+    address: 'pat@gmail.com', provider: 'Gmail',
+    imap: { host: 'imap.gmail.com', port: 993, secure: true }, smtp: { host: 'smtp.gmail.com', port: 465, secure: true }, savesSent: true,
+  }
+  it('tells a Gmail owner what to do when Google refuses the app password', () => {
+    const msg = describeError({ authenticationFailed: true, responseText: 'Invalid credentials (Failure)' }, gmail)
+    expect(msg).toContain('Invalid credentials')
+    expect(msg).toContain('/connect gmail')
+    expect(msg).toMatch(/work or school/)
+  })
+  it('leaves other providers as they were', () => {
+    expect(describeError({ authenticationFailed: true }, YAHOO_ACCT)).not.toContain('/connect gmail')
   })
 })

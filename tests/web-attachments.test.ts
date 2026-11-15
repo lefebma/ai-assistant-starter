@@ -123,7 +123,7 @@ describe('sending attachments', () => {
     useRuntime()
     const id = await newConv()
     const path = await upload('image.png', PNG)
-    expect(path).toBe('workspace/uploads/image.png')
+    expect(path).toBe('workspace/uploads/tray/4242/image.png')
     const r = await post(`/api/web/conversations/${id}/chat`, { text: 'What is this?', attachments: [path] })
     expect(events(await r.text()).at(-1)!.name).toBe('done')
 

@@ -79,6 +79,51 @@ describe('ms-auth start', () => {
   })
 })
 
+describe('ms-auth start where /connect outlook is set up', () => {
+  it('sends the owner to /connect outlook instead of starting a code', async () => {
+    const w = world()
+    w.deps.connectLink = true
+    let called = false
+    const inner = w.deps.fetchImpl
+    w.deps.fetchImpl = async (url, init) => ((called = true), inner(url, init))
+    const out = await runAuth(['start', '--account', 'work'], w.deps)
+    expect(out).toContain('/connect outlook')
+    expect(out).toContain('ms-auth start --code')
+    expect(out).not.toContain('ABC-123')
+    expect(called).toBe(false)
+    expect(w.data.has('MS_PENDING_WORK')).toBe(false)
+  })
+
+  it('still gives a code with --code, for when the link cannot be used', async () => {
+    const w = world()
+    w.deps.connectLink = true
+    const out = await runAuth(['start', '--code', '--account', 'work'], w.deps)
+    expect(out).toContain('ABC-123')
+    expect(w.data.has('MS_PENDING_WORK')).toBe(true)
+  })
+
+  it('names /connect outlook when a mail command finds nothing connected', async () => {
+    const w = world()
+    w.deps.connectLink = true
+    await expect(runMail(['inbox', '--account', 'work'], w.deps)).rejects.toThrow(/\/connect outlook/)
+    expect(await runAuth(['status'], w.deps)).toContain('/connect outlook')
+  })
+
+  it('prints the admin approval link for the app this install uses', async () => {
+    expect(await runAuth(['admin-link'], world().deps)).toContain(
+      'https://login.microsoftonline.com/organizations/adminconsent?client_id=cid'
+    )
+    expect(await runAuth(['admin-link'], world({ env: {} }).deps)).toContain(
+      'client_id=a67bec40-964d-4ea9-99bb-6a1301f217db'
+    )
+  })
+
+  it('keeps pointing at ms-auth start where there is no relay', async () => {
+    const w = world()
+    await expect(runMail(['inbox', '--account', 'work'], w.deps)).rejects.toThrow(/ms-auth start --account work/)
+  })
+})
+
 describe('ms-auth finish', () => {
   it('refuses when nothing was started', async () => {
     await expect(runAuth(['finish', '--account', 'work'], world().deps)).rejects.toThrow(/ms-auth start/)

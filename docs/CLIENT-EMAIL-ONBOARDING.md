@@ -14,9 +14,37 @@ Console / Azure project) — never the account password. Every step that
 touches the client's actual account is theirs to click through, in their own
 browser.
 
+**Before any of this: checklist returned.** Send the client
+[CLIENT-PRE-CALL-CHECKLIST.md](CLIENT-PRE-CALL-CHECKLIST.md) a few days ahead
+and start only once their answers are back. It tells you which mailboxes,
+which part of this doc each one needs, and whether an IT admin has to be on
+hand.
+
 ---
 
-## Part 1: Gmail + Google Calendar
+## The usual way: `/connect` (no SSH)
+
+On a box registered with the sign-in relay, the client connects Gmail and
+Outlook themselves from their chat: `/connect gmail` or `/connect outlook`
+sends a link, they sign in with Google or Microsoft in their own browser, and
+the assistant confirms. `/connect gmail` again adds another Gmail account;
+`/connect list` shows them. Nothing lands on the box but sealed tokens in its
+vault, and you never touch their account.
+
+- **New boxes:** `npm run provision` registers the box when
+  `HAVN_CONNECT_ADMIN_TOKEN` is set (card #216). Nothing to do here.
+- **Older boxes:** register once with
+  `npm run relay-box -- register <box> <ssh-host> <hostname> --label "..."`,
+  then restart the assistant ([deploy/connect-relay/README.md](../deploy/connect-relay/README.md#connect-a-box)).
+
+Warn the client about the "Google hasn't verified this app" screen (Step A
+below), and keep an eye on the 100-account cap. Parts 1 and 2 are the
+fallback: a box with no relay, an account the relay cannot serve, or an older
+box already signed in through gog.
+
+---
+
+## Part 1: Gmail + Google Calendar (fallback: gog over SSH)
 
 Fully working today, tested end-to-end on a live hosted box (2026-08-23). The shared Havn client was tested end to end on 2026-10-13 (read, labels, drafts, calendar writes), on a Mac rather than a hosted box.
 
@@ -180,7 +208,7 @@ the service if it was already running: `sudo systemctl restart havn`.
 
 ---
 
-## Part 2: Outlook / Microsoft 365
+## Part 2: Outlook / Microsoft 365 (fallback: sign-in over SSH)
 
 **Available since v1.28.0.** Mail (inbox, search, read, drafts, reply drafts,
 send an approved draft) and calendar (today, a date range, create an event).
@@ -190,43 +218,91 @@ secret, and no Cloud project. The app registration ships with the product, so
 the client signs in once and you are done. No step here needs anything
 downloaded onto the box.
 
-### Step A — 🧑‍💻 YOU: start the sign-in on the box
+### Step A — 👤 CLIENT: send `/connect outlook`
 
-```bash
-node dist/scripts/ms-auth.js start --account client@theircompany.com
-```
+On a box with the sign-in relay (every hosted box since v1.64.0), the client
+sends `/connect outlook` in their chat with the assistant. It answers with a
+one-time link that works for ten minutes. They open it on any device, sign in
+with their own Microsoft account and accept. The assistant confirms in the
+chat when the mailbox is connected. Nothing is copied, typed or pasted, and
+nothing runs over SSH.
 
-It prints a Microsoft URL and a short code, then returns straight away. It
-does not sit and wait, so this is safe to run over SSH.
+For a second mailbox they send `/connect outlook` again and sign in with the
+other account. `/connect remove outlook <address>` disconnects one.
 
-### Step B — 👤 CLIENT: sign in
-
-Send them the URL and the code exactly as printed. They open it in any
-browser, including on a phone, enter the code, sign in with their own
-Microsoft account, and approve.
+### Step B — 👤 CLIENT: what they will see
 
 Two things to warn them about in advance:
 
-- The consent screen names the app and marks the **publisher as unverified**.
-  That is expected for an app that is not in Microsoft's commercial
-  marketplace. They can go ahead.
-- If their organization blocks third-party apps, they will see **"needs admin
-  approval"** instead. Their Microsoft 365 administrator has to approve the
-  app once for the tenant. Retrying does not get past it, and neither does
-  starting over. Stop and get the admin.
+- The consent screen names the app and, until Microsoft has verified the
+  publisher, marks it **unverified**. They can go ahead.
+- If their organization blocks apps it has not approved, they see **"Need
+  admin approval"** instead. Retrying and starting over do not get past it.
+  Stop and use [If IT has to approve the app](#if-it-has-to-approve-the-app).
 
-The code is good for **fifteen minutes**. After that, rerun Step A for a fresh
-one.
+### Step C — 🧑‍💻 YOU: only if the link cannot be used (sign-in code)
 
-### Step C — 🧑‍💻 YOU: collect it
+On an install with no relay, or when `/connect outlook` cannot be used, sign
+in with a code instead:
+
+```bash
+node dist/scripts/ms-auth.js start --code --account client@theircompany.com
+```
+
+It prints a Microsoft URL and a short code and returns straight away. Send the
+client both exactly as printed; they open the URL, enter the code, sign in
+and approve. The code works for **fifteen minutes**, so have the client ready
+before you start it. Then collect it:
 
 ```bash
 node dist/scripts/ms-auth.js finish --account client@theircompany.com
 ```
 
-If it reports it is still waiting, they have not finished in the browser yet.
-Ask, then run it again. There is nothing to paste back from the client at any
-point, which is the part that goes wrong most often on the Gmail side.
+If it reports it is still waiting, they have not finished yet: ask, then run it
+again. `--code` is only needed where the relay is set up; without one,
+`ms-auth start` gives the code anyway.
+
+### If IT has to approve the app
+
+A company Microsoft 365 that requires admin approval needs it once for the
+whole company. After that, everyone there signs in normally. The approval
+covers exactly what the app asks for when anyone signs in: reading and writing
+mail, sending mail, reading and writing calendars, and the user's basic
+profile. It gives the app nothing for people who never sign in to it.
+
+Two ways, depending on what the "Need admin approval" screen offers:
+
+1. **The screen has a "Request approval" button.** The client fills in a
+   reason ("Our assistant, Havn, needs to read and draft my email") and sends
+   it. Their IT person approves it in the Microsoft Entra admin center under
+   **Enterprise applications → Admin consent requests**, then the client sends
+   `/connect outlook` again.
+2. **No button.** The IT person approves it directly. They sign in with an
+   administrator account (Cloud Application Administrator or higher) and open:
+
+   `https://login.microsoftonline.com/organizations/adminconsent?client_id=a67bec40-964d-4ea9-99bb-6a1301f217db`
+
+   (`node dist/scripts/ms-auth.js admin-link` prints it for the app this install uses.)
+
+   Microsoft lists the permissions and asks them to accept for the whole
+   organization. Havn's sign-in page then confirms the approval, and the
+   client sends `/connect outlook` again.
+
+A note the client can forward to their IT person, as it is:
+
+> Hi, I'm setting up an AI assistant called Havn (gethavn.ai) that works with
+> my Microsoft 365 email and calendar. Our tenant asks for admin approval
+> before I can connect it. Could you approve the app "Havn" (application ID
+> a67bec40-964d-4ea9-99bb-6a1301f217db) for our organization? It asks for
+> delegated permission only: read and write my mail, send mail as me, read and
+> write my calendar, and my basic profile. It only acts for people who sign in
+> to it themselves. You can approve it by signing in as an admin at
+> https://login.microsoftonline.com/organizations/adminconsent?client_id=a67bec40-964d-4ea9-99bb-6a1301f217db
+> or from Enterprise applications in the Entra admin center if I've sent a
+> request. The privacy policy is at https://gethavn.ai/app-privacy. Thanks!
+
+Builds that set their own `MS_CLIENT_ID` replace the application ID in both
+places with their own.
 
 ### Step D — 🧑‍💻 YOU: verify
 
@@ -245,8 +321,8 @@ another account: use that address from then on rather than starting over.
 Message the bot: "check my email," "what's on my calendar today." Restart the
 service if it was already running: `sudo systemctl restart havn`.
 
-For a second mailbox, run the same three steps with the other address. Each is
-stored separately. To disconnect one:
+Each mailbox is stored separately. To disconnect one, the client sends
+`/connect remove outlook <address>`, or on the box:
 `node dist/scripts/ms-auth.js logout --account <address>`.
 
 ### Shipping under your own name
@@ -265,9 +341,10 @@ expose one over IMAP.
 
 Presets cover Yahoo (every regional domain, ymail, rocketmail), AOL, iCloud
 (icloud.com, me.com, mac.com), Fastmail, GMX and Zoho. Any other provider
-works if you give its server names. Gmail and Outlook/Hotmail addresses are
-refused with a pointer to Parts 1 and 2: Gmail has a better path, and
-Microsoft has switched app-password sign-in off.
+works if you give its server names. Outlook/Hotmail addresses are refused
+with a pointer to Part 2, since Microsoft has switched app-password sign-in
+off. Gmail addresses get a pointer to Part 1 unless `--app-password` is given
+(see [Gmail by app password](#gmail-by-app-password-mail-only) below).
 
 The skill is installed on every box automatically, so there is nothing to
 copy. The client can do all of this from their chat without you; the steps
@@ -283,6 +360,7 @@ own later.
   Account security → **Generate app password**.
 - **iCloud:** account.apple.com → Sign-In and Security → **App-Specific
   Passwords**.
+- **Gmail** (only on the backup path below): myaccount.google.com/apppasswords.
 
 ### Step B — 👤 CLIENT: put it in the vault from their chat
 
@@ -315,6 +393,39 @@ For a provider without a preset, add its servers:
 `--imap-host imap.example.com --smtp-host smtp.example.com`, plus
 `--imap-port` / `--smtp-port` if they are not 993 and 465 (587 is treated as
 STARTTLS, and the connection is refused if the upgrade fails).
+
+### Gmail by app password (mail only)
+
+A backup to Part 1, not a replacement. Use it when the shared Havn Google app
+can't be used for this client:
+
+- the shared app is nearing its 100-account cap (an app-password connection
+  does not take a place),
+- the client won't approve an app Google labels "unverified", or
+- you want this mailbox not to depend on the sign-in relay.
+
+It is mail only: no calendar and no Drive. Google offers app passwords only
+with two-step sign-in on, and not on work or school accounts, with Advanced
+Protection, or when two-step sign-in uses only security keys. Those clients
+use Part 1 or their IT admin.
+
+Steps A and B as above (the app password comes from
+myaccount.google.com/apppasswords), then Step C with `--app-password`:
+
+```bash
+node dist/scripts/imap-auth.js add --account client@gmail.com --app-password
+```
+
+Google's servers are fixed (imap.gmail.com 993, smtp.gmail.com 465), and
+Gmail files its own Sent copy, so nothing is appended.
+
+**One address, one connection.** `add` refuses an address already connected
+with `/connect gmail`; run `/connect remove gmail <address>` first if the
+client really wants the app password instead. Connecting an address with
+`/connect gmail` later replaces its app-password connection, and the
+confirmation tells the client they can delete that app password. Gmail
+accounts on an older per-client Google project (gog's own sign-ins) are not
+checked: remove one side by hand.
 
 ### Step D — 🧑‍💻 YOU: verify
 

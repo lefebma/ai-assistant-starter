@@ -1,5 +1,5 @@
 /**
- * A paused managed box tells the owner once, then at most once a day.
+ * A paused managed box tells the owner in full once, then answers each later message briefly.
  * Review focus 4: 20 owner messages, one full reply, no turn saved.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -75,22 +75,20 @@ describe('owner reply while the AI allowance is used up', () => {
     vi.useRealTimers()
   })
 
-  it('sends the first reply once, stays quiet for 19 more, repeats after 25 h, saves no turn', async () => {
+  it('sends the full reply once, a short one to each later message, saves no turn', async () => {
     h.runAgent.mockResolvedValue({ text: null, aiPaused: 'spend_limit' })
     const { sent, say } = harness()
 
     await say('hello')
     expect(sent).toEqual([FIRST_REPLY])
 
-    for (let i = 0; i < 19; i++) {
-      vi.setSystemTime(new Date(Date.parse('2026-11-02T12:00:00Z') + (i + 1) * 3 * 60_000))
-      await say(`again ${i}`)
-    }
-    expect(sent).toEqual([FIRST_REPLY])
+    vi.setSystemTime(new Date('2026-11-02T12:03:00Z'))
+    await say('again')
+    expect(sent).toEqual([FIRST_REPLY, REPEAT_REPLY])
 
     vi.setSystemTime(new Date('2026-11-03T13:00:00Z'))
     await say('still there?')
-    expect(sent).toEqual([FIRST_REPLY, REPEAT_REPLY])
+    expect(sent).toEqual([FIRST_REPLY, REPEAT_REPLY, REPEAT_REPLY])
 
     expect(h.saveTurn).not.toHaveBeenCalled()
     expect(sent.some((t) => t === '(no response)')).toBe(false)

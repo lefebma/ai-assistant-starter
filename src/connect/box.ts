@@ -19,6 +19,7 @@
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { dropGmailEntry, readGmailEntries, saveGmailEntry } from './gmail-token.js'
+import { accountSecretName as imapAccountName, passwordSecretName as imapPasswordName } from '../imap/store.js'
 
 export interface ConnectTokenVault {
   get(name: string): string | undefined
@@ -205,8 +206,20 @@ export class ConnectFlow {
     } else {
       saveGmailEntry(this.o.vault, { account, accessToken, refreshToken, expiresAt })
     }
+    // One address, one connection: a Google sign-in replaces a mail-only
+    // app-password connection to the same Gmail (card #204).
+    const replaced = provider === 'gmail' && this.o.vault.delete(imapAccountName(account))
+    if (replaced) {
+      try {
+        this.o.vault.delete(imapPasswordName(account))
+      } catch {
+        // An address too long for a password name never had one stored.
+      }
+    }
     await this.o.onChange?.(provider)
-    return { status: 200, chatId: p.chatId, message: `Connected ${account}, mail and calendar working.` }
+    const message = `Connected ${account}, mail and calendar working.` +
+      (replaced ? ` This replaces its app-password connection; you can delete that app password at myaccount.google.com/apppasswords.` : '')
+    return { status: 200, chatId: p.chatId, message }
   }
 
   private sweep(): void {

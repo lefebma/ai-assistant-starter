@@ -64,7 +64,7 @@ describe('update icon markup', () => {
   })
 
   it('uses the accent colour, so it follows the theme', () => {
-    expect(css).toMatch(/\.update-flag\s*\{[^}]*color:\s*var\(--accent\)/)
+    expect(css).toMatch(/\.update-flag\s*\{[^}]*color:\s*var\(--accent-text\)/)
   })
 
   it('has an update section in Settings to open at', () => {

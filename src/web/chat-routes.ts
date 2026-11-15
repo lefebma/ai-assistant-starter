@@ -378,7 +378,7 @@ async function runTurn(chatId: string, conv: ConversationRow, item: QueueItem, a
   let held = false
   try {
     if (!attached) {
-      const planned = planAttachments(item.attachments, item.pastes)
+      const planned = planAttachments(chatId, item.attachments, item.pastes)
       if (!planned.ok) {
         sink.writeEvent('error', { message: ATTACH_NOTES[planned.code] ?? 'An attachment could not be sent. Attach it again and send it.' })
         return
@@ -569,7 +569,7 @@ registerWebRoutes([
       const b = await jsonBody(ctx, MAX_CHAT_BODY)
       const text = typeof b.text === 'string' ? b.text.trim() : ''
       if (text.length > MAX_TEXT) return sendError(ctx.res, 400, 'bad_text')
-      const planned = planAttachments(b.attachments, b.pastes)
+      const planned = planAttachments(ctx.chatId, b.attachments, b.pastes)
       if (!planned.ok) return sendError(ctx.res, 400, planned.code)
       const attaching = planned.plan.uploads.length + planned.plan.pastes.length > 0
       if (!text && !attaching) return sendError(ctx.res, 400, 'bad_text')

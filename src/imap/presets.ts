@@ -4,9 +4,11 @@
  * Everything here signs in with an app password, not the account password:
  * Yahoo, AOL and iCloud all refuse a plain password over IMAP once two-step
  * sign-in is on, and an app password is revocable on its own without touching
- * the account. Gmail and Outlook.com are deliberately not presets. Both have a
- * better path in this product (gog, and the Microsoft device-code sign-in),
- * and Outlook.com has switched basic IMAP sign-in off entirely.
+ * the account. Outlook.com is deliberately not a preset: it has a better path
+ * in this product (the Microsoft sign-in) and has switched basic IMAP sign-in
+ * off entirely. Gmail is a preset only when asked for (card #204): its normal
+ * path is /connect gmail, which also covers the calendar, and an app password
+ * is the mail-only backup for when that path can't be used.
  */
 
 export interface ServerEndpoint {
@@ -91,22 +93,42 @@ const ZOHO: ImapPreset = {
   appPasswordHelp: 'Zoho: My Account > Security > App Passwords > Generate New Password.',
 }
 
+const GMAIL: ImapPreset = {
+  provider: 'Gmail',
+  imap: { host: 'imap.gmail.com', port: 993, secure: true },
+  smtp: { host: 'smtp.gmail.com', port: 465, secure: true },
+  // Gmail files its own Sent copy for mail sent through smtp.gmail.com.
+  savesSent: true,
+  appPasswordHelp:
+    'Gmail (mail only, no calendar): two-step sign-in must be on. Open myaccount.google.com/apppasswords, name it after the assistant, and copy the 16-letter password. ' +
+    'Google does not offer app passwords on work or school accounts, with Advanced Protection, or when two-step sign-in uses only security keys. For those, use /connect gmail.',
+}
+
 function domainOf(address: string): string {
   const at = address.lastIndexOf('@')
   return at === -1 ? '' : address.slice(at + 1).trim().toLowerCase()
 }
 
+export function isGmailAddress(address: string): boolean {
+  const d = domainOf(address)
+  return d === 'gmail.com' || d === 'googlemail.com'
+}
+
 /**
  * The preset for an address, a redirect to the connector that should own it,
  * or null when the domain is unknown and the servers have to be given.
+ * `gmailAppPassword` is the owner choosing mail only by app password.
  */
-export function presetFor(address: string): ImapPreset | Redirect | null {
+export function presetFor(address: string, opts: { gmailAppPassword?: boolean } = {}): ImapPreset | Redirect | null {
   const d = domainOf(address)
   if (!d) return null
-  if (d === 'gmail.com' || d === 'googlemail.com') {
+  if (isGmailAddress(address)) {
+    if (opts.gmailAppPassword) return GMAIL
     return {
       redirect: 'gmail',
-      message: `${address} is a Gmail address. Connect it with the Gmail skill (gog) instead: it signs in with Google directly and needs no app password.`,
+      message:
+        `${address} is a Gmail address. Connect it with /connect gmail: one sign-in with Google, covering mail and calendar, with no app password. ` +
+        `Only if the owner asks for mail only by app password (or /connect gmail can't be used), run add again with --app-password.`,
     }
   }
   if (/^(outlook|hotmail|live|msn)\.[a-z.]+$/.test(d)) {

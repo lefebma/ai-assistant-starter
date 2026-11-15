@@ -244,8 +244,9 @@ machine. The assistant starts recording at its next restart.
 
 Hosted boxes reach Google Maps through a Havn-run Cloudflare Worker,
 `deploy/maps-proxy` (card #266), so Havn's Google key is never on a box. Each
-box has its own token in its vault (`MAPS_PROXY_TOKEN`) and the Worker's
-address in `.env` (`MAPS_PROXY_URL`). The Worker answers three calls only:
+box has its own token and the Worker's address in its vault
+(`MAPS_PROXY_TOKEN`, `MAPS_PROXY_URL`; boxes set up before card #301 may still
+have the address in `.env`, which also works). The Worker answers three calls only:
 geocode, route (traffic-aware, with a departure time; driving, transit or
 walking) and place search. It keeps a monthly request quota and a cost record
 per box, and caches geocodes per box for up to 30 days. Its logs hold box,
@@ -379,7 +380,9 @@ session for you. As `havn-admin`, once cloud-init has finished:
 sudo node /home/havn/havn/dist/scripts/hosted/enable-setup.js <ip-with-dashes>.sslip.io
 ```
 
-It installs Caddy with an edge that exposes only `/setup`, starts
+It installs Caddy with an edge that exposes only `/setup` and the sign-in
+relay's hand-off (`/connect/handoff`, which the app refuses unless the relay
+signed it), starts
 `havn-setup.service`, and prints the link. Send it to the client. On the
 page they make a Telegram bot, tap Start in it to pair (no chat id to look
 up), and paste their AI key. They are not asked their name or city there: the
