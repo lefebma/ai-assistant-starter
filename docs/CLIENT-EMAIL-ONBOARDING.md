@@ -263,10 +263,8 @@ Two ways, depending on what the "Need admin approval" screen offers:
    (`node dist/scripts/ms-auth.js admin-link` prints it for the app this install uses.)
 
    Microsoft lists the permissions and asks them to accept for the whole
-   organization. Then the client sends `/connect outlook` again. The page
-   Microsoft shows after accepting may be an error from the Havn sign-in
-   service, because it is not expecting that visit; the approval has still
-   been saved.
+   organization. Havn's sign-in page then confirms the approval, and the
+   client sends `/connect outlook` again.
 
 A note the client can forward to their IT person, as it is:
 

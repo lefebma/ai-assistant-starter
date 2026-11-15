@@ -276,6 +276,32 @@ describe('relay /callback', () => {
     expect((await cb(c, `code=C&state=${sc}`)).status).toBe(502)
     expect(c.posts).toHaveLength(1)
   })
+  it('thanks an administrator who approved the app for their organization, without a sign-in', async () => {
+    const r = setup()
+    const res = await cb(r, 'admin_consent=True&tenant=e82cd128-6997-4635-9afe-73a928bfeb79', false)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('approved')
+    expect(body).toContain('/connect outlook')
+    expect(body).not.toContain('expired')
+    expect(r.exchanged).toHaveLength(0)
+    expect(r.posts).toHaveLength(0)
+    expect(JSON.stringify(r.logs)).not.toContain('e82cd128')
+  })
+  it('says nothing was approved when the administrator declined', async () => {
+    const r = setup()
+    const res = await cb(r, 'error=access_denied&error_description=declined&admin_consent=True', false)
+    expect(res.status).toBe(400)
+    const body = await res.text()
+    expect(body).toContain('not approved')
+    expect(body).not.toContain('declined')
+  })
+  it('still treats a state-bearing callback as a sign-in, whatever else it carries', async () => {
+    const r = setup()
+    const res = await cb(r, 'admin_consent=True&state=forged', false)
+    expect(res.status).toBe(400)
+    expect(await res.text()).toContain('expired')
+  })
 })
 
 describe('sealed refresh tokens', () => {

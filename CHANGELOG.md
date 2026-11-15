@@ -4,6 +4,7 @@
 
 - **Changed: Outlook connects with a link, not a code, wherever the sign-in service is set up.** When your assistant needs Outlook connected, it now asks you to send `/connect outlook` and tap the link, instead of handing you a code to type in on another device within fifteen minutes. Installs without the sign-in service keep the code, and `ms-auth start --code` still gives one if the link can't be used.
 - **New for providers: steps for companies whose IT has to approve new apps.** `docs/CLIENT-EMAIL-ONBOARDING.md` Part 2 now leads with `/connect outlook` and has a section for Microsoft 365 organizations that show "Need admin approval": the request-approval path, a direct approval link, and a note the client can forward to their IT person as it is. `ms-auth admin-link` prints that link for the app the install uses, and the pre-call checklist points to the note.
+- **New for providers: the sign-in service confirms an IT approval.** After an administrator accepts Havn through the approval link, the sign-in page now says the app is approved and what to do next, instead of a misleading "link expired" message. This takes effect once the sign-in relay is redeployed (`deploy/connect-relay`).
 
 ## 1.77.2 - 2026-11-13
 
