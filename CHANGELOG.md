@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.79.2 - 2026-11-15
+
+- **Fixed: a reply you stop keeps what was written.** When you pressed Stop on a reply in the web app, the words so far showed on screen but disappeared when you reloaded the page. They are now kept, with a Stopped line under them.
+- **Fixed: a failed reply tells you why after a reload.** If a reply could not finish, the explanation showed once and was gone on reload. It is now kept in the chat.
+
 ## 1.79.1 - 2026-11-15
 
 - **Fixed: secrets no longer reach the logs.** Anything your assistant writes to its logs is now checked first. The exact value of every key, token and password it knows about, and anything shaped like one, is replaced with [REDACTED] before the line is saved. Logs are kept rather than purged, so a secret that got in would have stayed.

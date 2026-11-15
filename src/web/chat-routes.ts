@@ -99,6 +99,17 @@ async function jsonBody(ctx: WebContext, max?: number): Promise<Record<string, u
   return parsed as Record<string, unknown>
 }
 
+/**
+ * What a reply that was stopped half way is kept as. The page already shows the words so far
+ * with "Stopped." under them; storing the same text means a reload does not make the half
+ * reply vanish. Markers (files, buttons, decisions) are cut: a reply that did not finish
+ * must not offer a card or send a file. Nothing is kept when nothing had been written yet.
+ */
+export function interruptedContent(partial: string): string | null {
+  const words = partial.replace(/\[\[[a-z]+:[^\]]*(\]\])?/gi, '').replace(/\[\[[^\]]*$/, '').replace(/\[$/, '').trim()
+  return words ? `${words}\n\n*Stopped.*` : null
+}
+
 /** A plain-language reason for the owner; never a stack. */
 function ownerMessage(err: unknown): string {
   const m = err instanceof Error ? err.message : ''
@@ -202,7 +213,7 @@ async function answer(
 
   /** One agent turn on this conversation's session, streamed to the page. */
   const agentTurn = async (turnText: string, skipMemory = false): Promise<
-    { kind: 'reply'; mid: number } | { kind: 'paused'; text: string } | { kind: 'cancelled' }
+    { kind: 'reply'; mid: number } | { kind: 'paused'; text: string } | { kind: 'cancelled'; partial: string }
   > => {
     // Read the session now: /newchat may have just cleared it.
     const current = getConversation(chatId, id) ?? conv
@@ -240,7 +251,7 @@ async function answer(
       addMessage(id, 'assistant', result.paused)
       return { kind: 'paused', text: result.paused }
     }
-    if (result.cancelled || result.text === null) return { kind: 'cancelled' }
+    if (result.cancelled || result.text === null) return { kind: 'cancelled', partial: sent }
     const { cleanText: noDecisions, proposals } = extractDecisionMarkers(result.text)
     const { cleanText: noFiles, requests } = extractFileMarkers(noDecisions)
     const { cleanText, labels: replyLabels } = extractButtons(noFiles)
@@ -301,7 +312,7 @@ async function answer(
             else if (r.kind === 'paused') {
               paused = true
               sse.writeEvent('reply', { message: stored(latestAssistantMessageId(id)!) })
-            } else reply('*Stopped.*')
+            } else reply(interruptedContent(r.partial) ?? '*Stopped.*')
           } catch (err) {
             logger.error({ err, conversationId: id }, 'web command turn failed')
             reply(ownerMessage(err))
@@ -347,11 +358,22 @@ async function answer(
     if (r.kind === 'paused') {
       sse.writeEvent('paused', { text: r.text })
       paused = true
-    } else if (r.kind === 'cancelled') sse.writeEvent('done', { cancelled: true })
+    } else if (r.kind === 'cancelled') {
+      const kept = interruptedContent(r.partial)
+      if (kept) addMessage(id, 'assistant', kept, [], [])
+      sse.writeEvent('done', { cancelled: true })
+    }
     else sse.writeEvent('done', { cancelled: false, message: stored(r.mid) })
   } catch (err) {
     logger.error({ err, conversationId: id }, 'web chat turn failed')
-    sse.writeEvent('error', { message: ownerMessage(err) })
+    const reason = ownerMessage(err)
+    // The page shows this as a reply of its own; keep it so a reload shows why the turn ended.
+    try {
+      addMessage(id, 'assistant', reason, [], [])
+    } catch (storeErr) {
+      logger.warn({ err: storeErr, conversationId: id }, 'could not store the failed-turn notice')
+    }
+    sse.writeEvent('error', { message: reason })
   }
   sse.close()
   return paused ? 'paused' : undefined
