@@ -122,7 +122,7 @@ export class ConnectFlow {
     link.searchParams.set('provider', sub)
     link.searchParams.set('box', this.o.boxId)
     link.searchParams.set('nonce', nonce)
-    return { reply: `Open this on your phone, sign in and tap Allow. It works once and expires in 10 minutes.\n${link.toString()}` }
+    return { reply: `Open this link on any device, sign in and allow access. It works once and expires in 10 minutes.\n${link.toString()}` }
   }
 
   async handleCommandAsync(chatId: string, text: string): Promise<{ reply: string }> {

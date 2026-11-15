@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.79.4 - 2026-11-15
+
+- **Fixed: the `/connect gmail` and `/connect outlook` link no longer says to open it on your phone.** It works the same in a desktop browser, so the reply now says any device.
+
 ## 1.79.3 - 2026-11-15
 
 - **Fixed: a quiet scheduled task no longer swallows a real report that happens to mention a signal word.** A task set to stay silent when there is nothing to say used to be dropped whenever its answer contained words like `NO_REPLY` or `HEARTBEAT_OK` anywhere, even in the middle of a real report. Now only a lone signal word counts: the whole answer, or the very last line after a short explanation. A report that quotes one of those words is delivered.
