@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.79.3 - 2026-11-15
+
+- **Fixed: a quiet scheduled task no longer swallows a real report that happens to mention a signal word.** A task set to stay silent when there is nothing to say used to be dropped whenever its answer contained words like `NO_REPLY` or `HEARTBEAT_OK` anywhere, even in the middle of a real report. Now only a lone signal word counts: the whole answer, or the very last line after a short explanation. A report that quotes one of those words is delivered.
+- **Fixed: when a step fails and the assistant ends with nothing to say, you now get told.** If a tool failed (an email check, a calendar call, a command) and the turn then finished with no answer at all, it used to show as an empty reply, or look like a healthy quiet run for a scheduled task. It now says which step failed and that the work was not done. An answer the assistant did write is never touched.
+
 ## 1.79.2 - 2026-11-15
 
 - **Fixed: a reply you stop keeps what was written.** When you pressed Stop on a reply in the web app, the words so far showed on screen but disappeared when you reloaded the page. They are now kept, with a Stopped line under them.

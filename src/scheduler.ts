@@ -16,6 +16,7 @@ import { aiPausedForBackground, readAiLimit, recoveryDueAt } from './ai-limit.js
 import { ledgerBlock } from './memory/decisions.js'
 import { projectBlock, scopeFor } from './projects/store.js'
 import { dashboardDataFile } from './cockpit/paths.js'
+import { shouldSuppressResult } from './suppression.js'
 
 type Sender = (chatId: string, text: string) => Promise<void>
 type AgentResult = Awaited<ReturnType<typeof runAgent>>
@@ -23,7 +24,6 @@ type AgentResult = Awaited<ReturnType<typeof runAgent>>
 let sender: Sender | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-const SUPPRESSION_PATTERNS = ['HEARTBEAT_OK', 'NO_REPLY', 'NO_ACTION', 'NOTHING_TO_REPORT']
 const OVERLOAD_PATTERN = /API is temporarily overloaded/i
 const RETRY_DELAY_MS = 10 * 60 * 1000 // 10 minutes
 const DASHBOARD_JOBS_FILE = process.env.DASHBOARD_JOBS_FILE || dashboardDataFile('scheduled-jobs.json')
@@ -301,11 +301,6 @@ export function stopScheduler(): void {
     clearInterval(pollTimer)
     pollTimer = null
   }
-}
-
-function shouldSuppressResult(result: string): boolean {
-  const trimmed = result.trim()
-  return SUPPRESSION_PATTERNS.some((p) => trimmed.includes(p))
 }
 
 function syncDashboardJobs(): void {
