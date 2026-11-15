@@ -54,7 +54,7 @@ export function needsRotation(meta: SessionMeta | null, config: RotationConfig, 
 export const SUMMARY_PROMPT = [
   'This session is about to be rotated and its transcript will no longer be available to you.',
   'Write a compact handoff summary (under 300 words) of this conversation for your future self:',
-  'open tasks and their status, decisions the user made, preferences they expressed, and anything you promised to follow up on.',
+  'the request in flight (what the user last asked and whether it is finished), other open tasks and their status, decisions the user made, preferences they expressed, and anything you promised to follow up on.',
   'Plain text, no headers, no preamble. Do not use tools.',
 ].join(' ')
 

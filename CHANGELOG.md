@@ -1,9 +1,57 @@
 # Changelog
 
-## 1.74.2 - 2026-11-08
+## 1.79.2 - 2026-11-15
 
 - **Fixed: a reply you stop keeps what was written.** When you pressed Stop on a reply in the web app, the words so far showed on screen but disappeared when you reloaded the page. They are now kept, with a Stopped line under them.
 - **Fixed: a failed reply tells you why after a reload.** If a reply could not finish, the explanation showed once and was gone on reload. It is now kept in the chat.
+
+## 1.79.1 - 2026-11-15
+
+- **Fixed: secrets no longer reach the logs.** Anything your assistant writes to its logs is now checked first. The exact value of every key, token and password it knows about, and anything shaped like one, is replaced with [REDACTED] before the line is saved. Logs are kept rather than purged, so a secret that got in would have stayed.
+- **Fixed: a job that failed halfway no longer repeats what it already did.** When the AI service had a brief error in the middle of a job, your assistant tried the whole job again. If it had already sent a message or changed something, that could happen twice. It now stops, tells you what it had already run, and waits for you to say go on. Plain reading and searching still retry on their own.
+- **Improved: a fresh start remembers what you had just asked.** When a long chat is rotated to a new one, the hand-off note now includes the request that was still in progress.
+
+## 1.79.0 - 2026-11-15
+
+- **Changed: Outlook connects with a link, not a code, wherever the sign-in service is set up.** When your assistant needs Outlook connected, it now asks you to send `/connect outlook` and tap the link, instead of handing you a code to type in on another device within fifteen minutes. Installs without the sign-in service keep the code, and `ms-auth start --code` still gives one if the link can't be used.
+- **New for providers: steps for companies whose IT has to approve new apps.** `docs/CLIENT-EMAIL-ONBOARDING.md` Part 2 now leads with `/connect outlook` and has a section for Microsoft 365 organizations that show "Need admin approval": the request-approval path, a direct approval link, and a note the client can forward to their IT person as it is. `ms-auth admin-link` prints that link for the app the install uses, and the pre-call checklist points to the note.
+- **New for providers: the sign-in service confirms an IT approval.** After an administrator accepts Havn through the approval link, the sign-in page now says the app is approved and what to do next, instead of a misleading "link expired" message. This takes effect once the sign-in relay is redeployed (`deploy/connect-relay`).
+
+## 1.78.0 - 2026-11-14
+
+- **New for providers: a new hosted box is ready for `/connect gmail` and `/connect outlook` from the first chat.** `npm run provision` now registers the box with the sign-in relay and puts its three `/connect` secrets in the box's vault, when `HAVN_CONNECT_ADMIN_TOKEN` is set. Web setup's edge passes the relay's hand-off, so no `enable-teams` run is needed either. For a box that already exists, `npm run relay-box -- register <box> <ssh-host> <hostname>` does the same, then restart the assistant. It checks it can reach the box before registering, so a box it cannot write to keeps the key it has, and it says when the box's edge still needs the hand-off route. `--label` sets what the sign-in page calls the assistant (card #216).
+- **Fixed: provisioning with maps turned on no longer breaks web setup.** The maps step wrote the proxy's address to `.env` before web setup ran, and web setup refuses a box that already has a `.env`, so the setup link never came. The address now goes in the vault with the token. Boxes that already have it in `.env` keep working (card #301).
+
+## 1.77.2 - 2026-11-13
+
+- **Fixed: importing a very large ChatGPT export no longer runs out of memory.** Someone with years of ChatGPT history can have a conversations file of hundreds of megabytes. Your browser used to hold several copies of it at once and could crash the tab, and your assistant then read the whole upload in one go. Now both read it one conversation at a time and keep only the conversations in your projects, so a big export either imports or says plainly which limit it hit.
+
+## 1.77.1 - 2026-11-12
+
+- **Fixed: clearer messages for very large ChatGPT exports.** An export with more conversations or projects than one import can take now says which limit it hit, instead of calling the file too large. A conversation longer than 20,000 messages comes across with its most recent part and a note at the top saying so, instead of being cut without a word.
+
+## 1.77.0 - 2026-11-11
+
+- **New: setup reminds you to keep OpenAI from training on your data.** If you choose OpenAI as your assistant's AI, setup now explains that the key works through OpenAI's developer platform, not the ChatGPT app, so the privacy switch in ChatGPT does not cover it. It tells you where to check: sign in at platform.openai.com, open Settings, Organization, Data controls, and make sure Data sharing says Disabled. The same note shows in the browser setup page, in the list of next steps at the end of setup, and when you add an OpenAI key for voice. A new guide, `docs/OPENAI-DATA-PRIVACY.md`, has the full steps, including what OpenAI still keeps for 30 days and how to turn off training in ChatGPT if you use it too.
+- **New for providers: Gmail by app password, mail only.** A backup for when `/connect gmail` can't be used: the shared Google app is nearing its 100-account cap, a client won't approve an app Google calls unverified, or a mailbox shouldn't depend on the sign-in relay. The owner makes an app password at myaccount.google.com/apppasswords, stores it with `/secret set`, and the mailbox connects with `imap-auth add --account <address> --app-password`. Without the flag, a Gmail address still points to `/connect gmail`. One address has one connection: an address already connected with `/connect gmail` is refused, and connecting it with `/connect gmail` later replaces the app-password connection. Google offers no app passwords on work or school accounts, with Advanced Protection or with security keys only, and the sign-in error now says to use `/connect gmail` for those. Steps in `docs/CLIENT-EMAIL-ONBOARDING.md`, Part 3.
+
+## 1.76.2 - 2026-11-09
+
+- **Fixed: managed assistants count AI spend correctly.** On Claude Sonnet 5.5 a managed assistant counted about 2.3 times what Anthropic actually charged, so the 80% heads-up came far too early and spend figures read high. Spend is now worked out from the published prices. The hard limit was never affected.
+
+## 1.76.1 - 2026-11-09
+
+- **Changed: a paused assistant always answers.** Once a managed assistant had used up its monthly AI allowance and said so, later messages got no reply for up to a day, which looked like it had stopped working. Each one now gets a short note saying it is still paused.
+
+## 1.76.0 - 2026-11-09
+
+- **New: bring your projects over from ChatGPT.** In the web app, choose New project, then Import from ChatGPT, and pick the export file ChatGPT emails you, as it arrives. It is read in your browser, and only the conversations inside your ChatGPT projects are sent to your assistant; your other conversations, pictures and voice recordings stay on your computer. ChatGPT's export has no project names, instructions or files, so you name each project, can paste its instructions, and tick the ones you want. Each project's conversations come across as files your assistant can read, one per conversation, or one per month with a list when there are more than 40. Pictures show as `[picture]` and voice messages as their transcript. ChatGPT's memories and conversations outside projects do not come across. Importing the same project again does not make a copy. No AI is used to import. ChatGPT Business and Enterprise members cannot export their own data; their workspace owner can.
+- **Fixed: other people's chats can no longer open your files in the web app.** When someone else signed in to the web app from their own authorized chat, the Files panel showed them every chat's attachments, every project's files and Telegram downloads. Now they see only their own chats, projects and unsent attachments, and your main chat still sees everything. A message can only carry files added in that same chat. One-time effect of the update: an attachment added but not sent before it, or a waiting message with attachments, has to be attached again, and a waiting message retyped.
+- **Changed: a third colour choice in the web app.** Settings, Appearance now also offers Havn 2, alongside Original and Havn. Original stays the default.
+
+## 1.75.0 - 2026-11-08
+
+- **New: a choice of colours for the web app.** Settings now has an Appearance section with two palettes: Original, the warm paper and sea green you have today, and Havn, the blues of gethavn.ai. Light or dark still follows your device. Original stays the default, the choice is remembered in each browser, and you can switch back at any time.
 
 ## 1.74.0 - 2026-11-07
 

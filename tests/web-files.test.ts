@@ -218,9 +218,9 @@ describe('upload', () => {
     const a = (await (await upload('dup.txt', 'a')).json()) as { path: string }
     const b = (await (await upload('dup.txt', 'b')).json()) as { path: string }
     const c = (await (await upload('dup.txt', 'c')).json()) as { path: string }
-    expect(a.path).toBe('workspace/uploads/dup.txt')
-    expect(b.path).toBe('workspace/uploads/dup-1.txt')
-    expect(c.path).toBe('workspace/uploads/dup-2.txt')
+    expect(a.path).toBe('workspace/uploads/tray/4242/dup.txt')
+    expect(b.path).toBe('workspace/uploads/tray/4242/dup-1.txt')
+    expect(c.path).toBe('workspace/uploads/tray/4242/dup-2.txt')
     expect(readFileSync(join(root, a.path), 'utf8')).toBe('a')
   })
 

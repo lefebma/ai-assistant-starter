@@ -42,6 +42,8 @@ export interface NextStepsInput {
   serviceEntry: string
   /** Quoted absolute path to dist/scripts/ms-auth.js. */
   msAuthEntry: string
+  /** An OpenAI key was given (as the thinking engine or for voice). */
+  usesOpenAi?: boolean
 }
 
 export function buildNextSteps(i: NextStepsInput): NextStep[] {
@@ -49,6 +51,15 @@ export function buildNextSteps(i: NextStepsInput): NextStep[] {
 
   if (i.needsBotCredentials) {
     steps.push({ text: 'Fill in your bot credentials in .env (see docs/SETUP-GUIDE.md)' })
+  }
+
+  // The OpenAI key lives on OpenAI's developer platform, not in the ChatGPT app,
+  // so the training switch customers know does not apply (card #299).
+  if (i.usesOpenAi) {
+    steps.push({
+      text:
+        "Keep OpenAI from training on your data: sign in at platform.openai.com, open Settings, Organization, Data controls, and check that Data sharing says Disabled. ChatGPT's own privacy switch does not cover this key. Steps: docs/OPENAI-DATA-PRIVACY.md",
+    })
   }
 
   if (i.gmailAddress) {

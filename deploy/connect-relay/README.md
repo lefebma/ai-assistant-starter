@@ -66,37 +66,34 @@ also clears expired entries in bounded batches.
 
 ## Connect a box
 
-The box must be reachable over https at a stable origin (its tunnel hostname).
-Register it with a label the owner will recognise, since it is what the
-sign-in page shows. The answer carries the box's hand-off key, shown this once:
+`npm run provision` registers every new box when `HAVN_CONNECT_ADMIN_TOKEN`
+(the admin token from `<secrets>/havn-connect-admin-token`) is in your
+environment (card #216). For a box that already exists:
 
 ```bash
-ADMIN=$(cat "<secrets>/havn-connect-admin-token")
-curl -s -X POST https://connect.gethavn.ai/admin/boxes/havn-test \
-  -H "authorization: Bearer $ADMIN" -H 'content-type: application/json' \
-  -d '{"origin":"https://<box hostname>","label":"Havn assistant for Sam"}'
+HAVN_CONNECT_ADMIN_TOKEN=$(cat "<secrets>/havn-connect-admin-token") \
+  npm run relay-box -- register havn-sam <ssh-host> <box hostname> --label "Havn assistant for Sam"
 ```
 
-Then on the box, in the owner's chat, set three secrets. `/secret set <NAME>`
-asks for the value as the next message and deletes that message, so the key
-never stays in chat history:
+It registers `https://<box hostname>` under that label (what the sign-in page
+shows the owner), then writes `CONNECT_RELAY_URL`, `CONNECT_BOX_ID` and
+`CONNECT_HANDOFF_KEY` into the box's vault over SSH as havn, every value on
+stdin. The hand-off key is never printed. A running box reads them at start:
+restart it afterwards (`sudo systemctl restart havn` as havn-admin). Until all
+three exist, `/connect` answers "not set up". `HAVN_CONNECT_URL` points it at
+another relay.
 
-| Name | Value |
-|---|---|
-| `CONNECT_RELAY_URL` | `https://connect.gethavn.ai` |
-| `CONNECT_BOX_ID` | the box id you registered, e.g. `havn-test` |
-| `CONNECT_HANDOFF_KEY` | the `handoffKey` from the answer above |
-
-and restart the service. `/connect` answers "not set up" until all three exist.
-
-A hosted box's Caddy must pass `POST /connect/handoff` to the app. Edge configs
-written from 1.64.1 on do; an older box needs its edge written again with the
-same flags it was enabled with, e.g.
+A hosted box's Caddy must pass `POST /connect/handoff` to the app. Web setup
+(`enable-setup`) writes that from card #216 on, and `enable-teams` from 1.64.1
+on; an older box needs its edge written again with the same flags it was
+enabled with, e.g.
 `sudo node dist/scripts/hosted/enable-teams.js <hostname> --voice --web`.
 Check from outside: `curl -X POST https://<hostname>/connect/handoff -d '{}'`
 answers 401 (the app refusing an unsigned call). A 404 means Caddy dropped it.
 
-List boxes (never shows keys): `GET /admin/boxes`. Remove one:
+`npm run relay-box -- list` lists boxes (never the keys) and
+`npm run relay-box -- remove <box>` removes one. The admin API underneath:
+`GET /admin/boxes` and
 `DELETE /admin/boxes/<box>`. Registering a box again replaces its key, so the
 box needs the new one.
 

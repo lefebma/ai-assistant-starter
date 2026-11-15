@@ -228,7 +228,6 @@ function takePauseNotice(): string | null {
   const marker = readAiLimit()
   if (!marker) return null
   const reply = ownerPauseReply(marker, new Date())
-  if (!reply) return null
   try {
     writeAiLimit(reply.next)
   } catch (err) {
@@ -429,8 +428,8 @@ async function runTurn(
     }
     if (!clearedMidTurn) bumpSessionMessageCount(scope)
 
-    // A managed box whose AI allowance is used up. The owner hears it once, then
-    // at most once a day; nothing else about the turn happens (no memory save,
+    // A managed box whose AI allowance is used up. The owner hears it in full
+    // once, then a short notice; nothing else about the turn happens (no memory save,
     // voice or buttons), and the "(no response)" branch must not fire.
     if (aiPaused) {
       const pauseText = takePauseNotice()
@@ -830,12 +829,10 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
     )
     if (signal.aborted) return { text: null, cancelled: true }
     if (aiPaused) {
-      // The web is a pull surface: the owner is looking at the page, so a
-      // paused turn always says why, even inside Telegram's once-a-day window.
-      // It never records the notice: that marker is Telegram's, and spending
-      // it here would leave the chat silent for the day.
+      // It never records the notice: that marker is the chat's, and spending
+      // it here would cost the chat its one full explanation.
       const marker = readAiLimit()
-      const paused = (marker ? ownerPauseReply(marker, new Date())?.text : undefined) ?? repeatReply(marker?.resumesAt)
+      const paused = marker ? ownerPauseReply(marker, new Date()).text : repeatReply(undefined)
       return { text: null, newSessionId, cancelled: false, paused }
     }
     if (reply && !input.skipMemory) await saveConversationTurn(scope, text, extractDecisionMarkers(reply).cleanText, { reads })

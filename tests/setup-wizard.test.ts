@@ -256,7 +256,7 @@ describe('shouldSkipSecret', () => {
   })
 })
 
-function scripted(answers: Array<string | boolean | number>): Prompter {
+function scripted(answers: Array<string | boolean | number>, said: string[] = []): Prompter {
   const queue = [...answers]
   const next = () => {
     if (queue.length === 0) throw new Error('wizard asked more questions than scripted')
@@ -269,7 +269,7 @@ function scripted(answers: Array<string | boolean | number>): Prompter {
       return typeof v === 'number' ? options[v] : String(v)
     },
     yesNo: async () => Boolean(next()),
-    say: () => {},
+    say: (m) => { said.push(m) },
   }
 }
 
@@ -487,6 +487,17 @@ describe('runWizard', () => {
     expect(openai.aiProvider).toBe('openai')
     expect(openai.keys.openai).toBe('sk-o')
     expect(openai.aiModel).toBe('gpt-5')
+  })
+
+  it('warns OpenAI customers that ChatGPT\'s privacy switch does not cover the key, and says nothing to others (card #299)', async () => {
+    const saidOpenAi: string[] = []
+    await runWizard(scripted(['Telegram', 1, 1, 'sk-o', 'gpt-5', ...NO_EXTRAS], saidOpenAi), '/repo')
+    expect(saidOpenAi.join('\n')).toMatch(/Data sharing/)
+    expect(saidOpenAi.join('\n')).toMatch(/OPENAI-DATA-PRIVACY\.md/)
+
+    const saidClaude: string[] = []
+    await runWizard(scripted(['Telegram', 1, 0, 'sk-a', ...NO_EXTRAS], saidClaude), '/repo')
+    expect(saidClaude.join('\n')).not.toMatch(/Data sharing/)
   })
 
   it('no longer asks a Wordsmith question (skill is always-on)', async () => {

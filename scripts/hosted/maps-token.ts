@@ -8,8 +8,8 @@
  *   npm run maps-token -- quota <box-name> <requests>     # monthly requests for that box
  *   npm run maps-token -- usage [YYYY-MM]                 # requests and cost per box
  *
- * issue replaces any earlier token for the box, then stores the new one in
- * the box's vault (MAPS_PROXY_TOKEN) and MAPS_PROXY_URL in its .env, as havn.
+ * issue replaces any earlier token for the box, then stores the new one and
+ * the proxy's URL in the box's vault (MAPS_PROXY_TOKEN, MAPS_PROXY_URL), as havn.
  * The token travels on stdin, never on a command line. `npm run provision`
  * does this for a new box when the same two variables are set. Maps calls
  * read both fresh, so no restart is needed.
@@ -20,24 +20,27 @@ import { resolve } from 'node:path'
 import { BOX_NAME } from '../../src/assurance/witness-protocol.js'
 
 /**
- * Run as havn on the box: token into the vault, URL into .env, everything
- * else kept. The values ride inside the script as base64 (bash -s reads the
- * script from stdin, so a trailing data line would be read as script).
+ * Run as havn on the box: token and URL into the vault. It never creates
+ * .env: provisioning runs this before web setup, and web setup refuses a box
+ * that already has a .env (card #301). On a box set up before #301 a
+ * MAPS_PROXY_URL line in .env is removed, so the vault copy is the only one;
+ * everything else in .env is kept. The values ride inside the script as
+ * base64 (bash -s reads the script from stdin, so a trailing data line would
+ * be read as script).
  */
 export function connectScript(url: string, token: string, installDir = '$HOME/havn'): string {
   const b64 = (v: string) => Buffer.from(v, 'utf-8').toString('base64')
   return `set -euo pipefail
-url=$(printf %s '${b64(url)}' | base64 -d)
 cd "${installDir}"
 printf %s '${b64(token)}' | base64 -d | node dist/scripts/vault-cli.js set MAPS_PROXY_TOKEN
+printf %s '${b64(url)}' | base64 -d | node dist/scripts/vault-cli.js set MAPS_PROXY_URL
 f="${installDir}/.env"
-touch "$f"
-tmp=$(mktemp)
-grep -vE '^(MAPS_PROXY_URL|MAPS_PROXY_TOKEN)=' "$f" > "$tmp" || true
-printf 'MAPS_PROXY_URL=%s\\n' "$url" >> "$tmp"
-cat "$tmp" > "$f"
-rm -f "$tmp"
-chmod 600 "$f"
+if [ -f "$f" ] && grep -qE '^MAPS_PROXY_URL=' "$f"; then
+  tmp=$(mktemp)
+  grep -vE '^MAPS_PROXY_URL=' "$f" > "$tmp" || true
+  cat "$tmp" > "$f"
+  rm -f "$tmp"
+fi
 echo "maps proxy connected"
 `
 }

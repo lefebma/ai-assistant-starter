@@ -8,7 +8,8 @@
  *
  * What it does:
  *   - refuses if the box is already set up (.env exists)
- *   - installs Caddy and writes an edge that exposes only /setup (TLS from Let's Encrypt)
+ *   - installs Caddy and writes an edge that exposes only /setup and the
+ *     sign-in relay's hand-off, /connect/handoff (TLS from Let's Encrypt)
  *   - opens ufw 80/tcp (ACME) and 443/tcp
  *   - installs and starts havn-setup.service (as havn, no sudo), which serves
  *     the page until the client finishes and then writes store/setup-finished
@@ -89,7 +90,8 @@ function main(): void {
   }
   writeFileSync(
     '/etc/caddy/Caddyfile',
-    buildCaddyfile(hostname, { teams: false, shortcuts: false, voice: false, connect: false, setup: true, caddyVersion: caddyVersion() })
+    // connect: the relay hand-off, so /connect works once setup hands over (card #216).
+    buildCaddyfile(hostname, { teams: false, shortcuts: false, voice: false, connect: true, setup: true, caddyVersion: caddyVersion() })
   )
   run('caddy', ['validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile'])
   run('ufw', ['allow', '80/tcp'])

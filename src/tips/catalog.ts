@@ -26,8 +26,12 @@ export interface TipContext {
   decisions: number
   /** Spoken replies can be produced on this box. */
   voiceReplies: boolean
-  /** A project here was brought in from another assistant. */
+  /** A project here was brought in from Claude. */
   importedProjects: boolean
+  /** A project was imported from ChatGPT. */
+  importedFromChatGPT: boolean
+  /** The owner's own OpenAI key is set: not a managed box, where the key is the provider's. */
+  ownOpenAiKey: boolean
 }
 
 export interface Tip {
@@ -224,6 +228,29 @@ export const TIPS: Tip[] = [
     tryIt: 'In the web app, choose New project, then Import from Claude.',
     used: (c) => c.importedProjects,
     phrases: /\bimport\b.*\bclaude\b/i,
+  },
+  {
+    id: 'import-chatgpt-projects',
+    since: '1.76.0',
+    text: 'Moving from ChatGPT? You can bring your projects here, with their past conversations.',
+    tryIt: 'In the web app, choose New project, then Import from ChatGPT.',
+    used: (c) => c.importedFromChatGPT,
+    phrases: /\bimport\b.*\bchat ?gpt\b/i,
+  },
+  {
+    id: 'openai-data-sharing',
+    since: '1.77.0',
+    text: "Your OpenAI key is billed through OpenAI's developer platform, so ChatGPT's privacy switch does not stop OpenAI training on your data.",
+    tryIt: 'At platform.openai.com, open Settings, Organization, Data controls, check Data sharing.',
+    applies: (c) => c.ownOpenAiKey,
+    phrases: /\bopen ?ai\b.*\b(train(ing)?|data sharing|privacy)\b|\b(train(ing)?|data sharing|privacy)\b.*\bopen ?ai\b/i,
+  },
+  {
+    id: 'colours',
+    since: '1.75.0',
+    text: 'The web app comes in more than one set of colours, and each browser remembers your choice.',
+    tryIt: 'In the web app, open Settings and look under Appearance.',
+    phrases: /\b(colou?rs?|palette)\b/i,
   },
   {
     id: 'tips',

@@ -15,8 +15,9 @@ import { currentProxy, withEgress } from '../egress/index.js'
 import { spawnInToolsCgroup } from '../egress/hosted.js'
 import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
-import { recordManagedSpend } from '../ai-usage.js'
+import { claudeTurnCostUsd, recordManagedSpend } from '../ai-usage.js'
 import { logger } from '../logger.js'
+import { noRetryNotice, unsafeToolNames } from './replay-safety.js'
 import {
   AiPausedError,
   classifyAiError,
@@ -397,7 +398,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         },
       })
       for await (const event of conversation) {
-        if (event.type === 'result') recordManagedSpend((event as any).total_cost_usd)
+        if (event.type === 'result') recordManagedSpend(claudeTurnCostUsd(event as any))
         if (event.type === 'result' && event.is_error) {
           const hit = classifyAiError(resultEventText(event))
           if (hit) {
@@ -570,6 +571,8 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       let responseText: string | null = null
       let newSessionId: string | undefined
       let streamedText = ''
+      // Every tool this attempt called, so a retry can tell a harmless replay from a repeated side effect.
+      const toolsCalled: string[] = []
       let usageLimitHit = false
       let rateLimitType: string | undefined
       let resetsAt: number | undefined
@@ -645,6 +648,13 @@ export class ClaudeAgentRuntime implements AgentRuntime {
             if (newSessionId) this.activeWorkspaces.set(newSessionId, cwd)
           }
 
+          if (event.type === 'assistant') {
+            const content = (event as any).message?.content
+            if (Array.isArray(content)) {
+              for (const block of content) if (block?.type === 'tool_use' && typeof block.name === 'string') toolsCalled.push(block.name)
+            }
+          }
+
           // Subscription usage-window signal (claude.ai auth). status 'rejected'
           // means the window is exhausted and this turn is blocked — distinct from
           // a transient 429/529. 'allowed_warning' is only an approaching-limit
@@ -691,7 +701,7 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           // is_error set (even subtype 'success') instead of a throw. A limit
           // must pause the box, never be delivered as the answer.
           // Managed lane: count each call's reported cost toward the month (card #159).
-          if (managed && event.type === 'result') recordManagedSpend((event as any).total_cost_usd)
+          if (managed && event.type === 'result') recordManagedSpend(claudeTurnCostUsd(event as any))
 
           if (managed && event.type === 'result' && event.is_error) {
             aiLimitHit = classifyAiError(resultEventText(event))
@@ -837,6 +847,18 @@ export class ClaudeAgentRuntime implements AgentRuntime {
         // as an exception, not a rate_limit_event) escalates instead of backing off.
         if (isUsageLimitError(err)) {
           return { text: null, usageLimitHit: true }
+        }
+
+        // A transient error is only worth replaying when the failed attempt changed nothing.
+        // If it already ran a tool that is not clearly read-only, replaying the message could
+        // send the email or create the event twice, so stop and say so instead.
+        if (isRetryableError(err)) {
+          const unsafe = unsafeToolNames(toolsCalled)
+          if (unsafe.length > 0) {
+            logger.warn({ attempt, tools: unsafe }, 'Transient error after side-effecting tools ran; not retrying')
+            if (newSessionId) this.activeWorkspaces.delete(newSessionId)
+            return { text: noRetryNotice(unsafe), newSessionId: lastSessionId }
+          }
         }
 
         if (attempt < MAX_RETRIES && isRetryableError(err)) {

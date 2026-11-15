@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   AI_USAGE_FILE,
+  claudeTurnCostUsd,
   markUsageWarned,
   nextUtcMonthStart,
   readAiUsage,
@@ -23,6 +24,41 @@ function store(flag: Record<string, unknown> | null = { since: '2026-10-01T00:00
   if (flag) writeFileSync(join(d, MANAGED_AI_FILE), JSON.stringify(flag))
   return d
 }
+
+describe('claudeTurnCostUsd', () => {
+  const usage = (over: Record<string, number>) => ({
+    inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 0, ...over,
+  })
+  // A real short turn from the B4 test on havn-test: the SDK reported $0.5064, Anthropic charged about $0.20.
+  const b4Turn = usage({ inputTokens: 4, outputTokens: 213, cacheCreationInputTokens: 80173, costUSD: 0.5064 })
+
+  it('prices Sonnet 5.5 at its published rate, not the figure the SDK reports', () => {
+    expect(claudeTurnCostUsd({ total_cost_usd: 0.5064, modelUsage: { 'claude-sonnet-5-5': b4Turn } })).toBeCloseTo(0.20257, 5)
+  })
+
+  it('charges cache reads and web searches', () => {
+    const u = usage({ cacheReadInputTokens: 1_000_000, webSearchRequests: 3, costUSD: 9 })
+    expect(claudeTurnCostUsd({ total_cost_usd: 9, modelUsage: { 'claude-sonnet-5-5': u } })).toBeCloseTo(0.2 + 0.03, 6)
+  })
+
+  it('matches a dated or 1M-context model id', () => {
+    const modelUsage = { 'claude-sonnet-5-5-20261001[1m]': b4Turn }
+    expect(claudeTurnCostUsd({ total_cost_usd: 0.5064, modelUsage })).toBeCloseTo(0.20257, 5)
+  })
+
+  it('keeps the reported cost of a model it has no price for, adding the rest', () => {
+    const haiku = usage({ outputTokens: 62, cacheCreationInputTokens: 27524, costUSD: 0.035 })
+    const cost = claudeTurnCostUsd({ total_cost_usd: 0.5414, modelUsage: { 'claude-sonnet-5-5': b4Turn, 'claude-haiku-4-5-20251001': haiku } })
+    expect(cost).toBeCloseTo(0.20257 + 0.035, 5)
+  })
+
+  it('falls back to the total without usable per-model figures', () => {
+    expect(claudeTurnCostUsd({ total_cost_usd: 0.25 })).toBe(0.25)
+    expect(claudeTurnCostUsd({ total_cost_usd: 0.25, modelUsage: {} })).toBe(0.25)
+    expect(claudeTurnCostUsd({ total_cost_usd: 0.25, modelUsage: { 'claude-haiku-4-5': { costUSD: 'x' } } })).toBe(0.25)
+    expect(claudeTurnCostUsd({ total_cost_usd: 0.25, modelUsage: { 'claude-sonnet-5-5': { outputTokens: 'x' } } })).toBe(0.25)
+  })
+})
 
 describe('recordManagedSpend', () => {
   let d: string

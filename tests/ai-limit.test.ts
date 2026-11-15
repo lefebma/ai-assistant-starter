@@ -92,15 +92,16 @@ describe('recoveryDue', () => {
 describe('ownerPauseReply', () => {
   const since = '2026-10-01T00:00:00.000Z'
   const now = new Date('2026-10-01T01:00:00.000Z')
-  it('first, silent, then repeat after 24h', () => {
-    const first = ownerPauseReply({ kind: 'spend_limit', since }, now)!
+  it('tells the owner in full once, then answers every later message with the short notice', () => {
+    const first = ownerPauseReply({ kind: 'spend_limit', since }, now)
     expect(first.text).toBe(FIRST)
     expect(first.next.toldFull).toBe(true)
     expect(first.next.lastToldAt).toBe(now.toISOString())
-    expect(ownerPauseReply(first.next, new Date(now.getTime() + 60 * MIN))).toBeNull()
-    const rep = ownerPauseReply(first.next, new Date(now.getTime() + 25 * 60 * MIN))!
+    const soon = new Date(now.getTime() + MIN)
+    const rep = ownerPauseReply(first.next, soon)
     expect(rep.text).toBe(REPEAT)
-    expect(rep.next.lastToldAt).toBe(new Date(now.getTime() + 25 * 60 * MIN).toISOString())
+    expect(rep.next.lastToldAt).toBe(soon.toISOString())
+    expect(ownerPauseReply(rep.next, new Date(soon.getTime() + MIN)).text).toBe(REPEAT)
   })
 })
 
