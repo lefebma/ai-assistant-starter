@@ -122,7 +122,9 @@ IT has to approve new apps: no / yes, and they'll be reachable / don't know
   it later. Don't spend the call on account recovery.
 - **"IT has to approve" or "don't know"** for a company address: confirm the
   IT contact will be reachable during the call, or plan that address for a
-  second, short session.
+  second, short session. For Microsoft 365, send the client the forwardable
+  note in [If IT has to approve the app](CLIENT-EMAIL-ONBOARDING.md#if-it-has-to-approve-the-app)
+  ahead of the call, so IT can approve before it.
 - **Several Google accounts:** have the client open the sign-in link in a
   private or incognito window, or use the account picker, so Google doesn't
   sign them in with the wrong one.

@@ -29,12 +29,20 @@ export function getGmailKeeper(): GmailTokenKeeper | null {
   return keeper
 }
 
-export function getConnectFlow(): ConnectFlow | null {
-  if (flow !== undefined) return flow
+/** The relay settings, or null when /connect is not set up on this install. */
+export function connectSettings(): { relayUrl: string; boxId: string; handoffKey: string } | null {
   const relayUrl = getSecret('CONNECT_RELAY_URL') ?? ''
   const boxId = getSecret('CONNECT_BOX_ID') ?? ''
   const handoffKey = getSecret('CONNECT_HANDOFF_KEY') ?? ''
-  if (!relayUrl.startsWith('https://') || !boxId || handoffKey.length < 32) return (flow = null)
+  if (!relayUrl.startsWith('https://') || !boxId || handoffKey.length < 32) return null
+  return { relayUrl, boxId, handoffKey }
+}
+
+export function getConnectFlow(): ConnectFlow | null {
+  if (flow !== undefined) return flow
+  const settings = connectSettings()
+  if (!settings) return (flow = null)
+  const { relayUrl, boxId, handoffKey } = settings
   const shim = setUpGogShim()
   const vault = { get: (n: string) => defaultVault().get(n), set: (n: string, v: string) => defaultVault().set(n, v), delete: (n: string) => defaultVault().delete(n) }
   const k = new GmailTokenKeeper({ relayUrl, boxId, handoffKey, vault, shim, onRevoked: (a) => onRevoked?.(a) })
