@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.78.1 - 2026-11-15
+
+- **Fixed: a quiet scheduled task no longer swallows a real report that happens to mention a signal word.** A task set to stay silent when there is nothing to say used to be dropped whenever its answer contained words like `NO_REPLY` or `HEARTBEAT_OK` anywhere, even in the middle of a real report. Now only a lone signal word counts: the whole answer, or the very last line after a short explanation. A report that quotes one of those words is delivered.
+- **Fixed: when a step fails and the assistant ends with nothing to say, you now get told.** If a tool failed (an email check, a calendar call, a command) and the turn then finished with no answer at all, it used to show as an empty reply, or look like a healthy quiet run for a scheduled task. It now says which step failed and that the work was not done. An answer the assistant did write is never touched.
+
 ## 1.78.0 - 2026-11-14
 
 - **New for providers: a new hosted box is ready for `/connect gmail` and `/connect outlook` from the first chat.** `npm run provision` now registers the box with the sign-in relay and puts its three `/connect` secrets in the box's vault, when `HAVN_CONNECT_ADMIN_TOKEN` is set. Web setup's edge passes the relay's hand-off, so no `enable-teams` run is needed either. For a box that already exists, `npm run relay-box -- register <box> <ssh-host> <hostname>` does the same, then restart the assistant. It checks it can reach the box before registering, so a box it cannot write to keeps the key it has, and it says when the box's edge still needs the hand-off route. `--label` sets what the sign-in page calls the assistant (card #216).

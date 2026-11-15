@@ -17,6 +17,7 @@ import { readEnvFile } from '../env.js'
 import { getSecret } from '../vault/index.js'
 import { claudeTurnCostUsd, recordManagedSpend } from '../ai-usage.js'
 import { logger } from '../logger.js'
+import { failedToolNames, toolFailureNotice } from './tool-failures.js'
 import {
   AiPausedError,
   classifyAiError,
@@ -570,6 +571,10 @@ export class ClaudeAgentRuntime implements AgentRuntime {
       let responseText: string | null = null
       let newSessionId: string | undefined
       let streamedText = ''
+      // Tool name by call id, and the ids whose result came back as an error, so a turn that
+      // ends blank after a failure can say so instead of looking like a quiet success.
+      const toolNamesById = new Map<string, string>()
+      const erroredToolIds: string[] = []
       let usageLimitHit = false
       let rateLimitType: string | undefined
       let resetsAt: number | undefined
@@ -630,6 +635,15 @@ export class ClaudeAgentRuntime implements AgentRuntime {
 
         for await (const event of conversation) {
           logger.info({ type: event.type, subtype: (event as any).subtype }, 'Agent event')
+          if (event.type === 'assistant' || event.type === 'user') {
+            const content = (event as any).message?.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block?.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') toolNamesById.set(block.id, block.name)
+                else if (block?.type === 'tool_result' && block.is_error && typeof block.tool_use_id === 'string') erroredToolIds.push(block.tool_use_id)
+              }
+            }
+          }
           if (event.type === 'system' && event.subtype === 'init') {
             // Which effort levels the CLI's models take, for /effort (card
             // #272). In the background; a failure asks again next turn.
@@ -786,8 +800,18 @@ export class ClaudeAgentRuntime implements AgentRuntime {
           responseText = coerceMcpResult(responseText)
         }
 
+        // A blank turn after a failing tool must say so, not look like a quiet success.
+        // `answered` below still reflects the model's own reply, not this note.
+        const hadAnswer = Boolean(responseText)
+        const failedTools = failedToolNames(toolNamesById, erroredToolIds)
+        const failureNote = toolFailureNotice(responseText, failedTools)
+        if (failureNote) {
+          logger.warn({ tools: failedTools }, 'Turn ended blank after tool failures; adding a note')
+          responseText = failureNote
+        }
+
         // Success, return the result
-        return { text: responseText, newSessionId, ...(managed && responseText && !resultWasError ? { answered: true } : {}) }
+        return { text: responseText, newSessionId, ...(managed && hadAnswer && !resultWasError ? { answered: true } : {}) }
       } catch (err) {
         lastError = err
         // Cancellation surfaces as a thrown AbortError from the killed
