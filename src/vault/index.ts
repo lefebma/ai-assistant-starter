@@ -8,6 +8,7 @@
  * this without any behavior change until secrets are actually vaulted.
  */
 import { readEnvFile } from '../env.js'
+import { registerSecret } from '../log-redact.js'
 import { SecretVault } from './store.js'
 
 export { SecretVault, defaultVaultDir } from './store.js'
@@ -31,10 +32,13 @@ export function defaultVault(): SecretVault {
  * exists (non-empty) in none of them.
  */
 export function getSecret(name: string, vault: SecretVault = defaultVault()): string | undefined {
-  return (
+  const value =
     vault.get(name)?.trim() ||
     readEnvFile()[name]?.trim() ||
     process.env[name]?.trim() ||
     undefined
-  )
+  // Vault secrets never appear in .env, so the logger cannot know them up front. Register
+  // every resolved value so any later log line containing it is scrubbed.
+  registerSecret(value)
+  return value
 }

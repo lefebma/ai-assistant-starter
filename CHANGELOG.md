@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.79.1 - 2026-11-15
+
+- **Fixed: secrets no longer reach the logs.** Anything your assistant writes to its logs is now checked first. The exact value of every key, token and password it knows about, and anything shaped like one, is replaced with [REDACTED] before the line is saved. Logs are kept rather than purged, so a secret that got in would have stayed.
+- **Fixed: a job that failed halfway no longer repeats what it already did.** When the AI service had a brief error in the middle of a job, your assistant tried the whole job again. If it had already sent a message or changed something, that could happen twice. It now stops, tells you what it had already run, and waits for you to say go on. Plain reading and searching still retry on their own.
+- **Improved: a fresh start remembers what you had just asked.** When a long chat is rotated to a new one, the hand-off note now includes the request that was still in progress.
+
 ## 1.79.0 - 2026-11-15
 
 - **Changed: Outlook connects with a link, not a code, wherever the sign-in service is set up.** When your assistant needs Outlook connected, it now asks you to send `/connect outlook` and tap the link, instead of handing you a code to type in on another device within fifteen minutes. Installs without the sign-in service keep the code, and `ms-auth start --code` still gives one if the link can't be used.
