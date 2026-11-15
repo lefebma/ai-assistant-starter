@@ -84,8 +84,9 @@ npm run maps-token -- usage            # this month; or usage 2026-11
 
 `issue` makes a new token (any earlier one for that box stops working, and a
 revoke is lifted), then over SSH as havn stores it in the box's vault as
-`MAPS_PROXY_TOKEN` and writes `MAPS_PROXY_URL` to its `.env`. The token
-travels on stdin, never on a command line. `npm run provision` does the same
+`MAPS_PROXY_TOKEN`, with the Worker's address as `MAPS_PROXY_URL`. It never
+creates `.env`, so it can run before web setup (card #301). Both values
+travel on stdin, never on a command line. `npm run provision` does the same
 for a new box when both variables are set. No restart is needed.
 
 `revoke` stops that box at once; its usage record stays. Box names follow the

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.78.0 - 2026-11-14
+
+- **New for providers: a new hosted box is ready for `/connect gmail` and `/connect outlook` from the first chat.** `npm run provision` now registers the box with the sign-in relay and puts its three `/connect` secrets in the box's vault, when `HAVN_CONNECT_ADMIN_TOKEN` is set. Web setup's edge passes the relay's hand-off, so no `enable-teams` run is needed either. For a box that already exists, `npm run relay-box -- register <box> <ssh-host> <hostname>` does the same, then restart the assistant. It checks it can reach the box before registering, so a box it cannot write to keeps the key it has, and it says when the box's edge still needs the hand-off route. `--label` sets what the sign-in page calls the assistant (card #216).
+- **Fixed: provisioning with maps turned on no longer breaks web setup.** The maps step wrote the proxy's address to `.env` before web setup ran, and web setup refuses a box that already has a `.env`, so the setup link never came. The address now goes in the vault with the token. Boxes that already have it in `.env` keep working (card #301).
+
 ## 1.77.2 - 2026-11-13
 
 - **Fixed: importing a very large ChatGPT export no longer runs out of memory.** Someone with years of ChatGPT history can have a conversations file of hundreds of megabytes. Your browser used to hold several copies of it at once and could crash the tab, and your assistant then read the whole upload in one go. Now both read it one conversation at a time and keep only the conversations in your projects, so a big export either imports or says plainly which limit it hit.

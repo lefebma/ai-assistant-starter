@@ -3,7 +3,7 @@
  * one small interface, so the feature code (#260 travel times, #261 timing
  * problems) never knows where the answer came from.
  *
- * - Hosted box: MAPS_PROXY_URL (.env) and the MAPS_PROXY_TOKEN secret point it
+ * - Hosted box: the MAPS_PROXY_URL and MAPS_PROXY_TOKEN secrets point it
  *   at Havn's Worker (deploy/maps-proxy). The Google key is never on the box.
  *   Each call's cost comes back from the Worker and is added to this month's
  *   AI spend (ai-usage.json), so it counts toward the monthly allowance.
@@ -85,9 +85,10 @@ export interface MapsDeps {
 
 /** Read fresh each time, so a key set with /secret set works without a restart. */
 export function mapsConfigFromEnv(): MapsConfig {
-  const env = readEnvFile(['MAPS_PROXY_URL', 'MAPS_PROVIDER'])
+  const env = readEnvFile(['MAPS_PROVIDER'])
   return {
-    proxyUrl: (env.MAPS_PROXY_URL ?? process.env.MAPS_PROXY_URL ?? '').trim() || undefined,
+    // The vault since card #301; getSecret still finds a .env line on an older box.
+    proxyUrl: getSecret('MAPS_PROXY_URL'),
     proxyToken: getSecret('MAPS_PROXY_TOKEN'),
     googleKey: getSecret('GOOGLE_MAPS_API_KEY'),
     provider: (env.MAPS_PROVIDER ?? process.env.MAPS_PROVIDER ?? 'google').trim().toLowerCase(),

@@ -22,7 +22,29 @@ hand.
 
 ---
 
-## Part 1: Gmail + Google Calendar
+## The usual way: `/connect` (no SSH)
+
+On a box registered with the sign-in relay, the client connects Gmail and
+Outlook themselves from their chat: `/connect gmail` or `/connect outlook`
+sends a link, they sign in with Google or Microsoft in their own browser, and
+the assistant confirms. `/connect gmail` again adds another Gmail account;
+`/connect list` shows them. Nothing lands on the box but sealed tokens in its
+vault, and you never touch their account.
+
+- **New boxes:** `npm run provision` registers the box when
+  `HAVN_CONNECT_ADMIN_TOKEN` is set (card #216). Nothing to do here.
+- **Older boxes:** register once with
+  `npm run relay-box -- register <box> <ssh-host> <hostname> --label "..."`,
+  then restart the assistant ([deploy/connect-relay/README.md](../deploy/connect-relay/README.md#connect-a-box)).
+
+Warn the client about the "Google hasn't verified this app" screen (Step A
+below), and keep an eye on the 100-account cap. Parts 1 and 2 are the
+fallback: a box with no relay, an account the relay cannot serve, or an older
+box already signed in through gog.
+
+---
+
+## Part 1: Gmail + Google Calendar (fallback: gog over SSH)
 
 Fully working today, tested end-to-end on a live hosted box (2026-08-23). The shared Havn client was tested end to end on 2026-10-13 (read, labels, drafts, calendar writes), on a Mac rather than a hosted box.
 
@@ -186,7 +208,7 @@ the service if it was already running: `sudo systemctl restart havn`.
 
 ---
 
-## Part 2: Outlook / Microsoft 365
+## Part 2: Outlook / Microsoft 365 (fallback: sign-in over SSH)
 
 **Available since v1.28.0.** Mail (inbox, search, read, drafts, reply drafts,
 send an approved draft) and calendar (today, a date range, create an event).

@@ -76,6 +76,14 @@ export interface ProvisionDeps {
    * travel times off but does not stop provisioning.
    */
   connectMaps?: (box: string, host: string) => Promise<void>
+  /**
+   * Register the box with the sign-in relay at https://<address> and put the
+   * three /connect secrets in its vault (card #216), so the owner's first
+   * /connect gmail works with no SSH. Set when the operator has the relay's
+   * admin token; a failure here leaves /connect "not set up" but does not stop
+   * provisioning.
+   */
+  connectRelay?: (box: string, host: string, address: string) => Promise<void>
 }
 
 export interface ProvisionResult {
@@ -287,6 +295,18 @@ export async function provision(spec: ProvisionSpec, deps: ProvisionDeps): Promi
       }
     } else {
       deps.log('Maps: HAVN_MAPS_URL not set, so travel times are off on this box for now.')
+    }
+
+    if (deps.connectRelay) {
+      try {
+        await deps.connectRelay(hostName, ip, address)
+        deps.log(`Sign-in relay: ${hostName} is registered; /connect gmail and /connect outlook work once setup is done.`)
+      } catch (err) {
+        deps.log(`Sign-in relay: not registered (${err instanceof Error ? err.message : String(err)}). ` +
+          `/connect stays off until you run: npm run relay-box -- register ${hostName} ${ip} ${address}`)
+      }
+    } else {
+      deps.log('Sign-in relay: HAVN_CONNECT_ADMIN_TOKEN not set, so /connect is off on this box for now.')
     }
 
     deps.log(`Turning on web setup at https://${address}/setup ...`)
