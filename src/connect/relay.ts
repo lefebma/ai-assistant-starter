@@ -297,6 +297,15 @@ export function createRelay(opts: RelayOpts) {
   }
 
   async function callback(req: Request, url: URL): Promise<Response> {
+    // Microsoft's admin consent link (`ms-auth admin-link`) lands here too, with
+    // no state: it is an IT person approving the app, not a sign-in.
+    if (!url.searchParams.has('state') && url.searchParams.has('admin_consent')) {
+      const ok = !url.searchParams.get('error') && url.searchParams.get('admin_consent')?.toLowerCase() === 'true'
+      log({ event: 'admin_consent', ok })
+      return ok
+        ? page(200, 'Havn is approved for your organization. Nothing else to do here: the person setting it up can now send /connect outlook to their assistant.')
+        : page(400, 'Havn was not approved, and nothing was changed. You can close this page.')
+    }
     const state = url.searchParams.get('state') ?? ''
     // Verify (and consume) first, so even a denial or a replay spends the state.
     const v = await verifyState(opts.signingSecret, state, opts.used, now())

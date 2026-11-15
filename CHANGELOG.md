@@ -1,9 +1,26 @@
 # Changelog
 
-## 1.78.1 - 2026-11-15
+## 1.79.3 - 2026-11-15
 
 - **Fixed: a quiet scheduled task no longer swallows a real report that happens to mention a signal word.** A task set to stay silent when there is nothing to say used to be dropped whenever its answer contained words like `NO_REPLY` or `HEARTBEAT_OK` anywhere, even in the middle of a real report. Now only a lone signal word counts: the whole answer, or the very last line after a short explanation. A report that quotes one of those words is delivered.
 - **Fixed: when a step fails and the assistant ends with nothing to say, you now get told.** If a tool failed (an email check, a calendar call, a command) and the turn then finished with no answer at all, it used to show as an empty reply, or look like a healthy quiet run for a scheduled task. It now says which step failed and that the work was not done. An answer the assistant did write is never touched.
+
+## 1.79.2 - 2026-11-15
+
+- **Fixed: a reply you stop keeps what was written.** When you pressed Stop on a reply in the web app, the words so far showed on screen but disappeared when you reloaded the page. They are now kept, with a Stopped line under them.
+- **Fixed: a failed reply tells you why after a reload.** If a reply could not finish, the explanation showed once and was gone on reload. It is now kept in the chat.
+
+## 1.79.1 - 2026-11-15
+
+- **Fixed: secrets no longer reach the logs.** Anything your assistant writes to its logs is now checked first. The exact value of every key, token and password it knows about, and anything shaped like one, is replaced with [REDACTED] before the line is saved. Logs are kept rather than purged, so a secret that got in would have stayed.
+- **Fixed: a job that failed halfway no longer repeats what it already did.** When the AI service had a brief error in the middle of a job, your assistant tried the whole job again. If it had already sent a message or changed something, that could happen twice. It now stops, tells you what it had already run, and waits for you to say go on. Plain reading and searching still retry on their own.
+- **Improved: a fresh start remembers what you had just asked.** When a long chat is rotated to a new one, the hand-off note now includes the request that was still in progress.
+
+## 1.79.0 - 2026-11-15
+
+- **Changed: Outlook connects with a link, not a code, wherever the sign-in service is set up.** When your assistant needs Outlook connected, it now asks you to send `/connect outlook` and tap the link, instead of handing you a code to type in on another device within fifteen minutes. Installs without the sign-in service keep the code, and `ms-auth start --code` still gives one if the link can't be used.
+- **New for providers: steps for companies whose IT has to approve new apps.** `docs/CLIENT-EMAIL-ONBOARDING.md` Part 2 now leads with `/connect outlook` and has a section for Microsoft 365 organizations that show "Need admin approval": the request-approval path, a direct approval link, and a note the client can forward to their IT person as it is. `ms-auth admin-link` prints that link for the app the install uses, and the pre-call checklist points to the note.
+- **New for providers: the sign-in service confirms an IT approval.** After an administrator accepts Havn through the approval link, the sign-in page now says the app is approved and what to do next, instead of a misleading "link expired" message. This takes effect once the sign-in relay is redeployed (`deploy/connect-relay`).
 
 ## 1.78.0 - 2026-11-14
 
