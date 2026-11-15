@@ -1,10 +1,15 @@
 # Changelog
 
-## 1.78.0 - 2026-11-14
+## 1.79.0 - 2026-11-15
 
 - **Changed: Outlook connects with a link, not a code, wherever the sign-in service is set up.** When your assistant needs Outlook connected, it now asks you to send `/connect outlook` and tap the link, instead of handing you a code to type in on another device within fifteen minutes. Installs without the sign-in service keep the code, and `ms-auth start --code` still gives one if the link can't be used.
 - **New for providers: steps for companies whose IT has to approve new apps.** `docs/CLIENT-EMAIL-ONBOARDING.md` Part 2 now leads with `/connect outlook` and has a section for Microsoft 365 organizations that show "Need admin approval": the request-approval path, a direct approval link, and a note the client can forward to their IT person as it is. `ms-auth admin-link` prints that link for the app the install uses, and the pre-call checklist points to the note.
 - **New for providers: the sign-in service confirms an IT approval.** After an administrator accepts Havn through the approval link, the sign-in page now says the app is approved and what to do next, instead of a misleading "link expired" message. This takes effect once the sign-in relay is redeployed (`deploy/connect-relay`).
+
+## 1.78.0 - 2026-11-14
+
+- **New for providers: a new hosted box is ready for `/connect gmail` and `/connect outlook` from the first chat.** `npm run provision` now registers the box with the sign-in relay and puts its three `/connect` secrets in the box's vault, when `HAVN_CONNECT_ADMIN_TOKEN` is set. Web setup's edge passes the relay's hand-off, so no `enable-teams` run is needed either. For a box that already exists, `npm run relay-box -- register <box> <ssh-host> <hostname>` does the same, then restart the assistant. It checks it can reach the box before registering, so a box it cannot write to keeps the key it has, and it says when the box's edge still needs the hand-off route. `--label` sets what the sign-in page calls the assistant (card #216).
+- **Fixed: provisioning with maps turned on no longer breaks web setup.** The maps step wrote the proxy's address to `.env` before web setup ran, and web setup refuses a box that already has a `.env`, so the setup link never came. The address now goes in the vault with the token. Boxes that already have it in `.env` keep working (card #301).
 
 ## 1.77.2 - 2026-11-13
 

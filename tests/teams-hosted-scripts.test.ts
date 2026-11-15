@@ -95,6 +95,15 @@ describe('teams edge (Caddy) config', () => {
     expect(setup).not.toContain('/connect')
   })
 
+  it('enable-setup opens the relay hand-off, so /connect works once setup hands over (card #216)', () => {
+    const t = readFileSync(resolve(__dirname, '../scripts/hosted/enable-setup.ts'), 'utf-8')
+    expect(t).toMatch(/buildCaddyfile\(hostname, \{[^}]*connect: true[^}]*setup: true/)
+    const c = buildCaddyfile('5-161-197-79.sslip.io', { teams: false, shortcuts: false, voice: false, connect: true, setup: true })
+    expect(c).toContain('handle /connect/handoff {')
+    expect(c).toContain('handle @setup {')
+    expect(c).not.toContain('/api/teams')
+  })
+
   it('generates teams-only config when no options are passed (backward compat)', () => {
     const c = buildCaddyfile('5-161-197-79.sslip.io')
     expect(c).toContain('handle /api/teams/* {')

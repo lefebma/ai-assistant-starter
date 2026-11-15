@@ -13,6 +13,9 @@ import {
   type SshResult,
 } from '../src/deploy/provision.js'
 import { parseProvisionArgs } from '../scripts/hosted/provision.js'
+import { connectBox } from '../scripts/hosted/maps-token.js'
+import { connectRelayBox } from '../scripts/hosted/relay-box.js'
+import { CAN_RUN_BOX_SCRIPTS, fakeBox } from './box-script-fixture.js'
 
 const ROOT = resolve(__dirname, '..')
 const templates = {
@@ -172,6 +175,67 @@ describe('provision', () => {
     const r = await provision(spec(), w2.deps)
     expect(r.link).toContain('/setup?token=')
     expect(w2.log.some((l) => l.includes('npm run maps-token -- issue havn-leif 45.77.1.2'))).toBe(true)
+  })
+
+  it('registers the box with the sign-in relay after install, before web setup, and a relay failure does not stop provisioning (card #216)', async () => {
+    const w = world()
+    const order: string[] = []
+    w.deps.connectMaps = async () => void order.push('maps')
+    w.deps.connectRelay = async (box, host, address) => void order.push(`relay ${box}@${host} ${address}`)
+    const ssh = w.deps.ssh
+    w.deps.ssh = async (host, command, user) => {
+      if (command.includes('enable-setup.js')) order.push('enable-setup')
+      return ssh(host, command, user)
+    }
+    await provision(spec(), w.deps)
+    expect(order).toEqual(['maps', 'relay havn-leif@45.77.1.2 leif.gethavn.ai', 'enable-setup'])
+    expect(w.log.some((l) => l.startsWith('Sign-in relay: havn-leif is registered'))).toBe(true)
+
+    const w2 = world()
+    w2.deps.connectRelay = async () => { throw new Error('The sign-in relay refused (401)') }
+    const r = await provision(spec(), w2.deps)
+    expect(r.link).toContain('/setup?token=')
+    expect(w2.log.some((l) => l.includes('npm run relay-box -- register havn-leif 45.77.1.2 leif.gethavn.ai'))).toBe(true)
+
+    const w3 = world()
+    await provision(spec(), w3.deps)
+    expect(w3.log).toContain('Sign-in relay: HAVN_CONNECT_ADMIN_TOKEN not set, so /connect is off on this box for now.')
+  })
+
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('the real maps and relay scripts leave no .env, so enable-setup still turns web setup on (cards #301, #216)', async () => {
+    const box = fakeBox()
+    try {
+      const w = world()
+      const ssh = w.deps.ssh
+      // enable-setup refuses a box with a .env, as the real one does.
+      w.deps.ssh = async (host, command, user) =>
+        command.includes('enable-setup.js') && box.env() !== null
+          ? { code: 1, stdout: '', stderr: 'This box is already set up (.env exists).' }
+          : ssh(host, command, user)
+      const runOnBox = async (_host: string, script: string) => box.run(script)
+      const okFetch = (answer: unknown) => (async () => new Response(JSON.stringify(answer), { status: 200 })) as unknown as typeof fetch
+      w.deps.connectMaps = (b, host) =>
+        connectBox({ url: 'https://maps.example', adminToken: 'm', fetch: okFetch({ token: 'maps-tok' }) }, b, host, runOnBox)
+      w.deps.connectRelay = async (b, host, address) =>
+        void (await connectRelayBox(
+          { url: 'https://connect.example', adminToken: 'r', fetch: okFetch({ box: b, origin: `https://${address}`, label: 'L', handoffKey: 'h'.repeat(43) }) },
+          b, host, address, 'L', runOnBox,
+        ))
+      const r = await provision(spec(), w.deps)
+      expect(r.link).toContain('/setup?token=')
+      expect(box.env()).toBeNull()
+      expect(Object.keys(box.vault()).sort()).toEqual(['CONNECT_BOX_ID', 'CONNECT_HANDOFF_KEY', 'CONNECT_RELAY_URL', 'MAPS_PROXY_TOKEN', 'MAPS_PROXY_URL'])
+    } finally {
+      box.cleanup()
+    }
+  })
+
+  it('takes --label for the sign-in page and refuses one the relay would refuse', () => {
+    const base = ['--client', 'leif', '--country', 'us', '--ssh-key', KEY]
+    expect(parseProvisionArgs([...base, '--name', 'Leif']).label).toBe('Havn assistant for Leif')
+    expect(parseProvisionArgs(base).label).toBe('Havn assistant (leif)')
+    expect(parseProvisionArgs([...base, '--label', "Leif's assistant"]).label).toBe("Leif's assistant")
+    expect(() => parseProvisionArgs([...base, '--label', 'A & B'])).toThrow(/--label/)
   })
 
   it('puts Canadian clients in Toronto', async () => {

@@ -17,6 +17,7 @@ import { recordMapsSpend, readAiUsage, AI_USAGE_FILE } from '../src/ai-usage.js'
 import { MANAGED_AI_FILE } from '../src/ai-limit.js'
 import { logger } from '../src/logger.js'
 import { connectScript } from '../scripts/hosted/maps-token.js'
+import { CAN_RUN_BOX_SCRIPTS, fakeBox } from './box-script-fixture.js'
 
 const ADMIN = 'admin-secret-token'
 const HOME = '12 Private Lane, Oakville ON'
@@ -347,11 +348,34 @@ describe('maps spend counts toward the monthly allowance', () => {
 })
 
 describe('provisioning a box token', () => {
-  it('writes the token to the vault over stdin and only the URL to .env', () => {
+  it('passes the token on stdin, never in the script text', () => {
     const s = connectScript('https://havn-maps.example.workers.dev', 'havn-leif.secretvalue')
     expect(s).not.toContain('secretvalue')
     expect(s).toContain('vault-cli.js set MAPS_PROXY_TOKEN')
-    expect(s).toContain("printf 'MAPS_PROXY_URL=%s\\n'")
-    expect(s).not.toMatch(/MAPS_PROXY_TOKEN=%s/)
+  })
+
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('puts the token and URL in the vault and never creates .env, so web setup still runs (card #301)', () => {
+    const box = fakeBox()
+    try {
+      const r = box.run(connectScript('https://havn-maps.example.workers.dev', 'havn-leif.secretvalue', box.dir))
+      expect(r.code, r.stderr).toBe(0)
+      expect(box.vault()).toEqual({ MAPS_PROXY_TOKEN: 'havn-leif.secretvalue', MAPS_PROXY_URL: 'https://havn-maps.example.workers.dev' })
+      expect(box.env()).toBeNull()
+    } finally {
+      box.cleanup()
+    }
+  })
+
+  it.skipIf(!CAN_RUN_BOX_SCRIPTS)('on a box set up before #301, drops the old .env URL line and keeps everything else', () => {
+    const box = fakeBox()
+    try {
+      writeFileSync(join(box.dir, '.env'), 'BOT_TOKEN=abc\nMAPS_PROXY_URL=https://old.example\nTZ=America/Toronto\n')
+      const r = box.run(connectScript('https://havn-maps.example.workers.dev', 'tok', box.dir))
+      expect(r.code, r.stderr).toBe(0)
+      expect(box.env()).toBe('BOT_TOKEN=abc\nTZ=America/Toronto\n')
+      expect(box.vault().MAPS_PROXY_URL).toBe('https://havn-maps.example.workers.dev')
+    } finally {
+      box.cleanup()
+    }
   })
 })
