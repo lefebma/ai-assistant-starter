@@ -9,6 +9,7 @@
  *
  * One entry per account, so a second mailbox cannot overwrite the first.
  */
+import { registerRotatingSecret } from '../log-redact.js'
 import { defaultVault } from '../vault/index.js'
 import type { MsTokens } from './auth.js'
 
@@ -51,6 +52,9 @@ export function loadTokens(account: string, vault: TokenVault = defaultVault()):
     const parsed = JSON.parse(raw) as Partial<MsTokens>
     if (typeof parsed.refreshToken !== 'string' || typeof parsed.accessToken !== 'string') return null
     if (typeof parsed.expiresAt !== 'number') return null
+    // A token saved before this process started is scrubbed from logs too (card #269).
+    registerRotatingSecret(`outlook:${account}:access`, parsed.accessToken)
+    registerRotatingSecret(`outlook:${account}:refresh`, parsed.refreshToken)
     return { accessToken: parsed.accessToken, refreshToken: parsed.refreshToken, expiresAt: parsed.expiresAt }
   } catch {
     return null

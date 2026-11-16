@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.82.1 - 2026-11-16
+
+- **Fixed: Gmail and Outlook sign-in tokens are kept out of the logs too.** Your assistant scrubs secrets from its logs, but it learned the values to look for only when it started. A Gmail or Outlook connection made with `/connect` gets a new token every hour, and those new tokens were not on the list. Each one is now added as it arrives, along with the tokens saved from before a restart, and Google's token formats are recognised on sight. A scan of a test assistant's logs found no tokens had been written (card #269).
+
 ## 1.82.0 - 2026-11-16
 
 - **Improved: make the files panel in the web app wider or narrower.** Drag its left edge, or focus the edge and use the arrow keys. Long file names and deep folders are easier to read. The width is kept in that browser, and a double-click on the edge puts it back. On a phone, where the panel slides in, nothing changes (card #253).

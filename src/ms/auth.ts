@@ -25,6 +25,7 @@
  * code grant for one is not supposed to have a secret. Nothing to store, and
  * nothing to leak.
  */
+import { registerRotatingSecret } from '../log-redact.js'
 
 const LOGIN_HOST = 'https://login.microsoftonline.com'
 
@@ -76,11 +77,16 @@ export function resolveMsConfig(env: Record<string, string | undefined>): MsConf
 
 /** Absolute expiry, plus the old refresh token when the response carried none. */
 export function stampExpiry(raw: RawToken, nowSecs: number, previousRefresh = ''): MsTokens {
-  return {
+  const tokens = {
     accessToken: raw.access_token ?? '',
     refreshToken: raw.refresh_token ?? previousRefresh,
     expiresAt: nowSecs + (raw.expires_in ?? 0),
   }
+  // Every new Microsoft token passes through here: tell the logger, which only
+  // read the environment at start-up (card #269).
+  registerRotatingSecret('outlook:access', tokens.accessToken)
+  registerRotatingSecret('outlook:refresh', tokens.refreshToken)
+  return tokens
 }
 
 export function needsRefresh(tokens: MsTokens | null, nowSecs: number): boolean {

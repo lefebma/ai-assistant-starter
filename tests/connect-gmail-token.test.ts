@@ -9,6 +9,7 @@ import { createRelay, GrantRevokedError, seal, unseal, signHandoff, type RelayPr
 import { MemoryUsedStore } from '../src/connect/state.js'
 import type { ConnectTokenVault } from '../src/connect/box.js'
 import { discoverCalendars } from '../src/proactive/calendar.js'
+import { createScrubber, REDACTED } from '../src/log-redact.js'
 
 const HKEY = 'box-handoff-key-for-tests-0123456789abcdef'
 const SECRET = 'relay-signing-secret-for-tests-0123456789'
@@ -96,6 +97,18 @@ describe('GmailTokenKeeper', () => {
     expect(await s.heldToken()).toBe('RT-1')
     expect(JSON.stringify(s.logs)).not.toContain('RT-1')
     expect(JSON.stringify(s.logs)).not.toContain('AT-1')
+  })
+
+  it('tells the logger each renewed token, so a log line holding it is scrubbed (card #269)', async () => {
+    let n = 0
+    const s = setup({ refresh: async () => ({ accessToken: `opaque-relay-access-${++n}-0123456789`, expiresAt: s.now() + HOUR }) })
+    const scrub = createScrubber([])
+    await s.connect(HOUR)
+    s.advance(HOUR - RENEW_BEFORE_MS + 1)
+    expect(await s.keeper.tick()).toBe('renewed')
+    const token = s.env.GOG_ACCESS_TOKEN as string
+    expect(token).toBe('opaque-relay-access-1-0123456789')
+    expect(scrub.string(`gog --access-token ${token}`)).toBe(`gog --access-token ${REDACTED}`)
   })
 
   it('stores a rotated refresh token', async () => {
