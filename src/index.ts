@@ -17,7 +17,7 @@ import { getSecret } from './vault/index.js'
 import { sendTextWithFiles } from './outbound-delivery.js'
 import { initWorkspaceService, stopWorkspaceService, defaultSyncOne } from './workspace/service.js'
 import { initUpdateNotice, stopUpdateNotice } from './update/notice-service.js'
-import { checkForUpdate, getChangelog, getCurrentVersion, restartPending } from './updater.js'
+import { checkForUpdate, getChangelog, getCurrentVersion, restartPending, syncReplyConventions } from './updater.js'
 import { startHttpServer, stopHttpServer } from './http-server.js'
 import { pruneVoiceTranscripts } from './voice-history.js'
 import { stopChrome, isCdpAvailable } from './browser.js'
@@ -118,6 +118,9 @@ async function main(): Promise<void> {
 
   // Initialize database
   initDatabase()
+  // Sections a newer version teaches CLAUDE.md (the updater that applied it
+  // was the old one). Append-only and idempotent; a failure is logged and ignored.
+  syncReplyConventions()
   logger.info('Database initialized')
 
   // Managed box on a key that is not the provider's (card #160): the client

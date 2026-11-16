@@ -61,11 +61,15 @@ function syncPlaywrightMcp(): void {
 /**
  * Teach an existing install the [[file:]] convention and the /request hint.
  *
+ * Also run at startup (src/index.ts): an update is applied by the updater of
+ * the version being replaced, which does not know a section added by the new
+ * one, so without the startup call the new section arrives one update late.
+ *
  * CLAUDE.md is in PRESERVED_PATHS, so the template's copy of this section
  * only ever reaches a fresh install. Without this, sending a file works on
  * every box and the assistant on an older one has no idea it can.
  */
-function syncReplyConventions(): void {
+export function syncReplyConventions(): void {
   try {
     const path = resolve(PROJECT_ROOT, 'CLAUDE.md')
     if (!existsSync(path)) return

@@ -189,6 +189,7 @@ const requestCardIds = new Map<string, string>()
 
 /** Sends a /request step, with its buttons where the platform has them. */
 async function sendRequestReply(adapter: PlatformAdapter, chatId: string, r: RequestReply): Promise<void> {
+  if (!r.text) return
   if (r.buttons && adapter.supportsButtons) requestCardIds.set(chatId, await adapter.sendMessage(chatId, r.text, { buttons: r.buttons }))
   else if (r.buttons) await adapter.sendMessage(chatId, `${r.text}\n\nReply ${r.buttons.slice(0, -1).join(', ')} or ${r.buttons.at(-1)}.`)
   else await adapter.sendMessage(chatId, r.text)
@@ -1070,7 +1071,7 @@ export function webSecretAwaited(chatId: string): boolean {
  * must not wait (card #250).
  */
 export function webSupportAwaited(chatId: string, text: string): boolean {
-  return supportAnswer(chatId, text.trim()) || requestFlow.owns(chatId, text)
+  return supportAnswer(chatId, text.trim()) || requestFlow.owns(chatId, text, false)
 }
 
 /** The web card a feature request draft was sent on (card #240), like webSupportCards. */
@@ -2043,8 +2044,8 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     }
     // The same for /request (card #240): a typed Send/Edit/Cancel, or the
     // request a bare /request (or Edit) is waiting for.
-    if (requestFlow.owns(chatId, trimmed)) {
-      const r = requestFlow.hasDraft(chatId) && /^(send|edit|cancel)$/i.test(trimmed)
+    if (requestFlow.owns(chatId, trimmed, !adapter.supportsButtons)) {
+      const r = !adapter.supportsButtons && requestFlow.hasDraft(chatId) && /^(send|edit|cancel)$/i.test(trimmed)
         ? await requestFlow.resolve(chatId, trimmed)
         : await requestFlow.answer(chatId, trimmed)
       if (r) {
@@ -2446,14 +2447,18 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         if (msg.messageId && (await answerTipClick(adapter, chatId, `${chatId}:${msg.messageId}`, label))) return
         if (await resolveModelClick(adapter, chatId, label)) return
         if (await resolveEffortClick(adapter, chatId, label)) return
-        if (await resolveSupportAction(adapter, chatId, label)) return
+        // A click on the request draft's own card answers the request and
+        // nothing else: it must never fall through to a support draft.
         if (msg.messageId && requestCardIds.get(chatId) === msg.messageId) {
           const requestReply = await requestFlow.resolve(chatId, label)
           if (requestReply) {
             requestCardIds.delete(chatId)
             return sendRequestReply(adapter, chatId, requestReply)
           }
+          await adapter.sendMessage(chatId, 'That request is no longer open. Send /request to start a new one.')
+          return
         }
+        if (await resolveSupportAction(adapter, chatId, label)) return
         await handleMessage(adapter, chatId, `[button_click]: ${label}`)
       }
       await (msg.messageId ? withRun(cardRunKey(chatId, msg.messageId), answer) : answer())

@@ -150,8 +150,8 @@ describe('RequestFlow', () => {
     const flow = new RequestFlow(deps())
     const ask = await flow.command('c1', '/request')
     expect(ask.text).toContain('What would you like your assistant to do')
-    expect(flow.owns('c1', 'a mileage log')).toBe(true)
-    expect(flow.owns('c1', '/help')).toBe(false)
+    expect(flow.owns('c1', 'a mileage log', false)).toBe(true)
+    expect(flow.owns('c1', '/help', false)).toBe(false)
     const r = await flow.answer('c1', 'a mileage log')
     expect(r.buttons).toEqual(REQUEST_BUTTONS)
     expect(flow.isAwaiting('c1')).toBe(false)
@@ -196,8 +196,44 @@ describe('RequestFlow', () => {
     const flow = new RequestFlow(deps())
     await flow.command('c1', '/request a mileage log')
     expect(await flow.resolve('c1', 'Discard')).toBeNull()
-    expect(flow.owns('c1', 'what time is it')).toBe(false)
+    expect(flow.owns('c1', 'what time is it', true)).toBe(false)
     expect(flow.hasDraft('c1')).toBe(true)
+  })
+
+  it('takes a typed Send only where the platform has no buttons', async () => {
+    const flow = new RequestFlow(deps())
+    await flow.command('c1', '/request a mileage log')
+    // A "Send" typed in a chat with buttons is for something else.
+    expect(flow.owns('c1', 'Send', false)).toBe(false)
+    expect(flow.owns('c1', 'Send', true)).toBe(true)
+  })
+
+  it('drops a draft whose tidy finished after the chat moved on', async () => {
+    let release!: (s: string) => void
+    tidy = () => new Promise((r) => { release = r })
+    const flow = new RequestFlow(deps())
+    const pending = flow.command('c1', '/request a mileage log')
+    await new Promise((r) => setImmediate(r))
+    flow.clear('c1') // /support or /newchat arrived meanwhile
+    release(TIDIED)
+    expect((await pending).text).toBe('')
+    expect(flow.hasDraft('c1')).toBe(false)
+  })
+
+  it('counts a send before it goes out, so racing Sends cannot pass the limit', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const d = deps()
+    const flow = new RequestFlow({ ...d, send: async (draft) => { sent.push(draft); await gate; return sendResult } })
+    for (let i = 0; i < MAX_REQUESTS_PER_DAY - 1; i++) recordRequest(d.logFile, `REQ-OLD${i}`)
+    await flow.command('a', '/request one')
+    await flow.command('b', '/request two')
+    const first = flow.resolve('a', 'Send')
+    const second = flow.resolve('b', 'Send')
+    release()
+    const replies = [await first, await second].map((r) => r!.text)
+    expect(sent).toHaveLength(1)
+    expect(replies.filter((t) => t.includes('limit'))).toHaveLength(1)
   })
 
   it('keeps chats apart', async () => {
