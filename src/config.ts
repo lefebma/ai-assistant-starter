@@ -182,6 +182,10 @@ export const VOICE_TRANSCRIPT_DAYS = Math.max(0, parseInt(env['VOICE_TRANSCRIPT_
 // Non-secret, so plain .env like other addresses.
 export const SUPPORT_EMAIL = env['SUPPORT_EMAIL']?.trim() || 'support@els-partners.com'
 
+// Feature requests (/request, card #240). Defaults to the support inbox; the
+// subject ("Feature request REQ-...") keeps them apart from support requests.
+export const REQUEST_EMAIL = env['REQUEST_EMAIL']?.trim() || SUPPORT_EMAIL
+
 // Limits
 export const MAX_MESSAGE_LENGTH = 4096
 export const TYPING_REFRESH_MS = 4000

@@ -843,6 +843,20 @@ sent through your connected Gmail account via `gog`. If no email account is
 connected, the request is saved under `support-requests/` in the install folder so
 you can send it manually.
 
+### Ask for a feature
+
+Send `/request <what you would like your assistant to do>`, or a bare `/request`
+and describe it when asked. The assistant tidies your words into three short
+lines (what, why, how often) and shows them with Send, Edit and Cancel. Edit
+lets you write it yourself; what you send then goes as written. Nothing is sent
+until you press Send, and you get a reference such as `REQ-7K3F`.
+
+Only the request, your name, the assistant's name and its version are sent: no
+logs, no skills list, no messages. It goes to `REQUEST_EMAIL` in `.env`, which
+defaults to `SUPPORT_EMAIL`, through your connected Gmail like a support request,
+with a subject starting "Feature request". If it cannot be emailed it is saved
+under `feature-requests/` in the install folder. A box sends at most five a day.
+
 ## What's Next
 
 - Add more skills as your workflow evolves

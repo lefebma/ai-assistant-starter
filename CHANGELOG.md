@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.80.0 - 2026-11-16
+
+- **New: ask for a feature from the chat with `/request`.** Write `/request` and what you would like your assistant to do, or just `/request` and it asks. It tidies your words into three short lines (what, why, how often) and shows them to you with Send, Edit and Cancel. Nothing goes until you press Send. The request goes by email with only your name, your assistant's name and its version, and you get a reference such as `REQ-7K3F` to mention later. If no email account can send it, it is saved on your assistant so nothing is lost. A box sends at most five a day. When you ask for something it cannot do, your assistant now offers `/request` (an update adds that to `CLAUDE.md`, once, unless it already mentions `/request`). Requests go to `REQUEST_EMAIL`, which defaults to the support inbox with a subject starting "Feature request" (card #240).
+
 ## 1.79.4 - 2026-11-15
 
 - **Fixed: the `/connect gmail` and `/connect outlook` link no longer says to open it on your phone.** It works the same in a desktop browser, so the reply now says any device.

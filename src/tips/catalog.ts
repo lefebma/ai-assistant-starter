@@ -253,6 +253,13 @@ export const TIPS: Tip[] = [
     phrases: /\b(colou?rs?|palette)\b/i,
   },
   {
+    id: 'request',
+    since: '1.80.0',
+    text: 'Wish your assistant could do something it cannot? Ask for it from the chat, in your own words. You see it before anything is sent.',
+    tryIt: 'Send /request followed by what you would like it to do.',
+    commands: ['/request'],
+  },
+  {
     id: 'tips',
     since: '1.72.0',
     text: 'I now suggest things you have not tried yet, no more than a few a week. They come at a quiet moment and stop once you use the feature.',

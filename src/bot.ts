@@ -4,13 +4,13 @@
  * handles commands, streaming, memory, and inline buttons.
  */
 
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { writeFileSync, existsSync, readFileSync, copyFileSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD, ROLES_FILE } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, REQUEST_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD, ROLES_FILE } from './config.js'
 import { readGuardLog, formatGuardReport, guardLogPath, parseGuardMode } from './assurance/tool-guard.js'
 import { roleLogPath, formatRoleReport, type RoleLogEntry } from './assurance/scope-gate.js'
 import { getSession, setSession, clearSession, getMemoriesForChat, getSessionMeta, bumpSessionMessageCount } from './db.js'
@@ -27,7 +27,9 @@ import { privacyOnFor } from './privacy/index.js'
 import { isEffort, type Effort } from './models/effort-levels.js'
 import { decideAccess } from './access.js'
 import { runAgent, steerAgent, isChatBusy, markLane, clearLane } from './agent.js'
-import { resolveTurnRuntime } from './runtime/index.js'
+import { resolveTurnRuntime, getAgentRuntime } from './runtime/index.js'
+import { RequestFlow, REQUEST_BUTTONS, type RequestReply } from './request/flow.js'
+import { tidyPrompt, type RequestDraft } from './request/draft.js'
 import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
@@ -141,6 +143,43 @@ const contextEngine = createDefaultEngine()
 // /secret command state: captures pasted API keys straight into the vault,
 // bypassing the model entirely (see src/secrets/flow.ts).
 const secretFlow = new SecretFlow()
+
+// /request state: feature requests drafted, shown, and sent only on Send (card #240).
+const TIDY_TIMEOUT_MS = 45_000
+const requestFlow = new RequestFlow({
+  tidy: (raw) =>
+    Promise.race([
+      withActor('job:request', () => getAgentRuntime('cron').runOnce(tidyPrompt(raw))),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('tidy timed out')), TIDY_TIMEOUT_MS).unref()),
+    ]),
+  send: (draft) => sendSupportEmail(draft),
+  sender: () => {
+    const owner = loadSetupAnswers(PROJECT_ROOT)?.ownerName
+    return {
+      ownerName: typeof owner === 'string' ? owner.trim() : '',
+      boxName: PUBLIC_HOSTNAME || hostname(),
+      version: getBootVersion(),
+    }
+  },
+  to: () => REQUEST_EMAIL,
+  logFile: join(STORE_DIR, 'feature-requests.json'),
+  saveDir: join(PROJECT_ROOT, 'feature-requests'),
+  logError: (err, msg) => logger.warn({ err }, msg),
+})
+
+/**
+ * The message a chat's request draft went out on, so only a click on that card
+ * resolves it: Send on some other card (an email the assistant drafted) must
+ * never send the feature request.
+ */
+const requestCardIds = new Map<string, string>()
+
+/** Sends a /request step, with its buttons where the platform has them. */
+async function sendRequestReply(adapter: PlatformAdapter, chatId: string, r: RequestReply): Promise<void> {
+  if (r.buttons && adapter.supportsButtons) requestCardIds.set(chatId, await adapter.sendMessage(chatId, r.text, { buttons: r.buttons }))
+  else if (r.buttons) await adapter.sendMessage(chatId, `${r.text}\n\nReply ${r.buttons.slice(0, -1).join(', ')} or ${r.buttons.at(-1)}.`)
+  else await adapter.sendMessage(chatId, r.text)
+}
 
 function isPrimaryChat(chatId: string): boolean {
   return !!PRIMARY_CHAT_ID && chatId === PRIMARY_CHAT_ID
@@ -1018,19 +1057,24 @@ export function webSecretAwaited(chatId: string): boolean {
  * must not wait (card #250).
  */
 export function webSupportAwaited(chatId: string, text: string): boolean {
-  return supportAnswer(chatId, text.trim())
+  return supportAnswer(chatId, text.trim()) || requestFlow.owns(chatId, text)
 }
+
+/** The web card a feature request draft was sent on (card #240), like webSupportCards. */
+const webRequestCards = new Map<string, { draft: RequestDraft; card: string }>()
 
 export async function runWebCommand(input: WebCommandInput): Promise<WebCommandResult> {
   const { chatId } = input
   const trimmed = input.text.trim()
   // Note which reply carries the support draft's buttons, if this command sends one.
   let draftCardId: string | null = null
+  let requestCardId: string | null = null
   const hooks: WebCommandHooks = {
     ...input.hooks,
     send: (text, buttons) => {
       const id = input.hooks.send(text, buttons)
       if (buttons.join('|') === SUPPORT_BUTTONS.join('|')) draftCardId = id
+      if (buttons.join('|') === REQUEST_BUTTONS.join('|')) requestCardId = id
       return id
     },
   }
@@ -1055,6 +1099,7 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
       contextEngine.invalidateCaches()
       pendingSupport.delete(chatId)
       awaitingSupportDescription.delete(chatId)
+      requestFlow.clear(chatId)
       await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
       return { handled: true, clearSession: true }
     }
@@ -1115,6 +1160,16 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
         webSupportCards.delete(chatId)
         return { handled: true, clearSession: false }
       }
+      const request = requestFlow.draftFor(chatId)
+      const requestCard = webRequestCards.get(chatId)
+      if (request && requestCard?.draft === request && requestCard.card === `${input.conversationId}:${input.clickedMessageId}`) {
+        const r = await requestFlow.resolve(chatId, click[1]!)
+        if (r) {
+          webRequestCards.delete(chatId)
+          await sendRequestReply(adapter, chatId, r)
+          return { handled: true, clearSession: false }
+        }
+      }
       return { handled: false, clearSession: false }
     }
     const handled = await routeText(adapter, {
@@ -1127,6 +1182,8 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
     }, { fromQueue: input.fromQueue })
     const draft = pendingSupport.get(chatId)
     if (draft && draftCardId) webSupportCards.set(chatId, { draft, card: `${input.conversationId}:${draftCardId}` })
+    const request = requestFlow.draftFor(chatId)
+    if (request && requestCardId) webRequestCards.set(chatId, { draft: request, card: `${input.conversationId}:${requestCardId}` })
     await Promise.all(turns)
     return { handled, clearSession: false }
   } finally {
@@ -1971,6 +2028,17 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
       await draftSupportRequest(adapter, chatId, trimmed)
       return true
     }
+    // The same for /request (card #240): a typed Send/Edit/Cancel, or the
+    // request a bare /request (or Edit) is waiting for.
+    if (requestFlow.owns(chatId, trimmed)) {
+      const r = requestFlow.hasDraft(chatId) && /^(send|edit|cancel)$/i.test(trimmed)
+        ? await requestFlow.resolve(chatId, trimmed)
+        : await requestFlow.answer(chatId, trimmed)
+      if (r) {
+        await sendRequestReply(adapter, chatId, r)
+        return true
+      }
+    }
   }
 
   // Command routing. The log line is the only trace a command leaves at
@@ -1993,6 +2061,7 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     contextEngine.invalidateCaches()
     pendingSupport.delete(chatId)
     awaitingSupportDescription.delete(chatId)
+    requestFlow.clear(chatId)
     await adapter.sendMessage(chatId, 'Session cleared. Starting fresh.')
     return true
   }
@@ -2196,7 +2265,15 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     return true
   }
   if (cmd === '/support') {
+    requestFlow.clear(chatId)
     await handleSupportCommand(adapter, chatId, trimmed)
+    return true
+  }
+  if (cmd === '/request') {
+    // One draft per chat: a request replaces a support draft in progress.
+    pendingSupport.delete(chatId)
+    awaitingSupportDescription.delete(chatId)
+    await sendRequestReply(adapter, chatId, await requestFlow.command(chatId, trimmed))
     return true
   }
   if (cmd === '/version') {
@@ -2252,6 +2329,7 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'workspace', description: 'Shared workspaces (primary only)' },
   { command: 'audit', description: 'Review how you have been using the assistant' },
   { command: 'support', description: 'Draft and send a support request' },
+  { command: 'request', description: 'Ask for a feature your assistant does not have' },
   { command: 'update', description: 'Check for and apply updates' },
   { command: 'version', description: 'Show current version' },
   { command: 'chatid', description: 'Show your chat ID' },
@@ -2356,6 +2434,13 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         if (await resolveModelClick(adapter, chatId, label)) return
         if (await resolveEffortClick(adapter, chatId, label)) return
         if (await resolveSupportAction(adapter, chatId, label)) return
+        if (msg.messageId && requestCardIds.get(chatId) === msg.messageId) {
+          const requestReply = await requestFlow.resolve(chatId, label)
+          if (requestReply) {
+            requestCardIds.delete(chatId)
+            return sendRequestReply(adapter, chatId, requestReply)
+          }
+        }
         await handleMessage(adapter, chatId, `[button_click]: ${label}`)
       }
       await (msg.messageId ? withRun(cardRunKey(chatId, msg.messageId), answer) : answer())

@@ -272,6 +272,27 @@ describe('web chat commands', () => {
     expect(replies(done).map((m) => m.content)).toEqual(['Support request discarded. Nothing was sent.'])
   })
 
+  it('runs the /request flow: ask, draft card, and a click on that card only', async () => {
+    const r = useRuntime()
+    const id = await newConv()
+    const ask = await chat(id, '/request')
+    expect(replies(ask)[0].content).toContain('What would you like your assistant to do')
+    const draft = await chat(id, 'a weekly mileage log')
+    const card = replies(draft)[0]
+    // The fake runtime's tidy answer has no What line, so the words go as written.
+    expect(card.content).toContain('What: a weekly mileage log')
+    expect(card.buttons).toEqual(['Send', 'Edit', 'Cancel'])
+    // Send on another card goes to the agent, not to the request.
+    r.result = { text: 'Ready to email Gus? [[buttons: Send | Cancel]]', newSessionId: 's' }
+    const other = await newConv()
+    await chat(other, 'draft a note to Gus')
+    const calls = r.calls.length
+    await chat(other, '[button_click]: Send')
+    expect(r.calls).toHaveLength(calls + 1)
+    const done = await chat(id, '[button_click]: Cancel')
+    expect(replies(done).map((m) => m.content)).toEqual(['Cancelled. Nothing was sent.'])
+  })
+
   it('serves the command menu Telegram shows', async () => {
     const res = await fetch(`${base()}/api/web/commands`, { headers: H() })
     expect(res.status).toBe(200)

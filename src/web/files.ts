@@ -33,6 +33,7 @@ export const HIDDEN_DIRS = new Set([
   // and a shared workspace clone holds its git deploy key.
   'logs',
   'support-requests',
+  'feature-requests',
   'certification',
   'workspaces',
   'dist-installer',
