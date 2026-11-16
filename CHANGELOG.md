@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.82.0 - 2026-11-16
+
+- **Improved: make the files panel in the web app wider or narrower.** Drag its left edge, or focus the edge and use the arrow keys. Long file names and deep folders are easier to read. The width is kept in that browser, and a double-click on the edge puts it back. On a phone, where the panel slides in, nothing changes (card #253).
+
 ## 1.81.1 - 2026-11-16
 
 - **Fixed: a `/request` now says who it is from.** On assistants set up before the first-chat profile, the request said "your name (not set)" and gave the assistant's web address as its name. It now finds both names where setup wrote them, so it reads "your name (Marc), this assistant's name (Nami), its address (...)". The email shows the assistant as "Nami (address)" (card #240).

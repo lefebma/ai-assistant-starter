@@ -30,6 +30,9 @@ many. You can also sign out from **Settings** in the page.
   Priorities section of your `PROFILE.md`, the same list your briefing reads.
 - **Files.** A panel on the right shows the files in your assistant's folder.
   You can preview text, images and PDFs, and upload files for your assistant.
+  Drag the panel's left edge to make it wider or narrower (or focus the edge
+  and use the arrow keys); double-click the edge to reset it. The width is
+  remembered in that browser.
 - **Pictures, files and pasted text in a message.** Paste a screenshot or an
   image into the chat box, drop files on the chat, or use the paperclip. They
   wait above the box until you send, and you can remove any of them. Pasted
