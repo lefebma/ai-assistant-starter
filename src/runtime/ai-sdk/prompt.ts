@@ -68,7 +68,7 @@ export function buildSystemPrompt(projectRoot: string): string {
   // date-shaped: "today", scheduling, "is this email recent".
   const tz = installTimezone()
   const now = new Date()
-  const dateStr = now.toLocaleString('en-CA', { timeZone: tz, hour12: false })
+  const dateStr = now.toLocaleString('en-US', { timeZone: tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })
   parts.push(
     '# Environment\n\n'
       + `- Working directory: ${projectRoot}\n`

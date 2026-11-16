@@ -81,7 +81,7 @@ describe('agent facade delegation', () => {
     const result = await runAgent('hello', 'sess-0', onTyping, onPartial, onToolProgress)
 
     expect(fake.runCalls).toHaveLength(1)
-    expect(fake.runCalls[0].message).toBe('hello')
+    expect(fake.runCalls[0].message).toMatch(/^\[Now: .*\]\n\nhello$/)
     expect(fake.runCalls[0].sessionId).toBe('sess-0')
     expect(fake.runCalls[0].onTyping).toBe(onTyping)
     expect(fake.runCalls[0].onPartial).toBe(onPartial)
@@ -95,7 +95,7 @@ describe('agent facade delegation', () => {
 
     const result = await runAgent('just a message')
 
-    expect(fake.runCalls[0].message).toBe('just a message')
+    expect(fake.runCalls[0].message).toMatch(/^\[Now: .*\]\n\njust a message$/)
     expect(fake.runCalls[0].sessionId).toBeUndefined()
     expect(fake.runCalls[0].onTyping).toBeUndefined()
     expect(result.text).toBe('fake reply')

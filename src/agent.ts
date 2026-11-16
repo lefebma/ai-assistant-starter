@@ -17,6 +17,7 @@ import { withRunOrNew } from './assurance/effect-journal.js'
 import { withEgress } from './egress/index.js'
 import { withTurn } from './memory/turn-context.js'
 import { privacyOnFor, withPrivacy } from './privacy/index.js'
+import { clockLine } from './clock.js'
 
 /**
  * Lane-based concurrency tracking (OpenClaw v2026.5.19 -- cron wake-lane isolation).
@@ -96,6 +97,8 @@ export async function runAgent(
   // run with no chat is private whenever any chat is.
   // The turn context notes what its tools read (memory provenance) and which
   // chat it is for (pinned decisions in subagent briefs), card #235.
+  // Every run is told the weekday in the install's zone (see clock.ts).
+  message = `${clockLine()}\n\n${message}`
   const { result, reads } = await withTurn(opts?.scope ?? opts?.chatId, () => withPrivacy(privacyOnFor(opts?.chatId), () => withRunOrNew('turn', () => withEgress({ roleId: scope?.role }, () => getAgentRuntime(lane, turn.id).run({
     message,
     sessionId: resumeId,

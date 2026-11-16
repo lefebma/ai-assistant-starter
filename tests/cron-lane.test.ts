@@ -30,3 +30,12 @@ describe('runAgent lane routing', () => {
     expect(getRuntimeSpy).toHaveBeenCalledWith('cron', 'cron-runtime')
   })
 })
+
+describe('runAgent clock', () => {
+  it('starts every run with the weekday and date in the install zone', async () => {
+    await runAgent('what day is it?')
+    const sent = (runSpy.mock.calls[0] as unknown as [{ message: string }])[0].message
+    expect(sent).toMatch(/^\[Now: (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), /)
+    expect(sent.endsWith('what day is it?')).toBe(true)
+  })
+})
