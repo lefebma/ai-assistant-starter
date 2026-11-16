@@ -20,8 +20,16 @@ export interface RequestDraft {
 
 export interface RequestSender {
   ownerName: string
+  /** The name the owner calls the assistant, e.g. Nami. Empty when none is set. */
+  assistantName: string
+  /** The box's address, so a request can be traced to the install that sent it. */
   boxName: string
   version: string
+}
+
+/** "Nami (nami.gethavn.ai)", or just the address when the assistant has no name. */
+function assistantLabel(sender: RequestSender): string {
+  return sender.assistantName ? `${sender.assistantName} (${sender.boxName})` : sender.boxName
 }
 
 /** Longest request we accept. A wish list longer than this belongs in an email. */
@@ -92,21 +100,29 @@ export function buildRequestDraft(summary: string, sender: RequestSender, to: st
       '',
       '--- Sent with it ---',
       `Customer: ${sender.ownerName || 'not set'}`,
-      `Assistant: ${sender.boxName}`,
+      `Assistant: ${assistantLabel(sender)}`,
       `Version: ${sender.version}`,
       '',
     ].join('\n'),
   }
 }
 
-/** What the customer sees before anything is sent. */
+/**
+ * What the customer sees before anything is sent. Every part is its own
+ * paragraph and the request lines are a list: Teams renders replies as
+ * Markdown, where a single line break collapses and the lines run together.
+ */
 export function formatRequestPreview(draft: RequestDraft, sender: RequestSender): string {
+  const lines = draft.summary
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => `- ${l}`)
+  const name = sender.assistantName ? `this assistant's name (${sender.assistantName}), its address (${sender.boxName})` : `this assistant's address (${sender.boxName})`
   return [
     'Your request:',
-    '',
-    draft.summary.trim(),
-    '',
-    `Sent with it: your name (${sender.ownerName || 'not set'}), this assistant's name (${sender.boxName}) and its version (${sender.version}). Nothing else.`,
+    lines.join('\n'),
+    `Sent with it: your name (${sender.ownerName || 'not set'}), ${name} and its version (${sender.version}). Nothing else.`,
     'Nothing has been sent yet.',
-  ].join('\n')
+  ].join('\n\n')
 }

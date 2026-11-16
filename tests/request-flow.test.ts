@@ -19,7 +19,7 @@ import { MAX_REQUESTS_PER_DAY, recordRequest, requestsInLastDay } from '../src/r
 import { RequestFlow, REQUEST_BUTTONS, type RequestFlowDeps } from '../src/request/flow.js'
 import { ensureRequestSection } from '../src/update/conventions.js'
 
-const SENDER = { ownerName: 'Sam', boxName: 'sam.gethavn.ai', version: '1.80.0' }
+const SENDER = { ownerName: 'Sam', assistantName: 'Avery', boxName: 'sam.gethavn.ai', version: '1.80.0' }
 const TIDIED = 'What: Track my mileage from calendar trips\nWhy: For my tax claim\nHow often: Weekly'
 
 describe('request draft', () => {
@@ -55,7 +55,7 @@ describe('request draft', () => {
     expect(d.subject).toBe('Feature request REQ-ABCD: Track my mileage from calendar trips')
     expect(d.body).toContain(TIDIED)
     expect(d.body).toContain('Customer: Sam')
-    expect(d.body).toContain('Assistant: sam.gethavn.ai')
+    expect(d.body).toContain('Assistant: Avery (sam.gethavn.ai)')
     expect(d.body).toContain('Version: 1.80.0')
     expect(d.body).not.toMatch(/Diagnostics|skills|log/i)
   })
@@ -69,9 +69,26 @@ describe('request draft', () => {
   it('shows the customer what goes with it before anything is sent', () => {
     const d = buildRequestDraft(TIDIED, SENDER, 'a@b.c', 'REQ-ABCD')
     const p = formatRequestPreview(d, SENDER)
-    expect(p).toContain(TIDIED)
     expect(p).toContain('your name (Sam)')
+    expect(p).toContain("this assistant's name (Avery), its address (sam.gethavn.ai)")
     expect(p).toContain('Nothing has been sent yet.')
+  })
+
+  it('lays the preview out so a Markdown surface (Teams) keeps every line apart', () => {
+    const d = buildRequestDraft(TIDIED, SENDER, 'a@b.c', 'REQ-ABCD')
+    const p = formatRequestPreview(d, SENDER)
+    // Each request line is a list item, and every part is its own paragraph:
+    // a single line break collapses in Markdown and ran them all together.
+    for (const line of TIDIED.split('\n')) expect(p).toContain(`- ${line}`)
+    expect(p).toMatch(/^Your request:\n\n- What:/)
+    expect(p).toMatch(/\n\nSent with it: [^\n]+\n\nNothing has been sent yet\.$/)
+  })
+
+  it('names only the address when the assistant has no name', () => {
+    const bare = { ...SENDER, assistantName: '' }
+    const d = buildRequestDraft(TIDIED, bare, 'a@b.c', 'REQ-ABCD')
+    expect(d.body).toContain('Assistant: sam.gethavn.ai\n')
+    expect(formatRequestPreview(d, bare)).toContain("this assistant's address (sam.gethavn.ai)")
   })
 })
 
@@ -133,7 +150,7 @@ describe('RequestFlow', () => {
     const flow = new RequestFlow(deps())
     const r = await flow.command('c1', '/request track my mileage for taxes, weekly')
     expect(tidyCalls).toEqual(['track my mileage for taxes, weekly'])
-    expect(r.text).toContain(TIDIED)
+    expect(r.text).toContain('- What: Track my mileage from calendar trips')
     expect(r.buttons).toEqual(REQUEST_BUTTONS)
     expect(sent).toHaveLength(0)
     const done = await flow.resolve('c1', 'Send')
