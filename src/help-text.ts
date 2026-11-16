@@ -60,6 +60,7 @@ export const HELP_GROUPS: Array<{ title: string; items: Array<[command: string, 
     title: 'Help and updates',
     items: [
       ['/support', 'Draft and send a support request (confirms before sending)'],
+      ['/request', 'Ask for a feature or capability your assistant does not have yet'],
       ['/update', 'Check for and apply updates (check/apply)'],
       ['/version', 'Show current version'],
       ['/chatid', 'Show your chat ID'],

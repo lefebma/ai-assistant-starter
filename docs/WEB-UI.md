@@ -78,6 +78,9 @@ order you sent them.
   Send, Edit or Discard on its draft, run straight away. A message that was
   already waiting is never taken as the description or as your answer to the
   draft; it goes to the assistant as an ordinary message.
+- **`/request`** behaves the same: the request it asks for, and a typed Send,
+  Edit or Cancel on its draft, run straight away. Its buttons answer only on
+  its own draft card.
 - **Reloading the page** loses nothing. The waiting messages are kept on the
   box, the page picks up the reply where it is, and a message is never sent
   twice. If you hit the AI limit, the waiting messages hold until you open

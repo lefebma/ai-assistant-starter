@@ -43,3 +43,27 @@ export function ensureFileMarkerSection(claudeMd: string): string | null {
   const trimmed = claudeMd.replace(/\s+$/, '')
   return `${trimmed}\n${FILE_MARKER_SECTION}`
 }
+
+/**
+ * The /request hint (card #240): when the owner asks for something the
+ * assistant cannot do, it offers /request instead of a dead end. Detected by
+ * the command itself, so an owner who wrote their own version is left alone.
+ */
+export const REQUEST_SECTION = `
+## Asking for a feature
+
+When the owner asks for something you cannot do (no skill, tool or connection
+covers it), say so plainly and offer \`/request\`: they describe what they
+want, see it before anything is sent, and it goes to the Havn team only when
+they tap Send. Offer it once for that ask, not on every reply, and never send
+a request for them.
+`
+
+/**
+ * @returns the file's new contents, or null when /request is already mentioned.
+ */
+export function ensureRequestSection(claudeMd: string): string | null {
+  if (claudeMd.includes('/request')) return null
+  const trimmed = claudeMd.replace(/\s+$/, '')
+  return `${trimmed}\n${REQUEST_SECTION}`
+}
