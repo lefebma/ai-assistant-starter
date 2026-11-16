@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createScrubber, secretValuesFromEnv, registerSecret, REDACTED } from '../src/log-redact.js'
+import { createScrubber, secretValuesFromEnv, registerSecret, registerRotatingSecret, clearRotatingSecrets, ROTATING_KEEP, REDACTED } from '../src/log-redact.js'
 
 const API_KEY = 'zk_live_51Habc123DEF456ghi789JKL'
 const PASSWORD = 'abcd-efgh-ijkl-mnop'
@@ -227,5 +227,49 @@ describe('secret-named keys also blank long numbers, and the fallback scrubs key
   it('scrubs a secret used as an object key past the walk limit', () => {
     const out = JSON.stringify(scrub.deep({ a: { b: { c: { d: { e: { f: { g: { h: { [API_KEY]: 1 } } } } } } } } }))
     expect(out).not.toContain(API_KEY)
+  })
+})
+
+describe('tokens that change while the box runs (card #269)', () => {
+  it('scrubs Google access and refresh tokens by shape', () => {
+    const s = createScrubber([])
+    const at = 'ya29.a0AfB_byC3' + 'x'.repeat(40)
+    const rt = '1//0gLq' + 'Y'.repeat(40)
+    const out = s.string(`gog failed with ${at} after refresh ${rt}`)
+    expect(out).not.toContain(at)
+    expect(out).not.toContain(rt)
+    expect(out).toContain(REDACTED)
+  })
+
+  it('leaves ordinary text that only looks a little like a token alone', () => {
+    const s = createScrubber([])
+    expect(s.string('ratio 1//2 and ya29 in a sentence')).toBe('ratio 1//2 and ya29 in a sentence')
+  })
+
+  it('scrubs a value registered after the scrubber was built', () => {
+    clearRotatingSecrets()
+    const s = createScrubber([])
+    const token = 'opaque-rotated-token-0001'
+    expect(s.string(`using ${token}`)).toContain(token)
+    registerRotatingSecret('gmail:me@gmail.com:access', token)
+    expect(s.string(`using ${token}`)).toBe(`using ${REDACTED}`)
+  })
+
+  it('keeps only the last few values of a group, so hourly tokens do not pile up', () => {
+    clearRotatingSecrets()
+    const s = createScrubber([])
+    const tokens = Array.from({ length: ROTATING_KEEP + 2 }, (_, i) => `opaque-hourly-token-${String(i).padStart(4, '0')}`)
+    for (const t of tokens) registerRotatingSecret('gmail:me@gmail.com:access', t)
+    expect(s.string(tokens[0])).toBe(tokens[0])
+    expect(s.string(tokens[1])).toBe(tokens[1])
+    for (const t of tokens.slice(2)) expect(s.string(t)).toBe(REDACTED)
+  })
+
+  it('ignores values too short to be a secret', () => {
+    clearRotatingSecrets()
+    registerRotatingSecret('outlook:access', 'abc')
+    registerRotatingSecret('outlook:access', '')
+    registerRotatingSecret('outlook:access', undefined)
+    expect(createScrubber([]).string('abc')).toBe('abc')
   })
 })

@@ -30,6 +30,7 @@
  */
 import { signHandoff, REFRESH_PATH, REVOKE_PATH, SIGNATURE_HEADER } from './relay.js'
 import type { ConnectTokenVault, Revoker } from './box.js'
+import { registerRotatingSecret } from '../log-redact.js'
 
 export const GMAIL_ENTRY = 'CONNECT_GMAIL'
 /** The live access tokens, {account: token}, for the gog wrapper. */
@@ -188,6 +189,12 @@ export class GmailTokenKeeper {
   private publish(): void {
     const now = this.now()
     const live = [...readGmailEntries(this.o.vault).values()].filter((e) => !e.revoked && e.expiresAt > now)
+    // The logger only read the environment at start-up: tell it each token as
+    // it goes in, so a log line holding one is scrubbed (card #269).
+    for (const e of live) {
+      registerRotatingSecret(`gmail:${e.account}:access`, e.accessToken)
+      registerRotatingSecret(`gmail:${e.account}:refresh`, e.refreshToken)
+    }
     if (live.length) this.env[RELAY_TOKENS_ENV] = JSON.stringify(Object.fromEntries(live.map((e) => [e.account, e.accessToken])))
     else delete this.env[RELAY_TOKENS_ENV]
     if (!this.o.shim && live.length === 1) this.env.GOG_ACCESS_TOKEN = live[0].accessToken

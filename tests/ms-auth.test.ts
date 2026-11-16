@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { createScrubber, REDACTED } from '../src/log-redact.js'
 import {
   resolveMsConfig,
   DEFAULT_MS_CLIENT_ID,
@@ -54,6 +55,14 @@ describe('resolveMsConfig', () => {
 })
 
 describe('stampExpiry', () => {
+  it('tells the logger the new Outlook tokens (card #269)', () => {
+    const scrub = createScrubber([])
+    const at = 'opaque-outlook-access-0123456789'
+    const rt = 'M.C512_opaque-outlook-refresh-0123456789'
+    stampExpiry({ access_token: at, refresh_token: rt, expires_in: 3600 }, 1_000_000)
+    expect(scrub.string(`graph call with ${at} and ${rt}`)).toBe(`graph call with ${REDACTED} and ${REDACTED}`)
+  })
+
   it('turns a relative expires_in into an absolute time', () => {
     const t = stampExpiry({ access_token: 'a', refresh_token: 'r', expires_in: 3600 }, 1_000_000)
     expect(t.expiresAt).toBe(1_000_000 + 3600)

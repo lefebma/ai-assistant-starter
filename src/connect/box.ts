@@ -19,6 +19,7 @@
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { dropGmailEntry, readGmailEntries, saveGmailEntry } from './gmail-token.js'
+import { registerRotatingSecret } from '../log-redact.js'
 import { accountSecretName as imapAccountName, passwordSecretName as imapPasswordName } from '../imap/store.js'
 
 export interface ConnectTokenVault {
@@ -200,6 +201,8 @@ export class ConnectFlow {
     this.pending.delete(nonce)
     const now = this.now()
     if (!p || p.expiresAt < now || p.provider !== provider || Math.abs(now - ts) > this.ttl) return { status: 403 }
+    registerRotatingSecret(`${provider}:${account}:access`, accessToken)
+    registerRotatingSecret(`${provider}:${account}:refresh`, refreshToken)
     if (provider === 'outlook') {
       // The relay stamps milliseconds; the Microsoft store keeps seconds.
       this.o.msTokens.save(account, { accessToken, refreshToken, expiresAt: Math.floor(expiresAt / 1000) })

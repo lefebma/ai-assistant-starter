@@ -30,6 +30,32 @@ export function registerSecret(value: string | undefined | null): void {
   if (value && value.length >= MIN_SECRET_LENGTH) runtimeSecrets.add(value)
 }
 
+/** How many past values a rotating secret keeps scrubbing, per group. */
+export const ROTATING_KEEP = 8
+/**
+ * Secrets that change while the process runs: the hourly Gmail and Outlook
+ * access tokens and the refresh tokens behind them (card #269). They are
+ * captured from the environment only at start-up, so each new value is
+ * registered here. A group (one per account and token kind) keeps its last few
+ * values, since a turn that began on the old token can still log it, and drops
+ * older ones so a token refreshed every hour does not grow the list for ever.
+ */
+const rotatingSecrets = new Map<string, string[]>()
+
+export function registerRotatingSecret(group: string, value: string | undefined | null): void {
+  if (!value || value.length < MIN_SECRET_LENGTH) return
+  const list = rotatingSecrets.get(group) ?? []
+  if (list.includes(value)) return
+  list.push(value)
+  while (list.length > ROTATING_KEEP) list.shift()
+  rotatingSecrets.set(group, list)
+}
+
+/** Test hook: forget every rotating secret. */
+export function clearRotatingSecrets(): void {
+  rotatingSecrets.clear()
+}
+
 export function secretValuesFromEnv(env: Record<string, string | undefined>): string[] {
   const out: string[] = []
   for (const [name, raw] of Object.entries(env)) {
@@ -49,6 +75,9 @@ const SHAPES: Array<[RegExp, string]> = [
   [/\bxox[bpas]-[A-Za-z0-9-]{20,}/g, REDACTED],
   [/\b(?:ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]{20,}/g, REDACTED],
   [/\bAIza[0-9A-Za-z_-]{30,}/g, REDACTED],
+  // Google OAuth access tokens (ya29.) and refresh tokens (1//0), as the relay hands them to Gmail.
+  [/\bya29\.[A-Za-z0-9_-]{20,}/g, REDACTED],
+  [/(?<![A-Za-z0-9_/-])1\/\/0[A-Za-z0-9_-]{20,}/g, REDACTED],
   [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, REDACTED],
   // Authorization headers: keep the scheme, drop the credential
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, `$1 ${REDACTED}`],
@@ -88,7 +117,7 @@ export function createScrubber(initialSecrets: string[] = []): Scrubber {
   let exact: RegExp | null = null
 
   function exactRegex(): RegExp | null {
-    const all = [...fixed, ...runtimeSecrets]
+    const all = [...fixed, ...runtimeSecrets, ...[...rotatingSecrets.values()].flat()]
     const key = all.join('\u0000')
     if (key !== cacheKey) {
       cacheKey = key
