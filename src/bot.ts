@@ -145,13 +145,26 @@ const contextEngine = createDefaultEngine()
 const secretFlow = new SecretFlow()
 
 // /request state: feature requests drafted, shown, and sent only on Send (card #240).
+// The tidy is an isolated turn: no tools, no MCP servers, one model round
+// trip, no session. The words come from any authorized chat, so they must not
+// reach a run that can execute anything. The timeout aborts the run.
 const TIDY_TIMEOUT_MS = 45_000
+async function tidyRequest(raw: string): Promise<string> {
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), TIDY_TIMEOUT_MS)
+  timer.unref()
+  try {
+    const r = await withActor('job:request', () =>
+      getAgentRuntime('cron').run({ message: tidyPrompt(raw), model: 'haiku', isolated: true, signal: ac.signal }))
+    if (ac.signal.aborted) throw new Error('tidy timed out')
+    if (r.aiPaused || !r.text) throw new Error('tidy returned nothing')
+    return r.text
+  } finally {
+    clearTimeout(timer)
+  }
+}
 const requestFlow = new RequestFlow({
-  tidy: (raw) =>
-    Promise.race([
-      withActor('job:request', () => getAgentRuntime('cron').runOnce(tidyPrompt(raw))),
-      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('tidy timed out')), TIDY_TIMEOUT_MS).unref()),
-    ]),
+  tidy: tidyRequest,
   send: (draft) => sendSupportEmail(draft),
   sender: () => {
     const owner = loadSetupAnswers(PROJECT_ROOT)?.ownerName
