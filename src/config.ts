@@ -36,6 +36,8 @@ export const SCHEDULER_ENABLED = (env['SCHEDULER_ENABLED'] ?? 'true') === 'true'
 export const UPDATE_NOTICE_ENABLED = (env['UPDATE_NOTICE'] ?? 'on').toLowerCase() !== 'off'
 /** Tips (card #273). On unless a provider turns them off for the whole box. */
 export const TIPS_ENABLED = (env['TIPS'] ?? 'on').toLowerCase() !== 'off'
+/** PRIVACY_FINDER=off stops the privacy filter's name finder (card #275). It only runs while the filter is on. */
+export const PRIVACY_FINDER_ENABLED = (env['PRIVACY_FINDER'] ?? 'on').toLowerCase() !== 'off'
 
 // HTTP server (for ElevenLabs Conversational AI custom LLM + voice UI)
 export const HTTP_PORT = parseInt(env['HTTP_PORT'] ?? '3030', 10)
