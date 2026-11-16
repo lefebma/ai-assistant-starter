@@ -1128,7 +1128,6 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
     const cmd = commandWord(trimmed)
     const webEffort = isEffort(input.effort) ? input.effort : undefined
     noteOwnerMessage(isPrimaryChat(chatId), trimmed)
-    noteForFinder(isPrimaryChat(chatId), trimmed)
     if (cmd === '/tips') {
       logger.info({ chatId, command: cmd, surface: 'web' }, 'Handling command')
       await handleTipsCommand(adapter, chatId, trimmed.slice(cmd.length).trim(), 'web:')
@@ -2027,7 +2026,6 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
   const trimmed = text.trim()
   const cmd = commandWord(trimmed)
   noteOwnerMessage(isPrimaryChat(chatId), trimmed)
-  noteForFinder(isPrimaryChat(chatId), trimmed)
 
   // A pending /secret set owns the next text message: capture it in code,
   // delete it from the chat, never let it near the model. This must run
@@ -2053,6 +2051,11 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
       await adapter.sendMessage(chatId, 'Pending /secret set cancelled.')
     }
   }
+
+  // The privacy name finder (card #275) reads only after the secret capture
+  // above has had its turn: a key or passphrase must never reach it. Web text
+  // comes through here too, so this is its only call.
+  noteForFinder(isPrimaryChat(chatId), trimmed)
 
   // /btw non-abort: read-only commands during active run
   if (isChatBusy(chatId) && isNonAbortMessage(trimmed)) {

@@ -22,7 +22,7 @@ vi.mock('../src/tips/context.js', () => ({
   }),
 }))
 
-import { createBot, turnsIdle } from '../src/bot.js'
+import { createBot, runWebCommand, turnsIdle } from '../src/bot.js'
 import { getDb, initDatabase } from '../src/db.js'
 import { findEntry, resetPrivacyCache, setChatPrivacy } from '../src/privacy/store.js'
 import { markOffered, nextSuggestion, recordFinds } from '../src/privacy/finder/suggestions.js'
@@ -103,4 +103,47 @@ describe('privacy finder in the bot', () => {
       stop()
     }
   })
+
+  it('never reads the reply to /secret set', async () => {
+    const { sent, send } = fakeAdapter(true)
+    const stop = startFinder()
+    try {
+      setChatPrivacy('owner', true)
+      await send({ text: '/secret set MY_PASSPHRASE' })
+      await send({ text: 'Blue Falcon Rising', messageId: '9' })
+      expect(sent.some((m) => /MY_PASSPHRASE/.test(m.text))).toBe(true)
+      expect(finderQueueLength()).toBe(0)
+      expect(h.runAgent).not.toHaveBeenCalled()
+    } finally {
+      stop()
+    }
+  })
+
+  it('queues a web message once', async () => {
+    fakeAdapter(true)
+    const stop = startFinder()
+    try {
+      setChatPrivacy('owner', true)
+      h.runAgent.mockRejectedValue(new Error('no model in tests'))
+      await runWebCommand({
+        chatId: 'owner',
+        conversationId: 'c1',
+        text: 'Call Devon Spencer tomorrow',
+        hooks: { send: () => '1', edit: () => {}, clearButtons: () => {}, dropUserMessage: () => {}, file: () => {}, turn: async () => {} } as never,
+      }).catch(() => undefined)
+      expect(finderQueueLength()).toBe(1)
+    } finally {
+      stop()
+    }
+  })
 })
+
+function startFinder(): () => void {
+  return startNameFinder(
+    {
+      tagger: { tag: async () => [], disabled: () => false, unloadIfIdle: () => undefined },
+      send: async () => null, buttons: true, busy: () => false, now: () => new Date(), tz: 'UTC', skip: () => new Set(),
+    },
+    { worker: false }
+  )
+}
