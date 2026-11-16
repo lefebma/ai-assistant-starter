@@ -136,6 +136,13 @@ export const TIPS: Tip[] = [
     commands: ['/private'],
   },
   {
+    id: 'private-suggest',
+    since: '1.83.0',
+    text: 'With the privacy filter on, I now spot client names in your messages and ask before keeping them private. The reading happens on this machine.',
+    tryIt: 'Send /private on, then mention a client by name.',
+    commands: ['/private'],
+  },
+  {
     id: 'cancel',
     since: '1.47.0',
     text: 'Asked for the wrong thing? You can stop me part way through.',
