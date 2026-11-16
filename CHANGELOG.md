@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.81.1 - 2026-11-16
+
+- **Fixed: a `/request` now says who it is from.** On assistants set up before the first-chat profile, the request said "your name (not set)" and gave the assistant's web address as its name. It now finds both names where setup wrote them, so it reads "your name (Marc), this assistant's name (Nami), its address (...)". The email shows the assistant as "Nami (address)" (card #240).
+- **Fixed: the `/request` preview keeps its lines apart in Teams.** It arrived as one run-on paragraph. Each line of the request is now its own item, and the preview goes through the same formatting as every other reply.
+
 ## 1.81.0 - 2026-11-16
 
 - **Fixed: your assistant knows what day of the week it is.** It was given the date but not the weekday, and worked the weekday out itself, sometimes wrongly: one owner was told Monday 16 November was a Sunday, with "tomorrow, Tuesday" in the same reply. Every message, scheduled task and voice lookup now starts with the weekday, date, time and timezone from the assistant's own settings, plus what tomorrow is.

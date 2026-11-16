@@ -41,7 +41,7 @@ export interface RequestFlowDeps {
 }
 
 const ASK =
-  'What would you like your assistant to do that it cannot do today? Describe it in your next message, and say why it would help and how often you would use it.\n(Next time you can write it straight after the command: /request <what you want>.)'
+  'What would you like your assistant to do that it cannot do today? Describe it in your next message, and say why it would help and how often you would use it.\n\n(Next time you can write it straight after the command: /request <what you want>.)'
 
 function limitReply(): RequestReply {
   return {

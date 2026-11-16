@@ -80,6 +80,7 @@ import { clickFollowUp, replyFollowUp } from './proactive/followup.js'
 import { interviewNudge, markInterviewOffered, shouldOfferInterview } from './onboarding/interview-offer.js'
 import { NO_RESTART_MESSAGE, noteWelcomeTurn, shouldWelcome, takeRestartAfterReply, welcomeNudge } from './onboarding/welcome.js'
 import { loadSetupAnswers } from './setup/saved.js'
+import { resolveAssistantName, resolveOwnerName } from './request/sender.js'
 import { workspaceCommand, workspaceCommandArgs } from './workspace/commands.js'
 import { defaultSyncOne, scheduleWorkspace, unscheduleWorkspace } from './workspace/service.js'
 import { makeJoinIO } from './workspace/io.js'
@@ -167,9 +168,22 @@ const requestFlow = new RequestFlow({
   tidy: tidyRequest,
   send: (draft) => sendSupportEmail(draft),
   sender: () => {
-    const owner = loadSetupAnswers(PROJECT_ROOT)?.ownerName
+    const read = (f: string): string | null => {
+      try {
+        return readFileSync(join(PROJECT_ROOT, f), 'utf-8')
+      } catch {
+        return null
+      }
+    }
+    const sources = {
+      env: { OWNER_NAME: process.env.OWNER_NAME, ASSISTANT_NAME: process.env.ASSISTANT_NAME },
+      saved: loadSetupAnswers(PROJECT_ROOT),
+      personality: read('PERSONALITY.md'),
+      claudeMd: read('CLAUDE.md'),
+    }
     return {
-      ownerName: typeof owner === 'string' ? owner.trim() : '',
+      ownerName: resolveOwnerName(sources),
+      assistantName: resolveAssistantName(sources),
       boxName: PUBLIC_HOSTNAME || hostname(),
       version: getBootVersion(),
     }
@@ -190,9 +204,12 @@ const requestCardIds = new Map<string, string>()
 /** Sends a /request step, with its buttons where the platform has them. */
 async function sendRequestReply(adapter: PlatformAdapter, chatId: string, r: RequestReply): Promise<void> {
   if (!r.text) return
-  if (r.buttons && adapter.supportsButtons) requestCardIds.set(chatId, await adapter.sendMessage(chatId, r.text, { buttons: r.buttons }))
-  else if (r.buttons) await adapter.sendMessage(chatId, `${r.text}\n\nReply ${r.buttons.slice(0, -1).join(', ')} or ${r.buttons.at(-1)}.`)
-  else await adapter.sendMessage(chatId, r.text)
+  // Through the platform's formatter like any reply: sent raw, Teams ran the
+  // preview's lines together into one paragraph.
+  const text = r.buttons && !adapter.supportsButtons ? `${r.text}\n\nReply ${r.buttons.slice(0, -1).join(', ')} or ${r.buttons.at(-1)}.` : r.text
+  const formatted = adapter.formatText(text)
+  if (r.buttons && adapter.supportsButtons) requestCardIds.set(chatId, await adapter.sendMessage(chatId, formatted, { buttons: r.buttons, parseMode: 'html' }))
+  else await adapter.sendMessage(chatId, formatted, { parseMode: 'html' })
 }
 
 function isPrimaryChat(chatId: string): boolean {
