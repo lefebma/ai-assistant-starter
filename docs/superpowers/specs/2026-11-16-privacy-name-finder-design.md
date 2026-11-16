@@ -38,7 +38,7 @@ Marc accepted option 1 on 2026-11-16, raising no objection when it was proposed.
 - **When:** only while the privacy filter is on (`PRIVACY=on`, or any chat switched on). With the filter off, a suggestion has nothing to protect.
 - **Queue:** the text goes into a small in-memory queue, which is bounded and drops its oldest item when full. A single background worker handles the queue one message at a time, after the turn has started. Nothing awaits it in the request path.
 - **Model:** it loads lazily on first use and unloads after 10 idle minutes (my call, to keep RAM free on 2 GB boxes). The cache lives under `store/models/`. The download carries no message text.
-- **What counts as a find:** PER and ORG entities, merged across word pieces, with a score of at least 0.85 and at least 3 characters (the list's own minimum). LOC and MISC are ignored. Each find gets its kind: PER becomes person, ORG becomes company.
+- **What counts as a find:** PER and ORG entities, merged across word pieces and widened to whole words. Each entity needs a mean score of at least 0.8 and at least 3 characters (the list's own minimum), and people need a full name (2 or more words). LOC and MISC are ignored. PER becomes person, ORG becomes company. A short built-in list of well-known brands (Google, Microsoft, Telegram, Claude and so on) is skipped. These were tuned on a spike against the real model on 2026-11-16: bare first names and big brands were the noise, and 0.85 missed real companies such as Norwin.
 - **Filters:**
   - The name is not already on the list (`findEntry`, which also checks aliases).
   - The name was not offered before.
