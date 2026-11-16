@@ -49,6 +49,19 @@ describe('mergeTags', () => {
   })
 })
 
+describe('mergeTags with typed punctuation', () => {
+  it('leaves smart quotes, dashes and slashes out of the name', () => {
+    const quoted = mergeTags('Ask \u201cAcme Corp\u201d today', [t('B-ORG', 'Acme', 0.99, 2), t('I-ORG', 'Corp', 0.99, 3)])
+    expect(quoted.map((f) => f.value)).toEqual(['Acme Corp'])
+    const dashed = mergeTags('Hi\u2014Devon Spencer here', [t('B-PER', 'Devon', 0.99, 3), t('I-PER', 'Spencer', 0.99, 4)])
+    expect(dashed.map((f) => f.value)).toEqual(['Devon Spencer'])
+    const slashed = mergeTags('Acme/Norwin merger', [t('B-ORG', 'Acme', 0.99, 1), t('B-ORG', 'Nor', 0.99, 3), t('I-ORG', '##win', 0.99, 4)])
+    expect(slashed.map((f) => f.value)).toEqual(['Acme', 'Norwin'])
+    const single = mergeTags('Call \u2018Bright Path\u2019 now', [t('B-ORG', 'Bright', 0.99, 2), t('I-ORG', 'Path', 0.99, 3)])
+    expect(single.map((f) => f.value)).toEqual(['Bright Path'])
+  })
+})
+
 describe('filterFinds', () => {
   const f = (kind: 'person' | 'company', value: string, score = 0.99) => ({ kind, value, score })
 

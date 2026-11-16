@@ -24,12 +24,16 @@ export const MIN_SCORE = 0.8
 const MIN_CHARS = 3
 
 const KIND: Record<string, Found['kind']> = { PER: 'person', ORG: 'company' }
-const WORD = /[^\s,;:!?()"[\]{}<>]+/g
+// Typed punctuation never belongs to a name: smart quotes, dashes and
+// slashes split words here, as iOS and macOS insert them by default. A
+// right single quote stays inside a word (O’Brien) and is trimmed at the ends.
+const WORD = /[^\s,;:!?()"[\]{}<>\u201c\u201d\u2018\u00ab\u00bb\u2014\u2013/\\|]+/g
 
 type Word = { start: number; end: number; type: string; begins: boolean; scores: number[] }
 
 function cleanValue(raw: string): string {
   return raw
+    .replace(/^['’]+/, '')
     .replace(/['’]s$/i, '')
     .replace(/[.'"’]+$/, '')
     .trim()
@@ -72,7 +76,7 @@ export function mergeTags(text: string, tags: TokenTag[]): Found[] {
       group.type === w.type &&
       !w.begins &&
       group.last === wi - 1 &&
-      /^ +$/.test(text.slice(group.end, w.start))
+      /^[ \u00a0]+$/.test(text.slice(group.end, w.start))
     if (joins && group) {
       group.end = w.end
       group.scores.push(...w.scores)
