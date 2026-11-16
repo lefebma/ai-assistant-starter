@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { registerConnectRoute } from './connect/wiring.js'
 import { resolve } from 'node:path'
-import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, TIPS_ENABLED, AUDIT_DIR, AUDIT_WITNESS_URL, AUDIT_WITNESS_TOKEN } from './config.js'
+import { STORE_DIR, SCHEDULER_ENABLED, PRIMARY_CHAT_ID, UPDATE_NOTICE_ENABLED, TIPS_ENABLED, PRIVACY_FINDER_ENABLED, AUDIT_DIR, AUDIT_WITNESS_URL, AUDIT_WITNESS_TOKEN } from './config.js'
 import { getAuditTrail } from './assurance/audit-trail.js'
 import { WitnessShipper, startWitnessShipping } from './assurance/witness.js'
 import { WitnessChecker, startWitnessChecks } from './assurance/witness-check.js'
@@ -39,6 +39,8 @@ import { outlookClient } from './email-alerts/sources.js'
 import { listAuthedAccounts } from './ms/store.js'
 import { startProactive } from './proactive/service.js'
 import { startTips } from './tips/service.js'
+import { startNameFinder } from './privacy/finder/service.js'
+import { createModelTagger, loadBertNer } from './privacy/finder/model.js'
 import { isChatBusy } from './agent.js'
 import { tipContext } from './tips/context.js'
 import { lastOwnerMessage } from './tips/control.js'
@@ -391,6 +393,31 @@ async function main(): Promise<void> {
       })
     : () => {}
 
+  // Privacy name finder (card #275). Reads only the owner's typed messages,
+  // in this process, and only while the privacy filter is on. The model is
+  // downloaded the first time it is needed; PRIVACY_FINDER=off stops it.
+  const stopFinder = PRIMARY_CHAT_ID && PRIVACY_FINDER_ENABLED
+    ? startNameFinder({
+        tagger: createModelTagger({ load: () => loadBertNer(resolve(STORE_DIR, 'models')) }),
+        send: async (text, buttons) => {
+          const id = await adapter.sendMessage(
+            PRIMARY_CHAT_ID,
+            adapter.formatText(text),
+            adapter.supportsButtons ? { buttons } : undefined
+          )
+          return adapter.supportsButtons && id ? `${PRIMARY_CHAT_ID}:${id}` : null
+        },
+        buttons: adapter.supportsButtons,
+        busy: () => isChatBusy(PRIMARY_CHAT_ID) || webTurnBusy(PRIMARY_CHAT_ID),
+        now: () => new Date(),
+        tz: emailAlertsTz,
+        skip: () => {
+          const saved = loadSetupAnswers(PROJECT_ROOT)
+          return new Set([saved?.ownerName, saved?.assistantName].filter((n): n is string => typeof n === 'string' && n.trim() !== '').map((n) => n.trim().toLowerCase()))
+        },
+      })
+    : () => {}
+
   // Graceful shutdown
   let shuttingDown = false
   const shutdown = async (): Promise<void> => {
@@ -413,6 +440,7 @@ async function main(): Promise<void> {
     stopEmailAlerts()
     stopProactive()
     stopTips()
+    stopFinder()
     stopAiRecovery()
 
     // The listener closes first, and the order is load-bearing on a hosted box.
