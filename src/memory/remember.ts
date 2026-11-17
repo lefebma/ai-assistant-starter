@@ -94,21 +94,41 @@ export function hideRememberMarkers(text: string): string {
 
 const IDENTIFIER = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+|https?:\/\/[^\s)\]]+|[$€£]?[\w,.-]*\d[\w,.-]*/g
 const FILLER = new Set('that this with from have will they them their there what when where which would could should about into your than then also just only been were here more most some such very each other after before every always never'.split(' '))
+// Words that turn a statement around: "never to Priya" is not "to Priya".
+const NEGATION = /\b(?:not|no|never|don'?t|doesn'?t|isn'?t|won'?t|can'?t|cannot|stop|without|nobody|none)\b/i
 
 function norm(s: string): string {
   return s.toLowerCase().replace(/^[^\w$€£@]+|[^\w@]+$/g, '')
 }
 
+/** The addresses, links and numbers in a text, normalised, each with whether a negation sits in the few words before it. */
+function identifiers(text: string): Map<string, boolean> {
+  const out = new Map<string, boolean>()
+  for (const m of text.matchAll(IDENTIFIER)) {
+    const t = norm(m[0])
+    if (!/\d|@|:\/\//.test(t)) continue
+    const before = text.slice(0, m.index).split(/\s+/).slice(-4).join(' ')
+    out.set(t, (out.get(t) ?? false) || NEGATION.test(before))
+  }
+  return out
+}
+
 /**
  * True when the owner's own words in the turn back a fact the reply tagged.
- * Every address, link and number in the fact must appear in what the owner
- * typed. A fact with none of those needs at least half its words (four letters
- * or more) to be the owner's.
+ * Every address, link and number in the fact must be one the owner typed,
+ * exactly, and negated the same way ("never to priya@" does not back "to
+ * priya@"). A fact with none of those needs at least half its words (four
+ * letters or more) to be the owner's, and a negation in one but not the
+ * other means it is not backed. When in doubt it is not: an unbacked fact is
+ * still saved, it just retires nothing.
  */
 export function backedByOwner(fact: string, ownerText: string): boolean {
-  const own = ownerText.toLowerCase()
-  const ids = [...fact.matchAll(IDENTIFIER)].map((m) => norm(m[0])).filter((t) => /\d|@|:\/\//.test(t))
-  if (ids.length) return ids.every((t) => own.includes(t))
+  const ids = identifiers(fact)
+  if (ids.size) {
+    const own = identifiers(ownerText)
+    return [...ids].every(([t, negated]) => own.has(t) && own.get(t) === negated)
+  }
+  if (NEGATION.test(fact) !== NEGATION.test(ownerText)) return false
   const stems = (t: string) => t.toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length >= 4 && !FILLER.has(w)).map((w) => w.slice(0, 5))
   const words = [...new Set(stems(fact))]
   if (!words.length) return false
