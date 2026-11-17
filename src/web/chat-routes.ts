@@ -9,7 +9,8 @@ import { listModelChoices } from '../models/catalog.js'
 import { effortLevelsFor } from '../models/effort.js'
 import { runtimeIdFor } from '../runtime/index.js'
 import { runWebTurn, cancelWebTurn, webSecretAwaited, webSupportAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
-import { PIN_BUTTONS, extractDecisionMarkers, proposalCard, proposalHint, proposeDecision, setProposalCard } from '../memory/decisions.js'
+import { PIN_BUTTONS, proposalCard, proposalHint, proposeDecision, setProposalCard } from '../memory/decisions.js'
+import { extractReplyMarkers } from '../memory/remember.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
@@ -252,7 +253,8 @@ async function answer(
       return { kind: 'paused', text: result.paused }
     }
     if (result.cancelled || result.text === null) return { kind: 'cancelled', partial: sent }
-    const { cleanText: noDecisions, proposals } = extractDecisionMarkers(result.text)
+    // The [[remember:]] markers were saved with the turn (card #276); strip them here.
+    const { cleanText: noDecisions, proposals } = extractReplyMarkers(result.text)
     const { cleanText: noFiles, requests } = extractFileMarkers(noDecisions)
     const { cleanText, labels: replyLabels } = extractButtons(noFiles)
     const files: StoredFile[] = []

@@ -37,7 +37,7 @@ function cleanText(text: string, max: number): string {
   return t.length > max ? t.slice(0, max - 3).trimEnd() + '...' : t
 }
 
-function cleanTopic(topic: string | null | undefined): string | null {
+export function cleanTopic(topic: string | null | undefined): string | null {
   if (!topic) return null
   const t = topic.toLowerCase().replace(/[^\p{L}\p{N}\s._-]/gu, ' ').replace(/\s+/g, ' ').trim()
   return t ? t.slice(0, MAX_TOPIC_LEN) : null

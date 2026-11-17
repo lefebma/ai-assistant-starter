@@ -95,6 +95,26 @@ export function initDatabase(): void {
   }
   d.exec('CREATE INDEX IF NOT EXISTS idx_memories_chat ON memories(chat_id, accessed_at)')
 
+  // Topics and retirement (card #276). A [[remember: topic | fact]] marker
+  // tags the rows its turn saved; a newer owner fact on a topic retires the
+  // older rows on it. Retired rows are kept and never recalled.
+  if (!memoryCols.includes('retired_at')) d.exec('ALTER TABLE memories ADD COLUMN retired_at INTEGER')
+  if (!memoryCols.includes('retired_reason')) d.exec('ALTER TABLE memories ADD COLUMN retired_reason TEXT')
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS memory_topics (
+      memory_id INTEGER NOT NULL,
+      chat_id TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      PRIMARY KEY (memory_id, topic)
+    )
+  `)
+  d.exec('CREATE INDEX IF NOT EXISTS idx_memory_topics_topic ON memory_topics(chat_id, topic)')
+  d.exec(`
+    CREATE TRIGGER IF NOT EXISTS memories_topics_ad AFTER DELETE ON memories BEGIN
+      DELETE FROM memory_topics WHERE memory_id = OLD.id;
+    END
+  `)
+
   // Scheduled tasks
   d.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -386,6 +406,9 @@ export interface Memory {
   accessed_at: number
   /** Where it came from (card #235). 'untrusted' and 'legacy' rows are recalled inside an untrusted wrapper or as before. */
   origin: MemoryOrigin
+  /** Set when a newer owner fact on the same topic replaced it (card #276); such rows are never recalled. */
+  retired_at?: number | null
+  retired_reason?: string | null
 }
 
 /**
@@ -402,13 +425,53 @@ export function insertMemory(
   sector: 'semantic' | 'episodic',
   topicKey?: string,
   origin: Exclude<MemoryOrigin, 'legacy'> = 'system'
-): void {
+): number {
   const d = getDb()
   const ts = now()
-  d.prepare(
+  const info = d.prepare(
     `INSERT INTO memories (chat_id, topic_key, content, sector, salience, created_at, accessed_at, origin)
      VALUES (?, ?, ?, ?, 1.0, ?, ?, ?)`
   ).run(chatId, topicKey ?? null, content, sector, ts, ts, origin)
+  return Number(info.lastInsertRowid)
+}
+
+/**
+ * What recall may return (card #276): rows not retired, and no untrusted row
+ * on a topic the owner has a live memory on. Untrusted text on that topic is
+ * left out, not only wrapped. Rows without a topic behave as before.
+ */
+const RECALLABLE = `m.retired_at IS NULL AND NOT (
+  m.origin = 'untrusted' AND EXISTS (
+    SELECT 1 FROM memory_topics mt
+    JOIN memory_topics ot ON ot.chat_id = mt.chat_id AND ot.topic = mt.topic
+    JOIN memories o ON o.id = ot.memory_id
+    WHERE mt.memory_id = m.id AND o.origin = 'owner' AND o.retired_at IS NULL
+  )
+)`
+
+/** Tag memories with a topic (card #276). */
+export function tagMemories(chatId: string, ids: number[], topic: string): void {
+  const stmt = getDb().prepare('INSERT OR IGNORE INTO memory_topics (memory_id, chat_id, topic) VALUES (?, ?, ?)')
+  for (const id of ids) stmt.run(id, chatId, topic)
+}
+
+/**
+ * Retire this chat's live memories on a topic, except the ones just saved
+ * (card #276). The rows are kept. Returns their ids.
+ */
+export function retireTopic(chatId: string, topic: string, keep: number[]): number[] {
+  const d = getDb()
+  const rows = d
+    .prepare(
+      `SELECT m.id FROM memories m JOIN memory_topics t ON t.memory_id = m.id
+       WHERE t.chat_id = ? AND t.topic = ? AND m.chat_id = ? AND m.retired_at IS NULL`
+    )
+    .all(chatId, topic, chatId) as { id: number }[]
+  const ids = rows.map((r) => r.id).filter((id) => !keep.includes(id))
+  const stmt = d.prepare("UPDATE memories SET retired_at = ?, retired_reason = 'superseded' WHERE id = ?")
+  const ts = now()
+  for (const id of ids) stmt.run(ts, id)
+  return ids
 }
 
 /** Words that carry no topic: dropped from a recall query (card #235). */
@@ -433,7 +496,7 @@ export function searchMemories(query: string, limit: number, chatId: string): Me
       .prepare(
         `SELECT m.* FROM memories m
          JOIN memories_fts f ON f.rowid = m.id
-         WHERE memories_fts MATCH ? AND m.chat_id = ?
+         WHERE memories_fts MATCH ? AND m.chat_id = ? AND ${RECALLABLE}
          ORDER BY bm25(memories_fts)
          LIMIT ?`
       )
@@ -447,9 +510,9 @@ export function getRecentMemories(chatId: string, limit = 5): Memory[] {
   const d = getDb()
   return d
     .prepare(
-      `SELECT * FROM memories
-       WHERE chat_id = ?
-       ORDER BY accessed_at DESC
+      `SELECT m.* FROM memories m
+       WHERE m.chat_id = ? AND ${RECALLABLE}
+       ORDER BY m.accessed_at DESC
        LIMIT ?`
     )
     .all(chatId, limit) as Memory[]
@@ -473,7 +536,7 @@ export function getMemoriesForChat(chatId: string, limit = 20): Memory[] {
   const d = getDb()
   return d
     .prepare(
-      `SELECT * FROM memories WHERE chat_id = ? ORDER BY salience DESC, accessed_at DESC LIMIT ?`
+      `SELECT * FROM memories WHERE chat_id = ? AND retired_at IS NULL ORDER BY salience DESC, accessed_at DESC LIMIT ?`
     )
     .all(chatId, limit) as Memory[]
 }

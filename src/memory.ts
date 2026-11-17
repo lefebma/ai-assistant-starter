@@ -4,11 +4,15 @@ import {
   touchMemory,
   insertMemory,
   decayMemories as dbDecay,
+  getDb,
+  retireTopic,
+  tagMemories,
   type Memory,
 } from './db.js'
 import { logger } from './logger.js'
 import { scopeGone } from './projects/store.js'
 import { hasQuoted, ownerWords, recallLine, replyOrigin } from './memory/provenance.js'
+import { extractRememberMarkers, factContent, type RememberMarker } from './memory/remember.js'
 
 const SEMANTIC_PATTERN = /\b(my|i am|i'm|i prefer|remember|always|never)\b/i
 
@@ -52,18 +56,35 @@ const UNTRUSTED_BLOCK = /<(untrusted-[\w-]+)>\n?([\s\S]*?)\n?<\/\1>/g
  * owner, with quoted or forwarded text left out of them and saved apart as
  * untrusted. The reply is untrusted when the turn's tools read mail, the web
  * or another source (`reads` from runAgent), since it may repeat what it read.
+ *
+ * Topics (card #276): each [[remember: topic | fact]] marker (`remembers`,
+ * or any left in the reply) is saved as a fact and tags every row this turn
+ * saved. In a turn that read nothing from outside, the fact is the owner's and
+ * retires this chat's older rows on the topic. In any other turn it is
+ * untrusted, tags only the untrusted rows, and retires nothing.
  */
 export async function saveConversationTurn(
   chatId: string,
   userMsg: string,
   assistantMsg: string,
-  opts: { reads?: string[] } = {}
+  opts: { reads?: string[]; remembers?: RememberMarker[] } = {}
 ): Promise<void> {
   // A project deleted while this turn ran stays deleted (card #281).
   if (scopeGone(chatId)) return
 
-  // Skip very short messages or commands
-  if (userMsg.length <= 20 || userMsg.startsWith('/')) return
+  // A marker never reaches storage as text, whoever forgot to strip it.
+  const leftover = extractRememberMarkers(assistantMsg)
+  const reply = leftover.cleanText
+  const remembers = [...(opts.remembers ?? []), ...leftover.remembers]
+
+  // Skip very short messages or commands, unless the reply tagged a fact:
+  // "use billing@ now" is short and still worth keeping.
+  const skipTurn = userMsg.length <= 20 || userMsg.startsWith('/')
+  if (skipTurn && !remembers.length) return
+
+  const quoted = hasQuoted(userMsg)
+  const replyFrom = replyOrigin(opts.reads, quoted)
+  const trusted = replyFrom === 'assistant'
 
   const own = ownerWords(userMsg)
   const isSemantic = SEMANTIC_PATTERN.test(own)
@@ -73,26 +94,45 @@ export async function saveConversationTurn(
   // Prevents replay echo loops where an unresolved item gets re-saved every turn.
   const content = `User said: ${own.slice(0, 500)}`
   const recent = getRecentMemories(chatId, 20)
-  const alreadyLogged = recent.some((m) => m.content === content)
-  if (alreadyLogged) {
+  const alreadyLogged = !skipTurn && recent.some((m) => m.content === content)
+  if (alreadyLogged && !remembers.length) {
     logger.debug({ chatId }, 'Skipping duplicate user turn in memory')
     return
   }
-  insertMemory(chatId, content, sector, undefined, 'owner')
 
-  // Quoted or forwarded text: kept, but as what it is.
-  for (const m of userMsg.matchAll(UNTRUSTED_BLOCK)) {
-    const quoted = m[2]!.trim()
-    if (quoted.length > 20) insertMemory(chatId, `Quoted or forwarded text: ${quoted.slice(0, 500)}`, 'episodic', undefined, 'untrusted')
-  }
+  getDb().transaction(() => {
+    const ownerRows: number[] = []
+    const untrustedRows: number[] = []
+    if (!skipTurn && !alreadyLogged) {
+      ownerRows.push(insertMemory(chatId, content, sector, undefined, 'owner'))
 
-  // Save a compressed version of the assistant response for episodic recall
-  if (assistantMsg.length > 50) {
-    const summary = assistantMsg.slice(0, 300)
-    insertMemory(chatId, `Assistant responded: ${summary}`, 'episodic', undefined, replyOrigin(opts.reads, hasQuoted(userMsg)))
-  }
+      // Quoted or forwarded text: kept, but as what it is.
+      for (const m of userMsg.matchAll(UNTRUSTED_BLOCK)) {
+        const q = m[2]!.trim()
+        if (q.length > 20) untrustedRows.push(insertMemory(chatId, `Quoted or forwarded text: ${q.slice(0, 500)}`, 'episodic', undefined, 'untrusted'))
+      }
 
-  logger.debug({ chatId, sector }, 'Conversation turn saved to memory')
+      // Save a compressed version of the assistant response for episodic recall
+      if (reply.length > 50) {
+        const id = insertMemory(chatId, `Assistant responded: ${reply.slice(0, 300)}`, 'episodic', undefined, replyFrom)
+        ;(trusted ? ownerRows : untrustedRows).push(id)
+      }
+    }
+
+    let retired = 0
+    for (const r of remembers) {
+      const fact = insertMemory(chatId, factContent(r), 'semantic', undefined, trusted ? 'owner' : 'untrusted')
+      if (!r.topic) continue
+      // An untrusted turn tags only what came from outside: the owner's request
+      // to read an email is not the owner speaking on the email's topic.
+      const rows = trusted ? [...ownerRows, fact] : [...untrustedRows, fact]
+      tagMemories(chatId, rows, r.topic)
+      if (trusted) retired += retireTopic(chatId, r.topic, [...ownerRows, ...untrustedRows, fact]).length
+    }
+    if (retired) logger.info({ chatId, retired, topics: remembers.filter((r) => r.topic).length }, 'Retired memories replaced by a newer fact')
+  })()
+
+  logger.debug({ chatId, sector, facts: remembers.length }, 'Conversation turn saved to memory')
 }
 
 export function runDecaySweep(): void {
