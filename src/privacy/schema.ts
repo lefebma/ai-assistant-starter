@@ -12,4 +12,17 @@ export function initPrivacyTables(d: Database.Database): void {
       created_at INTEGER NOT NULL
     )
   `)
+  // Names the finder noticed (card #275): offered once, answered once.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS privacy_suggestions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      value TEXT NOT NULL,
+      lower TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      card TEXT,
+      first_seen INTEGER NOT NULL,
+      offered_at INTEGER
+    )
+  `)
 }

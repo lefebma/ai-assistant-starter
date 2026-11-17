@@ -53,6 +53,29 @@ Only the main chat can add to, show or shorten the list, because it holds
 every chat's names: another chat adding an ordinary word would make it vanish
 from every chat's requests.
 
+### Names it suggests
+
+While the filter is on, your assistant notices people and companies in the
+messages you type in the main chat and asks about each one: "Keep Bright Path
+Dental private?" with **Add** and **Not private**. Add puts it on the list.
+Not private means it never asks about that name again. It only suggests full
+names for people (two words or more), skips names already on the list and
+well-known brands, and asks at most three times a day, never in your quiet
+hours.
+
+- **It runs on this machine.** A small name-recognition model reads your
+  message here, after it has been sent. Nothing it reads goes anywhere. The
+  model (about 110 MB) is downloaded once, from Hugging Face, the first time
+  it is needed; the download carries none of your text. While it is in use it
+  takes about 300 MB of memory, and it is let go after ten quiet minutes.
+- **The first mention has already gone out.** The finder reads a message after
+  it is sent, so a name it has not seen before reached the AI service as
+  written that one time. Every mention after you tap Add is swapped.
+- **Only what you type in the main chat.** Not emails, files or other chats.
+- **Off for the whole box** with `PRIVACY_FINDER=off` in `.env`. If the model
+  cannot be downloaded or loaded, the finder turns itself off until the next
+  restart and everything else carries on as normal.
+
 ## What it covers
 
 - Everything the assistant sends to the AI: your messages, its instructions
@@ -68,7 +91,9 @@ from every chat's requests.
 ## What it does not cover
 
 - **Names not on the list.** Only listed names, emails and phone numbers are
-  swapped. A client the list does not know reaches the AI as written.
+  swapped. A client the list does not know reaches the AI as written. The
+  name finder (above) offers new names from your own messages, but only after
+  their first mention.
 - **What the assistant's tools send elsewhere.** A tool that runs on this
   machine (sending an email, opening a web page, running a command) uses the
   real names, since that is its job. The AI service only ever sees

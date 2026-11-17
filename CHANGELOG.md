@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.83.0 - 2026-11-16
+
+- **New: the privacy filter suggests names to keep private.** While the filter is on, your assistant notices people and companies in the messages you type in your main chat and asks, "Keep Bright Path Dental private?", with Add and Not private. Add puts the name on your list; Not private means it never asks about that name again. A small name-recognition model does the reading on your assistant's own machine, so nothing it reads goes anywhere; it is downloaded once (about 110 MB) the first time it is needed. It asks at most three times a day, never in quiet hours, and only after a name's first mention, which has already gone out by then. `PRIVACY_FINDER=off` in `.env` turns it off (card #275).
+
 ## 1.82.1 - 2026-11-16
 
 - **Fixed: Gmail and Outlook sign-in tokens are kept out of the logs too.** Your assistant scrubs secrets from its logs, but it learned the values to look for only when it started. A Gmail or Outlook connection made with `/connect` gets a new token every hour, and those new tokens were not on the list. Each one is now added as it arrives, along with the tokens saved from before a restart, and Google's token formats are recognised on sight. A scan of a test assistant's logs found no tokens had been written (card #269).

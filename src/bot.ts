@@ -34,6 +34,8 @@ import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
 import { noteAsked, noteOwnerActive, noteOwnerMessage, resolveTipClick, tipsCommand, TIP_BUTTONS } from './tips/control.js'
+import { noteForFinder } from './privacy/finder/service.js'
+import { resolveSuggestionClick } from './privacy/finder/suggestions.js'
 import { tipContext } from './tips/context.js'
 import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, extractDecisionMarkers, ledgerBlock, outcomeText, proposalCard, proposalHint, proposeDecision, resolveProposal, setProposalCard } from './memory/decisions.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
@@ -702,6 +704,14 @@ async function answerTipClick(adapter: PlatformAdapter, chatId: string, cardId: 
   return true
 }
 
+/** A tap on a privacy name suggestion (card #275). False when the card is something else. */
+async function answerSuggestionClick(adapter: PlatformAdapter, chatId: string, cardId: string, label: string): Promise<boolean> {
+  const reply = resolveSuggestionClick(isPrimaryChat(chatId), cardId, label)
+  if (reply === null) return false
+  await adapter.sendMessage(chatId, reply)
+  return true
+}
+
 // --- Apple Shortcuts ---
 
 /**
@@ -1170,6 +1180,9 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
         return { handled: true, clearSession: false }
       }
       if (input.clickedMessageId !== undefined && (await answerTipClick(adapter, chatId, `web:${chatId}:${input.clickedMessageId}`, click[1]!))) {
+        return { handled: true, clearSession: false }
+      }
+      if (input.clickedMessageId !== undefined && (await answerSuggestionClick(adapter, chatId, `web:${chatId}:${input.clickedMessageId}`, click[1]!))) {
         return { handled: true, clearSession: false }
       }
       const picked = await modelForClick(`web:${input.conversationId}`, click[1]!)
@@ -2039,6 +2052,11 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     }
   }
 
+  // The privacy name finder (card #275) reads only after the secret capture
+  // above has had its turn: a key or passphrase must never reach it. Web text
+  // comes through here too, so this is its only call.
+  noteForFinder(isPrimaryChat(chatId), trimmed)
+
   // /btw non-abort: read-only commands during active run
   if (isChatBusy(chatId) && isNonAbortMessage(trimmed)) {
     logger.info({ chatId, text: trimmed.slice(0, 40) }, 'Non-abort command during active run')
@@ -2462,6 +2480,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
       const answer = async () => {
         if (msg.messageId && (await resolveDecisionClick(adapter, chatId, msg.messageId, label))) return
         if (msg.messageId && (await answerTipClick(adapter, chatId, `${chatId}:${msg.messageId}`, label))) return
+        if (msg.messageId && (await answerSuggestionClick(adapter, chatId, `${chatId}:${msg.messageId}`, label))) return
         if (await resolveModelClick(adapter, chatId, label)) return
         if (await resolveEffortClick(adapter, chatId, label)) return
         // A click on the request draft's own card answers the request and
