@@ -69,7 +69,7 @@ describe('runWebTurn', () => {
     const msg = rt.calls[0]!.message
     expect(msg.indexOf('Project: Alpha')).toBeGreaterThanOrEqual(0)
     expect(msg.indexOf('Project: Alpha')).toBeLessThan(msg.lastIndexOf('hello'))
-    expect(h.saveTurn).toHaveBeenCalledWith('owner', 'hello', 'web reply', { reads: undefined })
+    expect(h.saveTurn).toHaveBeenCalledWith('owner', 'hello', 'web reply', { reads: undefined, remembers: [] })
   })
 
   it('reports onQueued(1) for a turn queued behind a running one', async () => {

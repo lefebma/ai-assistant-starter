@@ -1,3 +1,4 @@
+import { hideRememberMarkers } from './memory/remember.js'
 import { writeFileSync } from 'node:fs'
 import { CronExpressionParser } from 'cron-parser'
 import { getDueTasks, getAllTasks, getTask, updateTaskAfterRun, setTaskNextRun, deleteTask, pauseTask, markTaskRunning, clearTaskRun, getInterruptedTasks, markTaskInterrupted, type ScheduledTask } from './db.js'
@@ -532,7 +533,7 @@ export async function runDueTasks(): Promise<void> {
           logger.info({ taskId: task.id, name: task.name }, 'Silent task suppressed')
         } else {
           try {
-            await sender(task.chat_id, `${label}:\n\n${withNote(verdict.note, result)}`)
+            await sender(task.chat_id, `${label}:\n\n${withNote(verdict.note, hideRememberMarkers(result))}`)
           } catch (err) {
             run.authority.fail(`the answer could not be delivered: ${String(err)}`)
             throw err

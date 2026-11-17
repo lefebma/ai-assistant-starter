@@ -33,11 +33,12 @@ import { tidyPrompt, type RequestDraft } from './request/draft.js'
 import { withActor } from './assurance/audit-trail.js'
 import { cardRunKey, withRun } from './assurance/effect-journal.js'
 import { saveConversationTurn } from './memory.js'
+import { REMEMBER_INSTRUCTION, extractReplyMarkers, hidePartialMarkers } from './memory/remember.js'
 import { noteAsked, noteOwnerActive, noteOwnerMessage, resolveTipClick, tipsCommand, TIP_BUTTONS } from './tips/control.js'
 import { noteForFinder } from './privacy/finder/service.js'
 import { resolveSuggestionClick } from './privacy/finder/suggestions.js'
 import { tipContext } from './tips/context.js'
-import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, extractDecisionMarkers, ledgerBlock, outcomeText, proposalCard, proposalHint, proposeDecision, resolveProposal, setProposalCard } from './memory/decisions.js'
+import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, ledgerBlock, outcomeText, proposalCard, proposalHint, proposeDecision, resolveProposal, setProposalCard } from './memory/decisions.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
 import { createDefaultEngine } from './memory/engine.js'
@@ -377,7 +378,7 @@ async function runTurn(
 
   // Pinned decisions ride every turn, outside the history that trimming and
   // compaction drop, with how to propose a new one (card #235).
-  const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, onboardingNudge, rawText]
+  const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, REMEMBER_INSTRUCTION, onboardingNudge, rawText]
     .filter(Boolean)
     .join('\n\n')
 
@@ -427,7 +428,10 @@ async function runTurn(
   let pendingEditTimer: NodeJS.Timeout | null = null
   let pendingPreviewText = ''
 
-  async function renderPreview(text: string): Promise<void> {
+  async function renderPreview(raw: string): Promise<void> {
+    // Markers ([[remember:]], [[decision:]], [[buttons:]]) are stripped from
+    // the final reply; the preview hides them too, half-written ones included.
+    const text = hidePartialMarkers(raw)
     const truncated = text.length > STREAM_PREVIEW_LIMIT
     const body = truncated ? text.slice(0, STREAM_PREVIEW_LIMIT) + '\n\n... (still writing)' : text
     if (body === lastRenderedPreview) return
@@ -470,8 +474,9 @@ async function runTurn(
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
     const { text: rawResponse, newSessionId, aiPaused, reads } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope }))
-    // A proposed decision becomes a card of its own after the reply (card #235).
-    const { cleanText: response, proposals } = rawResponse ? extractDecisionMarkers(rawResponse) : { cleanText: rawResponse, proposals: [] }
+    // A proposed decision becomes a card of its own after the reply (card #235);
+    // a fact to remember is saved with the turn (card #276). Neither is shown.
+    const { cleanText: response, proposals, remembers } = rawResponse ? extractReplyMarkers(rawResponse) : { cleanText: rawResponse, proposals: [], remembers: [] }
 
     if (pendingEditTimer) {
       clearTimeout(pendingEditTimer)
@@ -483,7 +488,7 @@ async function runTurn(
     // killed mid-tool-call can wedge it), and save nothing to memory.
     if (signal.aborted) {
       logger.info({ chatId }, 'Agent turn cancelled')
-      const partial = pendingPreviewText.trim()
+      const partial = hidePartialMarkers(pendingPreviewText).trim()
       if (previewMessageId != null) {
         await adapter.editMessage(chatId, previewMessageId, partial ? `${partial.slice(0, 3800)}\n\n(cancelled)` : 'Cancelled.').catch(() => {})
       } else {
@@ -520,8 +525,15 @@ async function runTurn(
     if (!response && proposals.length) {
       // The reply was only a proposed decision: the card is the answer.
       if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
-      if (!opts.skipMemory) await saveConversationTurn(scope, rawText, '', { reads })
+      if (!opts.skipMemory) await saveConversationTurn(scope, rawText, '', { reads, remembers })
       await sendDecisionCards(adapter, chatId, proposals, scope)
+      return
+    }
+    if (!response && remembers.length) {
+      // The reply was only a fact to remember: keep it, and say so.
+      if (!opts.skipMemory) await saveConversationTurn(scope, rawText, '', { reads, remembers })
+      if (previewMessageId != null) await adapter.editMessage(chatId, previewMessageId, 'Noted.')
+      else await adapter.sendMessage(chatId, 'Noted.')
       return
     }
     if (!response) {
@@ -534,7 +546,7 @@ async function runTurn(
     }
 
     // Save to memory
-    if (!opts.skipMemory) await saveConversationTurn(scope, rawText, response, { reads })
+    if (!opts.skipMemory) await saveConversationTurn(scope, rawText, response, { reads, remembers })
 
     // Voice reply?
     if (willVoice) {
@@ -772,13 +784,14 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
     const { text: raw, newSessionId, reads } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope }))
     // Shortcuts get no instruction to propose decisions; strip a stray marker.
-    const text = raw ? extractDecisionMarkers(raw).cleanText : raw
+    const text = raw ? extractReplyMarkers(raw).cleanText : raw
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
     const clearedMidTurn = (sessionId !== undefined && getSession(scope) == null) || scopeGone(scope)
     if (newSessionId && !clearedMidTurn) setSession(scope, newSessionId)
     if (!clearedMidTurn) bumpSessionMessageCount(scope)
+    // No marker instruction here either, so a stray [[remember:]] is dropped, never saved.
     if (text) await saveConversationTurn(scope, rawText, text, { reads })
     return text
   } finally {
@@ -897,7 +910,7 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
   try {
     const skillIndex = buildSkillIndex()
     const memoryContext = await contextEngine.buildContext(scope, text)
-    const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, framing, text].filter(Boolean).join('\n\n')
+    const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, REMEMBER_INSTRUCTION, framing, text].filter(Boolean).join('\n\n')
     logger.info({ chatId, key, messageLength: text.length }, 'Processing web message')
     const { text: reply, newSessionId, aiPaused, reads } = await withActor(`web:${chatId}`, () =>
       runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
@@ -915,7 +928,10 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
       const paused = marker ? ownerPauseReply(marker, new Date()).text : repeatReply(undefined)
       return { text: null, newSessionId, cancelled: false, paused }
     }
-    if (reply && !input.skipMemory) await saveConversationTurn(scope, text, extractDecisionMarkers(reply).cleanText, { reads })
+    if (reply && !input.skipMemory) {
+      const { cleanText, remembers } = extractReplyMarkers(reply)
+      await saveConversationTurn(scope, text, cleanText, { reads, remembers })
+    }
     return { text: reply, newSessionId, cancelled: false }
   } finally {
     clearLane(key)
