@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.84.1 - 2026-11-17
+
+- **Fix: updates no longer download about 270 MB of graphics-card software.** Since 1.83.0, an update on a Linux machine fetched GPU libraries from Microsoft that your assistant never uses, and if that download failed, the update failed. Updates now skip it (card #275).
+
 ## 1.84.0 - 2026-11-16
 
 - **Improved: your assistant forgets what you have replaced.** Tell it "Northpine reminders go to Priya" one month and "send them to billing@ now" the next, and it used to recall both and pick one. Now the newer fact retires the older one: it is kept, but never recalled again. Something your assistant read in an email, a web page or a forwarded message can never replace what you said, and once you have spoken on a subject, outside text about it is left out of what your assistant recalls instead of only being marked as outside text. It works for the facts your assistant tags as it replies (contacts, amounts, dates, standing rules), and only a fact your own words in that message back can replace an older one, so an address or number you never typed cannot. Other memories behave as before. In the recovery eval, memory precision goes from 73% to 100% with nothing required lost (card #276).

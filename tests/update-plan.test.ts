@@ -83,6 +83,13 @@ describe('source update', () => {
     expect(SOURCE_INSTALL_ARGS[0]).toBe('ci')
   })
 
+  it('skips the onnxruntime GPU download on every update install, and ships .npmrc', () => {
+    // havn-test 1.82.1 -> 1.83.0 (2026-11-16): .npmrc was not an engine path, so the
+    // update's npm ci fetched 272 MB of CUDA from nuget.org; a failed fetch fails /update.
+    expect(SOURCE_INSTALL_ARGS).toContain('--onnxruntime-node-install=skip')
+    expect(SOURCE_ENGINE_PATHS).toContain('.npmrc')
+  })
+
   it('swaps the lockfile with package.json so the install is the one the new version was built with', () => {
     expect(SOURCE_ENGINE_PATHS).toContain('package.json')
     expect(SOURCE_ENGINE_PATHS).toContain('package-lock.json')

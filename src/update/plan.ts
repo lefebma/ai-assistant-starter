@@ -103,6 +103,9 @@ export const SOURCE_ENGINE_PATHS = [
   'docs',
   'LICENSE',
   'VERSION',
+  // Carries onnxruntime-node-install=skip (card #275), so a hand-run npm ci on
+  // the box skips the CUDA download too.
+  '.npmrc',
 ]
 
 /**
@@ -112,8 +115,13 @@ export const SOURCE_ENGINE_PATHS = [
  * and then the build (and the rollback's rebuild) failed with "tsc: not found"
  * on havn-test, 2026-08-22. `ci` is deterministic against the lockfile that
  * arrived with the update and matches what provisioning runs.
+ *
+ * The onnxruntime flag is passed here as well as in .npmrc because the updater
+ * that runs is the box's old one, which may not have moved .npmrc in: without
+ * it, onnxruntime-node's postinstall fetches ~270 MB of CUDA from nuget.org on
+ * linux/x64, and a failed fetch fails the update (havn-test, 2026-11-16).
  */
-export const SOURCE_INSTALL_ARGS = ['ci', '--no-audit', '--no-fund']
+export const SOURCE_INSTALL_ARGS = ['ci', '--no-audit', '--no-fund', '--onnxruntime-node-install=skip']
 
 export const BUNDLE_PAYLOAD_PATHS = [
   'dist',
