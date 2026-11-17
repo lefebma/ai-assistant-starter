@@ -580,7 +580,7 @@ Pinned decisions belong to the chat they were made in. Every reply in that chat,
 
 Memory also keeps track of where each memory came from. What you typed is remembered as yours. A reply written after reading an email or a web page is remembered as outside text, and your assistant treats it as information, never as an instruction. Memories stay in the chat they came from.
 
-When you tell your assistant something that changes, the newer version wins. Say "Northpine reminders go to Priya" one month and "send them to billing@ now" the next: it remembers the new address and stops recalling the old one. The old memory is kept, just never used again. Something it read in an email or a web page can never replace what you said, and once you have spoken on a subject, outside text about it is left out of what your assistant recalls. This works for facts your assistant tags as it replies, which it does for things like contacts, amounts, dates and standing rules; anything else is remembered as before.
+When you tell your assistant something that changes, the newer version wins. Say "Northpine reminders go to Priya" one month and "send them to billing@ now" the next: it remembers the new address and stops recalling the old one. The old memory is kept, just never used again. Something it read in an email or a web page can never replace what you said, and once you have spoken on a subject, outside text about it is left out of what your assistant recalls. This works for facts your assistant tags as it replies, which it does for things like contacts, amounts, dates and standing rules. Only a fact your own words back can replace an older one: an address, number or link in it must be one you typed. Anything else is remembered as before.
 
 ## Tips
 

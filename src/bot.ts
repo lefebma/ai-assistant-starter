@@ -777,15 +777,15 @@ async function shortcutTurn(chatId: string, rawText: string, signal: AbortSignal
     logger.info({ chatId, messageLength: rawText.length }, 'Processing shortcut message')
     const { text: raw, newSessionId, reads } = await withActor(`shortcut:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, undefined, undefined, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope }))
     // Shortcuts get no instruction to propose decisions; strip a stray marker.
-    const parsed = raw ? extractReplyMarkers(raw) : null
-    const text = parsed ? parsed.cleanText : raw
+    const text = raw ? extractReplyMarkers(raw).cleanText : raw
     // Same rules as a chat turn: a cancelled run keeps the previous session,
     // and a session cleared mid-turn by /newchat is not written back.
     if (signal.aborted) return 'Cancelled.'
     const clearedMidTurn = (sessionId !== undefined && getSession(scope) == null) || scopeGone(scope)
     if (newSessionId && !clearedMidTurn) setSession(scope, newSessionId)
     if (!clearedMidTurn) bumpSessionMessageCount(scope)
-    if (text) await saveConversationTurn(scope, rawText, text, { reads, remembers: parsed?.remembers })
+    // No marker instruction here either, so a stray [[remember:]] is dropped, never saved.
+    if (text) await saveConversationTurn(scope, rawText, text, { reads })
     return text
   } finally {
     clearLane(chatId)

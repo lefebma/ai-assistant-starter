@@ -12,7 +12,7 @@ import {
 import { logger } from './logger.js'
 import { scopeGone } from './projects/store.js'
 import { hasQuoted, ownerWords, recallLine, replyOrigin } from './memory/provenance.js'
-import { extractRememberMarkers, factContent, type RememberMarker } from './memory/remember.js'
+import { backedByOwner, extractRememberMarkers, factContent, type RememberMarker } from './memory/remember.js'
 
 const SEMANTIC_PATTERN = /\b(my|i am|i'm|i prefer|remember|always|never)\b/i
 
@@ -59,8 +59,9 @@ const UNTRUSTED_BLOCK = /<(untrusted-[\w-]+)>\n?([\s\S]*?)\n?<\/\1>/g
  *
  * Topics (card #276): each [[remember: topic | fact]] marker (`remembers`,
  * or any left in the reply) is saved as a fact and tags every row this turn
- * saved. In a turn that read nothing from outside, the fact is the owner's and
- * retires this chat's older rows on the topic. In any other turn it is
+ * saved. In a turn that read nothing from outside, a fact the owner's own words
+ * back is the owner's and retires this chat's older rows on the topic; one they
+ * do not back is the assistant's and retires nothing. In any other turn it is
  * untrusted, tags only the untrusted rows, and retires nothing.
  */
 export async function saveConversationTurn(
@@ -121,13 +122,22 @@ export async function saveConversationTurn(
 
     let retired = 0
     for (const r of remembers) {
-      const fact = insertMemory(chatId, factContent(r), 'semantic', undefined, trusted ? 'owner' : 'untrusted')
+      // The marker is the model's text: it is the owner's fact only when the
+      // owner's own words in this turn back it (see remember.ts).
+      const owners = trusted && backedByOwner(r.text, own)
+      const fact = insertMemory(chatId, factContent(r), 'semantic', undefined, owners ? 'owner' : trusted ? 'assistant' : 'untrusted')
       if (!r.topic) continue
-      // An untrusted turn tags only what came from outside: the owner's request
-      // to read an email is not the owner speaking on the email's topic.
-      const rows = trusted ? [...ownerRows, fact] : [...untrustedRows, fact]
-      tagMemories(chatId, rows, r.topic)
-      if (trusted) retired += retireTopic(chatId, r.topic, [...ownerRows, ...untrustedRows, fact]).length
+      if (owners) {
+        tagMemories(chatId, [...ownerRows, fact], r.topic)
+        retired += retireTopic(chatId, r.topic, [...ownerRows, ...untrustedRows, fact]).length
+      } else if (trusted) {
+        // Unbacked: tagged, so a later owner fact on the topic retires it, but it retires nothing.
+        tagMemories(chatId, [fact], r.topic)
+      } else {
+        // An untrusted turn tags only what came from outside: the owner's request
+        // to read an email is not the owner speaking on the email's topic.
+        tagMemories(chatId, [...untrustedRows, fact], r.topic)
+      }
     }
     if (retired) logger.info({ chatId, retired, topics: remembers.filter((r) => r.topic).length }, 'Retired memories replaced by a newer fact')
   })()

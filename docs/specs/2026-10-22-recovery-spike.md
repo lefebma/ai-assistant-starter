@@ -316,7 +316,7 @@ Every hard threshold now holds in the as-is arm. Precision is still under the ba
 ## Follow-up: card #276 (2026-11-16)
 
 - **Topics:** a reply tags a fact worth keeping with a `[[remember: topic | fact]]` marker (`src/memory/remember.ts`). The bot strips it, saves the fact, and tags every row its turn saved in `memory_topics`. Topics are cleaned like decision topics.
-- **Retiring:** in a turn that read nothing from outside, the fact is the owner's and retires the chat's older rows on its topic (`retired_at`, `retired_reason = 'superseded'`). Retired rows are kept and never recalled.
+- **Retiring:** in a turn that read nothing from outside, the fact is the owner's and retires the chat's older rows on its topic (`retired_at`, `retired_reason = 'superseded'`). Retired rows are kept and never recalled. The marker is model text, so the fact counts as the owner's only when the owner's words in that turn back it (`backedByOwner`: every address, link and number typed by the owner, or half the words for a plain fact); otherwise it is saved as the assistant's and retires nothing. Shortcut turns drop markers.
 - **Leaving out:** a marker in a turn that read mail, the web, a file or a forwarded message is saved as untrusted, tags only the untrusted rows and retires nothing. Recall leaves out an untrusted row on a topic the owner has a live memory on, instead of wrapping it.
 
 The as-is arm's S3 replies now carry the marker, so the eval measures retiring and leaving out, not how well the model tags.
