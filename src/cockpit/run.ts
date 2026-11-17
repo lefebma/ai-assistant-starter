@@ -1,3 +1,4 @@
+import { hideRememberMarkers } from '../memory/remember.js'
 import { IncomingMessage, ServerResponse } from 'node:http'
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -107,7 +108,7 @@ export async function handleRun(req: IncomingMessage, res: ServerResponse): Prom
     const sessionId = getSession(chatKey) ?? undefined
     const onPartial = (accumulated: string) => {
       if (state.cancelled) return
-      sse(res, { type: 'delta', text: accumulated })
+      sse(res, { type: 'delta', text: hideRememberMarkers(accumulated) })
     }
 
     const { text, newSessionId } = await withActor(`cockpit:${chatKey}`, () => runAgent(tagged, sessionId, undefined, onPartial, undefined, 'chat', state.controller.signal))
@@ -118,7 +119,7 @@ export async function handleRun(req: IncomingMessage, res: ServerResponse): Prom
     if (state.cancelled) {
       logger.info({ runId, skillId: skill.id }, 'cockpit: run cancelled by user')
     } else {
-      const final = text ?? '(no response)'
+      const final = text ? hideRememberMarkers(text).trim() || '(no response)' : '(no response)'
       const elapsedMs = Date.now() - state.startedAt
       sse(res, { type: 'done', runId, text: final, elapsedMs, newSessionId })
       persistLastRun({

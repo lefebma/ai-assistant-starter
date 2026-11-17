@@ -1,3 +1,4 @@
+import { hideRememberMarkers } from './memory/remember.js'
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http'
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs'
 import { resolve, extname } from 'node:path'
@@ -473,8 +474,12 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
     res.end()
   }, VOICE_HANDOFF_MS)
 
-  const onPartial = (accumulated: string): void => {
+  const onPartial = (raw: string): void => {
     if (handedOffToChat) return
+    // Never speak a [[remember:]] marker (card #276). Deltas only append, so a
+    // text that no longer extends what was sent waits for the final flush.
+    const accumulated = hideRememberMarkers(raw)
+    if (!accumulated.startsWith(lastSent)) return
     const delta = accumulated.slice(lastSent.length)
     if (!delta) return
     lastSent = accumulated
@@ -492,7 +497,7 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
       // operator bearer has none, and that falls back to the primary chat.
       const target = auth.chatId ?? PRIMARY_CHAT_ID
       if (target && text) {
-        await sendPlatformMessage(target, text).catch((e: unknown) =>
+        await sendPlatformMessage(target, hideRememberMarkers(text)).catch((e: unknown) =>
           logger.warn({ err: e }, 'voice fallback failed'),
         )
       }
@@ -501,8 +506,9 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse):
 
     if (timeoutHandle) clearTimeout(timeoutHandle)
     // Flush any tail that wasn't streamed via partials
-    if (text && text.length > lastSent.length) {
-      res.write(sseFrame(openaiChunk(completionId, model, { content: text.slice(lastSent.length) })))
+    const shown = text ? hideRememberMarkers(text) : ''
+    if (shown.startsWith(lastSent) && shown.length > lastSent.length) {
+      res.write(sseFrame(openaiChunk(completionId, model, { content: shown.slice(lastSent.length) })))
     }
     res.write(sseFrame(openaiChunk(completionId, model, {}, 'stop')))
     res.write('data: [DONE]\n\n')

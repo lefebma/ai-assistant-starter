@@ -488,7 +488,7 @@ async function runTurn(
     // killed mid-tool-call can wedge it), and save nothing to memory.
     if (signal.aborted) {
       logger.info({ chatId }, 'Agent turn cancelled')
-      const partial = pendingPreviewText.trim()
+      const partial = hidePartialMarkers(pendingPreviewText).trim()
       if (previewMessageId != null) {
         await adapter.editMessage(chatId, previewMessageId, partial ? `${partial.slice(0, 3800)}\n\n(cancelled)` : 'Cancelled.').catch(() => {})
       } else {
@@ -527,6 +527,13 @@ async function runTurn(
       if (previewMessageId != null) await adapter.deleteMessage?.(chatId, previewMessageId).catch(() => false)
       if (!opts.skipMemory) await saveConversationTurn(scope, rawText, '', { reads, remembers })
       await sendDecisionCards(adapter, chatId, proposals, scope)
+      return
+    }
+    if (!response && remembers.length) {
+      // The reply was only a fact to remember: keep it, and say so.
+      if (!opts.skipMemory) await saveConversationTurn(scope, rawText, '', { reads, remembers })
+      if (previewMessageId != null) await adapter.editMessage(chatId, previewMessageId, 'Noted.')
+      else await adapter.sendMessage(chatId, 'Noted.')
       return
     }
     if (!response) {

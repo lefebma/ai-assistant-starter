@@ -49,6 +49,9 @@ export async function buildMemoryContext(
   return `<memory-context hidden="true">\nThe following is background context from previous conversations. DO NOT include this in your response. Use it only to inform your answer.\n${lines.join('\n')}\n</memory-context>`
 }
 
+/** The lines media.ts puts in a message for each attachment: "[Photo attached: ...]", "[Document attached: ...]". */
+const ATTACHMENT_LINE = /\[[A-Za-z][\w ]* attached: /
+
 const UNTRUSTED_BLOCK = /<(untrusted-[\w-]+)>\n?([\s\S]*?)\n?<\/\1>/g
 
 /**
@@ -85,7 +88,10 @@ export async function saveConversationTurn(
 
   const quoted = hasQuoted(userMsg)
   const replyFrom = replyOrigin(opts.reads, quoted)
-  const trusted = replyFrom === 'assistant'
+  // An attachment (a photo, document or long paste) is read without a tool,
+  // so it leaves no read behind; a marker it led to is not the owner's either.
+  const attached = ATTACHMENT_LINE.test(userMsg)
+  const trusted = replyFrom === 'assistant' && !attached
 
   const own = ownerWords(userMsg)
   const isSemantic = SEMANTIC_PATTERN.test(own)
@@ -116,7 +122,8 @@ export async function saveConversationTurn(
       // Save a compressed version of the assistant response for episodic recall
       if (reply.length > 50) {
         const id = insertMemory(chatId, `Assistant responded: ${reply.slice(0, 300)}`, 'episodic', undefined, replyFrom)
-        ;(trusted ? ownerRows : untrustedRows).push(id)
+        if (replyFrom === 'untrusted') untrustedRows.push(id)
+        else if (trusted) ownerRows.push(id)
       }
     }
 

@@ -32,7 +32,8 @@ export const REMEMBER_INSTRUCTION =
   'or forwarded message, tag it the same way: it is saved as unverified and never replaces what the owner said. ' +
   'The owner never sees the marker.'
 
-const MARKER = /\[\[remember:\s*([^\]]+)\]\]/gi
+// Ends at the first ]], so a fact may hold a single bracket: [[remember: t | use the [internal] channel]].
+const MARKER = /\[\[remember:\s*([\s\S]*?)\]\]/gi
 
 function cleanFact(text: string): string {
   const t = defang(text).replace(/\s+/g, ' ').trim()
@@ -71,9 +72,24 @@ export function factContent(m: RememberMarker): string {
   return m.topic ? `Remembered fact [${m.topic}]: ${m.text}` : `Remembered fact: ${m.text}`
 }
 
-/** A streamed preview without markers, complete or half-written (same rule as the web page). */
+/**
+ * A streamed preview without markers, complete or half-written, any kind
+ * (remember, decision, buttons, file): the final reply strips or renders them.
+ * An unfinished opening ("[[remem") is held back too.
+ */
 export function hidePartialMarkers(text: string): string {
-  return text.replace(/\[\[[a-z]+:[^\]]*(\]\])?/gi, '').replace(/\[\[?$/, '')
+  return text.replace(/\[\[[a-z]+:[\s\S]*?(?:\]\]|$)/gi, '').replace(/\[\[[a-z]*$|\[$/i, '')
+}
+
+/**
+ * Only [[remember:]] markers, complete or half-written, for surfaces that
+ * never get the instruction but deliver the agent's text as is (scheduled
+ * results, the cockpit, voice). Other markers there keep their old handling.
+ */
+export function hideRememberMarkers(text: string): string {
+  return text
+    .replace(/\[\[remember:[\s\S]*?(?:\]\]|$)/gi, '')
+    .replace(/\[\[(?:r(?:e(?:m(?:e(?:m(?:b(?:e(?:r)?)?)?)?)?)?)?)?$/i, '')
 }
 
 const IDENTIFIER = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+|https?:\/\/[^\s)\]]+|[$€£]?[\w,.-]*\d[\w,.-]*/g

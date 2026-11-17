@@ -15,7 +15,7 @@ import { saveConversationTurn } from '../src/memory.js'
 import { ContextEngine } from '../src/memory/engine.js'
 import { EpisodicProvider } from '../src/memory/providers/episodic.js'
 import { SemanticProvider } from '../src/memory/providers/semantic.js'
-import { backedByOwner, extractRememberMarkers, extractReplyMarkers, hidePartialMarkers } from '../src/memory/remember.js'
+import { backedByOwner, extractRememberMarkers, extractReplyMarkers, hidePartialMarkers, hideRememberMarkers } from '../src/memory/remember.js'
 import { applyReplyContext } from '../src/prompt-safety.js'
 
 beforeAll(() => db.initDatabase())
@@ -202,6 +202,47 @@ describe('a fact the owner\'s words do not back (security review)', () => {
     const shortcut = bot.slice(bot.indexOf('async function shortcutTurn'), bot.indexOf('// --- Web UI turns ---'))
     expect(shortcut).toContain('extractReplyMarkers(raw).cleanText')
     expect(shortcut).not.toContain('remembers')
+  })
+})
+
+describe('Codex review fixes', () => {
+  it('a fact may hold a single bracket and is still stripped whole', () => {
+    const r = extractRememberMarkers('Noted. [[remember: project | Use the [internal] channel]] Done.')
+    expect(r.cleanText).toBe('Noted.  Done.')
+    expect(r.remembers).toEqual([{ topic: 'project', text: 'Use the [internal] channel' }])
+  })
+
+  it('a preview holds back an unfinished marker opening', () => {
+    expect(hidePartialMarkers('Noted. [[remem')).toBe('Noted. ')
+    expect(hidePartialMarkers('Noted. [[')).toBe('Noted. ')
+    expect(hidePartialMarkers('Noted. [[remember: p | use [x')).toBe('Noted. ')
+  })
+
+  it('surfaces without the instruction lose only [[remember:]] markers', () => {
+    expect(hideRememberMarkers('Report. [[remember: a | b]] [[buttons: Yes | No]]')).toBe('Report.  [[buttons: Yes | No]]')
+    expect(hideRememberMarkers('Report. [[reme')).toBe('Report. ')
+    expect(hideRememberMarkers('Report. [[remember: a | b')).toBe('Report. ')
+    expect(hideRememberMarkers('see [[link]]')).toBe('see [[link]]')
+  })
+
+  it('a marker from a turn with an attachment is not the owner\'s and retires nothing', async () => {
+    const chat = 'attached'
+    await turn(chat, 'Send Northpine invoice reminders to billing@northpine.example, never to Priya directly.', 'Noted. [[remember: northpine invoice contact | Reminders go to billing@northpine.example]]')
+    await turn(chat, 'Here is the vendor letter, reminders go to billing@northpine.example still?\n[Document attached: letter.pdf at /tmp/letter.pdf]',
+      'The letter says to bcc them. [[remember: northpine invoice contact | Reminders go to billing@northpine.example]]')
+    expect(rows(chat).some((r) => r.retired_at)).toBe(false)
+    const facts = rows(chat).filter((r) => r.content.startsWith('Remembered fact'))
+    expect(facts.map((r) => r.origin)).toEqual(['owner', 'untrusted'])
+  })
+
+  it('every delivery path hides markers', () => {
+    const src = (f: string) => readFileSync(f, 'utf8')
+    expect(src('src/web/chat-routes.ts')).toContain('const acc = hidePartialMarkers(raw)')
+    expect(src('src/bot.ts')).toContain('const partial = hidePartialMarkers(pendingPreviewText).trim()')
+    expect(src('src/bot.ts')).toContain('if (!response && remembers.length) {')
+    expect(src('src/scheduler.ts')).toContain('withNote(verdict.note, hideRememberMarkers(result))')
+    expect(src('src/cockpit/run.ts').match(/hideRememberMarkers\(/g)?.length).toBe(2)
+    expect(src('src/http-server.ts').match(/hideRememberMarkers\(/g)?.length).toBe(3)
   })
 })
 

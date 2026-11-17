@@ -10,7 +10,7 @@ import { effortLevelsFor } from '../models/effort.js'
 import { runtimeIdFor } from '../runtime/index.js'
 import { runWebTurn, cancelWebTurn, webSecretAwaited, webSupportAwaited, extractButtons, runWebCommand, COMMAND_MENU } from '../bot.js'
 import { PIN_BUTTONS, proposalCard, proposalHint, proposeDecision, setProposalCard } from '../memory/decisions.js'
-import { extractReplyMarkers } from '../memory/remember.js'
+import { extractReplyMarkers, hidePartialMarkers } from '../memory/remember.js'
 import { extractFileMarkers, resolveOutboundFile } from '../outbound-files.js'
 import { resolveVisible } from './files.js'
 import { projectFraming } from './projects.js'
@@ -233,7 +233,10 @@ async function answer(
       effort: (current.effort || undefined) as 'low' | 'medium' | 'high' | 'xhigh' | undefined,
       skipMemory,
       onQueued: (ahead) => sse.writeEvent('queued', { ahead }),
-      onPartial: (acc) => {
+      onPartial: (raw) => {
+        // Markers are stripped from the final reply; the live one hides them
+        // too, half-written ones included (card #276).
+        const acc = hidePartialMarkers(raw)
         // A runtime retry restarts the text from scratch. Appending it
         // would show both attempts, so the page is told to replace.
         if (!acc.startsWith(sent)) {
