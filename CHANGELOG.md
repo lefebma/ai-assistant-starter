@@ -2,7 +2,7 @@
 
 ## 1.84.2 - 2026-11-17
 
-- **Fix: a fact you did not state can no longer replace one you did.** Your assistant only lets a newer fact retire an older one when your own words back it. That check now needs every address, link and number to match one you typed exactly (not just appear inside a longer one), and it notices "not" and "never": "never send them to Priya" no longer backs "send them to Priya". When it is unsure, the fact is still kept, it just replaces nothing (card #276, security review).
+- **Fix: a fact you did not state can no longer replace one you did.** Your assistant only lets a newer fact retire an older one when your own words back it. That check now needs every address, link and number to match one you typed exactly (not just appear inside a longer one), and it reads "not", "never", "no longer" and "instead of" in the part of the sentence they belong to: "never send them to Priya" no longer backs "send them to Priya", and "send them to billing@ instead of ap@" never backs ap@. When it is unsure, the fact is still kept, it just replaces nothing (card #276, security review).
 
 ## 1.84.1 - 2026-11-17
 
