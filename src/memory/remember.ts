@@ -140,17 +140,23 @@ export function backedByOwner(fact: string, ownerText: string): boolean {
   // Clause by clause: each clause of the fact needs a clause of the owner's
   // with half its words and the same negation, so "send to Priya, never to
   // Bob" backs neither "never send to Priya" nor "send to Bob".
+  // Names count in any length here ("never to Bob"), unlike the half-the-words test.
+  const names = (t: string) => t.toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length >= 2 && !FILLER.has(w)).map((w) => w.slice(0, 5))
   const clauses = (t: string) =>
     t.split(/[,.;:!?\n]|\b(?:but|except|although|however)\b/i)
-      .map((c) => ({ words: [...new Set(stems(c))], negated: NEGATION.test(c) || REPLACED_BY.test(c) }))
-      .filter((c) => c.words.length)
-  const factClauses = clauses(fact)
+      .map((c) => ({ words: [...new Set(stems(c))], names: new Set(names(c)), negated: NEGATION.test(c) || REPLACED_BY.test(c) }))
+  const ownAll = clauses(ownerText)
+  // A bare "No." or "Not anymore." turns round what came before it: when in doubt, not backed.
+  if (ownAll.some((o) => o.negated && !o.words.length)) return false
+  const factClauses = clauses(fact).filter((c) => c.words.length)
   if (!factClauses.length) return false
-  const ownClauses = clauses(ownerText)
+  const ownClauses = ownAll.filter((c) => c.words.length || c.names.size)
   return factClauses.every((f) => {
     const same = ownClauses.filter((o) => o.negated === f.negated)
-    // A word the owner used only the other way round ("never to Oakridge") turns the clause against them.
-    const flipped = f.words.some((w) => !same.some((o) => o.words.includes(w)) && ownClauses.some((o) => o.words.includes(w)))
+    // A word the owner used only the other way round ("never to Oakridge", "never to Bob") turns the clause against them.
+    const flipped = [...f.names].some(
+      (w) => !same.some((o) => o.names.has(w)) && ownClauses.some((o) => o.names.has(w)),
+    )
     return !flipped && same.some((o) => f.words.filter((w) => o.words.includes(w)).length * 2 >= f.words.length)
   })
 }

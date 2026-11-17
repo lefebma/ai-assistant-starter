@@ -192,6 +192,8 @@ describe('a fact the owner\'s words do not back (security review)', () => {
     expect(backedByOwner('Never send invoice reminders to Priya', 'Never send invoice reminders to Priya.')).toBe(true)
     expect(backedByOwner('Never send invoice reminders to Priya', 'Send invoice reminders to Priya, never to the Oakridge team.')).toBe(false)
     expect(backedByOwner('Send invoice reminders to the Oakridge team', 'Send invoice reminders to Priya, never to the Oakridge team.')).toBe(false)
+    expect(backedByOwner('Send invoice reminders to Bob', 'Send invoice reminders to Priya, never to Bob.')).toBe(false)
+    expect(backedByOwner('Send invoice reminders to Priya', 'Send invoice reminders to Priya? No.')).toBe(false)
     expect(backedByOwner('Reminders go to priya@northpine.example', 'Reminders never go to priya@northpine.example.')).toBe(false)
     expect(backedByOwner('Reminders go to billing@northpine.example', 'Use billing@northpine.example.com for reminders.')).toBe(false)
     expect(backedByOwner('Reminders go to ing@northpine.example', 'Use billing@northpine.example for reminders.')).toBe(false)
