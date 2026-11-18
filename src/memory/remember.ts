@@ -94,24 +94,69 @@ export function hideRememberMarkers(text: string): string {
 
 const IDENTIFIER = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+|https?:\/\/[^\s)\]]+|[$€£]?[\w,.-]*\d[\w,.-]*/g
 const FILLER = new Set('that this with from have will they them their there what when where which would could should about into your than then also just only been were here more most some such very each other after before every always never'.split(' '))
+// Words that turn a statement around: "never to Priya" is not "to Priya",
+// and "billing@ instead of ap@" is not "ap@".
+const NEGATION = /\b(?:not|no|never|don'?t|doesn'?t|isn'?t|won'?t|can'?t|cannot|stop|without|nobody|none|longer|anymore|formerly|previously|replaced?|retired|old)\b/i
+// "instead of" and "rather than" mark what follows as the old one ("billing@ instead" is the new one).
+const REPLACED_BY = /\b(?:instead\s+of|rather\s+than)\b/i
 
 function norm(s: string): string {
   return s.toLowerCase().replace(/^[^\w$€£@]+|[^\w@]+$/g, '')
 }
 
+/** The addresses, links and numbers in a text, normalised, each with whether a negation sits within a few words of it. */
+function identifiers(text: string): Map<string, boolean> {
+  const out = new Map<string, boolean>()
+  for (const m of text.matchAll(IDENTIFIER)) {
+    const t = norm(m[0])
+    if (!/\d|@|:\/\//.test(t)) continue
+    const before = text.slice(0, m.index).split(/\s+/).slice(-4).join(' ')
+    // After it, only the same clause: "billing@, never to Priya" says nothing against billing@.
+    const after = text.slice(m.index! + m[0].length).split(/[,.;:!?\n]/)[0]!.split(/\s+/).slice(0, 5).join(' ')
+    out.set(t, (out.get(t) ?? false) || NEGATION.test(before) || REPLACED_BY.test(before) || NEGATION.test(after))
+  }
+  return out
+}
+
 /**
  * True when the owner's own words in the turn back a fact the reply tagged.
- * Every address, link and number in the fact must appear in what the owner
- * typed. A fact with none of those needs at least half its words (four letters
- * or more) to be the owner's.
+ * Every address, link and number in the fact must be one the owner typed,
+ * exactly, and negated or contrasted the same way in its clause ("never to
+ * priya@", "instead of priya@" and "priya@ is no longer" do not back "to
+ * priya@"). A fact with none of those needs each of its clauses
+ * to match one of the owner's: half its words (four letters or more) and the
+ * same negation. When in doubt it is not: an unbacked fact is
+ * still saved, it just retires nothing.
  */
 export function backedByOwner(fact: string, ownerText: string): boolean {
-  const own = ownerText.toLowerCase()
-  const ids = [...fact.matchAll(IDENTIFIER)].map((m) => norm(m[0])).filter((t) => /\d|@|:\/\//.test(t))
-  if (ids.length) return ids.every((t) => own.includes(t))
   const stems = (t: string) => t.toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length >= 4 && !FILLER.has(w)).map((w) => w.slice(0, 5))
-  const words = [...new Set(stems(fact))]
-  if (!words.length) return false
-  const ownStems = new Set(stems(ownerText))
-  return words.filter((w) => ownStems.has(w)).length * 2 >= words.length
+  const ids = identifiers(fact)
+  if (ids.size) {
+    const own = identifiers(ownerText)
+    if (![...ids].every(([t, negated]) => own.has(t) && own.get(t) === negated)) return false
+    // A fact that turns something around where the owner never did is not theirs.
+    return !NEGATION.test(fact.replace(IDENTIFIER, ' ')) || NEGATION.test(ownerText)
+  }
+  // Clause by clause: each clause of the fact needs a clause of the owner's
+  // with half its words and the same negation, so "send to Priya, never to
+  // Bob" backs neither "never send to Priya" nor "send to Bob".
+  // Names count in any length here ("never to Bob"), unlike the half-the-words test.
+  const names = (t: string) => t.toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length >= 2 && !FILLER.has(w)).map((w) => w.slice(0, 5))
+  const clauses = (t: string) =>
+    t.split(/[,.;:!?\n]|\b(?:but|except|although|however)\b/i)
+      .map((c) => ({ words: [...new Set(stems(c))], names: new Set(names(c)), negated: NEGATION.test(c) || REPLACED_BY.test(c) }))
+  const ownAll = clauses(ownerText)
+  // A bare "No." or "Not anymore." turns round what came before it: when in doubt, not backed.
+  if (ownAll.some((o) => o.negated && !o.words.length)) return false
+  const factClauses = clauses(fact).filter((c) => c.words.length)
+  if (!factClauses.length) return false
+  const ownClauses = ownAll.filter((c) => c.words.length || c.names.size)
+  return factClauses.every((f) => {
+    const same = ownClauses.filter((o) => o.negated === f.negated)
+    // A word the owner used only the other way round ("never to Oakridge", "never to Bob") turns the clause against them.
+    const flipped = [...f.names].some(
+      (w) => !same.some((o) => o.names.has(w)) && ownClauses.some((o) => o.names.has(w)),
+    )
+    return !flipped && same.some((o) => f.words.filter((w) => o.words.includes(w)).length * 2 >= f.words.length)
+  })
 }
