@@ -129,6 +129,15 @@ export const TIPS: Tip[] = [
     phrases: /\btiming warnings?\b/i,
   },
   {
+    id: 'first-call-prep',
+    since: '1.85.0',
+    text: 'Before a first call with someone new, I can send a short prep note. It comes with meeting briefings, which are off until you turn them on.',
+    tryIt: 'Say "turn on meeting briefings".',
+    applies: (c) => c.calendar,
+    used: (c) => c.briefingOn,
+    phrases: /\bprep notes?\b/i,
+  },
+  {
     id: 'private-names',
     since: '1.68.0',
     text: 'Working on something sensitive? I can swap client names, email addresses and phone numbers for placeholders before anything leaves this machine.',

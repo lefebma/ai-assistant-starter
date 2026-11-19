@@ -46,7 +46,8 @@ import { tipContext } from './tips/context.js'
 import { lastOwnerMessage } from './tips/control.js'
 import { webTurnBusy } from './bot.js'
 import { discoverCalendars } from './proactive/calendar.js'
-import { relatedThreads } from './proactive/threads.js'
+import { olderMailCount, relatedThreads } from './proactive/threads.js'
+import { prepare } from './proactive/prep.js'
 import { DAILY_DECISION_CAP, decide as decideBriefing } from './proactive/decide.js'
 import { arrivalNotes } from './proactive/travel.js'
 import { bumpCallCount, callCount } from './proactive/store.js'
@@ -328,6 +329,16 @@ async function main(): Promise<void> {
             tz: emailAlertsTz,
             count: () => callCount(localDay(new Date(), emailAlertsTz)),
             bump: () => bumpCallCount(localDay(new Date(), emailAlertsTz)),
+          }),
+        // First call with someone new: a prep note when there is no briefing. Shares the daily cap.
+        prep: (event, threads) =>
+          prepare(event, threads, {
+            run: proactiveRun,
+            tz: emailAlertsTz,
+            count: () => callCount(localDay(new Date(), emailAlertsTz)),
+            bump: () => bumpCallCount(localDay(new Date(), emailAlertsTz)),
+            cap: DAILY_DECISION_CAP,
+            older: () => olderMailCount(event, Date.now(), { client: outlookClient }),
           }),
         // Arrival notes share the briefings' daily cap of model reads.
         notes: (event, place, threads) =>

@@ -228,3 +228,45 @@ export async function relatedThreads(
   if (!deps.client) return []
   return outlookThreads(deps.client(event.account), ownAddress, emails, nowMs)
 }
+
+// ---------- Earlier history (first-call prep) ----------
+
+/**
+ * How many messages with these attendees are older than the lookback window,
+ * so a first call with someone new can be told from a regular one. Zero means
+ * the whole history is inside the window the briefing already reads. When the
+ * search comes back full the answer is "some", since the oldest may have been
+ * cut off: a known contact is never taken for a new one. Throws when the
+ * mailbox cannot be read.
+ */
+export async function olderMailCount(
+  event: UpcomingEvent,
+  nowMs: number,
+  deps: ThreadDeps = {}
+): Promise<number> {
+  const emails = searchable(event.attendees)
+  if (emails.length === 0) return 0
+  if (event.provider === 'google') {
+    const terms = emails.flatMap((e) => [`from:${e}`, `to:${e}`, `cc:${e}`])
+    const r = await (deps.exec ?? defaultExec)(gogBin(), [
+      'gmail', 'messages', 'search', `older_than:${LOOKBACK_DAYS}d -in:chats -in:drafts (${terms.join(' OR ')})`,
+      '--max', '3', '--json', '--results-only', '--account', event.account,
+    ])
+    if (!r.ok) throw new Error('gmail search failed')
+    const parsed = JSON.parse(r.stdout || '[]') as GogMessage[] | { messages?: GogMessage[] }
+    const rows = Array.isArray(parsed) ? parsed : (parsed.messages ?? [])
+    return rows.filter((m) => m.id && !(m.labels ?? []).map((l) => l.toUpperCase()).includes('DRAFT')).length
+  }
+  if (!deps.client) return 0
+  const cutoff = nowMs - LOOKBACK_DAYS * DAY
+  const kql = emails.map((e) => `participants:${e}`).join(' OR ')
+  const path =
+    `/me/messages?$search=${encodeURIComponent(`"${kql}"`)}&$top=${SEARCH_LIMIT}` + `&$select=id,receivedDateTime,isDraft`
+  const res = (await deps.client(event.account).get(path)) as { value?: GraphMessage[] }
+  const rows = (res.value ?? []).filter((m) => m.id && !m.isDraft)
+  if (rows.length >= SEARCH_LIMIT) return rows.length
+  return rows.filter((m) => {
+    const at = Date.parse(m.receivedDateTime ?? '')
+    return !Number.isNaN(at) && at < cutoff
+  }).length
+}

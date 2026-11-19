@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.85.0 - 2026-11-19
+
+- **New: a prep note before a first call with someone new.** When a meeting has no briefing (nothing open in your mail) and the people invited have no mail history with you from before the last two weeks, such as a recruiter or a new client, your assistant now sends a short prep note instead of staying quiet: who they are, what the call is for, what is likely to come up and what is worth asking. It says only what your mail supports and leaves a part out rather than guess.
+- **A known contact never gets one.** If anyone invited has older mail with you, or your mailbox cannot be checked, nothing is sent. It rides the meeting briefings switch (saying "stop the meeting briefings" turns it off too), follows your quiet hours and shares the daily limit on background reads.
+
 ## 1.84.2 - 2026-11-17
 
 - **Fix: a fact you did not state can no longer replace one you did.** Your assistant only lets a newer fact retire an older one when your own words back it. That check now needs every address, link and number to match one you typed exactly (not just appear inside a longer one), and it reads "not", "never", "no longer" and "instead of" in the part of the sentence they belong to: "never send them to Priya" no longer backs "send them to Priya", and "send them to billing@ instead of ap@" never backs ap@. When it is unsure, the fact is still kept, it just replaces nothing (card #276, security review).
