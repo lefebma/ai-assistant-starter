@@ -5,6 +5,12 @@ the attendees and send the owner a short heads-up: which threads to read
 first and anything the owner owes them. It stays quiet when there is nothing
 useful to say.
 
+For a first call with someone new (nothing open in the mail, and no mail with
+the attendees from before the last 14 days), the briefing becomes a short prep
+note instead: who they are, what the call is for, what is likely to come up and
+what is worth asking. It says only what the mail supports. It rides the
+briefing switch, so turning briefings off stops it too.
+
 For a meeting at a physical address, it can also send a travel message: the
 place, how long it takes to get there and when to leave, plus anything in
 the mail about parking, the room or someone running late. The trip starts at

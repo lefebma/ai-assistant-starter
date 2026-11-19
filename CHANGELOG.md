@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.85.0 - 2026-11-23
+
+- **New: a prep note before a first call with someone new.** When a meeting has no briefing (nothing open in your mail) and the people invited have no mail history with you from before the last two weeks, such as a recruiter or a new client, your assistant now sends a short prep note instead of staying quiet: who they are, what the call is for, what is likely to come up and what is worth asking. It says only what your mail supports and leaves a part out rather than guess.
+- **A known contact never gets one.** If anyone invited has older mail with you, or your mailbox cannot be checked, nothing is sent. It rides the meeting briefings switch (saying "stop the meeting briefings" turns it off too), follows your quiet hours and shares the daily limit on background reads.
+- **Tidier chat lists in the web app.** Each project and General now shows its 10 newest chats; the three dots show the rest, and "Show less" folds them back. The chat you have open always stays in view.
+
 ## 1.84.6 - 2026-11-20
 
 - **Fixed: the egress check proves what it says.** `npm run enable-egress -- <ip> --prove` ran as the assistant's user, which cannot move a process into the assistant's tools group, so every "inside: blocked" line it printed meant only that the move had failed. It now runs as root through havn-admin, stops with "nothing was proven" if the move fails, and refuses to run as anyone but root. Run on a test assistant, every check holds as it should (card #278).

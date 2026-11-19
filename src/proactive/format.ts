@@ -5,6 +5,7 @@
  */
 import type { UpcomingEvent } from './calendar.js'
 import type { Decision } from './decide.js'
+import type { Prep } from './prep.js'
 
 export type FormatMode = 'plain' | 'markdown'
 
@@ -52,5 +53,23 @@ export function formatBriefing(event: UpcomingEvent, d: Decision, tz: string, mo
   }
   const more = d.picks.length - shown.length
   if (more > 0) lines.push('', `${more} more related ${more === 1 ? 'thread' : 'threads'}.`)
+  return lines.join('\n')
+}
+
+/** The prep note for a first call with someone new. Empty parts are left out. */
+export function formatPrep(event: UpcomingEvent, p: Prep, tz: string, mode: FormatMode = 'markdown'): string {
+  const esc = mode === 'markdown' ? md : (s: string) => s
+  const people = who(event)
+  const lines = [`Prep for ${esc(event.title)} at ${time(event.startMs, tz)}${people ? ` (${esc(people)})` : ''}, a first call with them:`]
+  if (p.who) lines.push('', `Who: ${esc(p.who)}`)
+  if (p.about) lines.push('', `What it is about: ${esc(p.about)}`)
+  if (p.expect.length > 0) {
+    lines.push('', 'Likely to come up:')
+    for (const x of p.expect) lines.push(`- ${esc(x)}`)
+  }
+  if (p.ask.length > 0) {
+    lines.push('', 'Worth asking:')
+    for (const x of p.ask) lines.push(`- ${esc(x)}`)
+  }
   return lines.join('\n')
 }
