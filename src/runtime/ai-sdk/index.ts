@@ -36,6 +36,7 @@ import { capReached } from '../../ai-usage.js'
 import { capGate, recordStepSpend } from '../../managed-cap.js'
 import { SessionStore } from './sessions.js'
 import { createTools } from './tools.js'
+import { countSteps, logTurnEnd, type TurnEnd } from './turn-log.js'
 import { turnChat } from '../../memory/turn-context.js'
 import { briefWithDecisions } from '../../memory/decisions.js'
 import { effortProviderOptions, type Effort } from '../../models/effort-levels.js'
@@ -199,6 +200,10 @@ export class AiSdkAgentRuntime implements AgentRuntime {
       execute: async ({ prompt, working_directory }, { abortSignal }) => {
         const subCwd = working_directory ?? cwd
         logger.info({ cwd: subCwd, prompt: prompt.slice(0, 100) }, 'Dispatching subagent')
+        const started = Date.now()
+        const subModel = this.modelOverride ? { provider: 'override', modelId: 'override' } : safeResolveModel(model)
+        const end = (fields: Pick<TurnEnd, 'outcome' | 'replyLength' | 'steps' | 'toolCalls'>) =>
+          logTurnEnd({ kind: 'subagent', ...subModel, sessionId: guardSession, durationMs: Date.now() - started, ...fields })
         try {
           // A subagent inherits the job's role: it can never do more than its parent.
           // It is gated under the parent's session, so evasion strikes carry
@@ -208,9 +213,15 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           const sub = await this.buildAgent(subCwd, onToolProgress, { subagents: false, scope, guardSession, model, effort })
           // The brief carries the chat's pinned decisions (card #235).
           const result = await sub.generate({ prompt: briefWithDecisions(turnChat(), prompt), abortSignal })
-          return result.text.trim() || '(subagent returned no text)'
+          const report = result.text.trim()
+          end({ outcome: 'success', replyLength: report.length, ...countSteps(result) })
+          return report || '(subagent returned no text)'
         } catch (err) {
-          if (abortSignal?.aborted) return 'Subagent stopped: the run was cancelled.'
+          if (abortSignal?.aborted) {
+            end({ outcome: 'cancelled', replyLength: 0, steps: 0, toolCalls: 0 })
+            return 'Subagent stopped: the run was cancelled.'
+          }
+          end({ outcome: 'error', replyLength: 0, steps: 0, toolCalls: 0 })
           return `Subagent failed: ${String((err as Error)?.message ?? err).slice(0, 300)}`
         }
       },
@@ -344,10 +355,31 @@ export class AiSdkAgentRuntime implements AgentRuntime {
     const messages: ModelMessage[] = [...history, userMessage]
 
     this.activeWorkspaces.set(sessionId, cwd)
+    // One line when the turn ends, however it ends (card #279). Each exit below
+    // sets the outcome; the outer finally writes it.
+    const turnStarted = Date.now()
+    const end: TurnEnd = {
+      kind: isolated ? 'isolated' : 'turn',
+      outcome: 'error',
+      provider: turnProvider,
+      sessionId,
+      replyLength: 0,
+      durationMs: 0,
+      steps: 0,
+      toolCalls: 0,
+      attempts: 0,
+    }
+    const finish = (r: AgentRunResult, outcome: TurnEnd['outcome'], reason?: TurnEnd['reason']): AgentRunResult => {
+      end.outcome = outcome
+      end.reason = reason
+      end.replyLength = r.text?.length ?? 0
+      return r
+    }
     try {
       let lastError: unknown
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        end.attempts = attempt + 1
         if (attempt > 0) {
           const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1)
           logger.info({ attempt, delay }, 'Retrying after transient error')
@@ -369,7 +401,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
         let lastStepInput: number | undefined
         if (options.signal?.aborted) {
           logger.info({ attempt, sessionId }, 'AI SDK turn cancelled before starting')
-          return { text: null, newSessionId: sessionId }
+          return finish({ text: null, newSessionId: sessionId }, 'cancelled')
         }
         const abort = new AbortController()
         // Caller cancellation shares the controller the loop guard already uses.
@@ -382,6 +414,8 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           // not read back from the instance, which turns of other chats (on
           // other /model choices, card #270) and subagents also write.
           const turnModel = this.modelOverride ? { provider: 'override', modelId: 'override' } : resolveModel(options.model)
+          end.provider = turnModel.provider
+          end.modelId = turnModel.modelId
           const agent = await this.buildAgent(cwd, options.onToolProgress, {
             subagents: true,
             guardSession: sessionId,
@@ -399,6 +433,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
               stepToolCall = false
             } else if (part.type === 'finish-step') {
               stepOpen = false
+              end.steps++
               lastStepInput = part.usage?.inputTokens ?? lastStepInput
             }
             if (part.type === 'text-delta') {
@@ -407,6 +442,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
               options.onPartial?.(streamedText)
             } else if (part.type === 'tool-call') {
               stepToolCall = true
+              end.toolCalls++
               const sig = JSON.stringify({ n: part.toolName, i: part.input })
               if (sig === loopSignature) {
                 loopCount++
@@ -432,16 +468,16 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
           if (options.signal?.aborted) {
             logger.info({ sessionId }, 'AI SDK turn cancelled')
-            return { text: null, newSessionId: sessionId }
+            return finish({ text: null, newSessionId: sessionId }, 'cancelled')
           }
 
           if (loopDetected) {
             logger.error({ signature: loopSignature.slice(0, 200) }, 'Loop detected: identical tool calls repeated, aborting')
             save(messages)
-            return {
+            return finish({
               text: `Loop detected: the agent repeated the same tool call ${LOOP_THRESHOLD} times. Aborting to prevent infinite loop. Try rephrasing or starting a /newchat.`,
               newSessionId: sessionId,
-            }
+            }, 'error', 'loop')
           }
 
           if (streamError !== undefined) {
@@ -474,15 +510,17 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           }
 
           let text = (await result.text).trim() || null
+          let partial = false
           // The cap stopped the loop before any reply: report the pause, not "(no response)".
           if (!text && !streamedText.trim() && atCapNow()) {
-            return { text: null, newSessionId: sessionId, aiPaused: 'spend_limit' }
+            return finish({ text: null, newSessionId: sessionId, aiPaused: 'spend_limit' }, 'success', 'spend_limit')
           }
           // Reply reconciliation, same contract as the claude runtime: a partial
           // beats "(no response)" when the turn died after streaming text.
           if (!text && streamedText.trim().length > 0) {
             logger.warn({ partialLength: streamedText.length }, 'Reconciling partial stream as response')
             text = `${streamedText.trim()}\n\n_(partial reply, turn ended without a final result)_`
+            partial = true
           }
 
           // Steer chaining: run the queued follow-up on the same session. An
@@ -491,15 +529,19 @@ export class AiSdkAgentRuntime implements AgentRuntime {
             const steerMsg = `[steer]: ${this.pendingSteer}`
             this.pendingSteer = null
             logger.info('Executing queued steer message')
+            // The follow-up logs its own end line; this one records the first part.
+            end.replyLength = text?.length ?? 0
+            end.outcome = 'success'
+            end.reason = 'steered'
             return this.run({ ...options, message: steerMsg, sessionId })
           }
 
-          return { text, newSessionId: sessionId }
+          return finish({ text, newSessionId: sessionId }, 'success', partial ? 'partial' : undefined)
         } catch (err) {
           lastError = err
           if (options.signal?.aborted) {
             logger.info({ attempt, sessionId }, 'AI SDK turn cancelled')
-            return { text: null, newSessionId: sessionId }
+            return finish({ text: null, newSessionId: sessionId }, 'cancelled')
           }
           logger.error({ err, attempt }, 'AI SDK agent turn failed')
 
@@ -507,7 +549,7 @@ export class AiSdkAgentRuntime implements AgentRuntime {
           if (streamedText.trim().length > 0) {
             logger.warn({ attempt, partialLength: streamedText.length }, 'Partial stream before error; delivering it')
             save(messages)
-            return { text: `${streamedText.trim()}\n\n_(partial reply, turn ended early)_`, newSessionId: sessionId }
+            return finish({ text: `${streamedText.trim()}\n\n_(partial reply, turn ended early)_`, newSessionId: sessionId }, 'error', 'partial')
           }
 
           if (attempt < MAX_RETRIES && isRetryableError(err)) {
@@ -516,11 +558,11 @@ export class AiSdkAgentRuntime implements AgentRuntime {
 
           // Exact wording contract: the scheduler's OVERLOAD_PATTERN keys off this string.
           if (isRetryableError(err)) {
-            return { text: 'API is temporarily overloaded. Will try again on the next run.', newSessionId: sessionId }
+            return finish({ text: 'API is temporarily overloaded. Will try again on the next run.', newSessionId: sessionId }, 'error', 'overloaded')
           }
 
           const detail = String((err as Error)?.message ?? err).replace(/\s+/g, ' ').trim().slice(0, 300)
-          return { text: `Ran into an error and couldn't finish that: ${detail}`, newSessionId: sessionId }
+          return finish({ text: `Ran into an error and couldn't finish that: ${detail}`, newSessionId: sessionId }, 'error')
         } finally {
           // An aborted step was sent, so it is billed. An error part with no
           // output yet (a 429 refused up front, say) usually is not, and the
@@ -537,8 +579,13 @@ export class AiSdkAgentRuntime implements AgentRuntime {
       }
 
       logger.error({ lastError }, 'Exhausted all retries')
-      return { text: 'API is temporarily overloaded. Will try again on the next run.', newSessionId: sessionId }
+      return finish({ text: 'API is temporarily overloaded. Will try again on the next run.', newSessionId: sessionId }, 'error', 'retries_exhausted')
     } finally {
+      // A throw nobody caught (sleep() aborted between retries, say) leaves the
+      // default: an error, unless the caller cancelled.
+      if (end.outcome === 'error' && !end.reason && options.signal?.aborted && end.replyLength === 0) end.outcome = 'cancelled'
+      end.durationMs = Date.now() - turnStarted
+      logTurnEnd(end)
       this.activeWorkspaces.delete(sessionId)
       if (!isolated) this.pendingSteer = null
     }
@@ -564,4 +611,14 @@ function toolFailed(name: string, out: unknown): boolean {
   if (!out || typeof out !== 'object') return false
   const o = out as { isError?: unknown; error?: unknown; exitCode?: unknown }
   return o.isError === true || (typeof o.exitCode === 'number' && o.exitCode !== 0) || (o.error !== undefined && o.error !== null && o.error !== false)
+}
+
+/** Provider and model for a log line; a model that will not resolve is the run's problem, not the log's. */
+function safeResolveModel(model?: string): { provider?: string; modelId?: string } {
+  try {
+    const { provider, modelId } = resolveModel(model)
+    return { provider, modelId }
+  } catch {
+    return {}
+  }
 }
