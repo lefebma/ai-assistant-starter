@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.84.3 - 2026-11-20
+
+- **Fixed: no more refused browser checks in the audit log.** With the egress allowlist on, each time the browser tools started they looked for a Chrome on port 9222, and the allowlist refused the check, so the audit log filled with blocked lines that meant nothing. Browser tasks were not affected: they used the assistant's own browser, which keeps to the allowlist. The check is now skipped while egress is enforced, and the browser tools never attach to a Chrome started with `/browser start` there, since that Chrome runs outside the allowlist. `/browser start` says so (card #278).
+
 ## 1.84.2 - 2026-11-17
 
 - **Fix: a fact you did not state can no longer replace one you did.** Your assistant only lets a newer fact retire an older one when your own words back it. That check now needs every address, link and number to match one you typed exactly (not just appear inside a longer one), and it reads "not", "never", "no longer" and "instead of" in the part of the sentence they belong to: "never send them to Priya" no longer backs "send them to Priya", and "send them to billing@ instead of ap@" never backs ap@. When it is unsure, the fact is still kept, it just replaces nothing (card #276, security review).

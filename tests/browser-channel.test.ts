@@ -39,6 +39,14 @@ describe('chromeChannelInstalled', () => {
 })
 
 describe('playwrightMcpBrowserArgs', () => {
+  it('never attaches to :9222 while egress is enforced (card #278)', () => {
+    // A /browser start Chrome runs outside the egress proxy: driving it would
+    // let every page reach anywhere. The proxied browser is used instead.
+    expect(playwrightMcpBrowserArgs({ cdpUp: true, chromeInstalled: false, passthrough: [], proxied: true }))
+      .toEqual(['--browser', 'chromium'])
+    expect(playwrightMcpBrowserArgs({ cdpUp: true, chromeInstalled: true, passthrough: [], proxied: true })).toEqual([])
+  })
+
   it('attaches to a running debuggable browser when there is one', () => {
     expect(playwrightMcpBrowserArgs({ cdpUp: true, chromeInstalled: false, passthrough: [] }))
       .toEqual(['--cdp-endpoint', 'http://127.0.0.1:9222'])

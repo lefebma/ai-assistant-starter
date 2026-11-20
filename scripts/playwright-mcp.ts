@@ -1,7 +1,8 @@
 /**
  * Launcher for the Playwright MCP server that auto-connects to CDP when a
  * browser is already listening on port 9222 (so the assistant drives your
- * real browser session instead of a fresh one). Without one, it uses Google
+ * real browser session instead of a fresh one), except when egress is
+ * enforced: that browser runs outside the egress proxy. Without one, it uses Google
  * Chrome when installed and Playwright's bundled Chromium otherwise (hosted
  * VPS boxes have no Chrome). See src/browser-channel.ts.
  *
@@ -32,13 +33,19 @@ async function cdpUp(): Promise<boolean> {
 async function main(): Promise<void> {
   const local = resolve(PROJECT_ROOT, 'node_modules', '@playwright', 'mcp', 'cli.js')
   const passthrough = process.argv.slice(2)
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy
+  // With egress enforced the browser never attaches to :9222, so do not even
+  // look: the probe would go through the run's proxy and be refused, one
+  // denied line in the audit log every time this starts (card #278).
+  const proxied = !!proxyUrl
   const browserArgs = playwrightMcpBrowserArgs({
-    cdpUp: await cdpUp(),
+    cdpUp: proxied ? false : await cdpUp(),
     chromeInstalled: chromeChannelInstalled(),
     passthrough,
+    proxied,
   })
 
-  const proxy = proxyArgsFor(process.env.HTTPS_PROXY || process.env.https_proxy, passthrough)
+  const proxy = proxyArgsFor(proxyUrl, passthrough)
   const proxyArgs = proxy.args
   const [cmd, args, useShell] = existsSync(local)
     ? [process.execPath, [local, ...browserArgs, ...proxyArgs, ...passthrough], false]
