@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.84.5 - 2026-11-20
+
+- **Fixed: the log now shows when a reply finishes on every AI service.** On OpenAI, Gemini, open models and Azure, the log showed a reply starting and then nothing, so a finished reply and a stuck one looked the same. Every reply now ends with one "AI SDK agent turn ended" line: whether it finished, failed or was cancelled, how long it took, how many steps and tools it used, and which model ran it. Helpers the assistant hands work to get the same line. The words of the reply are never logged (card #279).
+
 ## 1.84.4 - 2026-11-20
 
 - **Fixed: browser tasks work with the egress allowlist on.** On a hosted assistant with egress turned on, any request that needed the browser hung: the firewall that keeps the assistant's tools inside the allowlist also cut the browser tools off from the browser they start, which they drive over a local port. The firewall now lets one of the assistant's tools reach a local port that another of its tools opened, and nothing else on the machine. Pages the browser opens still go through the allowlist. A machine that turned egress on before this release needs `npm run enable-egress -- <ip>` run again after updating (card #278).
