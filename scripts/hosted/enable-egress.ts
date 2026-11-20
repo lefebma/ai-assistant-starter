@@ -15,7 +15,8 @@
  *   - adds Delegate=yes so the assistant may move its tools into the cgroup
  *
  * It does not restart the assistant. Restart it (systemctl restart havn) when
- * the client is not mid-conversation, then run with --prove to check that a
+ * the client is not mid-conversation, then run with --prove (as root, through
+ * havn-admin) to check that a
  * process in the tools cgroup cannot connect out on its own.
  *
  * Safe to re-run: files are rewritten, the host lists replaced only when given.
@@ -73,22 +74,30 @@ echo "egress set up; restart havn to apply"
 }
 
 /**
- * Run as havn after the restart. A process that joins the tools cgroup must
+ * Run as root (through havn-admin) after the restart: a process from an ssh
+ * session cannot move into the service's cgroup unless it is root, and a
+ * check whose join fails would read as "blocked" and prove nothing (it did,
+ * from 2026-11-05 to 1.84.4). Every check below joins through \`inside\`, which
+ * stops the script if the join fails. A process that joins the tools cgroup must
  * not reach the internet or DNS on its own; the same command outside it can.
  */
 export const PROVE = `set -u
 CG=${CGROUP}
-[ -w "$CG/cgroup.procs" ] || { echo "tools cgroup missing or not writable: restart havn first"; exit 1; }
+[ "$(id -u)" = 0 ] || { echo "run --prove as root (havn-admin with sudo)"; exit 1; }
+# Joins the tools cgroup, or stops the whole check: a failed join must never read as "blocked".
+inside() { sh -c 'echo $$ > "$0/cgroup.procs" || exit 99; exec "$@"' "$CG" "$@"; r=$?; [ $r = 99 ] && { echo "could not join the tools cgroup: nothing was proven"; exit 1; }; return $r; }
+[ -w "$CG/cgroup.procs" ] || { echo "tools cgroup missing: restart havn first"; exit 1; }
+inside true || exit 1
 if curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "outside the cgroup: reaches the internet"; else echo "outside the cgroup: NO network (unexpected)"; fi
-if sh -c 'echo $$ > "$0/cgroup.procs" && exec curl -m 8 -sS -o /dev/null https://www.google.com' "$CG" 2>/dev/null; then echo "inside the cgroup: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside the cgroup: blocked"; fi
-if sh -c 'echo $$ > "$0/cgroup.procs" && exec curl -m 8 -sS -o /dev/null --noproxy "*" http://1.1.1.1' "$CG" 2>/dev/null; then echo "inside, by address: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside, by address: blocked"; fi
-if sh -c 'echo $$ > "$0/cgroup.procs" && exec getent hosts example.com' "$CG" >/dev/null 2>&1; then echo "inside, DNS: resolved (DNS is not blocked)"; exit 1; else echo "inside, DNS: blocked"; fi
-if sh -c 'echo $$ > "$0/cgroup.procs" && exec timeout 6 bash -c "</dev/tcp/127.0.0.1/22"' "$CG" 2>/dev/null; then echo "inside, a local service (sshd): CONNECTED (loopback is NOT fenced)"; exit 1; else echo "inside, a local service: blocked"; fi
+if inside curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "inside the cgroup: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside the cgroup: blocked"; fi
+if inside curl -m 8 -sS -o /dev/null --noproxy "*" http://1.1.1.1 2>/dev/null; then echo "inside, by address: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside, by address: blocked"; fi
+if inside getent hosts example.com >/dev/null 2>&1; then echo "inside, DNS: resolved (DNS is not blocked)"; exit 1; else echo "inside, DNS: blocked"; fi
+if inside timeout 6 bash -c "</dev/tcp/127.0.0.1/22" 2>/dev/null; then echo "inside, a local service (sshd): CONNECTED (loopback is NOT fenced)"; exit 1; else echo "inside, a local service: blocked"; fi
 # Card #278: a tools listener (the browser's debugging port) is reachable from the tools, not from outside.
 LP=$(( 39000 + RANDOM % 900 ))
-sh -c 'echo $$ > "$0/cgroup.procs" && exec python3 -I -c "import socket,sys;s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind((sys.argv[2],int(sys.argv[1])));s.listen(4);[s.accept()[0].close() for _ in range(4)]" "$1" 127.0.0.1' "$CG" "$LP" & LPID=$!
+inside timeout 20 python3 -I -c "import socket,sys;s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind((sys.argv[2],int(sys.argv[1])));s.listen(4);[s.accept()[0].close() for _ in range(4)]" "$LP" 127.0.0.1 & LPID=$!
 sleep 1
-if sh -c 'echo $$ > "$0/cgroup.procs" && exec timeout 6 bash -c "</dev/tcp/127.0.0.1/$1"' "$CG" "$LP" 2>/dev/null; then echo "inside, a port the tools opened: connected"; else echo "inside, a port the tools opened: BLOCKED (browser tasks will hang)"; kill $LPID 2>/dev/null; exit 1; fi
+if inside timeout 6 bash -c "</dev/tcp/127.0.0.1/$LP" 2>/dev/null; then echo "inside, a port the tools opened: connected"; else echo "inside, a port the tools opened: BLOCKED (browser tasks will hang)"; kill $LPID 2>/dev/null; exit 1; fi
 if timeout 6 bash -c "</dev/tcp/127.0.0.1/$LP" 2>/dev/null; then echo "outside, a port the tools opened: CONNECTED (tools listeners are NOT fenced)"; kill $LPID 2>/dev/null; exit 1; else echo "outside, a port the tools opened: blocked"; fi
 kill $LPID 2>/dev/null
 grep -q '^EGRESS=enforce' /etc/havn/egress.env && echo "settings: enforce"
@@ -115,7 +124,7 @@ export function main(argv: string[]): void {
     process.exit(2)
   }
   if (argv.includes('--prove')) {
-    const p = ssh('havn', host, 'bash -s', PROVE)
+    const p = ssh('havn-admin', host, 'sudo -n bash -s', PROVE)
     process.stdout.write(p.out)
     if (!p.ok) { console.error(`Egress on ${host} is not holding. Check /etc/havn and journalctl -u havn.`); process.exit(1) }
     console.log(`Egress holds on ${host}.`)

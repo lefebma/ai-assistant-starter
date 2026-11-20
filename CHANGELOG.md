@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.84.6 - 2026-11-20
+
+- **Fixed: the egress check proves what it says.** `npm run enable-egress -- <ip> --prove` ran as the assistant's user, which cannot move a process into the assistant's tools group, so every "inside: blocked" line it printed meant only that the move had failed. It now runs as root through havn-admin, stops with "nothing was proven" if the move fails, and refuses to run as anyone but root. Run on a test assistant, every check holds as it should (card #278).
+
 ## 1.84.5 - 2026-11-20
 
 - **Fixed: the log now shows when a reply finishes on every AI service.** On OpenAI, Gemini, open models and Azure, the log showed a reply starting and then nothing, so a finished reply and a stuck one looked the same. Every reply now ends with one "AI SDK agent turn ended" line: whether it finished, failed or was cancelled, how long it took, how many steps and tools it used, and which model ran it. Helpers the assistant hands work to get the same line. The words of the reply are never logged (card #279).

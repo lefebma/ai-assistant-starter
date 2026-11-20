@@ -349,9 +349,13 @@ Restart the assistant when the client is not mid-conversation, then prove it:
 npm run enable-egress -- <ip> --prove
 ```
 
-The proof joins the tools cgroup as havn and checks that a connection by name,
-by address and a DNS lookup all fail, while the same command outside the
-cgroup still works.
+The proof runs as root through havn-admin (only root can move a process from
+an ssh session into the assistant's tools cgroup) and checks, from inside that
+cgroup, that a connection by name, by address, a DNS lookup and ssh on the box
+all fail, and that a port the tools themselves opened is reachable from inside
+but not from outside, while the same command outside the cgroup still works.
+If it cannot join the cgroup it says "nothing was proven" and fails, rather
+than reporting the checks as blocked.
 
 When it finishes you'll see the MOTD on login:
 
