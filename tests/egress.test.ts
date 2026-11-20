@@ -316,4 +316,23 @@ describe('hosted cgroup helpers', () => {
     expect(t).toMatch(/level 3 "system\.slice\/havn\.service\/tools" drop/)
     expect(t).toContain('table inet havn_egress')
   })
+
+  it('lets the cgroup reach a local port only when the listener is in the cgroup too (card #278)', () => {
+    // Playwright drives the Chromium it starts over a random local debugging
+    // port; the kernel rule dropped it, so no browser task could start.
+    const t = nftRules('system.slice/havn.service/tools', [47000, 47999])
+    const cg = 'socket cgroupv2 level 3 "system.slice/havn.service/tools"'
+    const lines = t.split('\n').map((l) => l.trim())
+    const out = lines.slice(lines.indexOf('chain out {'), lines.indexOf('chain in {'))
+    const inn = lines.slice(lines.indexOf('chain in {'))
+    // Proxy ports first and unmarked; other loopback connections are marked before the drop.
+    expect(out.findIndex((l) => l.includes('dport 47000-47999 accept'))).toBeLessThan(out.findIndex((l) => l.includes('ct mark set 0x68766e74')))
+    expect(out.findIndex((l) => l.includes('ct mark set 0x68766e74'))).toBeLessThan(out.findIndex((l) => l === `${cg} drop`))
+    expect(out).toContain(`${cg} ip daddr 127.0.0.1 meta l4proto tcp ct state new ct mark 0 ct mark set 0x68766e74 accept`)
+    // Only the loopback address: no other host, no UDP (no local DNS resolver).
+    expect(out.filter((l) => l.includes(' accept') && l.startsWith(cg)).every((l) => l.includes('ip daddr 127.0.0.1') && /tcp/.test(l))).toBe(true)
+    // In: a listener in the cgroup is checked and accepted; anything else on a marked connection is dropped.
+    expect(inn).toContain(`iif "lo" ct mark 0x68766e74 ct direction original ${cg} ct mark set 0x68766e75 accept`)
+    expect(inn.filter((l) => l.startsWith('iif')).at(-1)).toBe('iif "lo" ct mark 0x68766e74 ct direction original drop')
+  })
 })

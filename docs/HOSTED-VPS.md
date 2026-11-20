@@ -292,6 +292,11 @@ to the audit log. A command that ignores the proxy settings gets nowhere: no
 direct connections, no DNS. The assistant's own connections (Telegram, email
 alerts) are not affected.
 
+One local exception: a tool may connect to a port that another of the
+assistant's tools is listening on. The browser tools need it, because they
+drive the browser they start over a local port. Nothing else on the box (the
+assistant's web server, its privacy relay, ssh) is reachable from the tools.
+
 Each run's proxy also has its own secret, carried in the proxy address its
 tools are given. A tool cannot borrow another run's proxy (and with it a wider
 allowlist): without that run's secret the proxy answers 407, and a wrong
@@ -332,6 +337,11 @@ to a release with egress, then from your machine:
 ```
 npm run enable-egress -- <ip> --allow host,host --read host,host
 ```
+
+A box that turned egress on before 1.84.4 has the older firewall rule, under
+which browser tasks never start. After updating it, run `npm run
+enable-egress -- <ip>` again (the host lists are kept when you leave out
+`--allow` and `--read`), restart the assistant, then `--prove`.
 
 Restart the assistant when the client is not mid-conversation, then prove it:
 

@@ -35,9 +35,25 @@ export function spawnInToolsCgroup(o: SpawnOptions): SpawnedProcess {
   return child as unknown as SpawnedProcess
 }
 
+/** Connection marks: a tools connection on loopback, and one whose listener was checked (card #278). */
+export const LOOPBACK_MARK = '0x68766e74'
+export const CHECKED_MARK = '0x68766e75'
+
 /**
  * The nftables table for a cgroup path relative to the cgroup root, e.g.
  * "system.slice/havn.service/tools". `level` is its depth.
+ *
+ * The tools cgroup may reach the proxy ports, and (card #278) a loopback port
+ * that a process in the same cgroup is listening on: the browser tools talk to
+ * the Chromium they start over a local debugging port Playwright picks at
+ * random. Nothing else on the box (the assistant's web server, the privacy
+ * relay, sshd) is reachable. How:
+ *   - out: a new tools connection to 127.0.0.1 off the proxy ports is marked
+ *   - in: its first packet is let through only if the listening socket it
+ *     reaches is in the tools cgroup, and the connection is then marked as
+ *     checked; any other packet of a marked, unchecked connection is dropped.
+ * The check has to happen on the first packet: later in the handshake the
+ * kernel sees a half-open socket, whose cgroup it cannot read.
  */
 export function nftRules(relCgroup: string, ports: [number, number]): string {
   const level = relCgroup.split('/').filter(Boolean).length
@@ -47,8 +63,16 @@ export function nftRules(relCgroup: string, ports: [number, number]): string {
     '  chain out {',
     '    type filter hook output priority 0; policy accept;',
     `    ${match} ip daddr 127.0.0.1 tcp dport ${ports[0]}-${ports[1]} accept`,
+    `    ${match} ip daddr 127.0.0.1 meta l4proto tcp ct state new ct mark 0 ct mark set ${LOOPBACK_MARK} accept`,
+    `    ${match} ip daddr 127.0.0.1 meta l4proto tcp accept`,
     `    ${match} limit rate 10/minute log prefix "havn-egress-drop "`,
     `    ${match} drop`,
+    '  }',
+    '  chain in {',
+    '    type filter hook input priority 0; policy accept;',
+    `    iif "lo" ct mark ${LOOPBACK_MARK} ct direction original ${match} ct mark set ${CHECKED_MARK} accept`,
+    `    iif "lo" ct mark ${LOOPBACK_MARK} ct direction original limit rate 10/minute log prefix "havn-egress-lo-drop "`,
+    `    iif "lo" ct mark ${LOOPBACK_MARK} ct direction original drop`,
     '  }',
     '}',
     '',

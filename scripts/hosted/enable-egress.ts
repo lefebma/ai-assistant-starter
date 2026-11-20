@@ -83,6 +83,7 @@ if curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "out
 if sh -c 'echo $$ > "$0/cgroup.procs" && exec curl -m 8 -sS -o /dev/null https://www.google.com' "$CG" 2>/dev/null; then echo "inside the cgroup: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside the cgroup: blocked"; fi
 if sh -c 'echo $$ > "$0/cgroup.procs" && exec curl -m 8 -sS -o /dev/null --noproxy "*" http://1.1.1.1' "$CG" 2>/dev/null; then echo "inside, by address: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside, by address: blocked"; fi
 if sh -c 'echo $$ > "$0/cgroup.procs" && exec getent hosts example.com' "$CG" >/dev/null 2>&1; then echo "inside, DNS: resolved (DNS is not blocked)"; exit 1; else echo "inside, DNS: blocked"; fi
+if sh -c 'echo $$ > "$0/cgroup.procs" && exec timeout 6 bash -c "</dev/tcp/127.0.0.1/22"' "$CG" 2>/dev/null; then echo "inside, a local service (sshd): CONNECTED (loopback is NOT fenced)"; exit 1; else echo "inside, a local service: blocked"; fi
 grep -q '^EGRESS=enforce' /etc/havn/egress.env && echo "settings: enforce"
 `
 
