@@ -328,7 +328,11 @@ describe('hosted cgroup helpers', () => {
     // Proxy ports first and unmarked; other loopback connections are marked before the drop.
     expect(out.findIndex((l) => l.includes('dport 47000-47999 accept'))).toBeLessThan(out.findIndex((l) => l.includes('ct mark set 0x68766e74')))
     expect(out.findIndex((l) => l.includes('ct mark set 0x68766e74'))).toBeLessThan(out.findIndex((l) => l === `${cg} drop`))
-    expect(out).toContain(`${cg} ip daddr 127.0.0.1 meta l4proto tcp ct state new ct mark 0 ct mark set 0x68766e74 accept`)
+    expect(out).toContain(`${cg} ip daddr 127.0.0.1 meta l4proto tcp ct state new ct mark != 0x68766e75 ct mark set 0x68766e74 accept`)
+    // Fail closed: only connections this table marked may send. No bare loopback accept
+    // (an unmarked or untracked connection, or a reply to a client outside the cgroup).
+    expect(out).toContain(`${cg} ip daddr 127.0.0.1 meta l4proto tcp ct mark { 0x68766e74, 0x68766e75 } accept`)
+    expect(out.some((l) => l === `${cg} ip daddr 127.0.0.1 meta l4proto tcp accept`)).toBe(false)
     // Only the loopback address: no other host, no UDP (no local DNS resolver).
     expect(out.filter((l) => l.includes(' accept') && l.startsWith(cg)).every((l) => l.includes('ip daddr 127.0.0.1') && /tcp/.test(l))).toBe(true)
     // In: a listener in the cgroup is checked and accepted; anything else on a marked connection is dropped.

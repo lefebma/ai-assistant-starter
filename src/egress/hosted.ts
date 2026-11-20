@@ -47,13 +47,18 @@ export const CHECKED_MARK = '0x68766e75'
  * that a process in the same cgroup is listening on: the browser tools talk to
  * the Chromium they start over a local debugging port Playwright picks at
  * random. Nothing else on the box (the assistant's web server, the privacy
- * relay, sshd) is reachable. How:
- *   - out: a new tools connection to 127.0.0.1 off the proxy ports is marked
+ * relay, sshd) is reachable, and nothing outside the cgroup can reach a tools
+ * listener. How:
+ *   - out: a new tools connection to 127.0.0.1 off the proxy ports is marked,
+ *     and only connections carrying this table's marks may send; anything
+ *     else from the cgroup (unmarked, untracked, a reply to an outside
+ *     client) is dropped
  *   - in: its first packet is let through only if the listening socket it
  *     reaches is in the tools cgroup, and the connection is then marked as
  *     checked; any other packet of a marked, unchecked connection is dropped.
  * The check has to happen on the first packet: later in the handshake the
- * kernel sees a half-open socket, whose cgroup it cannot read.
+ * kernel sees a half-open socket, whose cgroup it cannot read. A retransmitted
+ * first packet keeps the checked mark.
  */
 export function nftRules(relCgroup: string, ports: [number, number]): string {
   const level = relCgroup.split('/').filter(Boolean).length
@@ -63,8 +68,8 @@ export function nftRules(relCgroup: string, ports: [number, number]): string {
     '  chain out {',
     '    type filter hook output priority 0; policy accept;',
     `    ${match} ip daddr 127.0.0.1 tcp dport ${ports[0]}-${ports[1]} accept`,
-    `    ${match} ip daddr 127.0.0.1 meta l4proto tcp ct state new ct mark 0 ct mark set ${LOOPBACK_MARK} accept`,
-    `    ${match} ip daddr 127.0.0.1 meta l4proto tcp accept`,
+    `    ${match} ip daddr 127.0.0.1 meta l4proto tcp ct state new ct mark != ${CHECKED_MARK} ct mark set ${LOOPBACK_MARK} accept`,
+    `    ${match} ip daddr 127.0.0.1 meta l4proto tcp ct mark { ${LOOPBACK_MARK}, ${CHECKED_MARK} } accept`,
     `    ${match} limit rate 10/minute log prefix "havn-egress-drop "`,
     `    ${match} drop`,
     '  }',

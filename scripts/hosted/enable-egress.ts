@@ -84,6 +84,13 @@ if sh -c 'echo $$ > "$0/cgroup.procs" && exec curl -m 8 -sS -o /dev/null https:/
 if sh -c 'echo $$ > "$0/cgroup.procs" && exec curl -m 8 -sS -o /dev/null --noproxy "*" http://1.1.1.1' "$CG" 2>/dev/null; then echo "inside, by address: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside, by address: blocked"; fi
 if sh -c 'echo $$ > "$0/cgroup.procs" && exec getent hosts example.com' "$CG" >/dev/null 2>&1; then echo "inside, DNS: resolved (DNS is not blocked)"; exit 1; else echo "inside, DNS: blocked"; fi
 if sh -c 'echo $$ > "$0/cgroup.procs" && exec timeout 6 bash -c "</dev/tcp/127.0.0.1/22"' "$CG" 2>/dev/null; then echo "inside, a local service (sshd): CONNECTED (loopback is NOT fenced)"; exit 1; else echo "inside, a local service: blocked"; fi
+# Card #278: a tools listener (the browser's debugging port) is reachable from the tools, not from outside.
+LP=$(( 39000 + RANDOM % 900 ))
+sh -c 'echo $$ > "$0/cgroup.procs" && exec python3 -I -c "import socket,sys;s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind((sys.argv[2],int(sys.argv[1])));s.listen(4);[s.accept()[0].close() for _ in range(4)]" "$1" 127.0.0.1' "$CG" "$LP" & LPID=$!
+sleep 1
+if sh -c 'echo $$ > "$0/cgroup.procs" && exec timeout 6 bash -c "</dev/tcp/127.0.0.1/$1"' "$CG" "$LP" 2>/dev/null; then echo "inside, a port the tools opened: connected"; else echo "inside, a port the tools opened: BLOCKED (browser tasks will hang)"; kill $LPID 2>/dev/null; exit 1; fi
+if timeout 6 bash -c "</dev/tcp/127.0.0.1/$LP" 2>/dev/null; then echo "outside, a port the tools opened: CONNECTED (tools listeners are NOT fenced)"; kill $LPID 2>/dev/null; exit 1; else echo "outside, a port the tools opened: blocked"; fi
+kill $LPID 2>/dev/null
 grep -q '^EGRESS=enforce' /etc/havn/egress.env && echo "settings: enforce"
 `
 
