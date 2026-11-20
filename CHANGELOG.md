@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.84.4 - 2026-11-20
+
+- **Fixed: browser tasks work with the egress allowlist on.** On a hosted assistant with egress turned on, any request that needed the browser hung: the firewall that keeps the assistant's tools inside the allowlist also cut the browser tools off from the browser they start, which they drive over a local port. The firewall now lets one of the assistant's tools reach a local port that another of its tools opened, and nothing else on the machine. Pages the browser opens still go through the allowlist. A machine that turned egress on before this release needs `npm run enable-egress -- <ip>` run again after updating (card #278).
+
 ## 1.84.3 - 2026-11-20
 
 - **Fixed: no more refused browser checks in the audit log.** With the egress allowlist on, each time the browser tools started they looked for a Chrome on port 9222, and the allowlist refused the check, so the audit log filled with blocked lines that meant nothing. Browser tasks were not affected: they used the assistant's own browser, which keeps to the allowlist. The check is now skipped while egress is enforced, and the browser tools never attach to a Chrome started with `/browser start` there, since that Chrome runs outside the allowlist. `/browser start` says so (card #278).
