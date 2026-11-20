@@ -778,6 +778,8 @@ Other commands: `/browser status` shows whether it is running and what tabs are 
 
 Chrome has to be installed for `/browser start` to do anything. `/browser status` tells you when it is missing. The assistant's own browser works either way.
 
+On a machine with the egress allowlist turned on (`EGRESS=enforce`), the assistant does not attach to this Chrome, because it runs outside the allowlist. Browser tasks use the assistant's own browser, which keeps to the list.
+
 **Already installed before this shipped?** Just run `/update`. It registers the browser tools for you, merging them into any configuration you already have rather than replacing it. Nothing else to do, and no terminal needed.
 
 ## Troubleshooting

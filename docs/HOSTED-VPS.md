@@ -297,6 +297,10 @@ tools are given. A tool cannot borrow another run's proxy (and with it a wider
 allowlist): without that run's secret the proxy answers 407, and a wrong
 secret is written to the audit log.
 
+The browser tools always use their own browser, which goes through the run's
+proxy. They never attach to a Chrome started with `/browser start`: that one
+runs outside the proxy, so driving it would let any page reach any site.
+
 What a run may reach:
 
 | Who | Reaches |

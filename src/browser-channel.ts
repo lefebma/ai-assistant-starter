@@ -41,10 +41,16 @@ export interface BrowserArgsInput {
   chromeInstalled: boolean
   /** Arguments the operator passed through from .mcp.json. */
   passthrough: string[]
+  /**
+   * The run's traffic goes through the egress proxy (card #231). A browser on
+   * :9222 was started outside it (/browser start), so driving it would let
+   * every page reach anywhere: never attach then (card #278).
+   */
+  proxied?: boolean
 }
 
-export function playwrightMcpBrowserArgs({ cdpUp, chromeInstalled, passthrough }: BrowserArgsInput): string[] {
-  if (cdpUp) return ['--cdp-endpoint', CDP_ENDPOINT]
+export function playwrightMcpBrowserArgs({ cdpUp, chromeInstalled, passthrough, proxied = false }: BrowserArgsInput): string[] {
+  if (cdpUp && !proxied) return ['--cdp-endpoint', CDP_ENDPOINT]
   const chosen = passthrough.some((a) => a === '--browser' || a.startsWith('--browser='))
   if (chosen || chromeInstalled) return []
   return ['--browser', 'chromium']

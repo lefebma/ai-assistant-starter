@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir, hostname } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, REQUEST_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD, ROLES_FILE } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, REQUEST_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD, ROLES_FILE, EGRESS } from './config.js'
 import { readGuardLog, formatGuardReport, guardLogPath, parseGuardMode } from './assurance/tool-guard.js'
 import { roleLogPath, formatRoleReport, type RoleLogEntry } from './assurance/scope-gate.js'
 import { getSession, setSession, clearSession, getMemoriesForChat, getSessionMeta, bumpSessionMessageCount } from './db.js'
@@ -1397,6 +1397,9 @@ async function handleScheduleCommand(adapter: PlatformAdapter, chatId: string, t
   await adapter.sendMessage(chatId, 'Unknown schedule command. Use: list, create, cancel, delete, pause, resume, role, roles')
 }
 
+/** Card #278: under egress enforce the browser tools never attach to a Chrome on :9222. */
+export const EGRESS_BROWSER_NOTE = 'Egress is enforced on this machine, so your assistant will not drive this Chrome: it runs outside the list of sites your assistant may reach. Browser tasks use their own browser, which keeps to that list.'
+
 async function handleBrowserCommand(adapter: PlatformAdapter, chatId: string, text: string): Promise<void> {
   const parts = text.trim().split(/\s+/)
   const subcmd = parts[1]?.toLowerCase()
@@ -1417,7 +1420,7 @@ async function handleBrowserCommand(adapter: PlatformAdapter, chatId: string, te
     const ok = launchChrome({ useDefaultProfile: useDefault })
     if (ok) {
       const mode = useDefault ? 'default profile (your logins)' : 'isolated profile'
-      await adapter.sendMessage(chatId, `Chrome launched with CDP on port 9222 (${mode}).`)
+      await adapter.sendMessage(chatId, `Chrome launched with CDP on port 9222 (${mode}).${EGRESS === 'enforce' ? `\n${EGRESS_BROWSER_NOTE}` : ''}`)
     } else {
       await adapter.sendMessage(chatId, 'Failed to launch Chrome. Check logs.')
     }
