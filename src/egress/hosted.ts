@@ -55,7 +55,8 @@ export const CHECKED_MARK = '0x68766e75'
  *     client) is dropped
  *   - in: its first packet is let through only if the listening socket it
  *     reaches is in the tools cgroup, and the connection is then marked as
- *     checked; any other packet of a marked, unchecked connection is dropped.
+ *     checked; any other packet of a marked, unchecked connection is dropped,
+ *     and so is a connection from outside the cgroup to a tools listener.
  * The check has to happen on the first packet: later in the handshake the
  * kernel sees a half-open socket, whose cgroup it cannot read. A retransmitted
  * first packet keeps the checked mark.
@@ -78,6 +79,8 @@ export function nftRules(relCgroup: string, ports: [number, number]): string {
     `    iif "lo" ct mark ${LOOPBACK_MARK} ct direction original ${match} ct mark set ${CHECKED_MARK} accept`,
     `    iif "lo" ct mark ${LOOPBACK_MARK} ct direction original limit rate 10/minute log prefix "havn-egress-lo-drop "`,
     `    iif "lo" ct mark ${LOOPBACK_MARK} ct direction original drop`,
+    // A client outside the cgroup must not even open a connection to a tools listener.
+    `    iif "lo" ct direction original ct mark != { ${LOOPBACK_MARK}, ${CHECKED_MARK} } ${match} drop`,
     '  }',
     '}',
     '',

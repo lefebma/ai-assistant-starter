@@ -337,6 +337,8 @@ describe('hosted cgroup helpers', () => {
     expect(out.filter((l) => l.includes(' accept') && l.startsWith(cg)).every((l) => l.includes('ip daddr 127.0.0.1') && /tcp/.test(l))).toBe(true)
     // In: a listener in the cgroup is checked and accepted; anything else on a marked connection is dropped.
     expect(inn).toContain(`iif "lo" ct mark 0x68766e74 ct direction original ${cg} ct mark set 0x68766e75 accept`)
-    expect(inn.filter((l) => l.startsWith('iif')).at(-1)).toBe('iif "lo" ct mark 0x68766e74 ct direction original drop')
+    expect(inn).toContain('iif "lo" ct mark 0x68766e74 ct direction original drop')
+    // Nothing outside the cgroup opens a connection to a tools listener (the browser's debugging port).
+    expect(inn.filter((l) => l.startsWith('iif')).at(-1)).toBe(`iif "lo" ct direction original ct mark != { 0x68766e74, 0x68766e75 } ${cg} drop`)
   })
 })
