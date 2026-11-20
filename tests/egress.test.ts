@@ -342,3 +342,17 @@ describe('hosted cgroup helpers', () => {
     expect(inn.filter((l) => l.startsWith('iif')).at(-1)).toBe(`iif "lo" ct direction original ct mark != { 0x68766e74, 0x68766e75 } ${cg} drop`)
   })
 })
+
+describe('enable-egress --prove (card #278)', () => {
+  it('refuses to run as anyone but root, and never reads a failed cgroup join as "blocked"', async () => {
+    const { PROVE } = await import('../scripts/hosted/enable-egress.js')
+    // From 2026-11-05 to 1.84.4 the proof ran as havn, could not join the tools
+    // cgroup, and printed "blocked" for every check.
+    expect(PROVE).toContain('[ "$(id -u)" = 0 ] ||')
+    expect(PROVE).toMatch(/inside\(\) \{ sh -c 'echo \$\$ > "\$0\/cgroup\.procs" \|\| exit 99; exec "\$@"'/)
+    expect(PROVE).toContain('nothing was proven')
+    expect(PROVE).toContain('inside true || exit 1')
+    // Every inside check goes through the guarded join; none joins on its own.
+    expect(PROVE.match(/echo \$\$ > "\$0\/cgroup\.procs"/g)).toHaveLength(1)
+  })
+})
