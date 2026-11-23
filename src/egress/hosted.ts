@@ -28,7 +28,7 @@ export function inToolsCgroup(command: string, args: string[], cgroup: string = 
   // The helper moves its parent, this shell, then the shell execs the tool.
   // $0 is the helper, "$@" the real command: no quoting of the command needed.
   if (join) return { command: '/bin/sh', args: ['-c', '"$0" && exec "$@"', join, command, ...args] }
-  // Before 1.85.0: the assistant owned the cgroup and joined it itself.
+  // Before 1.86.0: the assistant owned the cgroup and joined it itself.
   return { command: '/bin/sh', args: ['-c', 'echo $$ > "$0/cgroup.procs" && exec "$@"', cgroup, command, ...args] }
 }
 

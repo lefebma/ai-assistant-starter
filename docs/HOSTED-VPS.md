@@ -303,7 +303,7 @@ to run a tool is ever moved, never the assistant itself. The root steps at
 start and stop (making the cgroup, loading the firewall rule, killing tools left
 behind) run in `havn-tools-guard.service`, never in `havn.service`, which reads
 the assistant's own `.env`.
-Before 1.85.0 the cgroup sat inside the assistant's own service, which its user
+Before 1.86.0 the cgroup sat inside the assistant's own service, which its user
 owned, and a tool could move itself back out (card #307).
 
 One local exception: a tool may connect to a port that another of the
@@ -352,11 +352,11 @@ to a release with egress, then from your machine:
 npm run enable-egress -- <ip> --allow host,host --read host,host
 ```
 
-A box that turned egress on before 1.85.0 has the older setup, under which a
+A box that turned egress on before 1.86.0 has the older setup, under which a
 tool could leave the fence (and, before 1.84.4, browser tasks never start).
 Update it first, then run `npm run enable-egress -- <ip>` again (the host lists
 are kept when you leave out `--allow` and `--read`), restart the assistant,
-then `--prove`. In that order: an assistant older than 1.85.0 cannot use the
+then `--prove`. In that order: an assistant older than 1.86.0 cannot use the
 new cgroup, and its tools would refuse to start until it is updated.
 
 Restart the assistant when the client is not mid-conversation, then prove it:

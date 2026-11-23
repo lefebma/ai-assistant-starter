@@ -113,7 +113,7 @@ export const EGRESS_CGROUP = (egressEnv.EGRESS_CGROUP ?? '').trim()
 /**
  * The root-owned helper that moves a tool into EGRESS_CGROUP (card #307). Set:
  * the cgroup is root-owned and only the helper may move a process into it.
- * Empty: the assistant writes to cgroup.procs itself (boxes set up before 1.85.0).
+ * Empty: the assistant writes to cgroup.procs itself (boxes set up before 1.86.0).
  */
 export const EGRESS_JOIN = (egressEnv.EGRESS_JOIN ?? '').trim()
 /**

@@ -3,6 +3,7 @@
 ## 1.86.0 - 2026-11-23
 
 - **Fixed: the assistant's tools can no longer step outside the egress allowlist.** On a hosted assistant with egress on, the tools run in a group the firewall holds to the allowlist. That group sat inside the assistant's own service, which the assistant's user owned, so a tool could move itself out with one command and reach any site. The group now sits where only root can move a process in or out, and a small root service, `havn-egressd`, puts each tool in when it starts and never takes one out. `--prove` now checks that a tool cannot leave. A machine with egress on must be updated first, then have `npm run enable-egress -- <ip>` run again and the assistant restarted (card #307).
+- **Fixed: the firewall's start and stop steps no longer run with the assistant's settings file.** They run as root, and they ran inside the assistant's own service, which reads `.env`, a file the assistant's user can change. They now run in a service of their own, `havn-tools-guard`, and `--prove` fails if the assistant's service ever runs a root command again (card #307).
 
 ## 1.85.0 - 2026-11-23
 

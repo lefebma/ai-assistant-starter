@@ -126,7 +126,7 @@ echo "egress set up; restart havn to apply"
  * Run as root (through havn-admin) after the restart: a process from an ssh
  * session cannot move into the service's cgroup unless it is root, and a
  * check whose join fails would read as "blocked" and prove nothing (it did,
- * from 2026-11-05 to 1.84.4), and until 1.85.0 a tool could leave the cgroup
+ * from 2026-11-05 to 1.84.4), and until 1.86.0 a tool could leave the cgroup
  * (card #307). Every check below joins through \`inside\`, which
  * stops the script if the join fails. A process that joins the tools cgroup must
  * not reach the internet or DNS on its own; the same command outside it can.

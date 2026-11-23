@@ -1,7 +1,7 @@
 /**
  * The root half of egress on a hosted box (card #307).
  *
- * Until 1.84.6 the tools cgroup sat inside havn.service, which the assistant's
+ * Before 1.86.0 the tools cgroup sat inside havn.service, which the assistant's
  * user owned (Delegate=yes) so it could put its tools there. Anything a tool
  * ran, as that same user, could therefore write its own pid back into
  * havn.service/cgroup.procs, leave the fence and reach the internet.
