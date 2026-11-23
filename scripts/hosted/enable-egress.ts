@@ -59,30 +59,56 @@ install -m 0755 -o root -g root ${DAEMON_PATH}.new ${DAEMON_PATH} && rm -f ${DAE
 install -m 0755 -o root -g root ${JOIN_PATH}.new ${JOIN_PATH} && rm -f ${JOIN_PATH}.new
 cat > /etc/systemd/system/havn-egressd.service <<'EOF'
 ${EGRESSD_UNIT}EOF
+# Card #307: tools that outlive the assistant are killed, so the kernel must be able to kill a cgroup (5.14+).
+mkdir -p ${CGROUP}
+[ -e ${CGROUP}/cgroup.kill ] || { echo "this kernel cannot empty a cgroup (cgroup.kill, Linux 5.14+): egress not set up"; exit 1; }
+# Replacing the table is one transaction: the declare-then-delete line means a
+# reload never leaves a moment with no rule, and never fails on a first load.
 cat > /etc/havn/egress.nft <<'EOF'
+table inet havn_egress
+delete table inet havn_egress
 ${nftRules(CGROUP_REL, PORTS)}EOF
 cat > /usr/local/sbin/havn-egress-rules <<'EOF'
 #!/bin/sh
-# Cards #231, #307. Runs as root before every start of havn.service: makes
-# the tools cgroup (root-owned, so a tool cannot leave it), clears out any
-# tool a previous run left behind, and loads the nftables rule.
+# Cards #231, #307. Run as root by havn-tools-guard.service before every
+# start of havn.service: makes the tools cgroup (root-owned, so a tool cannot
+# leave it), clears out any tool a previous run left behind, and loads the
+# nftables rule. Never from havn.service itself: that unit reads the
+# assistant's own .env, which its user can edit.
 set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mkdir -p ${CGROUP}
-if [ -e ${CGROUP}/cgroup.kill ]; then echo 1 > ${CGROUP}/cgroup.kill; fi
-nft delete table inet havn_egress 2>/dev/null || true
+echo 1 > ${CGROUP}/cgroup.kill
 nft -f /etc/havn/egress.nft
 EOF
 chmod 0755 /usr/local/sbin/havn-egress-rules
 install -d -m 0755 /etc/systemd/system/havn.service.d
-cat > /etc/systemd/system/havn.service.d/egress.conf <<'EOF'
-# Cards #231, #307: tools run in their own root-owned cgroup, which may reach only the egress proxy.
+# Card #307: the root steps run in a unit of their own. A '+' command in
+# havn.service would run as root with the assistant's .env (PATH, LD_PRELOAD),
+# which its user can edit.
+cat > /etc/systemd/system/havn-tools-guard.service <<'EOF'
 [Unit]
-Wants=havn-egressd.service
+Description=Havn tools fence (cgroup and firewall rule for the assistant's tools)
+PartOf=havn.service
+Before=havn.service
+Requires=havn-egressd.service
 After=havn-egressd.service
 [Service]
-ExecStartPre=+/usr/local/sbin/havn-egress-rules
-# Tools live outside havn.service now, so stopping it does not stop them: this does.
-ExecStopPost=+/bin/sh -c 'echo 1 > ${CGROUP}/cgroup.kill 2>/dev/null; nft delete table inet havn_egress 2>/dev/null || true'
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/havn-egress-rules
+# Tools live outside havn.service, so stopping it does not stop them: this does.
+# The rule stays loaded while the assistant is down: it holds only the tools
+# cgroup, so a tool that somehow outlived the kill still cannot get out.
+ExecStop=/bin/sh -c 'echo 1 > ${CGROUP}/cgroup.kill'
+EOF
+cat > /etc/systemd/system/havn.service.d/egress.conf <<'EOF'
+# Cards #231, #307: tools run in their own root-owned cgroup, which may reach only
+# the egress proxy. No root commands here: they run in havn-tools-guard.service.
+[Unit]
+Requires=havn-tools-guard.service havn-egressd.service
+After=havn-tools-guard.service havn-egressd.service
+[Service]
 Environment=EGRESS=enforce
 Environment=EGRESS_CGROUP=${CGROUP}
 Environment=EGRESS_JOIN=${JOIN_PATH}
@@ -121,9 +147,15 @@ if inside setpriv --reuid havn --regid havn --init-groups sh -c 'echo $$ > "$0/c
 # The join helper moves a shell of the assistant in, and refuses one that is not the assistant's.
 if sh -c 'echo $$ > "$0/cgroup.procs" || exit 99; exec setpriv --reuid havn --regid havn --init-groups sh -c '"'"'"$0" && grep -qx "0::/${TOOLS_CGROUP_REL}" /proc/self/cgroup'"'"' "$1"' "$SVC" "$J" 2>/dev/null; then echo "the join helper: moves a tool in"; else echo "the join helper: FAILED (tools cannot start)"; exit 1; fi
 if setpriv --reuid havn --regid havn --init-groups sh -c '"$0" 2>/dev/null; r=$?; exit $r' "$J"; then echo "the join helper, asked from outside the assistant: AGREED (it must refuse)"; exit 1; else echo "the join helper, asked from outside the assistant: refused"; fi
-if curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "outside the cgroup: reaches the internet"; else echo "outside the cgroup: NO network (unexpected)"; fi
+if curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "outside the cgroup: reaches the internet"; else echo "outside the cgroup: NO network, so the checks below would prove nothing"; exit 1; fi
+# Card #307: no root command may run inside havn.service, which reads the assistant's editable .env.
+if systemctl cat havn.service | grep -Eq '^Exec[A-Za-z]*=[-@:!]*\\+'; then echo "havn.service runs a command as root (with the assistant's .env): run enable-egress again"; exit 1; else echo "havn.service: no root commands"; fi
+systemctl is-active -q havn-tools-guard.service || { echo "havn-tools-guard is not active: restart havn"; exit 1; }
 if inside curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "inside the cgroup: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside the cgroup: blocked"; fi
 if inside curl -m 8 -sS -o /dev/null --noproxy "*" http://1.1.1.1 2>/dev/null; then echo "inside, by address: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside, by address: blocked"; fi
+if inside setpriv --reuid havn --regid havn --init-groups python3 -I -c 'import socket,struct,sys
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM,socket.IPPROTO_ICMP); s.settimeout(5)
+s.sendto(struct.pack("!BBHHH",8,0,0,0,1),(sys.argv[1],0)); s.recv(64)' 1.1.1.1 2>/dev/null; then echo "inside, ping: REPLIED (ICMP is NOT fenced)"; exit 1; else echo "inside, ping: blocked"; fi
 if inside getent hosts example.com >/dev/null 2>&1; then echo "inside, DNS: resolved (DNS is not blocked)"; exit 1; else echo "inside, DNS: blocked"; fi
 if inside timeout 6 bash -c "</dev/tcp/127.0.0.1/22" 2>/dev/null; then echo "inside, a local service (sshd): CONNECTED (loopback is NOT fenced)"; exit 1; else echo "inside, a local service: blocked"; fi
 # Card #278: a tools listener (the browser's debugging port) is reachable from the tools, not from outside.

@@ -298,7 +298,11 @@ root service, `havn-egressd`, does the one move the assistant needs: when it
 starts a tool, the shell that is about to run it asks the service (over
 `/run/havn-egress/sock`) to move that shell in. The service checks who is asking
 from the socket itself, agrees only for a process of the assistant, and never
-moves anything out. Its two files live in root-owned `/usr/local/lib/havn`.
+moves anything out. Its two files live in root-owned `/usr/local/lib/havn`. Only the shell that is about
+to run a tool is ever moved, never the assistant itself. The root steps at
+start and stop (making the cgroup, loading the firewall rule, killing tools left
+behind) run in `havn-tools-guard.service`, never in `havn.service`, which reads
+the assistant's own `.env`.
 Before 1.85.0 the cgroup sat inside the assistant's own service, which its user
 owned, and a tool could move itself back out (card #307).
 

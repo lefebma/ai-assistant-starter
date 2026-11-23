@@ -37,13 +37,15 @@ export const UNIT_CGROUP = '/system.slice/havn.service'
 /** The root service. Python because Node cannot read a unix socket's peer credentials. */
 export const EGRESSD_PY = `#!/usr/bin/python3 -IS
 # havn-egressd (card #307): moves the caller's parent into the tools cgroup. Written by enable-egress.
-import os, pwd, socket, struct, threading
+import os, pwd, signal, socket, struct, threading
 
 SOCK = ${JSON.stringify(SOCKET_PATH)}
 TOOLS = ${JSON.stringify(TOOLS_CGROUP)}
 TOOLS_REL = ${JSON.stringify('/' + TOOLS_CGROUP_REL)}
 UNIT = ${JSON.stringify(UNIT_CGROUP)}
 HAVN = pwd.getpwnam('havn')
+SHELL = os.path.realpath('/bin/sh')
+SLOTS = threading.BoundedSemaphore(32)
 
 def cgroup_of(pid):
     with open('/proc/%d/cgroup' % pid) as f:
@@ -64,18 +66,44 @@ def ppid_of(pid):
         s = f.read()
     return int(s[s.rindex(')') + 2:].split()[1])
 
+def started(pid):
+    with open('/proc/%d/stat' % pid) as f:
+        s = f.read()
+    return s[s.rindex(')') + 2:].split()[19]
+
 def join(peer):
     parent = ppid_of(peer)
-    if parent <= 1 or uids_of(parent) != {HAVN.pw_uid}:
+    if parent <= 1:
         return 'no: the parent does not run as havn'
-    cg = cgroup_of(parent)
-    if cg == TOOLS_REL:
+    # Only the wrapper shell, about to exec a tool, is ever moved. A tool that
+    # execs this helper itself has the assistant as its parent, which must
+    # never be put in the fence.
+    try:
+        exe = os.readlink('/proc/%d/exe' % parent)
+    except OSError:
+        return 'no: the parent is gone'
+    if exe != SHELL:
+        return "no: only the assistant's tool shell may be moved"
+    # Hold the parent so its pid cannot be reused while it is checked, and
+    # check it is the same process (start time) after the move as before.
+    fd = os.pidfd_open(parent)
+    try:
+        born = started(parent)
+        if uids_of(parent) != {HAVN.pw_uid}:
+            return 'no: the parent does not run as havn'
+        cg = cgroup_of(parent)
+        if cg == TOOLS_REL:
+            return 'ok'
+        if cg != UNIT and not cg.startswith(UNIT + '/'):
+            return 'no: the parent is not part of the assistant'
+        signal.pidfd_send_signal(fd, 0)
+        with open(TOOLS + '/cgroup.procs', 'w') as f:
+            f.write(str(parent))
+        if started(parent) != born or ppid_of(peer) != parent:
+            return 'no: the parent changed while it was moved'
         return 'ok'
-    if cg != UNIT and not cg.startswith(UNIT + '/'):
-        return 'no: the parent is not part of the assistant'
-    with open(TOOLS + '/cgroup.procs', 'w') as f:
-        f.write(str(parent))
-    return 'ok'
+    finally:
+        os.close(fd)
 
 def handle(conn):
     try:
@@ -96,6 +124,12 @@ def handle(conn):
         pass
     conn.close()
 
+def run(conn):
+    try:
+        handle(conn)
+    finally:
+        SLOTS.release()
+
 def main():
     os.makedirs(TOOLS, exist_ok=True)
     try:
@@ -111,7 +145,10 @@ def main():
     s.listen(64)
     while True:
         conn, _ = s.accept()
-        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+        if not SLOTS.acquire(blocking=False):
+            conn.close()
+            continue
+        threading.Thread(target=run, args=(conn,), daemon=True).start()
 
 main()
 `

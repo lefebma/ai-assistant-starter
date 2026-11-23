@@ -375,6 +375,9 @@ describe('enable-egress --prove (card #278)', () => {
     expect(PROVE).toContain('/sys/fs/cgroup/cgroup.procs')
     expect(PROVE).toContain('the join helper: moves a tool in')
     expect(PROVE).toContain('the join helper, asked from outside the assistant: refused')
+    expect(PROVE).toContain('outside the cgroup: NO network, so the checks below would prove nothing"; exit 1')
+    expect(PROVE).toContain('inside, ping: REPLIED (ICMP is NOT fenced)')
+    expect(PROVE).toContain('havn.service: no root commands')
   })
 })
 
@@ -389,6 +392,16 @@ describe('the root egress helper (card #307)', () => {
     expect(s).toContain('EGRESS_JOIN=/usr/local/lib/havn/tools-join')
     expect(s).toContain('EGRESS_CGROUP=/sys/fs/cgroup/havn-tools')
     expect(s).toContain('echo 1 > /sys/fs/cgroup/havn-tools/cgroup.kill')
+    // The rule is replaced in one transaction and stays loaded while the assistant is down.
+    expect(s).toContain('table inet havn_egress\ndelete table inet havn_egress\ntable inet havn_egress {')
+    expect(s).not.toContain('nft delete table')
+    expect(s).toContain('egress not set up')
+    // No root command runs inside havn.service: it reads the assistant's editable .env (PATH, LD_PRELOAD).
+    expect(s).not.toMatch(/^Exec[A-Za-z]*=[-@:!]*\+/m)
+    expect(s).toContain('cat > /etc/systemd/system/havn-tools-guard.service')
+    expect(s).toContain('PartOf=havn.service')
+    expect(s).toContain('ExecStart=/usr/local/sbin/havn-egress-rules')
+    expect(s).toContain('Requires=havn-tools-guard.service havn-egressd.service')
     expect(s).toContain('systemctl restart havn-egressd.service')
     expect(s).toContain('[ -S /run/havn-egress/sock ] || { echo "havn-egressd did not start"; exit 1; }')
   })
@@ -399,6 +412,13 @@ describe('the root egress helper (card #307)', () => {
     expect(EGRESSD_PY).toContain('SO_PEERCRED')
     expect(EGRESSD_PY).toContain("if uid != HAVN.pw_uid:")
     expect(EGRESSD_PY).toContain("uids_of(parent) != {HAVN.pw_uid}")
+    // The parent is held by a pidfd and must be the same process after the move.
+    expect(EGRESSD_PY).toContain('os.pidfd_open(parent)')
+    // Only the wrapper shell is moved: a tool that execs the helper itself has the assistant as its parent.
+    expect(EGRESSD_PY).toContain("SHELL = os.path.realpath('/bin/sh')")
+    expect(EGRESSD_PY).toContain('if exe != SHELL:')
+    expect(EGRESSD_PY).toContain('SLOTS = threading.BoundedSemaphore(32)')
+    expect(EGRESSD_PY).toContain("if started(parent) != born or ppid_of(peer) != parent:")
     // The only cgroup.procs it ever writes is the tools cgroup's.
     expect(EGRESSD_PY.match(/cgroup\.procs/g)).toHaveLength(1)
     expect(EGRESSD_PY).toContain("open(TOOLS + '/cgroup.procs', 'w')")
