@@ -218,7 +218,7 @@ export function kindName(k: MessageKind): string {
 function onText(k: MessageKind, s: ProactiveSettings): string {
   switch (k) {
     case 'briefing':
-      return `${KIND_NAMES.briefing} are on. About ${s.briefing.leadMinutes} minutes before a meeting with other people, I check recent mail with the attendees and message you only when something needs your attention.`
+      return `${KIND_NAMES.briefing} are on. About ${s.briefing.leadMinutes} minutes before a meeting with other people, I check recent mail with the attendees and message you when something needs your attention. For a first call with someone new, I send a short prep note instead: who they are, what the call is about, what is likely to come up and what is worth asking.`
     case 'travel':
       return `${KIND_NAMES.travel} are on. For a meeting at a physical address, I message you about ${s.travel.bufferMinutes} minutes before you need to leave, with the place, the travel time (${MODE_WORDS[s.travel.mode]}) and anything in your mail about parking, the room or someone running late.`
     case 'timing':

@@ -171,6 +171,61 @@ describe('tick', () => {
     expect(no.d.send).not.toHaveBeenCalled()
   })
 
+  describe('first call with someone new', () => {
+    const quiet = vi.fn(async () => ({ kind: 'decision', decision: { brief: false, reason: 'Routine', picks: [], owed: [] } }) as DecideOutcome)
+    const note = { who: 'Pannada Rao, Symbiotic Group', about: 'Intro call.', expect: ['Rate'], ask: ['Start date'] }
+
+    it('sends a prep note instead of staying quiet, and records why', async () => {
+      const { d, sent } = deps({ decide: quiet, prep: vi.fn(async () => ({ kind: 'prep', prep: note }) as never) })
+      const r = await svc.tick(d)
+      expect(r).toMatchObject({ sent: 1, decided: 1, quiet: 0 })
+      expect(sent[0]).toContain('Prep for Southtel cutover at 14:00 (Devon Spencer), a first call with them:')
+      expect(sent[0]).toContain('Who: Pannada Rao, Symbiotic Group')
+      expect(s.recentDecisions(1)[0]).toMatchObject({ status: 'sent', reason: svc.REASON_FIRST_CALL })
+      // Its follow-up buttons know the meeting and the threads.
+      expect(JSON.parse(s.recentDecisions(1)[0]!.context).threads).toHaveLength(1)
+    })
+
+    it('stays quiet for a known contact', async () => {
+      const { d, sent } = deps({ decide: quiet, prep: vi.fn(async () => ({ kind: 'not-new' }) as never) })
+      await svc.tick(d)
+      expect(sent).toHaveLength(0)
+      expect(s.recentDecisions(1)[0]).toMatchObject({ status: 'quiet', reason: 'Routine' })
+    })
+
+    it('stays quiet when the model has nothing to put in the note, or fails', async () => {
+      for (const kind of ['empty', 'failed']) {
+        const { d, sent } = deps({ events: [event({ id: kind })], decide: quiet, prep: vi.fn(async () => ({ kind }) as never) })
+        await svc.tick(d)
+        expect(sent).toHaveLength(0)
+      }
+      expect(s.recentDecisions(5).filter((r) => r.status === 'quiet')).toHaveLength(2)
+    })
+
+    it('never asks for a note when the briefing itself goes out', async () => {
+      const prep = vi.fn(async () => ({ kind: 'prep', prep: note }) as never)
+      const { d, sent } = deps({ prep })
+      await svc.tick(d)
+      expect(prep).not.toHaveBeenCalled()
+      expect(sent[0]).toContain('Before Southtel cutover')
+    })
+
+    it('stops the pass when the daily cap is spent, and decides nothing more', async () => {
+      const { d, sent } = deps({ decide: quiet, prep: vi.fn(async () => ({ kind: 'capped' }) as never) })
+      await svc.tick(d)
+      expect(sent).toHaveLength(0)
+      expect(s.recentDecisions(5)).toHaveLength(0)
+    })
+
+    it('sends one note per meeting, across ticks', async () => {
+      const prep = vi.fn(async () => ({ kind: 'prep', prep: note }) as never)
+      await svc.tick(deps({ decide: quiet, prep }).d)
+      await svc.tick(deps({ decide: quiet, prep, now: NOW + 10 * MIN }).d)
+      expect(prep).toHaveBeenCalledOnce()
+      expect(s.recentDecisions(10)).toHaveLength(1)
+    })
+  })
+
   it('retries a failed send next tick, and gives up once the meeting is close', async () => {
     const failing = deps({ send: vi.fn(async () => null) })
     await svc.tick(failing.d)

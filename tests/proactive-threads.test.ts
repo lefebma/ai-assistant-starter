@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { excerpt, gmailQuery, groupGmail, groupOutlook, relatedThreads, MAX_THREADS } from '../src/proactive/threads.js'
+import { excerpt, gmailQuery, groupGmail, groupOutlook, olderMailCount, relatedThreads, MAX_THREADS } from '../src/proactive/threads.js'
 import type { UpcomingEvent } from '../src/proactive/calendar.js'
 
 const NOW = Date.parse('2026-10-30T16:00:00Z')
@@ -168,5 +168,60 @@ describe('relatedThreads', () => {
     expect(decodeURIComponent(paths[0]!)).toContain('"participants:devon@client.com"')
     expect(paths[1]).toBe('/me/messages/m1?$select=body')
     expect(threads[0]!.lastInbound?.excerpt).toBe('Can you confirm?')
+  })
+})
+
+describe('olderMailCount', () => {
+  it('asks Gmail only for mail older than the lookback, without bodies', async () => {
+    const calls: string[][] = []
+    const exec = async (_bin: string, args: string[]) => {
+      calls.push(args)
+      return { ok: true, stdout: '[]' }
+    }
+    const n = await olderMailCount(event(), NOW, { exec })
+    expect(n).toBe(0)
+    expect(calls[0]![3]).toMatch(/^older_than:14d -in:chats -in:drafts \(from:devon@client\.com/)
+    expect(calls[0]).toEqual(expect.arrayContaining(['--max', '3']))
+    expect(calls[0]).not.toContain('--include-body')
+  })
+
+  it('counts older Gmail messages and ignores drafts', async () => {
+    const exec = async () => ({
+      ok: true,
+      stdout: JSON.stringify([{ id: 'a', labels: ['INBOX'] }, { id: 'b', labels: ['DRAFT'] }]),
+    })
+    expect(await olderMailCount(event(), NOW, { exec })).toBe(1)
+  })
+
+  it('throws when the mailbox cannot be read, so a known contact is never taken for a new one', async () => {
+    const exec = async () => ({ ok: false, stdout: '' })
+    await expect(olderMailCount(event(), NOW, { exec })).rejects.toThrow()
+  })
+
+  it('counts Outlook messages older than the lookback', async () => {
+    const rows = [
+      { id: 'a', receivedDateTime: new Date(NOW - 2 * DAY).toISOString() },
+      { id: 'b', receivedDateTime: new Date(NOW - 40 * DAY).toISOString() },
+      { id: 'c', isDraft: true, receivedDateTime: new Date(NOW - 50 * DAY).toISOString() },
+    ]
+    const client = () => ({ get: async () => ({ value: rows }) }) as never
+    expect(await olderMailCount(event({ provider: 'outlook', account: 'els' }), NOW, { client })).toBe(1)
+  })
+
+  it('says nothing is older when everything is recent', async () => {
+    const rows = [{ id: 'a', receivedDateTime: new Date(NOW - 2 * DAY).toISOString() }]
+    const client = () => ({ get: async () => ({ value: rows }) }) as never
+    expect(await olderMailCount(event({ provider: 'outlook', account: 'els' }), NOW, { client })).toBe(0)
+  })
+
+  it('treats a full Outlook result page as "some", since the oldest may have been cut off', async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => ({ id: `m${i}`, receivedDateTime: new Date(NOW - 1 * DAY).toISOString() }))
+    const client = () => ({ get: async () => ({ value: rows }) }) as never
+    expect(await olderMailCount(event({ provider: 'outlook', account: 'els' }), NOW, { client })).toBeGreaterThan(0)
+  })
+
+  it('is zero with no attendees to search', async () => {
+    const exec = async () => ({ ok: true, stdout: '[]' })
+    expect(await olderMailCount(event({ attendees: [] }), NOW, { exec })).toBe(0)
   })
 })

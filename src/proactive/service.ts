@@ -42,7 +42,8 @@ import { aiPausedForBackground } from '../ai-limit.js'
 import { upcomingEvents, type CalendarSource, type UpcomingEvent } from './calendar.js'
 import type { RelatedThread } from './threads.js'
 import type { DecideOutcome } from './decide.js'
-import { formatBriefing, MAX_SHOWN, type FormatMode } from './format.js'
+import type { PrepOutcome } from './prep.js'
+import { formatBriefing, formatPrep, MAX_SHOWN, type FormatMode } from './format.js'
 import { briefingContext, buttonsFor, meetingsContext } from './followup.js'
 import { anyOn, getQuietHours, getSettings, quietUntil, type ProactiveSettings } from './settings.js'
 import { createMapsClient, type MapsClient } from '../maps/client.js'
@@ -104,6 +105,7 @@ export const QUIET_NO_ATTENDEES = 'No one else is invited.'
 export const QUIET_NO_MAIL = 'No recent mail with the attendees.'
 export const QUIET_NOTHING_NEW = 'Nothing new since the last briefing for this series.'
 export const QUIET_HOURS = 'It fell in your quiet hours.'
+export const REASON_FIRST_CALL = 'First call with someone new.'
 export const QUIET_TOO_LATE = 'Seen too late to be any use.'
 /** How far back the calendar is read when travel or timing is on, to know where the owner comes from and what is under way. */
 const LOOKBACK_MS = 8 * 3_600_000
@@ -112,6 +114,8 @@ export interface TickDeps {
   calendars: () => Promise<CalendarSource[]>
   threads: (event: UpcomingEvent, ownAddress: string, nowMs: number) => Promise<RelatedThread[]>
   decide: (event: UpcomingEvent, threads: RelatedThread[]) => Promise<DecideOutcome>
+  /** First call with someone new: a prep note when there is no briefing. Without it, a quiet meeting stays quiet. */
+  prep?: (event: UpcomingEvent, threads: RelatedThread[]) => Promise<PrepOutcome>
   send: (text: string, buttons?: string[]) => Promise<{ chatId: string; messageId: string } | null>
   now: () => Date
   tz: string
@@ -270,23 +274,37 @@ export async function tick(deps: TickDeps): Promise<TickResult> {
     }
     result.decided++
     const d = outcome.decision
-    if (!d.brief) {
-      if (recordDecision({ ...base, status: 'quiet', reason: d.reason || 'Nothing worth a message.' })) result.quiet++
-      continue
+    let text: string
+    let context: string
+    let reason: string
+    let shown: RelatedThread[]
+    if (d.brief) {
+      text = formatBriefing(event, d, deps.tz, deps.format)
+      context = briefingContext(event, d)
+      reason = d.reason
+      shown = [...d.picks.slice(0, MAX_SHOWN).map((p) => p.thread), ...d.owed.map((o) => o.thread)]
+    } else {
+      // Nothing open in the mail. For someone new that is when a prep note is most useful.
+      const p = deps.prep ? await deps.prep(event, threads) : null
+      if (p?.kind === 'paused' || p?.kind === 'capped') break
+      if (p?.kind !== 'prep') {
+        if (recordDecision({ ...base, status: 'quiet', reason: d.reason || 'Nothing worth a message.' })) result.quiet++
+        continue
+      }
+      text = formatPrep(event, p.prep, deps.tz, deps.format)
+      shown = threads.slice(0, 3)
+      context = briefingContext(event, { brief: true, reason: REASON_FIRST_CALL, picks: shown.map((thread) => ({ thread, why: '' })), owed: [] })
+      reason = REASON_FIRST_CALL
     }
-    const text = formatBriefing(event, d, deps.tz, deps.format)
-    const context = briefingContext(event, d)
-    const id = recordDecision({ ...base, status: 'pending', reason: d.reason, text, context })
+    const id = recordDecision({ ...base, status: 'pending', reason, text, context })
     if (id === null) continue // another tick decided it first
     recordSeen(eventId(event), id, event.startMs, event.location)
-    const shownIds = [...d.picks.slice(0, MAX_SHOWN).map((p) => p.thread), ...d.owed.map((o) => o.thread)].flatMap(
-      (t) => t.messageIds
-    )
+    const shownIds = shown.flatMap((t) => t.messageIds)
     const row: DecisionRow = {
       ...base,
       id,
       status: 'pending',
-      reason: d.reason,
+      reason,
       text,
       attempts: 0,
       sentAt: null,
