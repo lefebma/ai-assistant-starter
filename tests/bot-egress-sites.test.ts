@@ -11,7 +11,8 @@ const h = vi.hoisted(() => {
     runAgent: vi.fn(),
     sites: [] as string[],
     approver: 'owner' as 'owner' | 'operator',
-    socket: join(mkdtempSync(join(tmpdir(), 'egs-')), 's'),
+    // Windows has no unix socket files: a named pipe stands in for the helper's socket.
+    socket: process.platform === 'win32' ? `\\\\.\\pipe\\egs-${process.pid}-${Date.now()}` : join(mkdtempSync(join(tmpdir(), 'egs-')), 's'),
     requests: [] as string[],
   }
 })
