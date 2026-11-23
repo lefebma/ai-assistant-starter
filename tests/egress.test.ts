@@ -12,6 +12,7 @@ import { openRunProxy, type EgressRecord, type RunProxy } from '../src/egress/pr
 import { chatPolicy, currentProxy, parsePorts, policyFor, proxyEnv, rolePolicy, withEgress } from '../src/egress/index.js'
 import { toolEnv, toolEnvOption } from '../src/egress/tool-env.js'
 import { inToolsCgroup, nftRules } from '../src/egress/hosted.js'
+import { EGRESSD_PY, EGRESSD_UNIT, JOIN_PY, TOOLS_CGROUP, TOOLS_CGROUP_REL } from '../scripts/hosted/egress-helper.js'
 import { withGrant } from '../src/assurance/grant.js'
 import { BUILTIN_ROLES } from '../src/assurance/roles.js'
 
@@ -310,6 +311,16 @@ describe('hosted cgroup helpers', () => {
     expect(w.args).toEqual(['-c', 'echo $$ > "$0/cgroup.procs" && exec "$@"', '/sys/fs/cgroup/system.slice/havn.service/tools', 'claude', '--x', 'a b'])
   })
 
+  it('with the root helper, the shell asks it to move the shell in, and execs the tool only if it did (card #307)', () => {
+    const w = inToolsCgroup('claude', ['--x', 'a b'], '/sys/fs/cgroup/havn-tools', '/usr/local/lib/havn/tools-join')
+    expect(w).toEqual({ command: '/bin/sh', args: ['-c', '"$0" && exec "$@"', '/usr/local/lib/havn/tools-join', 'claude', '--x', 'a b'] })
+  })
+
+  it('the tools cgroup sits at the top of the tree, where only root may move a process in or out (card #307)', () => {
+    expect(TOOLS_CGROUP).toBe('/sys/fs/cgroup/havn-tools')
+    expect(nftRules(TOOLS_CGROUP_REL, [47000, 47999])).toContain('socket cgroupv2 level 1 "havn-tools" drop')
+  })
+
   it('the nftables rule lets the cgroup reach only the proxy ports, and drops the rest', () => {
     const t = nftRules('system.slice/havn.service/tools', [47000, 47999])
     expect(t).toContain('socket cgroupv2 level 3 "system.slice/havn.service/tools" ip daddr 127.0.0.1 tcp dport 47000-47999 accept')
@@ -352,7 +363,47 @@ describe('enable-egress --prove (card #278)', () => {
     expect(PROVE).toMatch(/inside\(\) \{ sh -c 'echo \$\$ > "\$0\/cgroup\.procs" \|\| exit 99; exec "\$@"'/)
     expect(PROVE).toContain('nothing was proven')
     expect(PROVE).toContain('inside true || exit 1')
-    // Every inside check goes through the guarded join; none joins on its own.
-    expect(PROVE.match(/echo \$\$ > "\$0\/cgroup\.procs"/g)).toHaveLength(1)
+    // Every network check goes through the guarded join; none joins on its own.
+    for (const line of PROVE.split('\n').filter((l) => /curl|getent|\/dev\/tcp/.test(l) && !l.includes('outside'))) expect(line).toMatch(/inside /)
+  })
+
+  it('proves a tool cannot leave the fence, and that the join helper moves only the assistant in (card #307)', async () => {
+    const { PROVE } = await import('../scripts/hosted/enable-egress.js')
+    // A havn process in the tools cgroup tries both ways out; first a positive control.
+    expect(PROVE).toContain('could not start a havn process in the tools cgroup: nothing was proven')
+    expect(PROVE).toContain('inside, leaving the cgroup: MOVED OUT (a tool can leave the fence)')
+    expect(PROVE).toContain('/sys/fs/cgroup/cgroup.procs')
+    expect(PROVE).toContain('the join helper: moves a tool in')
+    expect(PROVE).toContain('the join helper, asked from outside the assistant: refused')
+  })
+})
+
+describe('the root egress helper (card #307)', () => {
+  it('setup installs it root-owned, drops Delegate and clears the cgroup on every start and stop', async () => {
+    const { setupScript } = await import('../scripts/hosted/enable-egress.js')
+    const s = setupScript('', '')
+    expect(s).not.toContain('Delegate=yes')
+    expect(s).not.toMatch(/chown havn/)
+    expect(s).toContain('install -m 0755 -o root -g root /usr/local/lib/havn/egressd.py.new /usr/local/lib/havn/egressd.py')
+    expect(s).toContain('install -m 0755 -o root -g root /usr/local/lib/havn/tools-join.new /usr/local/lib/havn/tools-join')
+    expect(s).toContain('EGRESS_JOIN=/usr/local/lib/havn/tools-join')
+    expect(s).toContain('EGRESS_CGROUP=/sys/fs/cgroup/havn-tools')
+    expect(s).toContain('echo 1 > /sys/fs/cgroup/havn-tools/cgroup.kill')
+    expect(s).toContain('systemctl restart havn-egressd.service')
+    expect(s).toContain('[ -S /run/havn-egress/sock ] || { echo "havn-egressd did not start"; exit 1; }')
+  })
+
+  it('runs with root-owned python, trusts the socket over the caller, and only ever moves a process in', () => {
+    expect(EGRESSD_UNIT).toContain('ExecStart=/usr/bin/python3 -I -S /usr/local/lib/havn/egressd.py')
+    expect(EGRESSD_UNIT).toContain('PrivateNetwork=yes')
+    expect(EGRESSD_PY).toContain('SO_PEERCRED')
+    expect(EGRESSD_PY).toContain("if uid != HAVN.pw_uid:")
+    expect(EGRESSD_PY).toContain("uids_of(parent) != {HAVN.pw_uid}")
+    // The only cgroup.procs it ever writes is the tools cgroup's.
+    expect(EGRESSD_PY.match(/cgroup\.procs/g)).toHaveLength(1)
+    expect(EGRESSD_PY).toContain("open(TOOLS + '/cgroup.procs', 'w')")
+    expect(EGRESSD_PY).toContain('os.chmod(SOCK, 0o660)')
+    expect(JOIN_PY).toContain("s.sendall(b'join\\n')")
+    expect(JOIN_PY).toContain('sys.exit(1)')
   })
 })

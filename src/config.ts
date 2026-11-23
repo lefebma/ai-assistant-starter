@@ -99,7 +99,7 @@ function readEgressSettings(): Record<string, string | undefined> {
     system = {}
   }
   const pick = (k: string) => process.env[k] ?? (system ? system[k] : env[k])
-  return Object.fromEntries(['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP'].map((k) => [k, pick(k)]))
+  return Object.fromEntries(['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP', 'EGRESS_JOIN'].map((k) => [k, pick(k)]))
 }
 export const EGRESS = (egressEnv.EGRESS ?? 'off').trim().toLowerCase() === 'enforce' ? 'enforce' : 'off'
 /** Hosts every run may write to (any method), comma separated. */
@@ -110,6 +110,12 @@ export const EGRESS_READ = egressEnv.EGRESS_READ ?? ''
 export const EGRESS_PORTS = egressEnv.EGRESS_PORTS ?? '47000-47999'
 /** The cgroup a hosted box runs tools in (written by enable-egress). Empty: no kernel rule. */
 export const EGRESS_CGROUP = (egressEnv.EGRESS_CGROUP ?? '').trim()
+/**
+ * The root-owned helper that moves a tool into EGRESS_CGROUP (card #307). Set:
+ * the cgroup is root-owned and only the helper may move a process into it.
+ * Empty: the assistant writes to cgroup.procs itself (boxes set up before 1.85.0).
+ */
+export const EGRESS_JOIN = (egressEnv.EGRESS_JOIN ?? '').trim()
 /**
  * Audit log of every tool call (card #196). A hosted box always uses
  * /var/lib/havn-audit when root has created it, whatever this says. Anywhere

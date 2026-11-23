@@ -10,9 +10,11 @@
  *   - writes /etc/havn/egress.env (root-owned: the assistant cannot widen its
  *     own allowlist) with EGRESS=enforce, the cgroup and the host lists
  *   - writes /usr/local/sbin/havn-egress-rules, which makes the tools cgroup
- *     and loads the nftables rule; a systemd drop-in runs it before every
- *     start (the rule names the cgroup, which is new on every start)
- *   - adds Delegate=yes so the assistant may move its tools into the cgroup
+ *     (/sys/fs/cgroup/havn-tools, root-owned), clears out anything left in it
+ *     and loads the nftables rule; a systemd drop-in runs it before every start
+ *   - installs havn-egressd, the root service that moves a tool into the
+ *     cgroup (egress-helper.ts, card #307); only root can move a process in or
+ *     out, so a tool cannot leave
  *
  * It does not restart the assistant. Restart it (systemctl restart havn) when
  * the client is not mid-conversation, then run with --prove (as root, through
@@ -23,9 +25,10 @@
  */
 import { spawnSync } from 'node:child_process'
 import { nftRules } from '../../src/egress/hosted.js'
+import { DAEMON_PATH, EGRESSD_PY, EGRESSD_UNIT, HELPER_DIR, JOIN_PATH, JOIN_PY, SOCKET_PATH, TOOLS_CGROUP, TOOLS_CGROUP_REL, UNIT_CGROUP } from './egress-helper.js'
 
-export const CGROUP_REL = 'system.slice/havn.service/tools'
-export const CGROUP = `/sys/fs/cgroup/${CGROUP_REL}`
+export const CGROUP_REL = TOOLS_CGROUP_REL
+export const CGROUP = TOOLS_CGROUP
 export const PORTS: [number, number] = [47000, 47999]
 
 export function setupScript(allow: string | null, read: string | null): string {
@@ -34,41 +37,61 @@ export function setupScript(allow: string | null, read: string | null): string {
     : v
   return `set -euo pipefail
 command -v nft >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y nftables
+command -v python3 >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y python3-minimal
 install -d -m 0755 /etc/havn
 ALLOW="${keep('EGRESS_ALLOW', allow)}"
 READ="${keep('EGRESS_READ', read)}"
 cat > /etc/havn/egress.env.new <<EOF
 EGRESS=enforce
 EGRESS_CGROUP=${CGROUP}
+EGRESS_JOIN=${JOIN_PATH}
 EGRESS_PORTS=${PORTS[0]}-${PORTS[1]}
 EGRESS_ALLOW=$ALLOW
 EGRESS_READ=$READ
 EOF
 install -m 0644 -o root -g root /etc/havn/egress.env.new /etc/havn/egress.env && rm -f /etc/havn/egress.env.new
+install -d -m 0755 -o root -g root ${HELPER_DIR}
+cat > ${DAEMON_PATH}.new <<'EOF'
+${EGRESSD_PY}EOF
+cat > ${JOIN_PATH}.new <<'EOF'
+${JOIN_PY}EOF
+install -m 0755 -o root -g root ${DAEMON_PATH}.new ${DAEMON_PATH} && rm -f ${DAEMON_PATH}.new
+install -m 0755 -o root -g root ${JOIN_PATH}.new ${JOIN_PATH} && rm -f ${JOIN_PATH}.new
+cat > /etc/systemd/system/havn-egressd.service <<'EOF'
+${EGRESSD_UNIT}EOF
 cat > /etc/havn/egress.nft <<'EOF'
 ${nftRules(CGROUP_REL, PORTS)}EOF
 cat > /usr/local/sbin/havn-egress-rules <<'EOF'
 #!/bin/sh
-# Card #231. Runs as root before every start of havn.service: the cgroup is
-# new each time, and the nftables rule must name the new one.
+# Cards #231, #307. Runs as root before every start of havn.service: makes
+# the tools cgroup (root-owned, so a tool cannot leave it), clears out any
+# tool a previous run left behind, and loads the nftables rule.
 set -eu
 mkdir -p ${CGROUP}
-chown havn:havn ${CGROUP} ${CGROUP}/cgroup.procs
+if [ -e ${CGROUP}/cgroup.kill ]; then echo 1 > ${CGROUP}/cgroup.kill; fi
 nft delete table inet havn_egress 2>/dev/null || true
 nft -f /etc/havn/egress.nft
 EOF
 chmod 0755 /usr/local/sbin/havn-egress-rules
 install -d -m 0755 /etc/systemd/system/havn.service.d
 cat > /etc/systemd/system/havn.service.d/egress.conf <<'EOF'
-# Card #231: tools run in their own cgroup, which may reach only the egress proxy.
+# Cards #231, #307: tools run in their own root-owned cgroup, which may reach only the egress proxy.
+[Unit]
+Wants=havn-egressd.service
+After=havn-egressd.service
 [Service]
-Delegate=yes
 ExecStartPre=+/usr/local/sbin/havn-egress-rules
-ExecStopPost=+/bin/sh -c 'nft delete table inet havn_egress 2>/dev/null || true'
+# Tools live outside havn.service now, so stopping it does not stop them: this does.
+ExecStopPost=+/bin/sh -c 'echo 1 > ${CGROUP}/cgroup.kill 2>/dev/null; nft delete table inet havn_egress 2>/dev/null || true'
 Environment=EGRESS=enforce
 Environment=EGRESS_CGROUP=${CGROUP}
+Environment=EGRESS_JOIN=${JOIN_PATH}
 EOF
 systemctl daemon-reload
+systemctl enable havn-egressd.service >/dev/null 2>&1
+systemctl restart havn-egressd.service
+for i in 1 2 3 4 5 6 7 8 9 10; do [ -S ${SOCKET_PATH} ] && break; sleep 0.5; done
+[ -S ${SOCKET_PATH} ] || { echo "havn-egressd did not start"; exit 1; }
 echo "egress set up; restart havn to apply"
 `
 }
@@ -77,7 +100,8 @@ echo "egress set up; restart havn to apply"
  * Run as root (through havn-admin) after the restart: a process from an ssh
  * session cannot move into the service's cgroup unless it is root, and a
  * check whose join fails would read as "blocked" and prove nothing (it did,
- * from 2026-11-05 to 1.84.4). Every check below joins through \`inside\`, which
+ * from 2026-11-05 to 1.84.4), and until 1.85.0 a tool could leave the cgroup
+ * (card #307). Every check below joins through \`inside\`, which
  * stops the script if the join fails. A process that joins the tools cgroup must
  * not reach the internet or DNS on its own; the same command outside it can.
  */
@@ -88,6 +112,15 @@ CG=${CGROUP}
 inside() { sh -c 'echo $$ > "$0/cgroup.procs" || exit 99; exec "$@"' "$CG" "$@"; r=$?; [ $r = 99 ] && { echo "could not join the tools cgroup: nothing was proven"; exit 1; }; return $r; }
 [ -w "$CG/cgroup.procs" ] || { echo "tools cgroup missing: restart havn first"; exit 1; }
 inside true || exit 1
+SVC=/sys/fs/cgroup${UNIT_CGROUP}
+J=${JOIN_PATH}
+[ -S ${SOCKET_PATH} ] || { echo "havn-egressd is not running: run enable-egress again"; exit 1; }
+# Card #307: a tool, running as havn, must not be able to move itself out of the fence.
+inside setpriv --reuid havn --regid havn --init-groups sh -c 'grep -qx "0::/${TOOLS_CGROUP_REL}" /proc/self/cgroup && [ "$(id -un)" = havn ]' || { echo "could not start a havn process in the tools cgroup: nothing was proven"; exit 1; }
+if inside setpriv --reuid havn --regid havn --init-groups sh -c 'echo $$ > "$0/cgroup.procs" || echo $$ > /sys/fs/cgroup/cgroup.procs' "$SVC" 2>/dev/null; then echo "inside, leaving the cgroup: MOVED OUT (a tool can leave the fence)"; exit 1; else echo "inside, leaving the cgroup: refused"; fi
+# The join helper moves a shell of the assistant in, and refuses one that is not the assistant's.
+if sh -c 'echo $$ > "$0/cgroup.procs" || exit 99; exec setpriv --reuid havn --regid havn --init-groups sh -c '"'"'"$0" && grep -qx "0::/${TOOLS_CGROUP_REL}" /proc/self/cgroup'"'"' "$1"' "$SVC" "$J" 2>/dev/null; then echo "the join helper: moves a tool in"; else echo "the join helper: FAILED (tools cannot start)"; exit 1; fi
+if setpriv --reuid havn --regid havn --init-groups sh -c '"$0" 2>/dev/null; r=$?; exit $r' "$J"; then echo "the join helper, asked from outside the assistant: AGREED (it must refuse)"; exit 1; else echo "the join helper, asked from outside the assistant: refused"; fi
 if curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "outside the cgroup: reaches the internet"; else echo "outside the cgroup: NO network (unexpected)"; fi
 if inside curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "inside the cgroup: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside the cgroup: blocked"; fi
 if inside curl -m 8 -sS -o /dev/null --noproxy "*" http://1.1.1.1 2>/dev/null; then echo "inside, by address: CONNECTED (egress is NOT enforced)"; exit 1; else echo "inside, by address: blocked"; fi

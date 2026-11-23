@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.86.0 - 2026-11-23
+
+- **Fixed: the assistant's tools can no longer step outside the egress allowlist.** On a hosted assistant with egress on, the tools run in a group the firewall holds to the allowlist. That group sat inside the assistant's own service, which the assistant's user owned, so a tool could move itself out with one command and reach any site. The group now sits where only root can move a process in or out, and a small root service, `havn-egressd`, puts each tool in when it starts and never takes one out. `--prove` now checks that a tool cannot leave. A machine with egress on must be updated first, then have `npm run enable-egress -- <ip>` run again and the assistant restarted (card #307).
+
 ## 1.85.0 - 2026-11-23
 
 - **New: a prep note before a first call with someone new.** When a meeting has no briefing (nothing open in your mail) and the people invited have no mail history with you from before the last two weeks, such as a recruiter or a new client, your assistant now sends a short prep note instead of staying quiet: who they are, what the call is for, what is likely to come up and what is worth asking. It says only what your mail supports and leaves a part out rather than guess.
