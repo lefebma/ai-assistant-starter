@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { readEnvFile, PROJECT_ROOT } from './env.js'
 import { getSecret } from './vault/index.js'
 
@@ -86,17 +86,18 @@ export const SEND_RECIPIENT_LIMIT = Math.max(1, parseInt(env['SEND_RECIPIENT_LIM
  * usual.
  */
 export const EGRESS_SYSTEM_FILE = '/etc/havn/egress.env'
-const EGRESS_SETTING_KEYS = ['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP', 'EGRESS_JOIN']
+const EGRESS_KEYS = ['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP', 'EGRESS_JOIN', 'EGRESS_APPROVER']
 const egressEnv: Record<string, string | undefined> = readEgressSettings()
+function parseEgressFile(file: string): Record<string, string> {
+  return Object.fromEntries(readFileSync(file, 'utf-8').split('\n')
+    .map((l) => /^\s*(EGRESS_[A-Z_]+|EGRESS)\s*=\s*(.*?)\s*$/.exec(l))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]))
+}
 function readEgressSettings(): Record<string, string | undefined> {
   let system: Record<string, string> | null = null
   try {
-    if (existsSync(EGRESS_SYSTEM_FILE)) {
-      system = Object.fromEntries(readFileSync(EGRESS_SYSTEM_FILE, 'utf-8').split('\n')
-        .map((l) => /^\s*(EGRESS_[A-Z_]+|EGRESS)\s*=\s*(.*?)\s*$/.exec(l))
-        .filter((m): m is RegExpExecArray => m !== null)
-        .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]))
-    }
+    if (existsSync(EGRESS_SYSTEM_FILE)) system = parseEgressFile(EGRESS_SYSTEM_FILE)
   } catch {
     // The file is there but unreadable: fail closed (enforce, empty lists), never off.
     system = { EGRESS: 'enforce' }
@@ -116,7 +117,7 @@ export function pickEgressSettings(
   dotEnv: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
   const pick = (k: string) => system ? (system[k] ?? (k === 'EGRESS_CGROUP' ? procEnv[k] : undefined)) : (procEnv[k] ?? dotEnv[k])
-  return Object.fromEntries(EGRESS_SETTING_KEYS.map((k) => [k, pick(k)]))
+  return Object.fromEntries(EGRESS_KEYS.map((k) => [k, pick(k)]))
 }
 export const EGRESS = (egressEnv.EGRESS ?? 'off').trim().toLowerCase() === 'enforce' ? 'enforce' : 'off'
 /** Hosts every run may write to (any method), comma separated. */
@@ -125,6 +126,41 @@ export const EGRESS_ALLOW = egressEnv.EGRESS_ALLOW ?? ''
 export const EGRESS_READ = egressEnv.EGRESS_READ ?? ''
 /** Loopback ports the per-run proxies bind in; the hosted kernel rule allows exactly these. */
 export const EGRESS_PORTS = egressEnv.EGRESS_PORTS ?? '47000-47999'
+/**
+ * Who may approve a refused site from chat (card #306), set only in root-owned
+ * /etc/havn/egress.env: 'owner' lets the owner tap Allow in the main chat;
+ * anything else (the default) leaves it to whoever runs the box, and the owner
+ * can only ask for it.
+ */
+export type EgressApprover = 'owner' | 'operator'
+const approverOf = (v: string | undefined): EgressApprover => ((v ?? '').trim().toLowerCase() === 'owner' ? 'owner' : 'operator')
+
+export type LiveEgress = { allow: string; read: string; approver: EgressApprover }
+let liveEgress: { mtimeMs: number; size: number; v: LiveEgress } | null = null
+
+/**
+ * The host lists and approver as they are now (card #306). On a hosted box the
+ * root-owned file is read again whenever it changes, so a site approved from
+ * chat works on the next connection, without a restart. Elsewhere, the values
+ * read at start. A file that cannot be read keeps the last good values.
+ */
+export function liveEgressSettings(file: string = EGRESS_SYSTEM_FILE): LiveEgress {
+  const fallback: LiveEgress = { allow: EGRESS_ALLOW, read: EGRESS_READ, approver: approverOf(egressEnv.EGRESS_APPROVER) }
+  try {
+    const st = statSync(file, { throwIfNoEntry: false })
+    if (!st) return liveEgress?.v ?? fallback
+    if (liveEgress && liveEgress.mtimeMs === st.mtimeMs && liveEgress.size === st.size) return liveEgress.v
+    const f = parseEgressFile(file)
+    // The file only: systemd loads .env into process.env, so it never overrides the file.
+    const pick = (k: string) => f[k] ?? ''
+    const v: LiveEgress = { allow: pick('EGRESS_ALLOW'), read: pick('EGRESS_READ'), approver: approverOf(pick('EGRESS_APPROVER')) }
+    liveEgress = { mtimeMs: st.mtimeMs, size: st.size, v }
+    return v
+  } catch {
+    return liveEgress?.v ?? fallback
+  }
+}
+
 /** The cgroup a hosted box runs tools in (written by enable-egress). Empty: no kernel rule. */
 export const EGRESS_CGROUP = (egressEnv.EGRESS_CGROUP ?? '').trim()
 /**

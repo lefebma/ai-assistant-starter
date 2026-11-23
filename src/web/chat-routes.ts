@@ -2,7 +2,8 @@
 import { createReadStream, statSync } from 'node:fs'
 import { extname, relative } from 'node:path'
 import { realpathSync } from 'node:fs'
-import { PROJECT_ROOT } from '../config.js'
+import { PROJECT_ROOT, liveEgressSettings } from '../config.js'
+import { buttonsFor, markOffered, offerText } from '../egress/approvals.js'
 import { UPLOADS_DIR } from '../media.js'
 import { logger } from '../logger.js'
 import { listModelChoices } from '../models/catalog.js'
@@ -274,10 +275,17 @@ async function answer(
     const [card, ...others] = replyLabels.length ? [undefined, ...proposals] : proposals
     const scope = scopeFor(chatId, conv.projectId)
     const offers = [card ? proposalCard(card, scope) : '', ...others.map((p) => p && proposalHint(p))]
-    const labels = card ? PIN_BUTTONS : replyLabels
-    const content = [cleanText, ...notes, ...offers].filter(Boolean).join('\n\n')
+    // A refused site (card #306) rides the reply as Allow/Deny (or Ask for
+    // access) when nothing else holds the buttons; any other is a typed hint.
+    const sites = result.sites ?? []
+    const approver = sites.length ? liveEgressSettings().approver : 'operator'
+    const ride = !card && !replyLabels.length ? sites[0] : undefined
+    const siteLines = sites.map((h) => offerText(h, approver, h === ride))
+    const labels = card ? PIN_BUTTONS : ride ? buttonsFor(approver) : replyLabels
+    const content = [cleanText, ...notes, ...offers, ...siteLines].filter(Boolean).join('\n\n')
     const mid = addMessage(id, 'assistant', content, files, labels)
     if (card) setProposalCard(proposeDecision(chatId, card.topic, card.text, scope), `${id}:${mid}`)
+    for (const h of sites) markOffered(h, h === ride ? `web:${chatId}:${mid}` : null)
     return { kind: 'reply', mid }
   }
 

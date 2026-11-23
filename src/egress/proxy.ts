@@ -25,7 +25,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import { decide, isInternalAddress, type EgressPolicy } from './policy.js'
 
-export type EgressRecord = { method: string; host: string; port: number; path: string; decision: 'allowed' | 'denied'; reason?: string }
+/** `unlisted`: refused only because the host is on no list (card #306). */
+export type EgressRecord = { method: string; host: string; port: number; path: string; decision: 'allowed' | 'denied'; reason?: string; unlisted?: boolean }
 
 export interface RunProxyOptions {
   /** Read for every connection: the run's policy as it is now. */
@@ -106,14 +107,14 @@ async function onRequest(req: IncomingMessage, res: ServerResponse, opts: RunPro
   const port = url.port ? Number(url.port) : 80
   const method = req.method ?? 'GET'
   const host = url.hostname
-  const rec = (decision: 'allowed' | 'denied', reason?: string) => opts.record?.({ method, host, port, path: url.pathname, decision, reason })
+  const rec = (decision: 'allowed' | 'denied', reason?: string, unlisted?: boolean) => opts.record?.({ method, host, port, path: url.pathname, decision, reason, ...(unlisted ? { unlisted } : {}) })
   if (!authorized(req, secret)) {
     if (req.headers['proxy-authorization']) rec('denied', NO_SECRET)
     res.writeHead(407, { 'Proxy-Authenticate': CHALLENGE, 'Content-Type': 'text/plain', 'X-Havn-Egress': 'denied' })
     return void res.end(`egress denied: ${NO_SECRET}\n`)
   }
   const verdict = decide(opts.policy(), { host, port, method })
-  if (!verdict.allow) { rec('denied', verdict.reason); return deny(res, verdict.reason) }
+  if (!verdict.allow) { rec('denied', verdict.reason, verdict.unlisted); return deny(res, verdict.reason) }
   const t = await target(host, opts)
   if ('refused' in t) { rec('denied', t.refused); return deny(res, t.refused) }
   rec('allowed')
@@ -132,9 +133,9 @@ async function onRequest(req: IncomingMessage, res: ServerResponse, opts: RunPro
 
 async function onConnect(req: IncomingMessage, client: Socket, head: Buffer, opts: RunProxyOptions, secret: Buffer | null): Promise<void> {
   const { host, port } = splitHostPort(req.url ?? '', 443)
-  const rec = (decision: 'allowed' | 'denied', reason?: string) => opts.record?.({ method: 'CONNECT', host, port, path: '', decision, reason })
-  const refuse = (reason: string) => {
-    rec('denied', reason)
+  const rec = (decision: 'allowed' | 'denied', reason?: string, unlisted?: boolean) => opts.record?.({ method: 'CONNECT', host, port, path: '', decision, reason, ...(unlisted ? { unlisted } : {}) })
+  const refuse = (reason: string, unlisted?: boolean) => {
+    rec('denied', reason, unlisted)
     client.end(`HTTP/1.1 403 Forbidden\r\nX-Havn-Egress: denied\r\nContent-Type: text/plain\r\n\r\negress denied: ${reason}\n`)
   }
   if (!authorized(req, secret)) {
@@ -142,7 +143,7 @@ async function onConnect(req: IncomingMessage, client: Socket, head: Buffer, opt
     return void client.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: ${CHALLENGE}\r\nX-Havn-Egress: denied\r\nContent-Type: text/plain\r\n\r\negress denied: ${NO_SECRET}\n`)
   }
   const verdict = decide(opts.policy(), { host, port, method: null })
-  if (!verdict.allow) return refuse(verdict.reason)
+  if (!verdict.allow) return refuse(verdict.reason, verdict.unlisted)
   const t = await target(host, opts)
   if ('refused' in t) return refuse(t.refused)
   rec('allowed')

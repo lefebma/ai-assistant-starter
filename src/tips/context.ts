@@ -9,7 +9,7 @@ import { getAllTasks, getDb } from '../db.js'
 import { liveDecisions } from '../memory/decisions.js'
 import { connectionDeps } from '../web/connections.js'
 import { voiceCapabilities } from '../voice.js'
-import { OPENAI_API_KEY } from '../config.js'
+import { EGRESS, OPENAI_API_KEY } from '../config.js'
 import { isManagedAi } from '../ai-limit.js'
 import type { TipContext } from './catalog.js'
 
@@ -47,5 +47,6 @@ export async function tipContext(chatId: string): Promise<TipContext> {
       false,
     ),
     ownOpenAiKey: !!OPENAI_API_KEY && !attempt(() => isManagedAi(), true),
+    siteList: EGRESS === 'enforce',
   }
 }

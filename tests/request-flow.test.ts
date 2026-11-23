@@ -163,6 +163,16 @@ describe('RequestFlow', () => {
     expect(sent).toHaveLength(1)
   })
 
+  it('sends a site access request at once, under the same daily limit (card #306)', async () => {
+    const flow = new RequestFlow(deps())
+    const r = await flow.sendNow('What: let my assistant open example.com', 'Site access request: example.com')
+    expect(r.text).toBe('Sent. Your reference is REQ-0001.')
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.subject).toBe('Site access request: example.com (REQ-0001)')
+    expect(sent[0]!.body).toContain('What: let my assistant open example.com')
+    expect(requestsInLastDay(join(dir, 'store', 'feature-requests.json'))).toBe(1)
+  })
+
   it('asks first on a bare /request and takes the next message', async () => {
     const flow = new RequestFlow(deps())
     const ask = await flow.command('c1', '/request')

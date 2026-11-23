@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.87.0 - 2026-11-23
+
+- **New: approve a blocked site from the chat.** On a hosted assistant with the site list on, when your assistant is refused a site only because it is not on the list, you get a card in your main chat after the reply. By default it offers Ask for access, which sends a request to whoever looks after your assistant; where they have turned on owner approval, it asks "Allow example.com?" with Allow and Deny, and Allow adds the site for good. Deny is remembered, so the same site is never asked about twice. `/egress` lists the sites, `/egress remove <site>` takes one off, and a newly added site works without a restart. Only a tap or a typed command adds a site, never the assistant itself or anything it reads, and every answer is written to the audit log. Works in Telegram, Teams and the web chat (card #306).
+
 ## 1.86.0 - 2026-11-23
 
 - **Fixed: the assistant's tools can no longer step outside the egress allowlist.** On a hosted assistant with egress on, the tools run in a group the firewall holds to the allowlist. That group sat inside the assistant's own service, which the assistant's user owned, so a tool could move itself out with one command and reach any site. The group now sits where only root can move a process in or out, and a small root service, `havn-egressd`, puts each tool in when it starts and never takes one out. `--prove` now checks that a tool cannot leave. A machine with egress on must be updated first, then have `npm run enable-egress -- <ip>` run again and the assistant restarted (card #307).

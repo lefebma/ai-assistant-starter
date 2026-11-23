@@ -136,6 +136,34 @@ export class RequestFlow {
     return { text: formatRequestPreview(draft, sender), buttons: REQUEST_BUTTONS }
   }
 
+  /**
+   * Send a request straight away, with no draft to confirm: the owner's tap
+   * on a card that already said what it sends (card #306, Ask for access).
+   * Same daily limit, and the same saved copy when no email can send it.
+   */
+  async sendNow(summary: string, subject: string): Promise<RequestReply> {
+    const now = this.now()
+    if (!canSendRequest(this.deps.logFile, now)) return limitReply()
+    const draft = { ...buildRequestDraft(summary, this.deps.sender(), this.deps.to(), (this.deps.newRef ?? newRequestRef)()) }
+    draft.subject = `${subject} (${draft.ref})`
+    recordRequest(this.deps.logFile, draft.ref, now)
+    return this.deliver(draft, `Sent. Your reference is ${draft.ref}.`)
+  }
+
+  private async deliver(draft: RequestDraft, sentText: string): Promise<RequestReply> {
+    const result = await this.deps.send(draft)
+    if (result.ok) return { text: sentText }
+    try {
+      saveFeatureRequest(draft, this.deps.saveDir)
+      return {
+        text: `I could not email it (${result.detail || 'no email account connected'}). It is saved on this assistant as ${draft.ref}, so nothing is lost: mention ${draft.ref} to whoever set up your assistant and they can pick it up.`,
+      }
+    } catch (err) {
+      this.deps.logError?.(err, 'request: could not save the fallback file')
+      return { text: `I could not email it or save it. Please send it to ${draft.to} yourself.` }
+    }
+  }
+
   /** Send / Edit / Cancel on the pending draft. Null when there is none or the action is not one of those. */
   async resolve(chatId: string, action: string): Promise<RequestReply | null> {
     const draft = this.pending.get(chatId)
@@ -159,18 +187,6 @@ export class RequestFlow {
     // racing through one email window cannot both pass the limit. A request
     // that fails to send is saved below and still counts.
     recordRequest(this.deps.logFile, draft.ref, now)
-    const result = await this.deps.send(draft)
-    if (result.ok) {
-      return { text: `Sent. The Havn team will see it. Your reference is ${draft.ref}.` }
-    }
-    try {
-      saveFeatureRequest(draft, this.deps.saveDir)
-      return {
-        text: `I could not email it (${result.detail || 'no email account connected'}). It is saved on this assistant as ${draft.ref}, so nothing is lost: mention ${draft.ref} to whoever set up your assistant and they can pick it up.`,
-      }
-    } catch (err) {
-      this.deps.logError?.(err, 'request: could not save the fallback file')
-      return { text: `I could not email it or save it. Please send it to ${draft.to} yourself.` }
-    }
+    return this.deliver(draft, `Sent. The Havn team will see it. Your reference is ${draft.ref}.`)
   }
 }

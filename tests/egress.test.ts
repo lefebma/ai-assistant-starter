@@ -4,6 +4,7 @@
  * env, and the hosted cgroup helpers.
  */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest'
+import { spawnSync } from 'node:child_process'
 import { createServer, request, type Server } from 'node:http'
 import { connect, createServer as createTcpServer, type Server as TcpServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
@@ -452,5 +453,15 @@ describe('egress settings on a hosted box (card #307)', () => {
     // No file: the environment, then .env, as before.
     expect(pickEgressSettings(null, {}, { EGRESS: 'enforce' }).EGRESS).toBe('enforce')
     expect(pickEgressSettings(null, { EGRESS: 'off' }, { EGRESS: 'enforce' }).EGRESS).toBe('off')
+  })
+})
+
+describe('the root helper takes one plain host name (card #306)', () => {
+  const py = spawnSync('python3', ['--version']).status === 0
+  it.skipIf(!py)('never lets a newline or space through to the settings file', () => {
+    const body = EGRESSD_PY.slice(EGRESSD_PY.indexOf('LABEL ='), EGRESSD_PY.indexOf('def read_env'))
+    const cases = ['example.com', 'evil.com\n.org', 'a.com\nEGRESS=off', 'x.local\n', 'a b.com', 'a\tb.com']
+    const r = spawnSync('python3', ['-I', '-c', `import re, json, sys\n${body}\nprint(json.dumps([approvable(h) for h in json.loads(sys.argv[1])]))`, JSON.stringify(cases)], { encoding: 'utf-8' })
+    expect(JSON.parse(r.stdout)).toEqual(['example.com', null, null, null, null, null])
   })
 })

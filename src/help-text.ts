@@ -25,6 +25,7 @@ export const HELP_GROUPS: Array<{ title: string; items: Array<[command: string, 
       ['/cancel', 'Stop what is running: the reply, queued messages, scheduled runs'],
       ['/steer', 'Steer me in the middle of a reply'],
       ['/tips', 'See what you have not tried yet (on/less/off/hide)'],
+      ['/egress', 'Sites I can open (list/allow/remove)'],
     ],
   },
   {

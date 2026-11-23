@@ -8,6 +8,7 @@ import { initProactiveTables } from './proactive/store.js'
 import { initEffectJournalTables } from './assurance/effect-journal.js'
 import { initRunStateTables } from './assurance/run-state.js'
 import { initPrivacyTables } from './privacy/schema.js'
+import { initEgressSiteTables } from './egress/schema.js'
 import { initDecisionTables } from './memory/decision-schema.js'
 import { initProjectTables } from './projects/schema.js'
 
@@ -323,6 +324,7 @@ export function initDatabase(): void {
   initEffectJournalTables(d)
   initRunStateTables(d)
   initPrivacyTables(d)
+  initEgressSiteTables(d)
   initDecisionTables(d)
   initProjectTables(d)
 }
