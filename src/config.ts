@@ -81,10 +81,12 @@ export const SEND_RECIPIENT_LIMIT = Math.max(1, parseInt(env['SEND_RECIPIENT_LIM
  * also gets a kernel rule so tools cannot go around it (enable-egress).
  *
  * The assistant can edit .env, so on a hosted box these settings come from
- * root-owned /etc/havn/egress.env and the service's own environment, and .env
- * is ignored for them. Elsewhere .env is read as usual.
+ * root-owned /etc/havn/egress.env, and .env is ignored for them even though
+ * systemd loads it into the service's environment. Elsewhere .env is read as
+ * usual.
  */
 export const EGRESS_SYSTEM_FILE = '/etc/havn/egress.env'
+const EGRESS_SETTING_KEYS = ['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP', 'EGRESS_JOIN']
 const egressEnv: Record<string, string | undefined> = readEgressSettings()
 function readEgressSettings(): Record<string, string | undefined> {
   let system: Record<string, string> | null = null
@@ -96,10 +98,25 @@ function readEgressSettings(): Record<string, string | undefined> {
         .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]))
     }
   } catch {
-    system = {}
+    // The file is there but unreadable: fail closed (enforce, empty lists), never off.
+    system = { EGRESS: 'enforce' }
   }
-  const pick = (k: string) => process.env[k] ?? (system ? system[k] : env[k])
-  return Object.fromEntries(['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP'].map((k) => [k, pick(k)]))
+  return pickEgressSettings(system, process.env, env)
+}
+/**
+ * Exported for tests. With the root-owned file, the settings come from it
+ * alone: systemd loads .env into the service's environment (EnvironmentFile
+ * beats the drop-in's Environment=), so process.env is never trusted there.
+ * The one exception is EGRESS_CGROUP, which boxes set up before 1.86.0 kept
+ * only in the drop-in. Without the file, .env is read as usual.
+ */
+export function pickEgressSettings(
+  system: Record<string, string> | null,
+  procEnv: Record<string, string | undefined>,
+  dotEnv: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const pick = (k: string) => system ? (system[k] ?? (k === 'EGRESS_CGROUP' ? procEnv[k] : undefined)) : (procEnv[k] ?? dotEnv[k])
+  return Object.fromEntries(EGRESS_SETTING_KEYS.map((k) => [k, pick(k)]))
 }
 export const EGRESS = (egressEnv.EGRESS ?? 'off').trim().toLowerCase() === 'enforce' ? 'enforce' : 'off'
 /** Hosts every run may write to (any method), comma separated. */
@@ -110,6 +127,12 @@ export const EGRESS_READ = egressEnv.EGRESS_READ ?? ''
 export const EGRESS_PORTS = egressEnv.EGRESS_PORTS ?? '47000-47999'
 /** The cgroup a hosted box runs tools in (written by enable-egress). Empty: no kernel rule. */
 export const EGRESS_CGROUP = (egressEnv.EGRESS_CGROUP ?? '').trim()
+/**
+ * The root-owned helper that moves a tool into EGRESS_CGROUP (card #307). Set:
+ * the cgroup is root-owned and only the helper may move a process into it.
+ * Empty: the assistant writes to cgroup.procs itself (boxes set up before 1.86.0).
+ */
+export const EGRESS_JOIN = (egressEnv.EGRESS_JOIN ?? '').trim()
 /**
  * Audit log of every tool call (card #196). A hosted box always uses
  * /var/lib/havn-audit when root has created it, whatever this says. Anywhere

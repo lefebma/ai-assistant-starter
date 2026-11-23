@@ -12,18 +12,23 @@
  * starts ever runs outside. If joining fails the command does not run: the
  * shell's && stops it. Fail closed.
  *
- * enable-egress (scripts/hosted/enable-egress.ts) sets this up as root:
- * a systemd drop-in with Delegate=yes, an ExecStartPre that makes the cgroup
- * and loads the rule, and EGRESS=enforce with EGRESS_CGROUP in the unit's env.
+ * enable-egress (scripts/hosted/enable-egress.ts) sets this up as root: a
+ * root-owned cgroup at /sys/fs/cgroup/havn-tools, an ExecStartPre that makes
+ * it and loads the rule, and havn-egressd, the root service that moves a tool
+ * into it (EGRESS_JOIN, card #307). Only root may move a process into or out
+ * of a top-level cgroup, so a tool cannot leave the fence.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk'
-import { EGRESS_CGROUP } from '../config.js'
+import { EGRESS_CGROUP, EGRESS_JOIN } from '../config.js'
 
 /** The command and args that run `command` inside the tools cgroup. Unchanged when there is none. */
-export function inToolsCgroup(command: string, args: string[], cgroup: string = EGRESS_CGROUP): { command: string; args: string[] } {
+export function inToolsCgroup(command: string, args: string[], cgroup: string = EGRESS_CGROUP, join: string = EGRESS_JOIN): { command: string; args: string[] } {
   if (!cgroup) return { command, args }
-  // $0 is the cgroup, "$@" the real command: no quoting of the command needed.
+  // The helper moves its parent, this shell, then the shell execs the tool.
+  // $0 is the helper, "$@" the real command: no quoting of the command needed.
+  if (join) return { command: '/bin/sh', args: ['-c', '"$0" && exec "$@"', join, command, ...args] }
+  // Before 1.86.0: the assistant owned the cgroup and joined it itself.
   return { command: '/bin/sh', args: ['-c', 'echo $$ > "$0/cgroup.procs" && exec "$@"', cgroup, command, ...args] }
 }
 
@@ -41,7 +46,7 @@ export const CHECKED_MARK = '0x68766e75'
 
 /**
  * The nftables table for a cgroup path relative to the cgroup root, e.g.
- * "system.slice/havn.service/tools". `level` is its depth.
+ * "havn-tools". `level` is its depth.
  *
  * The tools cgroup may reach the proxy ports, and (card #278) a loopback port
  * that a process in the same cgroup is listening on: the browser tools talk to

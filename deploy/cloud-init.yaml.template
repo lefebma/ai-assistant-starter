@@ -254,7 +254,9 @@ write_files:
       # lets reach only the per-run egress proxy on 127.0.0.1, which applies
       # the allowlist. Settings live in root-owned /etc/havn/egress.env, so the
       # assistant cannot widen them; add hosts there (EGRESS_ALLOW, EGRESS_READ)
-      # or with npm run enable-egress. Same steps as scripts/hosted/enable-egress.ts.
+      # or with npm run enable-egress. Same steps as scripts/hosted/enable-egress.ts,
+      # including havn-egressd, the root service that moves tools into the
+      # root-owned cgroup so they cannot leave it (card #307).
       node --input-type=module -e "import('{{INSTALL_DIR}}/dist/scripts/hosted/enable-egress.js').then((m) => process.stdout.write(m.setupScript('', '')))" | bash
 
       # --- Service: registered but NOT started ----------------------------

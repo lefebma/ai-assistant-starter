@@ -292,6 +292,26 @@ to the audit log. A command that ignores the proxy settings gets nowhere: no
 direct connections, no DNS. The assistant's own connections (Telegram, email
 alerts) are not affected.
 
+The cgroup is `/sys/fs/cgroup/havn-tools`, owned by root. Only root may move a
+process into or out of it, so a tool cannot step outside the fence. A small
+root service, `havn-egressd`, does the one move the assistant needs: when it
+starts a tool, the shell that is about to run it asks the service (over
+`/run/havn-egress/sock`) to move that shell in. The service checks who is asking
+from the socket itself, agrees only for a process of the assistant, and never
+moves anything out. Its two files live in root-owned `/usr/local/lib/havn`. Only the shell that is about
+to run a tool is ever moved, never the assistant itself. The root steps at
+start and stop (making the cgroup, loading the firewall rule, killing tools left
+behind) run in `havn-tools-guard.service`, never in `havn.service`, which reads
+the assistant's own `.env`.
+Before 1.86.0 the cgroup sat inside the assistant's own service, which its user
+owned, and a tool could move itself back out (card #307).
+
+Anything that runs a job for the assistant's user outside the fence is closed
+to it too: `/etc/cron.allow` and `/etc/at.allow` list only root, and the user's
+own systemd manager (`user@<uid>.service`) is masked, so a tool cannot hand a
+command to cron, `at` or `systemd-run --user`. Logging in as havn over ssh still
+works; it just has no per-user services. `--prove` checks all three.
+
 One local exception: a tool may connect to a port that another of the
 assistant's tools is listening on. The browser tools need it, because they
 drive the browser they start over a local port. Nothing else on the box (the
@@ -320,7 +340,9 @@ anything over HTTPS. Keep the read list to sites you would let the assistant
 post to.
 
 Settings live in `/etc/havn/egress.env`, owned by root, so the assistant
-cannot widen its own allowlist (`.env` is ignored for these on a hosted box):
+cannot widen its own allowlist. `.env` is ignored for these on a hosted box,
+even though systemd loads it into the service's environment: a setting in the
+file always wins.
 
 ```
 EGRESS_ALLOW=api.partner.example,crm.example.com
@@ -338,10 +360,12 @@ to a release with egress, then from your machine:
 npm run enable-egress -- <ip> --allow host,host --read host,host
 ```
 
-A box that turned egress on before 1.84.4 has the older firewall rule, under
-which browser tasks never start. After updating it, run `npm run
-enable-egress -- <ip>` again (the host lists are kept when you leave out
-`--allow` and `--read`), restart the assistant, then `--prove`.
+A box that turned egress on before 1.86.0 has the older setup, under which a
+tool could leave the fence (and, before 1.84.4, browser tasks never start).
+Update it first, then run `npm run enable-egress -- <ip>` again (the host lists
+are kept when you leave out `--allow` and `--read`), restart the assistant,
+then `--prove`. In that order: an assistant older than 1.86.0 cannot use the
+new cgroup, and its tools would refuse to start until it is updated.
 
 Restart the assistant when the client is not mid-conversation, then prove it:
 
@@ -354,7 +378,9 @@ an ssh session into the assistant's tools cgroup) and checks, from inside that
 cgroup, that a connection by name, by address, a DNS lookup and ssh on the box
 all fail, and that a port the tools themselves opened is reachable from inside
 but not from outside, while the same command outside the cgroup still works.
-If it cannot join the cgroup it says "nothing was proven" and fails, rather
+It also checks that a process of the assistant's user inside the cgroup cannot
+move itself out, that `havn-egressd` moves the assistant's own shell in, and
+that it refuses a process that is not the assistant's. If it cannot join the cgroup it says "nothing was proven" and fails, rather
 than reporting the checks as blocked.
 
 When it finishes you'll see the MOTD on login:
