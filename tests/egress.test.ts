@@ -445,7 +445,9 @@ describe('egress settings on a hosted box (card #307)', () => {
     // systemd puts .env into the service's environment, so an edited .env shows up in process.env.
     const tampered = { EGRESS: 'off', EGRESS_JOIN: '/bin/true', EGRESS_ALLOW: 'evil.example' }
     expect(pickEgressSettings(file, tampered, {})).toMatchObject(file)
-    // A key the file leaves out (an older setup) still comes from the service's environment.
+    // A key the file leaves out is not taken from .env either...
+    expect(pickEgressSettings({ EGRESS: 'enforce' }, { EGRESS_JOIN: '/bin/true', EGRESS_ALLOW: 'evil.example' }, {})).toMatchObject({ EGRESS_JOIN: undefined, EGRESS_ALLOW: undefined })
+    // ...except the cgroup, which boxes set up before 1.86.0 kept only in the drop-in.
     expect(pickEgressSettings({ EGRESS: 'enforce' }, { EGRESS_CGROUP: '/x' }, {}).EGRESS_CGROUP).toBe('/x')
     // No file: the environment, then .env, as before.
     expect(pickEgressSettings(null, {}, { EGRESS: 'enforce' }).EGRESS).toBe('enforce')

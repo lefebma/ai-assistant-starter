@@ -98,23 +98,24 @@ function readEgressSettings(): Record<string, string | undefined> {
         .map((m) => [m[1], m[2].replace(/^["']|["']$/g, '')]))
     }
   } catch {
-    system = {}
+    // The file is there but unreadable: fail closed (enforce, empty lists), never off.
+    system = { EGRESS: 'enforce' }
   }
   return pickEgressSettings(system, process.env, env)
 }
 /**
- * Exported for tests. With the root-owned file, a key it sets always wins:
- * systemd loads .env into the service's environment (EnvironmentFile beats the
- * drop-in's Environment=), so process.env cannot be trusted over the file
- * there. A key the file leaves out falls back to the service's environment
- * (boxes set up before 1.86.0). Without the file, .env is read as usual.
+ * Exported for tests. With the root-owned file, the settings come from it
+ * alone: systemd loads .env into the service's environment (EnvironmentFile
+ * beats the drop-in's Environment=), so process.env is never trusted there.
+ * The one exception is EGRESS_CGROUP, which boxes set up before 1.86.0 kept
+ * only in the drop-in. Without the file, .env is read as usual.
  */
 export function pickEgressSettings(
   system: Record<string, string> | null,
   procEnv: Record<string, string | undefined>,
   dotEnv: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
-  const pick = (k: string) => system ? (system[k] ?? procEnv[k]) : (procEnv[k] ?? dotEnv[k])
+  const pick = (k: string) => system ? (system[k] ?? (k === 'EGRESS_CGROUP' ? procEnv[k] : undefined)) : (procEnv[k] ?? dotEnv[k])
   return Object.fromEntries(EGRESS_SETTING_KEYS.map((k) => [k, pick(k)]))
 }
 export const EGRESS = (egressEnv.EGRESS ?? 'off').trim().toLowerCase() === 'enforce' ? 'enforce' : 'off'
