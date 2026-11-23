@@ -378,6 +378,11 @@ describe('enable-egress --prove (card #278)', () => {
     expect(PROVE).toContain('outside the cgroup: NO network, so the checks below would prove nothing"; exit 1')
     expect(PROVE).toContain('inside, ping: REPLIED (ICMP is NOT fenced)')
     expect(PROVE).toContain('havn.service: no root commands')
+    // Cron, at and the user's systemd manager would run a tool's command outside the fence.
+    expect(PROVE).toContain('inside, cron: TOOK A JOB (it would run outside the fence)"; exit 1')
+    expect(PROVE).toContain('inside, at: TOOK A JOB (it would run outside the fence)"; exit 1')
+    expect(PROVE).toContain('inside, the user\'s systemd: STARTED A JOB (outside the fence)"; exit 1')
+    for (const l of PROVE.split('\n').filter((l) => /crontab -'|at now|systemd-run/.test(l))) expect(l).toMatch(/^if (command -v at >\/dev\/null && )?inside \$H /)
   })
 })
 
@@ -404,6 +409,11 @@ describe('the root egress helper (card #307)', () => {
     expect(s).toContain('Requires=havn-tools-guard.service havn-egressd.service')
     expect(s).toContain('systemctl restart havn-egressd.service')
     expect(s).toContain('[ -S /run/havn-egress/sock ] || { echo "havn-egressd did not start"; exit 1; }')
+    // Nothing that runs jobs for havn outside the fence stays open to it.
+    expect(s).toContain("printf 'root\\n' > /etc/cron.allow")
+    expect(s).toContain("printf 'root\\n' > /etc/at.allow")
+    expect(s).toContain('crontab -r -u havn')
+    expect(s).toContain('systemctl mask "user@$HU.service"')
   })
 
   it('runs with root-owned python, trusts the socket over the caller, and only ever moves a process in', () => {
@@ -425,5 +435,20 @@ describe('the root egress helper (card #307)', () => {
     expect(EGRESSD_PY).toContain('os.chmod(SOCK, 0o660)')
     expect(JOIN_PY).toContain("s.sendall(b'join\\n')")
     expect(JOIN_PY).toContain('sys.exit(1)')
+  })
+})
+
+describe('egress settings on a hosted box (card #307)', () => {
+  it('takes them from the root-owned file, never from .env loaded into the service', async () => {
+    const { pickEgressSettings } = await import('../src/config.js')
+    const file = { EGRESS: 'enforce', EGRESS_CGROUP: '/sys/fs/cgroup/havn-tools', EGRESS_JOIN: '/usr/local/lib/havn/tools-join', EGRESS_ALLOW: '' }
+    // systemd puts .env into the service's environment, so an edited .env shows up in process.env.
+    const tampered = { EGRESS: 'off', EGRESS_JOIN: '/bin/true', EGRESS_ALLOW: 'evil.example' }
+    expect(pickEgressSettings(file, tampered, {})).toMatchObject(file)
+    // A key the file leaves out (an older setup) still comes from the service's environment.
+    expect(pickEgressSettings({ EGRESS: 'enforce' }, { EGRESS_CGROUP: '/x' }, {}).EGRESS_CGROUP).toBe('/x')
+    // No file: the environment, then .env, as before.
+    expect(pickEgressSettings(null, {}, { EGRESS: 'enforce' }).EGRESS).toBe('enforce')
+    expect(pickEgressSettings(null, { EGRESS: 'off' }, { EGRESS: 'enforce' }).EGRESS).toBe('off')
   })
 })

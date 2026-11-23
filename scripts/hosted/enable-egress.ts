@@ -113,6 +113,15 @@ Environment=EGRESS=enforce
 Environment=EGRESS_CGROUP=${CGROUP}
 Environment=EGRESS_JOIN=${JOIN_PATH}
 EOF
+# Card #307: cron, at and the user's own systemd manager start jobs outside the
+# fence, so a tool could hand them a command. Only root may use them.
+printf 'root\\n' > /etc/cron.allow && chmod 0644 /etc/cron.allow
+printf 'root\\n' > /etc/at.allow && chmod 0644 /etc/at.allow
+crontab -r -u havn 2>/dev/null || true
+if command -v atq >/dev/null; then for j in $(atq | awk '$NF=="havn"{print $1}'); do atrm "$j"; done; fi
+HU=$(id -u havn)
+systemctl stop "user@$HU.service" 2>/dev/null || true
+systemctl mask "user@$HU.service" >/dev/null
 systemctl daemon-reload
 systemctl enable havn-egressd.service >/dev/null 2>&1
 systemctl restart havn-egressd.service
@@ -147,6 +156,12 @@ if inside setpriv --reuid havn --regid havn --init-groups sh -c 'echo $$ > "$0/c
 # The join helper moves a shell of the assistant in, and refuses one that is not the assistant's.
 if sh -c 'echo $$ > "$0/cgroup.procs" || exit 99; exec setpriv --reuid havn --regid havn --init-groups sh -c '"'"'"$0" && grep -qx "0::/${TOOLS_CGROUP_REL}" /proc/self/cgroup'"'"' "$1"' "$SVC" "$J" 2>/dev/null; then echo "the join helper: moves a tool in"; else echo "the join helper: FAILED (tools cannot start)"; exit 1; fi
 if setpriv --reuid havn --regid havn --init-groups sh -c '"$0" 2>/dev/null; r=$?; exit $r' "$J"; then echo "the join helper, asked from outside the assistant: AGREED (it must refuse)"; exit 1; else echo "the join helper, asked from outside the assistant: refused"; fi
+# Card #307: nothing a tool can ask starts a job outside the fence.
+H="setpriv --reuid havn --regid havn --init-groups"
+if inside $H sh -c 'echo "0 0 1 1 * true" | crontab -' 2>/dev/null; then crontab -r -u havn 2>/dev/null; echo "inside, cron: TOOK A JOB (it would run outside the fence)"; exit 1; else echo "inside, cron: refused"; fi
+if command -v at >/dev/null && inside $H sh -c 'echo true | at now + 1 hour' 2>/dev/null; then for j in $(atq | awk '$NF=="havn"{print $1}'); do atrm "$j"; done; echo "inside, at: TOOK A JOB (it would run outside the fence)"; exit 1; else echo "inside, at: refused"; fi
+if inside $H sh -c 'XDG_RUNTIME_DIR=/run/user/$(id -u) timeout 10 systemd-run --user --quiet true' 2>/dev/null; then echo "inside, the user's systemd: STARTED A JOB (outside the fence)"; exit 1; else echo "inside, the user's systemd: refused"; fi
+systemctl is-enabled "user@$(id -u havn).service" 2>/dev/null | grep -qx masked || { echo "the user's systemd manager is not masked: run enable-egress again"; exit 1; }
 if curl -m 8 -sS -o /dev/null https://www.google.com 2>/dev/null; then echo "outside the cgroup: reaches the internet"; else echo "outside the cgroup: NO network, so the checks below would prove nothing"; exit 1; fi
 # Card #307: no root command may run inside havn.service, which reads the assistant's editable .env.
 if systemctl cat havn.service | grep -Eq '^Exec[A-Za-z]*=[-@:!]*\\+'; then echo "havn.service runs a command as root (with the assistant's .env): run enable-egress again"; exit 1; else echo "havn.service: no root commands"; fi

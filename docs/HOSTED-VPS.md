@@ -306,6 +306,12 @@ the assistant's own `.env`.
 Before 1.86.0 the cgroup sat inside the assistant's own service, which its user
 owned, and a tool could move itself back out (card #307).
 
+Anything that runs a job for the assistant's user outside the fence is closed
+to it too: `/etc/cron.allow` and `/etc/at.allow` list only root, and the user's
+own systemd manager (`user@<uid>.service`) is masked, so a tool cannot hand a
+command to cron, `at` or `systemd-run --user`. Logging in as havn over ssh still
+works; it just has no per-user services. `--prove` checks all three.
+
 One local exception: a tool may connect to a port that another of the
 assistant's tools is listening on. The browser tools need it, because they
 drive the browser they start over a local port. Nothing else on the box (the
@@ -334,7 +340,9 @@ anything over HTTPS. Keep the read list to sites you would let the assistant
 post to.
 
 Settings live in `/etc/havn/egress.env`, owned by root, so the assistant
-cannot widen its own allowlist (`.env` is ignored for these on a hosted box):
+cannot widen its own allowlist. `.env` is ignored for these on a hosted box,
+even though systemd loads it into the service's environment: a setting in the
+file always wins.
 
 ```
 EGRESS_ALLOW=api.partner.example,crm.example.com

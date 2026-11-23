@@ -81,10 +81,12 @@ export const SEND_RECIPIENT_LIMIT = Math.max(1, parseInt(env['SEND_RECIPIENT_LIM
  * also gets a kernel rule so tools cannot go around it (enable-egress).
  *
  * The assistant can edit .env, so on a hosted box these settings come from
- * root-owned /etc/havn/egress.env and the service's own environment, and .env
- * is ignored for them. Elsewhere .env is read as usual.
+ * root-owned /etc/havn/egress.env, and .env is ignored for them even though
+ * systemd loads it into the service's environment. Elsewhere .env is read as
+ * usual.
  */
 export const EGRESS_SYSTEM_FILE = '/etc/havn/egress.env'
+const EGRESS_SETTING_KEYS = ['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP', 'EGRESS_JOIN']
 const egressEnv: Record<string, string | undefined> = readEgressSettings()
 function readEgressSettings(): Record<string, string | undefined> {
   let system: Record<string, string> | null = null
@@ -98,8 +100,22 @@ function readEgressSettings(): Record<string, string | undefined> {
   } catch {
     system = {}
   }
-  const pick = (k: string) => process.env[k] ?? (system ? system[k] : env[k])
-  return Object.fromEntries(['EGRESS', 'EGRESS_ALLOW', 'EGRESS_READ', 'EGRESS_PORTS', 'EGRESS_CGROUP', 'EGRESS_JOIN'].map((k) => [k, pick(k)]))
+  return pickEgressSettings(system, process.env, env)
+}
+/**
+ * Exported for tests. With the root-owned file, a key it sets always wins:
+ * systemd loads .env into the service's environment (EnvironmentFile beats the
+ * drop-in's Environment=), so process.env cannot be trusted over the file
+ * there. A key the file leaves out falls back to the service's environment
+ * (boxes set up before 1.86.0). Without the file, .env is read as usual.
+ */
+export function pickEgressSettings(
+  system: Record<string, string> | null,
+  procEnv: Record<string, string | undefined>,
+  dotEnv: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const pick = (k: string) => system ? (system[k] ?? procEnv[k]) : (procEnv[k] ?? dotEnv[k])
+  return Object.fromEntries(EGRESS_SETTING_KEYS.map((k) => [k, pick(k)]))
 }
 export const EGRESS = (egressEnv.EGRESS ?? 'off').trim().toLowerCase() === 'enforce' ? 'enforce' : 'off'
 /** Hosts every run may write to (any method), comma separated. */
