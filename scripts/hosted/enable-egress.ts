@@ -31,7 +31,20 @@ export const CGROUP_REL = TOOLS_CGROUP_REL
 export const CGROUP = TOOLS_CGROUP
 export const PORTS: [number, number] = [47000, 47999]
 
-export function setupScript(allow: string | null, read: string | null): string {
+/** A host list or approver as given on the command line: only characters a host rule can hold, so nothing reaches the shell. */
+export function safeArg(v: string | null): string | null {
+  if (v === null) return null
+  if (!/^[A-Za-z0-9.*:,@\-]*$/.test(v)) throw new Error(`not a host list: ${v}`)
+  return v
+}
+
+export type SetupExtras = { approver?: string | null; addRead?: string | null }
+
+export function setupScript(allow: string | null, read: string | null, extras: SetupExtras = {}): string {
+  allow = safeArg(allow)
+  read = safeArg(read)
+  const approver = extras.approver == null ? null : extras.approver === 'owner' ? 'owner' : 'operator'
+  const addRead = safeArg(extras.addRead ?? null)
   const keep = (k: string, v: string | null) => v === null
     ? `$(grep -E '^${k}=' /etc/havn/egress.env 2>/dev/null | cut -d= -f2- || true)`
     : v
@@ -41,13 +54,16 @@ command -v python3 >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install 
 install -d -m 0755 /etc/havn
 ALLOW="${keep('EGRESS_ALLOW', allow)}"
 READ="${keep('EGRESS_READ', read)}"
-cat > /etc/havn/egress.env.new <<EOF
+APPROVER="${keep('EGRESS_APPROVER', approver)}"
+${addRead ? `for h in ${addRead.split(',').filter(Boolean).join(' ')}; do case ",$READ," in *",$h,"*) ;; *) READ="\${READ:+$READ,}$h" ;; esac; done
+` : ''}cat > /etc/havn/egress.env.new <<EOF
 EGRESS=enforce
 EGRESS_CGROUP=${CGROUP}
 EGRESS_JOIN=${JOIN_PATH}
 EGRESS_PORTS=${PORTS[0]}-${PORTS[1]}
 EGRESS_ALLOW=$ALLOW
 EGRESS_READ=$READ
+EGRESS_APPROVER=$APPROVER
 EOF
 install -m 0644 -o root -g root /etc/havn/egress.env.new /etc/havn/egress.env && rm -f /etc/havn/egress.env.new
 install -d -m 0755 -o root -g root ${HELPER_DIR}
@@ -200,7 +216,7 @@ function flag(argv: string[], name: string): string | null {
 export function main(argv: string[]): void {
   const host = argv[0]
   if (!host || host.startsWith('--')) {
-    console.error('Usage: npm run enable-egress -- <ip-or-host> [--allow host,host] [--read host,host] | <ip-or-host> --prove')
+    console.error('Usage: npm run enable-egress -- <ip-or-host> [--allow host,host] [--read host,host] [--add-read host,host] [--approver owner|operator] | <ip-or-host> --prove')
     process.exit(2)
   }
   if (argv.includes('--prove')) {
@@ -210,7 +226,7 @@ export function main(argv: string[]): void {
     console.log(`Egress holds on ${host}.`)
     return
   }
-  const s = ssh('havn-admin', host, 'sudo -n bash -s', setupScript(flag(argv, 'allow'), flag(argv, 'read')))
+  const s = ssh('havn-admin', host, 'sudo -n bash -s', setupScript(flag(argv, 'allow'), flag(argv, 'read'), { approver: flag(argv, 'approver'), addRead: flag(argv, 'add-read') }))
   process.stdout.write(s.out)
   if (!s.ok) { console.error('Setup failed. Is the box split (npm run split-admin)?'); process.exit(1) }
   console.log(`Done. Restart the assistant on ${host} when the client is not mid-conversation, then: npm run enable-egress -- ${host} --prove`)

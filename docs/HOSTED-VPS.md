@@ -350,7 +350,43 @@ EGRESS_READ=en.wikipedia.org,*.gov
 ```
 
 Hosts are comma separated: `host`, `host:port` or `*.domain`. Edit the file as
-havn-admin and restart the assistant.
+havn-admin and restart the assistant, or use `enable-egress` (below): the
+assistant reads the lists again whenever the file changes, so a restart is only
+needed for the other settings.
+
+#### Approving a site from chat
+
+When a chat's tools are refused a site only because it is on no list, the
+owner gets a card in the main chat after the reply. Other chats never do. What
+it offers depends on `EGRESS_APPROVER` in the same root-owned file:
+
+| `EGRESS_APPROVER` | The card | What a tap does |
+|---|---|---|
+| unset or `operator` (default) | Ask for access, Not needed | Emails a site access request to `REQUEST_EMAIL` (the `/request` path, same daily limit). You add the site from your machine. |
+| `owner` | Allow, Deny | Allow puts the site on `EGRESS_READ` at once, for good. |
+
+Deny and Not needed are remembered: the same site is never offered twice. Every
+answer goes to the audit log (`egress-approval`). Only one plain public name can
+be approved: never an address, a wildcard, a port, a group or an internal name
+(`localhost`, `.local`, `.internal`, `.lan`, `.home.arpa`).
+
+The change is made by `havn-egressd`, and only for the assistant's own process
+(its cgroup is `havn.service` itself and it runs `/usr/bin/node`), never for one
+of its tools, so nothing the assistant reads or runs can approve a site. Adding
+also needs `EGRESS_APPROVER=owner` in the file, which only you can set.
+
+In the main chat, `/egress` lists the sites, `/egress allow <site>` adds one
+(owner approval only) and `/egress remove <site>` takes one off the read list.
+From your machine:
+
+```
+npm run enable-egress -- <ip> --approver owner      # let the owner approve sites
+npm run enable-egress -- <ip> --approver operator   # back to requests only
+npm run enable-egress -- <ip> --add-read example.com,other.org
+```
+
+These keep the other settings; restart only for the approver change to show in
+`/egress`. (The read list applies at once.)
 
 New boxes get this from cloud-init, with both lists empty: until you add
 hosts, chat cannot open arbitrary websites. For a box built earlier, update it

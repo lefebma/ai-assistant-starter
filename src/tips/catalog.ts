@@ -32,6 +32,8 @@ export interface TipContext {
   importedFromChatGPT: boolean
   /** The owner's own OpenAI key is set: not a managed box, where the key is the provider's. */
   ownOpenAiKey: boolean
+  /** The site list (egress allowlist) is on, so tools reach only listed sites. */
+  siteList?: boolean
 }
 
 export interface Tip {
@@ -150,6 +152,14 @@ export const TIPS: Tip[] = [
     text: 'With the privacy filter on, I now spot client names in your messages and ask before keeping them private. The reading happens on this machine.',
     tryIt: 'Send /private on, then mention a client by name.',
     commands: ['/private'],
+  },
+  {
+    id: 'egress-sites',
+    since: '1.87.0',
+    text: 'I can only open sites on this assistant\'s list. When I am refused one, I ask you about it after my reply.',
+    tryIt: 'Send /egress to see the sites I can open.',
+    applies: (c) => c.siteList === true,
+    commands: ['/egress'],
   },
   {
     id: 'cancel',

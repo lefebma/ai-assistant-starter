@@ -40,6 +40,9 @@ export function spawnInToolsCgroup(o: SpawnOptions): SpawnedProcess {
   return child as unknown as SpawnedProcess
 }
 
+/** The root helper's socket (scripts/hosted/egress-helper.ts, cards #307 and #306). */
+export const EGRESS_SOCKET = '/run/havn-egress/sock'
+
 /** Connection marks: a tools connection on loopback, and one whose listener was checked (card #278). */
 export const LOOPBACK_MARK = '0x68766e74'
 export const CHECKED_MARK = '0x68766e75'

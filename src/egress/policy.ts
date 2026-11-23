@@ -24,7 +24,8 @@ import { isIP } from 'node:net'
 export type HostRule = { host: string; wildcard: boolean; port?: number }
 export type EgressPolicy = { name: string; write: HostRule[]; read: HostRule[] }
 export type EgressRequest = { host: string; port: number; /** null for an HTTPS tunnel, where the method cannot be seen. */ method: string | null }
-export type EgressDecision = { allow: true; via: 'write' | 'read' } | { allow: false; reason: string }
+/** `unlisted`: refused only because the host is on no list, so approving it would let it through (card #306). */
+export type EgressDecision = { allow: true; via: 'write' | 'read' } | { allow: false; reason: string; unlisted?: true }
 
 /** The AI itself. Always reachable, or the run could not think. */
 export const ESSENTIALS = ['api.anthropic.com']
@@ -115,7 +116,24 @@ export function decide(policy: EgressPolicy, req: EgressRequest): EgressDecision
     if (req.method === null || READ_METHODS.has(req.method.toUpperCase())) return { allow: true, via: 'read' }
     return { allow: false, reason: `${policy.name} may only read from ${host}:${req.port}, not ${req.method.toUpperCase()}` }
   }
-  return { allow: false, reason: `${host}:${req.port} is not on ${policy.name}'s allowlist` }
+  return { allow: false, reason: `${host}:${req.port} is not on ${policy.name}'s allowlist`, unlisted: true }
+}
+
+/**
+ * A host a person may approve from chat (card #306): one public name, as
+ * typed, lowercased. Never an address, a wildcard, a port, a group, a
+ * single-label or internal name (localhost, .local, .internal, .lan, .home.arpa).
+ * Null when it is not one. The root helper applies the same rule.
+ */
+export function approvableHost(input: string): string | null {
+  const h = input.trim().toLowerCase().replace(/\.$/, '')
+  if (h.length > 253 || isIP(h.replace(/^\[|\]$/g, '')) !== 0) return null
+  const labels = h.split('.')
+  if (labels.length < 2) return null
+  if (!labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l))) return null
+  if (!/^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]{2,}$/.test(labels.at(-1)!) || /^\d+$/.test(labels.at(-1)!)) return null
+  if (/(^|\.)(localhost|local|internal|lan|home\.arpa|intranet|corp)$/.test(h)) return null
+  return h
 }
 
 /** A hosts list from .env: comma or whitespace separated. */

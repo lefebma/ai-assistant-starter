@@ -15,7 +15,7 @@
  * (EGRESS_CGROUP, see hosted.ts).
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { EGRESS, EGRESS_ALLOW, EGRESS_PORTS, EGRESS_READ, PROJECT_ROOT, AUDIT_DIR, ROLES_FILE } from '../config.js'
+import { EGRESS, EGRESS_PORTS, PROJECT_ROOT, AUDIT_DIR, ROLES_FILE, liveEgressSettings } from '../config.js'
 import { logger } from '../logger.js'
 import { getAuditTrail, currentActor } from '../assurance/audit-trail.js'
 import { loadRoles, roleExpired, type RoleSpec } from '../assurance/roles.js'
@@ -37,8 +37,10 @@ function imapHosts(): string[] {
   }
 }
 
+/** The lists as they are now: a site approved from chat applies to the next connection (card #306). */
 export function egressConfig(): EgressConfig {
-  return { approved: listFromEnv(EGRESS_ALLOW), read: listFromEnv(EGRESS_READ), imapHosts }
+  const live = liveEgressSettings()
+  return { approved: listFromEnv(live.allow), read: listFromEnv(live.read), imapHosts }
 }
 
 const sources = (cfg: EgressConfig): GroupSources => ({ approved: cfg.approved, readList: cfg.read, imapHosts: cfg.imapHosts })
@@ -99,6 +101,29 @@ export function parsePorts(v: string): [number, number] | undefined {
   if (!m) return undefined
   const lo = Number(m[1]), hi = Number(m[2])
   return lo > 1023 && hi >= lo && hi < 65536 ? [lo, hi] : undefined
+}
+
+// --- sites refused in a chat turn (card #306) --------------------------------
+
+/** Hosts a turn's tools were refused because they are on no list, in order, without repeats. */
+export type RefusedSites = Set<string>
+const refusedStore = new AsyncLocalStorage<RefusedSites>()
+
+/**
+ * Run a chat turn and collect the sites its tools were refused only because
+ * they are on no list, on the usual web ports, so the owner can be asked
+ * about them afterwards. The proxy records them; the model never names them,
+ * so a page cannot make the assistant offer a site it never tried.
+ */
+export async function collectRefusedSites<T>(fn: () => Promise<T>): Promise<{ value: T; sites: string[] }> {
+  const sites: RefusedSites = new Set()
+  const value = await refusedStore.run(sites, fn)
+  return { value, sites: [...sites] }
+}
+
+export function noteRefused(sites: RefusedSites | undefined, r: EgressRecord): void {
+  if (!sites || r.decision !== 'denied' || !r.unlisted || (r.port !== 443 && r.port !== 80)) return
+  if (sites.size < 20) sites.add(r.host.toLowerCase().replace(/\.$/, ''))
 }
 
 // --- the run's proxy ---------------------------------------------------------
@@ -169,6 +194,7 @@ export async function withEgress<T>(opts: EgressOptions, fn: () => Promise<T>): 
   const live = currentGrant() ? AsyncLocalStorage.bind(() => currentGrant()) : null
   // Whether this run is private is known now; the proxy's callbacks run outside its context.
   const isPrivate = privacyActive()
+  const refused = refusedStore.getStore()
   const policy = (): EgressPolicy => {
     const g = live ? live() : null
     if (g && !g.ok) return NOTHING(g.reason)
@@ -176,7 +202,8 @@ export async function withEgress<T>(opts: EgressOptions, fn: () => Promise<T>): 
   }
   let proxy: RunProxy
   try {
-    proxy = await openRunProxy({ policy, ports: parsePorts(EGRESS_PORTS), record: opts.record ?? ((r) => audit(runId, actor, r)) })
+    const record = opts.record ?? ((r: EgressRecord) => audit(runId, actor, r))
+    proxy = await openRunProxy({ policy, ports: parsePorts(EGRESS_PORTS), record: (r) => { noteRefused(refused, r); record(r) } })
   } catch (err) {
     // Fail closed: a run that cannot get its proxy does not run with an open network.
     logger.error({ err: String(err) }, 'egress proxy could not start; run refused')

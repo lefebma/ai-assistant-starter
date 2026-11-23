@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { homedir, hostname } from 'node:os'
 
-import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, REQUEST_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD, ROLES_FILE, EGRESS } from './config.js'
+import { PRIMARY_CHAT_ID, TYPING_REFRESH_MS, OPENAI_API_KEY, SUPPORT_EMAIL, REQUEST_EMAIL, PUBLIC_HOSTNAME, HTTP_PORT, SHORTCUT_WAIT_SECONDS, STORE_DIR, TOOL_GUARD, ROLES_FILE, EGRESS, liveEgressSettings } from './config.js'
 import { readGuardLog, formatGuardReport, guardLogPath, parseGuardMode } from './assurance/tool-guard.js'
 import { roleLogPath, formatRoleReport, type RoleLogEntry } from './assurance/scope-gate.js'
 import { getSession, setSession, clearSession, getMemoriesForChat, getSessionMeta, bumpSessionMessageCount } from './db.js'
@@ -38,6 +38,8 @@ import { noteAsked, noteOwnerActive, noteOwnerMessage, resolveTipClick, tipsComm
 import { noteForFinder } from './privacy/finder/service.js'
 import { resolveSuggestionClick } from './privacy/finder/suggestions.js'
 import { tipContext } from './tips/context.js'
+import { collectRefusedSites } from './egress/index.js'
+import { buttonsFor, egressCommand, markOffered, offerText, resolveSiteClick, sitesToOffer, type ApprovalDeps } from './egress/approvals.js'
 import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, ledgerBlock, outcomeText, proposalCard, proposalHint, proposeDecision, resolveProposal, setProposalCard } from './memory/decisions.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
@@ -473,7 +475,9 @@ async function runTurn(
       : undefined
 
     const onPartial = streamingEnabled ? scheduleStreamEdit : undefined
-    const { text: rawResponse, newSessionId, aiPaused, reads } = await withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope }))
+    // Sites its tools were refused only for being on no list are offered to the owner after the reply (card #306).
+    const { value: turn, sites: refusedSites } = await collectRefusedSites(() => withActor(`chat:${chatId}`, () => runAgent(fullMessage, sessionId, undefined, onPartial, onToolProg, 'chat', signal, undefined, { model: getChatModel(chatId), effort: getChatEffort(chatId), chatId, scope })))
+    const { text: rawResponse, newSessionId, aiPaused, reads } = turn
     // A proposed decision becomes a card of its own after the reply (card #235);
     // a fact to remember is saved with the turn (card #276). Neither is shown.
     const { cleanText: response, proposals, remembers } = rawResponse ? extractReplyMarkers(rawResponse) : { cleanText: rawResponse, proposals: [], remembers: [] }
@@ -622,6 +626,9 @@ async function runTurn(
     // Proposed decisions: one card each, pinned only by the owner's tap.
     if (proposals.length) await sendDecisionCards(adapter, chatId, proposals, scope)
 
+    // A site this turn was refused: ask the owner about it (card #306).
+    await sendSiteCards(adapter, chatId, refusedSites)
+
     // Managed box at 80% of its monthly cap (card #159): one heads-up a month,
     // to the owner only, after the reply. Marked only once it is delivered,
     // against the month it was decided in.
@@ -711,6 +718,39 @@ async function handleTipsCommand(adapter: PlatformAdapter, chatId: string, arg: 
 
 async function answerTipClick(adapter: PlatformAdapter, chatId: string, cardId: string, label: string): Promise<boolean> {
   const reply = resolveTipClick(isPrimaryChat(chatId), cardId, label)
+  if (reply === null) return false
+  await adapter.sendMessage(chatId, reply)
+  return true
+}
+
+// --- Sites refused by the egress allowlist (card #306) ---
+
+export const siteApprovalDeps: ApprovalDeps = {
+  ask: async (host) =>
+    (await requestFlow.sendNow(
+      `What: let my assistant open ${host}\nWhy: it needed the site for something I asked, and it is not on this assistant's list of sites\nHow often: whenever it comes up`,
+      `Site access request: ${host}`,
+    )).text,
+}
+
+/** One card per refused site, in the main chat, after the reply. */
+async function sendSiteCards(adapter: PlatformAdapter, chatId: string, sites: string[], cardPrefix = ''): Promise<void> {
+  if (EGRESS !== 'enforce' || !isPrimaryChat(chatId) || !sites.length) return
+  const approver = liveEgressSettings().approver
+  for (const host of sitesToOffer(sites)) {
+    try {
+      const buttons = adapter.supportsButtons
+      const id = await adapter.sendMessage(chatId, offerText(host, approver, buttons), buttons ? { buttons: buttonsFor(approver) } : undefined)
+      markOffered(host, buttons && id ? `${cardPrefix}${chatId}:${id}` : null)
+    } catch (err) {
+      logger.warn({ err: String(err), chatId }, 'Could not offer a refused site')
+    }
+  }
+}
+
+/** A tap on a refused-site card. False when the card is something else. */
+async function answerSiteClick(adapter: PlatformAdapter, chatId: string, cardId: string, label: string): Promise<boolean> {
+  const reply = await resolveSiteClick(isPrimaryChat(chatId), cardId, label, `chat:${chatId}`, siteApprovalDeps)
   if (reply === null) return false
   await adapter.sendMessage(chatId, reply)
   return true
@@ -823,6 +863,8 @@ export interface WebTurnResult {
   newSessionId?: string
   cancelled: boolean
   paused?: string
+  /** Refused sites to ask the main chat's owner about (card #306), already filtered by sitesToOffer. */
+  sites?: string[]
 }
 
 const webQueueKey = (conversationId: string): string => `web:${conversationId}`
@@ -912,14 +954,15 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
     const memoryContext = await contextEngine.buildContext(scope, text)
     const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, REMEMBER_INSTRUCTION, framing, text].filter(Boolean).join('\n\n')
     logger.info({ chatId, key, messageLength: text.length }, 'Processing web message')
-    const { text: reply, newSessionId, aiPaused, reads } = await withActor(`web:${chatId}`, () =>
+    const { value: turn, sites } = await collectRefusedSites(() => withActor(`web:${chatId}`, () =>
       runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
         model: input.model,
         effort: input.effort,
         chatId,
         scope,
       }),
-    )
+    ))
+    const { text: reply, newSessionId, aiPaused, reads } = turn
     if (signal.aborted) return { text: null, cancelled: true }
     if (aiPaused) {
       // It never records the notice: that marker is the chat's, and spending
@@ -932,7 +975,9 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
       const { cleanText, remembers } = extractReplyMarkers(reply)
       await saveConversationTurn(scope, text, cleanText, { reads, remembers })
     }
-    return { text: reply, newSessionId, cancelled: false }
+    // Only the main chat is ever asked about a site (card #306).
+    const offer = EGRESS === 'enforce' && isPrimaryChat(chatId) ? sitesToOffer(sites) : []
+    return { text: reply, newSessionId, cancelled: false, ...(offer.length ? { sites: offer } : {}) }
   } finally {
     clearLane(key)
   }
@@ -1199,6 +1244,9 @@ export async function runWebCommand(input: WebCommandInput): Promise<WebCommandR
         return { handled: true, clearSession: false }
       }
       if (input.clickedMessageId !== undefined && (await answerSuggestionClick(adapter, chatId, `web:${chatId}:${input.clickedMessageId}`, click[1]!))) {
+        return { handled: true, clearSession: false }
+      }
+      if (input.clickedMessageId !== undefined && (await answerSiteClick(adapter, chatId, `web:${chatId}:${input.clickedMessageId}`, click[1]!))) {
         return { handled: true, clearSession: false }
       }
       const picked = await modelForClick(`web:${input.conversationId}`, click[1]!)
@@ -2201,6 +2249,10 @@ async function routeText(adapter: PlatformAdapter, msg: IncomingMessage, opts: {
     await handleTipsCommand(adapter, chatId, trimmed.slice(cmd.length).trim())
     return true
   }
+  if (cmd === '/egress') {
+    await adapter.sendMessage(chatId, await egressCommand(isPrimaryChat(chatId), EGRESS === 'enforce', trimmed.slice(cmd.length).trim(), `chat:${chatId}`, siteApprovalDeps))
+    return true
+  }
   if (cmd === '/decide' || cmd === '/decisions') {
     await adapter.sendMessage(chatId, decisionCommand(commandScope(adapter, chatId), cmd, trimmed.slice(cmd.length).trim()))
     return true
@@ -2390,6 +2442,7 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'cancel', description: 'Stop what is running in this chat' },
   { command: 'steer', description: 'Inject mid-run steering message' },
   { command: 'tips', description: 'See what you have not tried yet' },
+  { command: 'egress', description: 'Sites your assistant can open (list/allow/remove)' },
   { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
   { command: 'secret', description: 'Manage API keys in the encrypted vault' },
   { command: 'connect', description: 'Connect Gmail or Outlook (sign-in link)' },
@@ -2500,6 +2553,7 @@ export function createBot(adapter: PlatformAdapter): BotCore {
         if (msg.messageId && (await resolveDecisionClick(adapter, chatId, msg.messageId, label))) return
         if (msg.messageId && (await answerTipClick(adapter, chatId, `${chatId}:${msg.messageId}`, label))) return
         if (msg.messageId && (await answerSuggestionClick(adapter, chatId, `${chatId}:${msg.messageId}`, label))) return
+        if (msg.messageId && (await answerSiteClick(adapter, chatId, `${chatId}:${msg.messageId}`, label))) return
         if (await resolveModelClick(adapter, chatId, label)) return
         if (await resolveEffortClick(adapter, chatId, label)) return
         // A click on the request draft's own card answers the request and
