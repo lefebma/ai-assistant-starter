@@ -365,10 +365,12 @@ it offers depends on `EGRESS_APPROVER` in the same root-owned file:
 | unset or `operator` (default) | Ask for access, Not needed | Emails a site access request to `REQUEST_EMAIL` (the `/request` path, same daily limit). You add the site from your machine. |
 | `owner` | Allow, Deny | Allow puts the site on `EGRESS_READ` at once, for good. |
 
-One card per turn, and only for a site the turn named: in the owner's message
-or the reply, by address (`bbc.com`) or by name (Wikipedia). A site nobody
-named, such as the browser checking in with Google or a page's extra requests,
-never gets a card. In the web app the card rides the reply's buttons; when the
+One card per turn, and only for a site the turn named: by address (`bbc.com`)
+in the owner's message or the reply, or by plain name (Wikipedia) in the
+owner's message. A site nobody named, such as the browser checking in with
+Google or a page's extra requests, never gets a card, and neither does a bot
+check or CAPTCHA (`challenges.cloudflare.com`, hCaptcha, reCAPTCHA): allowing
+one never gets an automated browser past it. In the web app the card rides the reply's buttons; when the
 reply already has buttons, the site waits for the next time it is refused.
 
 The assistant is told to say a blocked site plainly, in one sentence naming it
