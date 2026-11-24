@@ -245,6 +245,16 @@ resizer.addEventListener('keydown', (e) => {
 })
 
 $('open-left').addEventListener('click', () => openDrawer('left'))
+
+// Collapse the left panel on wide screens; remembered per browser.
+function setLeftCollapsed(collapsed, save = true) {
+  $('app').classList.toggle('left-collapsed', collapsed)
+  show($('expand-left'), collapsed)
+  if (save) { try { localStorage.setItem('left-panel-collapsed', collapsed ? '1' : '0') } catch { /* private mode */ } }
+}
+$('collapse-left').addEventListener('click', () => setLeftCollapsed(true))
+$('expand-left').addEventListener('click', () => setLeftCollapsed(false))
+try { if (localStorage.getItem('left-panel-collapsed') === '1') setLeftCollapsed(true, false) } catch { /* private mode */ }
 $('open-right').addEventListener('click', () => {
   if (narrow.matches) openDrawer('right')
   else setFilesOpen(!$('app').classList.contains('files-open'))
