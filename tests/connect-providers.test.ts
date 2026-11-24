@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { googleProvider, microsoftProvider, MICROSOFT_SCOPES } from '../src/connect/providers.js'
+import { googleProvider, microsoftProvider, MICROSOFT_SCOPES, GOOGLE_SCOPES, DRIVE_SCOPES } from '../src/connect/providers.js'
 import { MS_SCOPES } from '../src/ms/cli.js'
 import { GrantRevokedError } from '../src/connect/relay.js'
 
@@ -70,4 +70,17 @@ describe('provider adapters (fake fetch)', () => {
     expect(microsoftProvider('c').revoke).toBeUndefined()
   })
 
+})
+
+describe('google provider scopes', () => {
+  it('the drive provider asks for Drive read access and nothing else', () => {
+    const u = new URL(googleProvider({ clientId: 'cid', clientSecret: 'S' }, undefined, undefined, { scopes: DRIVE_SCOPES }).authUrl('ST', 'https://r/callback', 'CH'))
+    expect(u.searchParams.get('scope')).toBe('openid email https://www.googleapis.com/auth/drive.readonly')
+    expect(u.searchParams.has('include_granted_scopes')).toBe(false)
+  })
+  it('the gmail provider still asks for mail and calendar only', () => {
+    const u = new URL(googleProvider({ clientId: 'cid', clientSecret: 'S' }).authUrl('ST', 'https://r/callback', 'CH'))
+    expect(u.searchParams.get('scope')).toBe(GOOGLE_SCOPES.join(' '))
+    expect(u.searchParams.get('scope')).not.toContain('drive')
+  })
 })

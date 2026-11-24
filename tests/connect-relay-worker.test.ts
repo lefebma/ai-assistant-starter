@@ -109,10 +109,15 @@ describe('relay through the Worker', () => {
     expect(loc.searchParams.get('redirect_uri')).toBe('https://connect.gethavn.ai/callback')
     expect(loc.searchParams.get('code_challenge_method')).toBe('S256')
   })
+  it('registers drive beside gmail when the Google app is configured', () => {
+    const p = providersFrom(makeEnv({ GOOGLE_CLIENT_ID: 'c', GOOGLE_CLIENT_SECRET: 's' }))
+    expect(Object.keys(p).sort()).toEqual(expect.arrayContaining(['drive', 'gmail']))
+    expect(new URL(p.drive.authUrl('S', 'https://r/callback', 'C')).searchParams.get('scope')).toContain('drive.readonly')
+  })
   it('does not offer Gmail until both Google settings exist', async () => {
     expect(Object.keys(providersFrom(makeEnv()))).toEqual(['outlook'])
     expect(Object.keys(providersFrom(makeEnv({ GOOGLE_CLIENT_ID: 'g' })))).toEqual(['outlook'])
-    expect(Object.keys(providersFrom(makeEnv({ GOOGLE_CLIENT_ID: 'g', GOOGLE_CLIENT_SECRET: 's' }))).sort()).toEqual(['gmail', 'outlook'])
+    expect(Object.keys(providersFrom(makeEnv({ GOOGLE_CLIENT_ID: 'g', GOOGLE_CLIENT_SECRET: 's' }))).sort()).toEqual(['drive', 'gmail', 'outlook'])
     const env = makeEnv()
     await register(env, 'b1')
     expect((await worker.fetch(new Request('https://connect.gethavn.ai/start?provider=gmail&box=b1&nonce=nonce-0123456789abcdef'), env)).status).toBe(400)

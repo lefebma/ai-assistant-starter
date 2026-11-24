@@ -4,7 +4,7 @@
  * drive them with a fake fetch. Not usable until the relay's /callback is
  * registered on the Google and Microsoft apps (cards 205/207).
  */
-import { GrantRevokedError, type ProviderTokens, type RelayProvider } from './relay.js'
+import { GrantRevokedError, type ProviderCopy, type ProviderTokens, type RelayProvider } from './relay.js'
 
 export interface OAuthApp {
   clientId: string
@@ -36,6 +36,16 @@ function emailFromIdToken(idToken: unknown): string {
 }
 
 export const GOOGLE_SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/calendar']
+/** Read-only Drive: the whole grant for the `drive` sign-in, nothing else. */
+export const DRIVE_SCOPES = ['openid', 'email', 'https://www.googleapis.com/auth/drive.readonly']
+
+export const DRIVE_COPY: ProviderCopy = {
+  heading: 'Connect your Google Drive',
+  grant: 'This lets <strong>{who}</strong> see and download the files in your Google Drive. It cannot change them.',
+  risk: 'Continuing would give them your files.',
+  done: 'Connected to {who}. Go back to Havn. Your Drive files will appear in the files panel.',
+}
+
 /**
  * The Graph scopes match the box's MS_SCOPES (src/ms/cli.ts) one for one, so
  * the box's own refresh asks for nothing the owner did not consent to here.
@@ -49,14 +59,21 @@ export const MICROSOFT_SCOPES = [
   'https://graph.microsoft.com/Calendars.ReadWrite',
 ]
 
-export function googleProvider(app: OAuthApp, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): RelayProvider {
+export function googleProvider(
+  app: OAuthApp,
+  fetchImpl: typeof fetch = fetch,
+  now: () => number = Date.now,
+  opts: { scopes?: string[]; copy?: ProviderCopy } = {},
+): RelayProvider {
+  const scopes = opts.scopes ?? GOOGLE_SCOPES
   return {
+    ...(opts.copy ? { copy: opts.copy } : {}),
     label: 'Google',
     authOrigin: 'https://accounts.google.com',
     authUrl: (state, redirectUri, codeChallenge) =>
       'https://accounts.google.com/o/oauth2/v2/auth?' +
       new URLSearchParams({
-        client_id: app.clientId, redirect_uri: redirectUri, response_type: 'code', scope: GOOGLE_SCOPES.join(' '),
+        client_id: app.clientId, redirect_uri: redirectUri, response_type: 'code', scope: scopes.join(' '),
         access_type: 'offline', prompt: 'consent', state, code_challenge: codeChallenge, code_challenge_method: 'S256',
       }),
     async exchange(code, redirectUri, codeVerifier) {

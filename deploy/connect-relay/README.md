@@ -17,6 +17,8 @@ box or used anywhere else. `POST /revoke` ends the grant the same way. That make
 dependency for Gmail (a box keeps working for at least 30 minutes after the
 relay goes away). Outlook needs the relay only to sign in.
 
+Drive is a second Google provider (`drive`, registered whenever `gmail` is) with the read-only `drive.readonly` scope and its own confirmation wording; add that scope to the consent screen before deploying.
+
 What the relay keeps: the box registry (origin and hand-off key per box) and,
 for ten minutes, the key of each used sign-in state so a link works once. It
 never keeps a token. Google's client secret is a Worker secret; Microsoft needs
