@@ -15,11 +15,31 @@ function deps(over: Partial<ConnectionDeps> = {}): ConnectionDeps {
     managedAi: () => false,
     aiUsage: () => null,
     brokenMailboxes: async () => [],
+    driveAccounts: async () => [],
     chatId: () => '1',
     ...over,
   }
 }
 const by = (l: Awaited<ReturnType<typeof getConnections>>, id: string) => l.find((c) => c.id === id)!
+
+describe('Google Drive row', () => {
+  it('shows a connected account', async () => {
+    const l = await getConnections(deps({ driveAccounts: async () => [{ account: 'm@x.com', state: 'ok' }] }))
+    expect(by(l, 'drive')).toEqual({ id: 'drive', name: 'Google Drive', status: 'connected', detail: 'm@x.com' })
+  })
+  it('asks to connect again when the sign-in was revoked', async () => {
+    const l = await getConnections(deps({ driveAccounts: async () => [{ account: 'm@x.com', state: 'reconnect' }] }))
+    expect(by(l, 'drive')).toMatchObject({ status: 'attention', detail: 'm@x.com', next: 'Open the files panel and connect again.' })
+  })
+  it('has no row when nothing is connected', async () => {
+    expect((await getConnections(deps())).find((c) => c.id === 'drive')).toBeUndefined()
+  })
+  it('a throwing source never hides the others', async () => {
+    const l = await getConnections(deps({ driveAccounts: async () => { throw new Error('x') } }))
+    expect(by(l, 'drive').status).toBe('attention')
+    expect(by(l, 'gmail').status).toBe('connected')
+  })
+})
 
 describe('getConnections', () => {
   it('reports connected and off, with a real next step only where one exists', async () => {

@@ -1,5 +1,4 @@
 import { extname } from 'node:path'
-import { GOOGLE_EXPORT_PDF } from './drive.js'
 
 /** How the files panel shows a file. Local files derive it from the name, Drive files from the mime type. */
 export type FileKind = 'image' | 'pdf' | 'text' | 'markdown' | 'other'
@@ -17,6 +16,12 @@ const IMAGE_MIME: Record<string, string> = {
 }
 const IMAGE_MIMES = new Set(Object.values(IMAGE_MIME))
 const TEXT_MIMES = new Set(['text/plain', 'text/csv', 'text/html', 'application/json'])
+/** Google-native types Drive can export as a PDF for preview. */
+export const GOOGLE_EXPORT_PDF = new Set([
+  'application/vnd.google-apps.document',
+  'application/vnd.google-apps.spreadsheet',
+  'application/vnd.google-apps.presentation',
+])
 const OTHER = { kind: 'other' as const, mime: 'application/octet-stream' }
 
 export function dispositionName(name: string): string {

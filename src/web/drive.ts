@@ -21,7 +21,9 @@ import { realGogBin, resolveGogBin } from '../infra/gog-bin.js'
 import { connectSettings, getDriveKeeper } from '../connect/instance.js'
 import type { DriveTokenKeeper } from '../connect/drive-token.js'
 import { cachedCheck } from './connections.js'
-import { dispositionName } from './file-kind.js'
+import { dispositionName, GOOGLE_EXPORT_PDF } from './file-kind.js'
+
+export { GOOGLE_EXPORT_PDF }
 
 export type DriveError = 'not_connected' | 'reconnect' | 'not_found' | 'too_large' | 'unavailable'
 
@@ -58,11 +60,6 @@ export const MAX_DRIVE_BYTES = 25 * 1024 * 1024
 export const DRIVE_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/
 const PAGE_TOKEN = /^[A-Za-z0-9_=.~+/][A-Za-z0-9_\-=.~+/]{0,2047}$/
 export const PAGE_SIZE = 100
-export const GOOGLE_EXPORT_PDF = new Set([
-  'application/vnd.google-apps.document',
-  'application/vnd.google-apps.spreadsheet',
-  'application/vnd.google-apps.presentation',
-])
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const GOOGLE_NATIVE = 'application/vnd.google-apps.'
 
