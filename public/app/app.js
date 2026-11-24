@@ -6,6 +6,7 @@ import { renderMarkdown } from './markdown.js'
 import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
 import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
+import { kindFromName } from './filekind.js'
 import { DEFAULT_WIDTH, STEP, clampWidth, widthFromPointer, loadWidth, saveWidth, clearWidth } from './panelwidth.js'
 import { voiceCallSupport, createVoiceCall, callProblem } from './voicecall.js'
 import { readChatGPTExport } from './chatgpt-export.js'
@@ -2749,7 +2750,7 @@ function treeItems(entries) {
       frag.append(li)
     } else {
       const btn = h('button', { type: 'button', class: 'tree-btn', icon: 'file', title: e.name, 'data-path': e.path }, h('span', { text: e.name }))
-      btn.addEventListener('click', () => preview(e))
+      btn.addEventListener('click', () => preview(localEntry(e)))
       frag.append(h('li', { role: 'treeitem' }, btn))
     }
   }
@@ -2788,12 +2789,14 @@ async function loadTree() {
   }
 }
 
-const TEXT_EXT = new Set(['txt', 'json', 'csv', 'log', 'html', 'htm'])
-const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+// A local file's preview entry; the kind comes from its name.
+function localEntry(e) {
+  return { name: e.name, path: e.path, url: '/api/web/files/raw?path=' + encodeURIComponent(e.path), kind: kindFromName(e.name) }
+}
 
+// entry: { name, url, kind, openUrl? } (local entries also carry path).
 async function preview(entry) {
-  const url = '/api/web/files/raw?path=' + encodeURIComponent(entry.path)
-  const ext = (entry.name.split('.').pop() || '').toLowerCase()
+  const url = entry.url
   const bodyEl = $('preview-body')
   state.previewPath = entry.path
   for (const b of $('tree').querySelectorAll('.tree-btn.current')) b.classList.remove('current')
@@ -2805,9 +2808,9 @@ async function preview(entry) {
   show($('preview'))
   bodyEl.replaceChildren(h('p', { class: 'preview-note', text: 'Loading...' }))
 
-  if (IMAGE_EXT.has(ext)) return bodyEl.replaceChildren(h('img', { src: url, alt: entry.name }))
-  if (ext === 'pdf') return bodyEl.replaceChildren(h('iframe', { src: url, title: entry.name }))
-  if (ext !== 'md' && !TEXT_EXT.has(ext)) {
+  if (entry.kind === 'image') return bodyEl.replaceChildren(h('img', { src: url, alt: entry.name }))
+  if (entry.kind === 'pdf') return bodyEl.replaceChildren(h('iframe', { src: url, title: entry.name }))
+  if (entry.kind !== 'markdown' && entry.kind !== 'text') {
     return bodyEl.replaceChildren(h('p', { class: 'preview-note', text: 'No preview for this kind of file. Use Download to open it.' }))
   }
   try {
@@ -2819,7 +2822,7 @@ async function preview(entry) {
     }
     const text = await res.text()
     if (state.previewPath !== entry.path) return
-    if (ext === 'md') {
+    if (entry.kind === 'markdown') {
       const md = h('div', { class: 'msg-body' })
       md.innerHTML = renderMarkdown(text)
       bodyEl.replaceChildren(md)

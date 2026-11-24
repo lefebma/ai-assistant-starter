@@ -21,6 +21,7 @@ import { realGogBin, resolveGogBin } from '../infra/gog-bin.js'
 import { connectSettings, getDriveKeeper } from '../connect/instance.js'
 import type { DriveTokenKeeper } from '../connect/drive-token.js'
 import { cachedCheck } from './connections.js'
+import { dispositionName } from './file-kind.js'
 
 export type DriveError = 'not_connected' | 'reconnect' | 'not_found' | 'too_large' | 'unavailable'
 
@@ -255,9 +256,6 @@ export async function getFile(account: string, fileId: string, deps: DriveDeps =
   return entry
 }
 
-/** The same character rule the web routes use for Content-Disposition. */
-const safeName = (name: string): string => name.replace(/[^\w.\- ]/g, '_')
-
 function sweep(dir: string, now: number): void {
   try {
     for (const f of readdirSync(dir)) {
@@ -302,7 +300,7 @@ export async function fetchFile(
   logger.info({ event: 'drive fetch', ok: true })
   return {
     path,
-    name: exported ? `${safeName(meta.name)}.pdf` : safeName(meta.name),
+    name: exported ? `${dispositionName(meta.name)}.pdf` : dispositionName(meta.name),
     mimeType: exported ? 'application/pdf' : meta.mimeType || 'application/octet-stream',
     cleanup: () => remove(path),
   }
