@@ -5,6 +5,7 @@
 - **Fixed: the privacy filter no longer asks to keep a web address private.** Its name finder took reuters.com for a company and offered a card for it. Web and email addresses are never offered now, and any already waiting are dropped: they are not private, and masking one would hide the very site a message is about.
 - **Fixed: the privacy filter no longer asks about ordinary words.** Its name finder could take the first letters of a name and match them inside an earlier word, so "Keep there private?" came up after a message mentioning reuters.com. A name's first piece now has to start a word, a find with no capital letter is never offered, and any such card already waiting is dropped.
 - **Clearer privacy cards.** "Keep Acme private?" now says what Add does: the AI service never sees that name, because your assistant swaps it for a stand-in before sending and puts the real name back in its replies.
+- **Fixed: no card for a site the reply only mentions by name, or for a bot check.** After apnews.com was allowed, its Cloudflare bot check led to an "Allow challenges.cloudflare.com?" card, because the reply said "Cloudflare". A site's plain name now counts only in your own message (an address in the reply still does), and bot-check and CAPTCHA services are never offered: allowing one never gets the assistant past it (card #306).
 
 ## 1.88.0 - 2026-11-23
 

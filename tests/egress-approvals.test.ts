@@ -76,20 +76,32 @@ describe('offering a site', () => {
   it('skips what is listed (wildcards too) or already answered or offered, one per turn', () => {
     markOffered('seen.com', 'owner:1')
     getDb().prepare("INSERT INTO egress_sites (host, status, updated_at) VALUES ('nope.com', 'declined', 0), ('back.com', 'removed', 0)").run()
-    expect(sitesToOffer(['docs.example.org', 'irs.gov', 'seen.com', 'nope.com', '10.0.0.1', 'back.com', 'new.com', 'third.com'], 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com')).toEqual(['back.com'])
+    expect(sitesToOffer(['docs.example.org', 'irs.gov', 'seen.com', 'nope.com', '10.0.0.1', 'back.com', 'new.com', 'third.com'], { owner: 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com', reply: '' })).toEqual(['back.com'])
   })
 
   it('offers only a site the turn named, never the browser\'s own traffic', () => {
     // Card #306 on havn-test: a second bbc request offered android.clients.google.com,
     // Chromium checking in with Google, which looked like bbc asked again.
-    const ctx = 'Open bbc.com/news and tell me the top headline.\nI can\'t open bbc.com because it isn\'t on my list of sites yet.'
+    const ctx = { owner: 'Open bbc.com/news and tell me the top headline.', reply: 'I can\'t open bbc.com because it isn\'t on my list of sites yet.' }
     expect(sitesToOffer(['android.clients.google.com', 'www.google.com', 'www.bbc.com'], ctx)).toEqual(['www.bbc.com'])
-    expect(sitesToOffer(['android.clients.google.com', 'update.googleapis.com', 'redirector.gvt1.com'], 'google.com and gvt1.com')).toEqual([])
-    expect(mentionedIn('en.wikipedia.org', 'Open the Wikipedia main page')).toBe(true)
-    expect(mentionedIn('www.bbc.com', 'open bbc.com/news')).toBe(true)
-    expect(mentionedIn('bbc.com', 'see www.bbc.com')).toBe(true)
-    expect(mentionedIn('evil.example', 'Open bbc.com/news')).toBe(false)
-    expect(mentionedIn('cdn.bbci.co.uk', 'Open bbc.com/news')).toBe(false)
+    expect(sitesToOffer(['android.clients.google.com', 'update.googleapis.com', 'redirector.gvt1.com'], { owner: 'google.com and gvt1.com', reply: '' })).toEqual([])
+    const own = (owner: string) => ({ owner, reply: '' })
+    expect(mentionedIn('en.wikipedia.org', own('Open the Wikipedia main page'))).toBe(true)
+    expect(mentionedIn('www.bbc.com', own('open bbc.com/news'))).toBe(true)
+    expect(mentionedIn('bbc.com', own('see www.bbc.com'))).toBe(true)
+    expect(mentionedIn('evil.example', own('Open bbc.com/news'))).toBe(false)
+    expect(mentionedIn('cdn.bbci.co.uk', own('Open bbc.com/news'))).toBe(false)
+  })
+
+  it('takes a plain name only from the owner, and never offers a bot check (apnews on havn-test)', () => {
+    // The reply said "a check from Cloudflare", which offered challenges.cloudflare.com.
+    const turn = { owner: 'Open apnews.com and tell me the top story.', reply: 'The site only showed a security check from Cloudflare, an anti-bot service.' }
+    expect(sitesToOffer(['challenges.cloudflare.com', 'www.gstatic.com', 'js.hcaptcha.com', 'www.recaptcha.net'], turn)).toEqual([])
+    expect(mentionedIn('blog.cloudflare.com', turn)).toBe(false)
+    // An address in the reply still counts: a site the assistant chose itself.
+    expect(mentionedIn('weather.com', { owner: 'What is the forecast?', reply: "I can't open weather.com because it isn't on my list of sites yet." })).toBe(true)
+    // So does a name in the owner's own words.
+    expect(mentionedIn('blog.cloudflare.com', { owner: 'What does the Cloudflare blog say?', reply: '' })).toBe(true)
   })
 
   it('says what each button does, and gives a typed command where there are no buttons', () => {
@@ -127,7 +139,7 @@ describe('a tap on a site card', () => {
     const d = deps('no: sites on this box are approved by whoever runs it')
     markOffered('example.com', 'owner:5')
     expect(await resolveSiteClick(true, 'owner:5', ALLOW, 'chat:owner', d.deps)).toMatch(/could not add example\.com: sites on this box/)
-    expect(sitesToOffer(['example.com'], 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com')).toEqual([])
+    expect(sitesToOffer(['example.com'], { owner: 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com', reply: '' })).toEqual([])
   })
 
   it('never calls the helper when the box leaves approval to whoever runs it', async () => {
@@ -146,7 +158,7 @@ describe('a tap on a site card', () => {
     expect(await resolveSiteClick(true, 'owner:1', ASK, 'chat:owner', d.deps)).toBe('asked about a.com')
     expect(await resolveSiteClick(true, 'owner:2', DENY, 'chat:owner', d.deps)).toMatch(/won't ask about b\.com again/)
     expect(await resolveSiteClick(true, 'owner:3', NOT_NEEDED, 'chat:owner', d.deps)).toMatch(/c\.com/)
-    expect(sitesToOffer(['a.com', 'b.com', 'c.com'], 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com')).toEqual([])
+    expect(sitesToOffer(['a.com', 'b.com', 'c.com'], { owner: 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com', reply: '' })).toEqual([])
     expect(d.calls).toEqual([])
   })
 
@@ -181,7 +193,7 @@ describe('/egress', () => {
     expect(await egressCommand(true, true, 'allow 169.254.169.254', 'chat:owner', d.deps)).toMatch(/not a site name/)
     expect(d.calls).toEqual(['allow example.com', 'remove example.com'])
     // A removed site may be offered again later.
-    expect(sitesToOffer(['example.com'], 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com')).toEqual(['example.com'])
+    expect(sitesToOffer(['example.com'], { owner: 'docs.example.org irs.gov seen.com nope.com back.com new.com third.com example.com a.com b.com c.com', reply: '' })).toEqual(['example.com'])
   })
 })
 

@@ -57,26 +57,36 @@ const BACKGROUND = [
   /(^|\.)clients\d*\.google\.com$/,
   /(^|\.)gvt[12]\.com$/,
   /^(update|safebrowsing|optimizationguide-pa|content-autofill|clientservices|android)\.googleapis\.com$/,
+  // Bot checks and CAPTCHAs a site puts in front of its pages: allowing one
+  // never gets an automated browser past it, so a card would offer nothing.
+  /^challenges\.cloudflare\.com$/,
+  /(^|\.)hcaptcha\.com$/,
+  /(^|\.)recaptcha\.net$/,
+  /(^|\.)gstatic\.com$/,
 ]
 const bare = (h: string) => h.replace(/^www\./, '')
 
+/** The words of one turn: what the owner wrote, and the assistant's reply. */
+export type TurnText = { owner: string; reply: string }
+
 /**
- * Whether the turn named this site: in the owner's message or the reply, by
- * address (bbc.com, www.bbc.com) or by name (Wikipedia for en.wikipedia.org).
- * A site the conversation never named is the browser's own traffic or a page's
- * extra requests, not something the owner wanted.
+ * Whether the turn named this site. By address (bbc.com, www.bbc.com) in the
+ * owner's message or the reply; by plain name (Wikipedia for
+ * en.wikipedia.org) only in the owner's message, because a reply names
+ * services in passing ("a check from Cloudflare") that nobody wanted opened.
+ * A site never named is the browser's own traffic or a page's extra
+ * requests, not something the owner wanted.
  */
-export function mentionedIn(host: string, context: string): boolean {
+export function mentionedIn(host: string, turn: TurnText): boolean {
   const h = bare(host)
-  const text = context.toLowerCase()
-  for (const m of text.matchAll(/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+/g)) {
+  const both = `${turn.owner}\n${turn.reply}`.toLowerCase()
+  for (const m of both.matchAll(/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+/g)) {
     const t = bare(m[0])
-    if (!t.includes('.') ) continue
     if (t === h || h.endsWith(`.${t}`) || t.endsWith(`.${h}`)) return true
   }
   const labels = h.split('.')
   const name = labels.length >= 2 ? labels[labels.length - 2]! : ''
-  return name.length >= 3 && new RegExp(`(^|[^a-z0-9-])${name.replace(/-/g, '\\-')}([^a-z0-9-]|$)`).test(text)
+  return name.length >= 3 && new RegExp(`(^|[^a-z0-9-])${name}([^a-z0-9-]|$)`).test(turn.owner.toLowerCase())
 }
 
 type Status = 'offered' | 'allowed' | 'declined' | 'asked' | 'removed'
@@ -102,15 +112,15 @@ function listed(host: string): boolean {
 }
 
 /**
- * The refused sites worth a card: approvable, named in the turn (context is
- * the owner's message and the reply), not the browser's own traffic, not
- * listed, never answered or offered before.
+ * The refused sites worth a card: approvable, named in the turn (see
+ * mentionedIn), not the browser's own traffic or a bot check, not listed,
+ * never answered or offered before.
  */
-export function sitesToOffer(sites: string[], context: string): string[] {
+export function sitesToOffer(sites: string[], turn: TurnText): string[] {
   const out: string[] = []
   for (const s of sites) {
     const h = approvableHost(s)
-    if (!h || out.includes(h) || BACKGROUND.some((r) => r.test(h)) || !mentionedIn(h, context) || listed(h)) continue
+    if (!h || out.includes(h) || BACKGROUND.some((r) => r.test(h)) || !mentionedIn(h, turn) || listed(h)) continue
     const r = row(h)
     // Offered once and left unanswered is still not offered again: one card per site.
     if (r && r.status !== 'removed') continue
