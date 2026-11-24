@@ -12,6 +12,13 @@ const GOOGLE_EXPORTS = new Set([
   'application/vnd.google-apps.presentation',
 ])
 
+const GOOGLE_NATIVE = 'application/vnd.google-apps.'
+const FOLDER = 'application/vnd.google-apps.folder'
+const FETCHED = new Set(['image', 'pdf', 'text', 'markdown'])
+
+/** The largest Drive file the panel previews or downloads (the server's cap too). */
+export const MAX_PREVIEW_BYTES = 25 * 1024 * 1024
+
 const ERRORS = {
   unavailable: 'Google Drive is not available right now. Try again in a minute.',
   too_large: 'This file is too large to preview here. Open it in Google Drive.',
@@ -86,5 +93,25 @@ export function downloadName(entry) {
 
 /** Plain words for a Drive error code. */
 export function errorText(code) {
-  return ERRORS[code] || ERRORS.unavailable
+  return Object.prototype.hasOwnProperty.call(ERRORS, code) ? ERRORS[code] : ERRORS.unavailable
+}
+
+/**
+ * How the panel shows a Drive file, from its list entry ({ kind, mimeType, size? }):
+ * too_large (over the cap), no_file (a Google type with nothing to hand over,
+ * such as a Form), fetch (the page loads it first, so a failure can be explained),
+ * or other (no preview, Download offered).
+ */
+export function drivePreviewPlan(entry) {
+  const mime = String((entry && entry.mimeType) || '')
+  const size = entry && entry.size !== undefined && entry.size !== null && entry.size !== '' ? Number(entry.size) : NaN
+  if (Number.isFinite(size) && size > MAX_PREVIEW_BYTES) return { mode: 'too_large' }
+  if (mime.startsWith(GOOGLE_NATIVE) && mime !== FOLDER && !GOOGLE_EXPORTS.has(mime)) return { mode: 'no_file' }
+  if (entry && FETCHED.has(entry.kind)) return { mode: 'fetch' }
+  return { mode: 'other' }
+}
+
+/** The sign-in link to open, only when it is https; null for anything else. */
+export function safeSignInUrl(url) {
+  return typeof url === 'string' && /^https:\/\//.test(url) ? url : null
 }

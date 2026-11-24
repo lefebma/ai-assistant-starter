@@ -6,7 +6,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 export const CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' blob:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 export const MAX_JSON_BYTES = 256 * 1024
 

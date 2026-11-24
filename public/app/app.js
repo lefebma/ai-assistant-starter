@@ -7,7 +7,7 @@ import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
 import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
 import { kindFromName } from './filekind.js'
-import { STORAGE_KEY, pickerOptions, showPicker, resolveSource, viewFor, accountOf, needsMore, driveListUrl, driveRawUrl, driveOpenUrl, downloadName, errorText } from './sources.js'
+import { STORAGE_KEY, pickerOptions, showPicker, resolveSource, viewFor, accountOf, needsMore, driveListUrl, driveRawUrl, driveOpenUrl, downloadName, errorText, drivePreviewPlan, safeSignInUrl } from './sources.js'
 import { DEFAULT_WIDTH, STEP, clampWidth, widthFromPointer, loadWidth, saveWidth, clearWidth } from './panelwidth.js'
 import { voiceCallSupport, createVoiceCall, callProblem } from './voicecall.js'
 import { readChatGPTExport } from './chatgpt-export.js'
@@ -63,6 +63,8 @@ const state = {
   source: 'local', // the files panel's source: 'local', 'drive:<account>' or 'drive:' (not connected)
   connectPoll: null, // the check for a finished Google sign-in
   previewUrl: '',
+  previewGen: 0, // bumped by each preview, so a slow Drive fetch never lands on a newer one
+  previewBlob: '', // the object URL a Drive image or PDF preview shows, revoked when replaced
   attachments: [], // the tray: files and pasted text waiting to go with the next message
 }
 
@@ -2745,7 +2747,9 @@ const POLL_MS = 5000
 const POLL_LIMIT_MS = 10 * 60 * 1000
 
 function ensureTree() {
-  if (!state.treeLoaded) loadFiles()
+  if (!state.treeLoaded) return loadFiles()
+  // A sign-in finished while the panel was closed: check again rather than keep showing Connect.
+  if (state.source !== 'local' && !state.connectPoll && viewFor(state.source, state.sources || LOCAL_ONLY) !== 'tree') loadFiles()
 }
 
 async function listDir(path) {
@@ -2826,10 +2830,13 @@ function moreRow(src, folder, page) {
   btn.addEventListener('click', async () => {
     btn.disabled = true
     btn.firstChild.textContent = 'Loading...'
+    const before = li.previousElementSibling
+    if (before && before.classList.contains('tree-more-error')) before.remove()
     try {
       li.replaceWith(pageItems(await src.load(folder, page), src, folder))
     } catch (err) {
-      li.replaceWith(h('li', { class: 'tree-note', text: src.problem(err, 'Could not load more files.') }))
+      // The note, then Show more again, so the page can be retried.
+      li.replaceWith(h('li', { class: 'tree-note tree-more-error', text: src.problem(err, 'Could not load more files.') }), moreRow(src, folder, page))
     }
   })
   li.append(btn)
@@ -2975,16 +2982,22 @@ async function startConnect(btn) {
     note(msg, err.status === 401 ? '' : errorText(err.code || 'unavailable'))
     return
   }
-  if (r && r.url) {
+  const signIn = r && r.url ? safeSignInUrl(r.url) : null
+  if (signIn) {
     if (tab) {
       tab.opener = null
-      tab.location.href = r.url
+      tab.location.href = signIn
     }
     box.replaceChildren(
       h('p', { class: 'source-text', text: 'Finish signing in to Google in the new tab. Your Drive shows here once you are done.' }),
-      h('a', { class: 'small-btn', href: r.url, target: '_blank', rel: 'noopener', text: 'Open the Google sign-in again' })
+      h('a', { class: 'small-btn', href: signIn, target: '_blank', rel: 'noopener', text: 'Open the Google sign-in again' })
     )
     pollForDrive()
+  } else if (r && r.url) {
+    // Anything but an https link is never opened.
+    if (tab) tab.close()
+    btn.disabled = false
+    note(msg, errorText('unavailable'))
   } else if (r && r.command) {
     if (tab) tab.close()
     box.replaceChildren(
@@ -3045,17 +3058,68 @@ function localEntry(e) {
 }
 
 // A Drive file's preview entry; the server has already decided its kind from the mime type.
+// Size and type come along so the preview can tell a file too large or with nothing to fetch.
 function driveEntry(account, e) {
-  return { name: e.name, id: e.id, download: downloadName(e), url: driveRawUrl(account, e.id), kind: e.kind, openUrl: driveOpenUrl(e.id) }
+  return {
+    name: e.name, id: e.id, account, download: downloadName(e), url: driveRawUrl(account, e.id), kind: e.kind,
+    openUrl: driveOpenUrl(e.id), size: e.size, mimeType: e.mimeType,
+  }
 }
 
 // Words for a preview that could not load: Drive says why, local files keep their wording.
 function previewProblem(entry, err, fallback) {
   if (entry.openUrl && err && err.status !== 401) {
+    // Google took the permission back: the panel asks to connect again.
+    if (err.status === 409) {
+      if (entry.account) markReconnect(entry.account)
+      return errorText('reconnect')
+    }
     if (err.status === 413) return errorText('too_large')
-    if (err.code) return errorText(err.code)
+    return errorText(err.code)
   }
   return friendly(err, fallback)
+}
+
+// An answer that is not OK, as an error carrying its status and the server's code.
+async function httpProblem(res) {
+  let code = ''
+  try {
+    code = ((await res.json()) || {}).error || ''
+  } catch {
+    // no body to read
+  }
+  return Object.assign(new Error('bad'), { status: res.status, code })
+}
+
+function dropPreviewBlob() {
+  if (state.previewBlob) URL.revokeObjectURL(state.previewBlob)
+  state.previewBlob = ''
+}
+
+// A Drive image or PDF: fetched first, so a failure is explained in words, then shown from memory.
+async function driveMediaPreview(entry, gen) {
+  const bodyEl = $('preview-body')
+  try {
+    const res = await fetch(entry.url, { credentials: 'same-origin' })
+    if (res.status === 401) return showSignedOut('')
+    if (!res.ok) throw await httpProblem(res)
+    const blob = await res.blob()
+    if (gen !== state.previewGen) return
+    dropPreviewBlob()
+    state.previewBlob = URL.createObjectURL(blob)
+    if (entry.kind === 'image') {
+      const img = h('img', { src: state.previewBlob, alt: entry.name })
+      img.addEventListener('error', () => {
+        if (gen === state.previewGen) bodyEl.replaceChildren(h('p', { class: 'preview-note', text: errorText('unavailable') }))
+      })
+      bodyEl.replaceChildren(img)
+    } else {
+      bodyEl.replaceChildren(h('iframe', { src: state.previewBlob, title: entry.name }))
+    }
+  } catch (err) {
+    if (gen !== state.previewGen) return
+    bodyEl.replaceChildren(h('p', { class: 'preview-note', text: previewProblem(entry, err, 'Could not open this file.') }))
+  }
 }
 
 // entry: { name, url, kind, openUrl?, download? } (local entries also carry path, Drive entries id).
@@ -3063,6 +3127,8 @@ async function preview(entry) {
   const url = entry.url
   const bodyEl = $('preview-body')
   state.previewUrl = url
+  const gen = ++state.previewGen
+  dropPreviewBlob()
   for (const b of $('tree').querySelectorAll('.tree-btn.current')) b.classList.remove('current')
   const btn = [...$('tree').querySelectorAll('.tree-btn[data-path], .tree-btn[data-id]')].find((b) =>
     entry.id ? b.getAttribute('data-id') === entry.id : b.getAttribute('data-path') === entry.path
@@ -3071,6 +3137,7 @@ async function preview(entry) {
   $('preview-name').textContent = entry.name
   $('preview-download').href = url
   $('preview-download').setAttribute('download', entry.download || entry.name)
+  show($('preview-download'))
   const open = $('preview-open')
   if (entry.openUrl) open.href = entry.openUrl
   else open.removeAttribute('href')
@@ -3079,19 +3146,18 @@ async function preview(entry) {
   show($('preview'))
   bodyEl.replaceChildren(h('p', { class: 'preview-note', text: 'Loading...' }))
 
-  const broken = () => {
-    if (state.previewUrl === url) bodyEl.replaceChildren(h('p', { class: 'preview-note', text: errorText('unavailable') }))
+  if (entry.openUrl) {
+    const plan = drivePreviewPlan(entry)
+    if (plan.mode === 'too_large' || plan.mode === 'no_file') {
+      // Nothing to download here either: Google Drive is the way to open it.
+      show($('preview-download'), false)
+      const text = plan.mode === 'too_large' ? errorText('too_large') : 'This kind of Google file opens in Google Drive.'
+      return bodyEl.replaceChildren(h('p', { class: 'preview-note', text }))
+    }
+    if (plan.mode === 'fetch' && (entry.kind === 'image' || entry.kind === 'pdf')) return driveMediaPreview(entry, gen)
   }
-  if (entry.kind === 'image') {
-    const img = h('img', { src: url, alt: entry.name })
-    if (entry.openUrl) img.addEventListener('error', broken)
-    return bodyEl.replaceChildren(img)
-  }
-  if (entry.kind === 'pdf') {
-    const frame = h('iframe', { src: url, title: entry.name })
-    if (entry.openUrl) frame.addEventListener('error', broken)
-    return bodyEl.replaceChildren(frame)
-  }
+  if (entry.kind === 'image') return bodyEl.replaceChildren(h('img', { src: url, alt: entry.name }))
+  if (entry.kind === 'pdf') return bodyEl.replaceChildren(h('iframe', { src: url, title: entry.name }))
   if (entry.kind !== 'markdown' && entry.kind !== 'text') {
     const text = entry.openUrl ? 'No preview for this kind of file.' : 'No preview for this kind of file. Use Download to open it.'
     return bodyEl.replaceChildren(h('p', { class: 'preview-note', text }))
@@ -3099,15 +3165,7 @@ async function preview(entry) {
   try {
     const res = await fetch(url, { credentials: 'same-origin' })
     if (res.status === 401) return showSignedOut('')
-    if (!res.ok) {
-      let code = ''
-      try {
-        code = ((await res.json()) || {}).error || ''
-      } catch {
-        // no body to read
-      }
-      throw Object.assign(new Error('bad'), { status: res.status, code })
-    }
+    if (!res.ok) throw await httpProblem(res)
     if (!(res.headers.get('content-type') || '').startsWith('text/plain')) {
       const text = entry.openUrl ? errorText('too_large') : 'This file is too large to preview. Use Download to open it.'
       return bodyEl.replaceChildren(h('p', { class: 'preview-note', text }))
@@ -3131,6 +3189,8 @@ function closePreview() {
   show($('preview'), false)
   $('preview-body').replaceChildren()
   state.previewUrl = ''
+  state.previewGen++
+  dropPreviewBlob()
   for (const b of $('tree').querySelectorAll('.tree-btn.current')) b.classList.remove('current')
 }
 

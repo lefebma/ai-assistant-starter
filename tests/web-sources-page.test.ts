@@ -101,6 +101,50 @@ describe('urls and names', () => {
   })
 })
 
+describe('Drive preview plan', () => {
+  const MB = 1024 * 1024
+  it('the cap is 25 MB', () => expect(s.MAX_PREVIEW_BYTES).toBe(25 * MB))
+  it('a file over the cap is too large, whatever its kind', () => {
+    expect(s.drivePreviewPlan({ kind: 'pdf', mimeType: 'application/pdf', size: 25 * MB + 1 })).toEqual({ mode: 'too_large' })
+    expect(s.drivePreviewPlan({ kind: 'other', mimeType: 'application/zip', size: 30 * MB })).toEqual({ mode: 'too_large' })
+  })
+  it('a file at the cap or with no size is fetched', () => {
+    expect(s.drivePreviewPlan({ kind: 'image', mimeType: 'image/png', size: 25 * MB })).toEqual({ mode: 'fetch' })
+    expect(s.drivePreviewPlan({ kind: 'pdf', mimeType: 'application/vnd.google-apps.document' })).toEqual({ mode: 'fetch' })
+  })
+  it('Google Forms, Sites and shortcuts have no file', () => {
+    for (const t of ['form', 'site', 'shortcut', 'drawing']) {
+      expect(s.drivePreviewPlan({ kind: 'other', mimeType: 'application/vnd.google-apps.' + t })).toEqual({ mode: 'no_file' })
+    }
+  })
+  it('Docs, Sheets and Slides are fetched as PDF', () => {
+    for (const t of ['document', 'spreadsheet', 'presentation']) {
+      expect(s.drivePreviewPlan({ kind: 'pdf', mimeType: 'application/vnd.google-apps.' + t })).toEqual({ mode: 'fetch' })
+    }
+  })
+  it('images, PDFs, text and markdown are fetched; anything else is a download', () => {
+    for (const kind of ['image', 'pdf', 'text', 'markdown']) expect(s.drivePreviewPlan({ kind, mimeType: 'x/y', size: 10 })).toEqual({ mode: 'fetch' })
+    expect(s.drivePreviewPlan({ kind: 'other', mimeType: 'application/zip', size: 10 })).toEqual({ mode: 'other' })
+  })
+})
+
+describe('sign-in link', () => {
+  it('only an https link is used', () => {
+    expect(s.safeSignInUrl('https://connect.gethavn.ai/start?x=1')).toBe('https://connect.gethavn.ai/start?x=1')
+    for (const bad of ['http://connect.gethavn.ai/start', 'javascript:alert(1)', 'data:text/html,x', '', null, undefined, 42, {}]) {
+      expect(s.safeSignInUrl(bad)).toBeNull()
+    }
+  })
+})
+
+describe('error words', () => {
+  it('an unknown code falls back to the unavailable text', () => {
+    for (const c of ['nope', 'constructor', 'toString', '__proto__', '', undefined]) {
+      expect(s.errorText(c)).toBe('Google Drive is not available right now. Try again in a minute.')
+    }
+  })
+})
+
 describe('the page', () => {
   it('the page has the picker, the connect copy and a noopener link', () => {
     expect(html).toContain('id="source-picker"')
@@ -111,5 +155,16 @@ describe('the page', () => {
     expect(html).toMatch(/id="preview-open"[^>]*rel="noopener"[^>]*>Open in Google Drive</)
     expect(js).toContain('Show more')
     expect(js).toMatch(/noopener/)
+  })
+
+  it('Drive previews explain themselves and the page keeps its retries', () => {
+    expect(js).toContain('This kind of Google file opens in Google Drive.')
+    // Images and PDFs are fetched first and shown from an object URL that is revoked when replaced.
+    expect(js).toContain('URL.createObjectURL(blob)')
+    expect(js).toContain('URL.revokeObjectURL(state.previewBlob)')
+    // Only an https sign-in link is opened.
+    expect(js).toContain('safeSignInUrl(r.url)')
+    // A failed Show more leaves a Show more row to retry.
+    expect(js).toMatch(/tree-more-error[^\n]*moreRow\(src, folder, page\)/)
   })
 })
