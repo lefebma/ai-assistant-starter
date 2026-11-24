@@ -1,0 +1,287 @@
+/**
+ * Card #284: read-only Google Drive access for the web files panel, through the
+ * gog CLI (github.com/openclaw/gogcli). Three reads only: list a folder, get one
+ * file's metadata, download (or export) one file. Every call is `--readonly` and
+ * limited with `--enable-commands-exact` to the one subcommand it needs, so no
+ * code path here can reach a mutating `gog drive` command.
+ *
+ * Tokens: a relay-connected account's access token goes to gog in
+ * GOG_ACCESS_TOKEN, never on the command line, never in process.env, never in a
+ * log. The REAL gog binary is called, not the account-picking wrapper, because
+ * the wrapper's job is Gmail. Logs carry event names and counts only.
+ */
+import { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
+import { logger } from '../logger.js'
+import { readEnvFile } from '../env.js'
+import { STORE_DIR } from '../config.js'
+import { realGogBin, resolveGogBin } from '../infra/gog-bin.js'
+import { connectSettings, getDriveKeeper } from '../connect/instance.js'
+import type { DriveTokenKeeper } from '../connect/drive-token.js'
+import { cachedCheck } from './connections.js'
+
+export type DriveError = 'not_connected' | 'reconnect' | 'not_found' | 'too_large' | 'unavailable'
+
+export class DriveFailure extends Error {
+  constructor(public readonly code: DriveError) {
+    super(code)
+    this.name = 'DriveFailure'
+  }
+}
+
+export interface DriveEntry {
+  id: string
+  name: string
+  isDir: boolean
+  mimeType: string
+  size?: number
+  modified?: string
+}
+
+export interface DriveDeps {
+  /** `env` holds only what to add (the token); the default merges it over a clean copy of process.env. */
+  run(args: string[], env: Record<string, string>, timeoutMs: number): Promise<{ code: number; stdout: string }>
+  keeper: Pick<DriveTokenKeeper, 'accounts' | 'token'> | null
+  relayConfigured: boolean
+  gogAccounts(): Promise<{ account: string; services: string[] }[]>
+  tmpDir: string
+  now(): number
+}
+
+export const MAX_DRIVE_BYTES = 25 * 1024 * 1024
+export const DRIVE_ID = /^[A-Za-z0-9_-]{1,128}$/
+export const PAGE_SIZE = 100
+export const GOOGLE_EXPORT_PDF = new Set([
+  'application/vnd.google-apps.document',
+  'application/vnd.google-apps.spreadsheet',
+  'application/vnd.google-apps.presentation',
+])
+const FOLDER_MIME = 'application/vnd.google-apps.folder'
+const GOOGLE_NATIVE = 'application/vnd.google-apps.'
+
+const CALL_TIMEOUT_MS = 30_000
+const MAX_BUFFER = 8 * 1024 * 1024
+const MAX_IN_FLIGHT = 2
+const TMP_MAX_AGE_MS = 10 * 60_000
+const ACCOUNTS_CACHE_MS = 5 * 60_000
+const FIELDS = 'id,name,mimeType,size,modifiedTime,trashed'
+
+// ---------- Running gog ----------
+
+function cleanEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  delete env['GOG_ACCESS_TOKEN']
+  delete env['GOG_RELAY_TOKENS']
+  return { ...env, ...extra }
+}
+
+function defaultRun(args: string[], extra: Record<string, string>, timeoutMs: number): Promise<{ code: number; stdout: string }> {
+  const bin = realGogBin() ?? resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) })
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { timeout: timeoutMs, maxBuffer: MAX_BUFFER, env: cleanEnv(extra) }, (err, stdout) => {
+      if (!err) return resolve({ code: 0, stdout: String(stdout) })
+      const code = (err as { code?: unknown }).code
+      // A non-zero exit carries a numeric code; a spawn failure or timeout is a real error.
+      if (typeof code === 'number' && !(err as { killed?: boolean }).killed) return resolve({ code, stdout: String(stdout) })
+      reject(err)
+    })
+  })
+}
+
+const gogAccountsCheck = cachedCheck(async () => {
+  const bin = realGogBin() ?? resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) })
+  const out = await new Promise<string>((resolve, reject) => {
+    execFile(bin, ['auth', 'list', '--plain'], { timeout: 5_000, maxBuffer: 1024 * 1024, env: cleanEnv({}) }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))))
+  })
+  return parseGogAccountServices(out)
+}, ACCOUNTS_CACHE_MS)
+
+/** `gog auth list --plain` is TSV: the account first, services somewhere after it. */
+export function parseGogAccountServices(stdout: string): { account: string; services: string[] }[] {
+  const out: { account: string; services: string[] }[] = []
+  for (const line of stdout.split('\n')) {
+    const cols = line.split('\t')
+    const account = (cols[0] ?? '').trim()
+    if (!/^[^\s@]+@[^\s@]+$/.test(account)) continue
+    const services = cols.slice(1).flatMap((c) => c.split(/[,\s]+/)).map((s) => s.trim().toLowerCase()).filter(Boolean)
+    out.push({ account, services })
+  }
+  return out
+}
+
+function defaultDeps(): DriveDeps {
+  return {
+    run: defaultRun,
+    keeper: getDriveKeeper(),
+    relayConfigured: connectSettings() !== null,
+    gogAccounts: () => gogAccountsCheck.get(),
+    tmpDir: join(STORE_DIR, 'drive-tmp'),
+    now: () => Date.now(),
+  }
+}
+
+// At most two gog calls at once per box, FIFO, released on every outcome.
+let active = 0
+const waiting: (() => void)[] = []
+async function limited<T>(fn: () => Promise<T>): Promise<T> {
+  if (active >= MAX_IN_FLIGHT) await new Promise<void>((r) => waiting.push(r))
+  else active++
+  try {
+    return await fn()
+  } finally {
+    const next = waiting.shift()
+    if (next) next() // hand the place straight over
+    else active--
+  }
+}
+
+// ---------- Accounts ----------
+
+export async function driveAccounts(deps: DriveDeps = defaultDeps()): Promise<{ account: string; state: 'ok' | 'reconnect' }[]> {
+  if (deps.relayConfigured) return deps.keeper ? deps.keeper.accounts() : []
+  try {
+    return (await deps.gogAccounts()).filter((a) => a.services.some((s) => s.toLowerCase() === 'drive')).map((a) => ({ account: a.account, state: 'ok' as const }))
+  } catch {
+    return []
+  }
+}
+
+/** Where Drive sign-ins come from on this box: the relay, or gog's own stored accounts. */
+export function driveConnectMode(deps: DriveDeps = defaultDeps()): 'relay' | 'gog' | null {
+  return deps.relayConfigured ? 'relay' : 'gog'
+}
+
+/** Who may be read, and how gog is told: a token for a relay account, --account otherwise. */
+async function authFor(account: string, deps: DriveDeps): Promise<{ env: Record<string, string>; args: string[] }> {
+  const known = (await driveAccounts(deps)).find((a) => a.account.toLowerCase() === account.toLowerCase())
+  if (!known) throw new DriveFailure('not_connected')
+  if (known.state === 'reconnect') throw new DriveFailure('reconnect')
+  if (!deps.relayConfigured) return { env: {}, args: ['--account', known.account] }
+  const token = deps.keeper ? await deps.keeper.token(known.account) : null
+  if (!token) throw new DriveFailure('reconnect')
+  return { env: { GOG_ACCESS_TOKEN: token }, args: [] }
+}
+
+// ---------- Calls ----------
+
+async function gog(command: 'ls' | 'get' | 'download', args: string[], account: string, deps: DriveDeps): Promise<string> {
+  const auth = await authFor(account, deps)
+  const full = ['drive', command, ...args, '--readonly', '--enable-commands-exact', `drive.${command}`, ...auth.args]
+  try {
+    const r = await limited(() => deps.run(full, auth.env, CALL_TIMEOUT_MS))
+    if (r.code !== 0) throw new DriveFailure('unavailable')
+    return r.stdout
+  } catch (err) {
+    if (err instanceof DriveFailure) throw err
+    throw new DriveFailure('unavailable')
+  }
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new DriveFailure('unavailable')
+  }
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** One Drive file row, tolerant of field spelling and of size as text. Null for a row we cannot use. */
+function toEntry(row: unknown): DriveEntry | null {
+  if (!isObj(row) || row['trashed'] === true) return null
+  const id = typeof row['id'] === 'string' ? row['id'] : ''
+  if (!id) return null
+  const mimeType = typeof row['mimeType'] === 'string' ? row['mimeType'] : ''
+  const entry: DriveEntry = { id, name: typeof row['name'] === 'string' ? row['name'] : id, isDir: mimeType === FOLDER_MIME, mimeType }
+  const size = Number(row['size'])
+  if (row['size'] !== undefined && row['size'] !== null && row['size'] !== '' && Number.isFinite(size)) entry.size = size
+  const modified = row['modifiedTime'] ?? row['modified']
+  if (typeof modified === 'string') entry.modified = modified
+  return entry
+}
+
+const byFoldersThenName = (a: DriveEntry, b: DriveEntry): number =>
+  a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+
+export async function listFolder(
+  account: string,
+  folderId: string,
+  pageToken?: string,
+  deps: DriveDeps = defaultDeps(),
+): Promise<{ entries: DriveEntry[]; nextPage: string | null }> {
+  if (!DRIVE_ID.test(folderId)) throw new DriveFailure('not_found')
+  const args = [
+    '--json', '--parent', folderId, '--max', String(PAGE_SIZE), '--no-all-drives',
+    '--fields', `files(${FIELDS}),nextPageToken`,
+    ...(pageToken ? ['--page', pageToken] : []),
+  ]
+  const data = parseJson(await gog('ls', args, account, deps))
+  const rows = Array.isArray(data) ? data : isObj(data) && Array.isArray(data['files']) ? data['files'] : []
+  const entries = rows.map(toEntry).filter((e): e is DriveEntry => e !== null).sort(byFoldersThenName)
+  const next = isObj(data) && typeof data['nextPageToken'] === 'string' && data['nextPageToken'] ? data['nextPageToken'] : null
+  logger.info({ event: 'drive list', entries: entries.length, ok: true })
+  return { entries, nextPage: next }
+}
+
+export async function getFile(account: string, fileId: string, deps: DriveDeps = defaultDeps()): Promise<DriveEntry> {
+  if (!DRIVE_ID.test(fileId)) throw new DriveFailure('not_found')
+  const data = parseJson(await gog('get', [fileId, '--json', '--fields', FIELDS], account, deps))
+  const entry = toEntry(isObj(data) && isObj(data['file']) ? data['file'] : data)
+  if (!entry) throw new DriveFailure('not_found')
+  return entry
+}
+
+/** The same character rule the web routes use for Content-Disposition. */
+const safeName = (name: string): string => name.replace(/[^\w.\- ]/g, '_')
+
+function sweep(dir: string, now: number): void {
+  try {
+    for (const f of readdirSync(dir)) {
+      try {
+        const p = join(dir, f)
+        if (now - statSync(p).mtimeMs > TMP_MAX_AGE_MS) unlinkSync(p)
+      } catch { /* gone already */ }
+    }
+  } catch { /* no directory yet */ }
+}
+
+function remove(path: string): void {
+  try {
+    unlinkSync(path)
+  } catch { /* already gone */ }
+}
+
+export async function fetchFile(
+  account: string,
+  fileId: string,
+  deps: DriveDeps = defaultDeps(),
+): Promise<{ path: string; name: string; mimeType: string; cleanup(): void }> {
+  if (!DRIVE_ID.test(fileId)) throw new DriveFailure('not_found')
+  mkdirSync(deps.tmpDir, { recursive: true })
+  sweep(deps.tmpDir, deps.now())
+  const meta = await getFile(account, fileId, deps)
+  const exported = GOOGLE_EXPORT_PDF.has(meta.mimeType)
+  // Folders and Forms, Sites, shortcuts have no file to hand over.
+  if (meta.isDir || (!exported && meta.mimeType.startsWith(GOOGLE_NATIVE))) throw new DriveFailure('not_found')
+  if (!exported && meta.size !== undefined && meta.size > MAX_DRIVE_BYTES) throw new DriveFailure('too_large')
+
+  const path = join(deps.tmpDir, randomBytes(12).toString('hex'))
+  try {
+    await gog('download', [fileId, ...(exported ? ['--format', 'pdf'] : []), '--out', path], account, deps)
+    if (!existsSync(path)) throw new DriveFailure('unavailable')
+    if (statSync(path).size > MAX_DRIVE_BYTES) throw new DriveFailure('too_large')
+  } catch (err) {
+    remove(path)
+    throw err
+  }
+  logger.info({ event: 'drive fetch', ok: true })
+  return {
+    path,
+    name: exported ? `${safeName(meta.name)}.pdf` : safeName(meta.name),
+    mimeType: exported ? 'application/pdf' : meta.mimeType || 'application/octet-stream',
+    cleanup: () => remove(path),
+  }
+}

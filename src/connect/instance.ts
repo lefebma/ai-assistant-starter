@@ -90,7 +90,7 @@ function setUpGogShim(): boolean {
     if (!real) return false
     const path = installGogShim(dir, real, process.execPath)
     if (!path) return false
-    setGogShim(path)
+    setGogShim(path, real)
     const rest = (process.env.PATH ?? '').split(delimiter).filter((d) => d && d !== dir)
     process.env.PATH = [dir, ...rest].join(delimiter)
     return true

@@ -41,13 +41,22 @@ function bareName(platform: string): string {
 }
 
 let shim: string | undefined
+let real: string | undefined
 
 /**
  * Route every gog call through the relay wrapper (src/connect/gog-shim.ts),
- * so a relay-connected Gmail account gets its own token. Undefined turns it off.
+ * so a relay-connected Gmail account gets its own token. Undefined turns it off
+ * (and forgets the real path with it). `realPath` is the gog binary the wrapper
+ * itself runs, for callers that must bypass the wrapper (Drive).
  */
-export function setGogShim(path: string | undefined): void {
+export function setGogShim(path: string | undefined, realPath?: string): void {
   shim = path
+  real = path ? realPath : undefined
+}
+
+/** The real gog binary behind the wrapper, or null when no wrapper is installed. */
+export function realGogBin(): string | null {
+  return real ?? null
 }
 
 /**
