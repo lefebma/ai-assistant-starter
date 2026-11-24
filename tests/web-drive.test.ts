@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   listFolder, getFile, fetchFile, driveAccounts, driveConnectMode, DriveFailure,
-  MAX_DRIVE_BYTES, DRIVE_ID, PAGE_SIZE, GOOGLE_EXPORT_PDF, type DriveDeps,
+  MAX_DRIVE_BYTES, AUTH_LIST_ARGS, DRIVE_ID, PAGE_SIZE, GOOGLE_EXPORT_PDF, type DriveDeps,
 } from '../src/web/drive.js'
 
 vi.mock('../src/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }))
@@ -62,7 +62,7 @@ describe('constants', () => {
 describe('listFolder', () => {
   it('lists a folder read only, My Drive only, with the token in the environment not the arguments', async () => {
     await listFolder('m@x.com', 'root', undefined, mkDeps())
-    expect(last().args).toEqual(expect.arrayContaining(['drive', 'ls', '--json', '--readonly', '--parent', 'root', '--max', '100', '--no-all-drives']))
+    expect(last().args).toEqual(expect.arrayContaining(['drive', 'ls', '--json', '--readonly', '--parent=root', '--max', '100', '--no-all-drives']))
     expect(last().args).toEqual(expect.arrayContaining(['--enable-commands-exact', 'drive.ls']))
     expect(last().args).not.toContain('--results-only')
     expect(last().args.join(' ')).not.toContain('TOKEN-1')
@@ -72,7 +72,7 @@ describe('listFolder', () => {
 
   it('passes the page token through as --page', async () => {
     await listFolder('m@x.com', 'root', 'P1', mkDeps())
-    expect(last().args).toEqual(expect.arrayContaining(['--page', 'P1']))
+    expect(last().args).toEqual(expect.arrayContaining(['--page=P1']))
   })
 
   it('a gog-signed account is named with --account and gets no token', async () => {
@@ -123,6 +123,31 @@ describe('listFolder', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it.each(['-aauto', '--all', '-'])('refuses option-shaped folder id %j before gog runs', async (id) => {
+    await expect(listFolder('m@x.com', id, undefined, mkDeps())).rejects.toMatchObject({ code: 'not_found' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it.each(['--all', 'a b', '', 'x'.repeat(2049), '-x', 'a;b'])('refuses page token %j before gog runs', async (tok) => {
+    await expect(listFolder('m@x.com', 'root', tok, mkDeps())).rejects.toMatchObject({ code: 'not_found' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('accepts a realistic page token', async () => {
+    await listFolder('m@x.com', 'root', 'ABC_d-e=f.g~h+i/j', mkDeps())
+    expect(last().args).toContain('--page=ABC_d-e=f.g~h+i/j')
+  })
+
+  it('gog exit code 4 (documented: auth) answers reconnect for every call', async () => {
+    run.mockImplementation(async () => ({ code: 4, stdout: '' }))
+    await expect(listFolder('m@x.com', 'root', undefined, mkDeps())).rejects.toMatchObject({ code: 'reconnect' })
+    await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toMatchObject({ code: 'reconnect' })
+  })
+
+  it('lists gog accounts read only and limited to auth.list', () => {
+    expect(AUTH_LIST_ARGS).toEqual(['auth', 'list', '--plain', '--readonly', '--enable-commands-exact', 'auth.list'])
+  })
+
   it('refuses an account that has no Drive connection', async () => {
     await expect(listFolder('other@x.com', 'root', undefined, mkDeps())).rejects.toMatchObject({ code: 'not_connected' })
     expect(run).not.toHaveBeenCalled()
@@ -149,7 +174,7 @@ describe('listFolder', () => {
 
   it('unparseable output answers unavailable', async () => {
     stdout = 'not json'
-    await expect(listFolder('m@x.com', 'root', undefined, mkDeps())).rejects.toBeInstanceOf(DriveFailure)
+    await expect(listFolder('m@x.com', 'root', undefined, mkDeps())).rejects.toMatchObject({ code: 'unavailable' })
   })
 })
 
@@ -158,7 +183,7 @@ describe('getFile', () => {
     stdout = JSON.stringify({ file: { id: 'abc', name: 'Plan', mimeType: 'application/pdf', size: '99' } })
     const f = await getFile('m@x.com', 'abc', mkDeps())
     expect(f).toMatchObject({ id: 'abc', name: 'Plan', size: 99, isDir: false })
-    expect(last().args).toEqual(expect.arrayContaining(['drive', 'get', 'abc', '--json', '--readonly', '--enable-commands-exact', 'drive.get']))
+    expect(last().args).toEqual(expect.arrayContaining(['drive', 'get', '--json', '--readonly', '--enable-commands-exact', 'drive.get', '--', 'abc']))
   })
 
   it('a trashed file is not found', async () => {
@@ -169,10 +194,16 @@ describe('getFile', () => {
   it('gog exit code 5 (documented: not found) answers not_found, other failures stay unavailable', async () => {
     run.mockImplementationOnce(async () => ({ code: 5, stdout: '' }))
     await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toMatchObject({ code: 'not_found' })
-    for (const code of [1, 4, 7]) {
+    for (const code of [1, 7]) {
       run.mockImplementationOnce(async () => ({ code, stdout: '' }))
       await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toMatchObject({ code: 'unavailable' })
     }
+  })
+
+  it.each(['-aauto', '--all', '-'])('refuses option-shaped id %j before gog runs', async (id) => {
+    await expect(getFile('m@x.com', id, mkDeps())).rejects.toMatchObject({ code: 'not_found' })
+    await expect(fetchFile('m@x.com', id, mkDeps())).rejects.toMatchObject({ code: 'not_found' })
+    expect(run).not.toHaveBeenCalled()
   })
 
   it('refuses a bad id', async () => {
@@ -196,7 +227,7 @@ describe('fetchFile', () => {
     fakeDownload()
     const f = await fetchFile('m@x.com', 'abc', mkDeps())
     const dl = calls.find((c) => c.args.includes('download'))!
-    expect(dl.args).toEqual(expect.arrayContaining(['drive', 'download', 'abc', '--format', 'pdf', '--out', f.path, '--readonly', '--enable-commands-exact', 'drive.download']))
+    expect(dl.args).toEqual(expect.arrayContaining(['drive', 'download', '--json', '--format', 'pdf', '--out', f.path, '--readonly', '--enable-commands-exact', 'drive.download', '--', 'abc']))
     expect(f.name).toBe('Q4 _plan__draft.pdf')
     expect(f.mimeType).toBe('application/pdf')
     expect(f.path.startsWith(tmpDir)).toBe(true)

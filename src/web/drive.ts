@@ -53,7 +53,9 @@ export interface DriveDeps {
 }
 
 export const MAX_DRIVE_BYTES = 25 * 1024 * 1024
-export const DRIVE_ID = /^[A-Za-z0-9_-]{1,128}$/
+/** Never starts with '-', so an id can not be read as a gog flag. */
+export const DRIVE_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/
+const PAGE_TOKEN = /^[A-Za-z0-9_=.~+/][A-Za-z0-9_\-=.~+/]{0,2047}$/
 export const PAGE_SIZE = 100
 export const GOOGLE_EXPORT_PDF = new Set([
   'application/vnd.google-apps.document',
@@ -92,10 +94,12 @@ function defaultRun(args: string[], extra: Record<string, string>, timeoutMs: nu
   })
 }
 
+export const AUTH_LIST_ARGS = ['auth', 'list', '--plain', '--readonly', '--enable-commands-exact', 'auth.list']
+
 const gogAccountsCheck = cachedCheck(async () => {
   const bin = realGogBin() ?? resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) })
   const out = await new Promise<string>((resolve, reject) => {
-    execFile(bin, ['auth', 'list', '--plain'], { timeout: 5_000, maxBuffer: 1024 * 1024, env: cleanEnv({}) }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))))
+    execFile(bin, AUTH_LIST_ARGS, { timeout: 5_000, maxBuffer: 1024 * 1024, env: cleanEnv({}) }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))))
   })
   return parseGogAccountServices(out)
 }, ACCOUNTS_CACHE_MS)
@@ -177,13 +181,16 @@ async function authFor(account: string, deps: DriveDeps): Promise<{ env: Record<
 
 // ---------- Calls ----------
 
-async function gog(command: 'ls' | 'get' | 'download', args: string[], account: string, deps: DriveDeps): Promise<string> {
+async function gog(command: 'ls' | 'get' | 'download', flags: string[], positional: string | null, account: string, deps: DriveDeps): Promise<string> {
   const auth = await authFor(account, deps)
-  const full = ['drive', command, ...args, '--readonly', '--enable-commands-exact', `drive.${command}`, ...auth.args]
+  // Flags first, then `--` and the id, so an id can never be taken for a flag.
+  const full = ['drive', command, '--json', ...flags, '--readonly', '--enable-commands-exact', `drive.${command}`, ...auth.args, ...(positional ? ['--', positional] : [])]
   try {
     const r = await limited(() => deps.run(full, auth.env, CALL_TIMEOUT_MS))
     // gog documents exit code 5 as "not found"; every other failure is unavailable.
     if (r.code === 5) throw new DriveFailure('not_found')
+    // Exit 4 is "auth": the sign-in has expired or been withdrawn.
+    if (r.code === 4) throw new DriveFailure('reconnect')
     if (r.code !== 0) throw new DriveFailure('unavailable')
     return r.stdout
   } catch (err) {
@@ -226,12 +233,13 @@ export async function listFolder(
   deps: DriveDeps = defaultDeps(),
 ): Promise<{ entries: DriveEntry[]; nextPage: string | null }> {
   if (!DRIVE_ID.test(folderId)) throw new DriveFailure('not_found')
+  if (pageToken !== undefined && !PAGE_TOKEN.test(pageToken)) throw new DriveFailure('not_found')
   const args = [
-    '--json', '--parent', folderId, '--max', String(PAGE_SIZE), '--no-all-drives',
+    `--parent=${folderId}`, '--max', String(PAGE_SIZE), '--no-all-drives',
     '--fields', `files(${FIELDS}),nextPageToken`,
-    ...(pageToken ? ['--page', pageToken] : []),
+    ...(pageToken !== undefined ? [`--page=${pageToken}`] : []),
   ]
-  const data = parseJson(await gog('ls', args, account, deps))
+  const data = parseJson(await gog('ls', args, null, account, deps))
   const rows = Array.isArray(data) ? data : isObj(data) && Array.isArray(data['files']) ? data['files'] : []
   const entries = rows.map(toEntry).filter((e): e is DriveEntry => e !== null).sort(byFoldersThenName)
   const next = isObj(data) && typeof data['nextPageToken'] === 'string' && data['nextPageToken'] ? data['nextPageToken'] : null
@@ -241,7 +249,7 @@ export async function listFolder(
 
 export async function getFile(account: string, fileId: string, deps: DriveDeps = defaultDeps()): Promise<DriveEntry> {
   if (!DRIVE_ID.test(fileId)) throw new DriveFailure('not_found')
-  const data = parseJson(await gog('get', [fileId, '--json', '--fields', FIELDS], account, deps))
+  const data = parseJson(await gog('get', ['--fields', FIELDS], fileId, account, deps))
   const entry = toEntry(isObj(data) && isObj(data['file']) ? data['file'] : data)
   if (!entry) throw new DriveFailure('not_found')
   return entry
@@ -283,7 +291,8 @@ export async function fetchFile(
 
   const path = join(deps.tmpDir, randomBytes(12).toString('hex'))
   try {
-    await gog('download', [fileId, ...(exported ? ['--format', 'pdf'] : []), '--out', path], account, deps)
+    // --json is passed for uniformity; stdout is ignored, the file at --out is the result.
+    await gog('download', [...(exported ? ['--format', 'pdf'] : []), '--out', path], fileId, account, deps)
     if (!existsSync(path)) throw new DriveFailure('unavailable')
     if (statSync(path).size > MAX_DRIVE_BYTES) throw new DriveFailure('too_large')
   } catch (err) {
