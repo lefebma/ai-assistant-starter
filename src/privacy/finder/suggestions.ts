@@ -40,8 +40,9 @@ export function nextSuggestion(): { id: number; kind: 'person' | 'company'; valu
       getDb().prepare("UPDATE privacy_suggestions SET status = 'added' WHERE id = ?").run(r.id)
       continue
     }
-    // A web or email address noticed before 1.89.0: never a name to keep private.
-    if (isAddress(r.value)) {
+    // A web or email address, or an all-lowercase word ("there"), noticed
+    // before 1.89.0: never a name to keep private.
+    if (isAddress(r.value) || !/\p{Lu}/u.test(r.value)) {
       getDb().prepare("UPDATE privacy_suggestions SET status = 'declined' WHERE id = ?").run(r.id)
       continue
     }
