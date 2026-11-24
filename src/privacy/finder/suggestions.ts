@@ -8,7 +8,7 @@
  */
 import { getDb } from '../../db.js'
 import { addEntry, findEntry } from '../store.js'
-import type { Found } from './detect.js'
+import { isAddress, type Found } from './detect.js'
 
 export const ADD = 'Add'
 export const NOT_PRIVATE = 'Not private'
@@ -40,6 +40,11 @@ export function nextSuggestion(): { id: number; kind: 'person' | 'company'; valu
       getDb().prepare("UPDATE privacy_suggestions SET status = 'added' WHERE id = ?").run(r.id)
       continue
     }
+    // A web or email address noticed before 1.89.0: never a name to keep private.
+    if (isAddress(r.value)) {
+      getDb().prepare("UPDATE privacy_suggestions SET status = 'declined' WHERE id = ?").run(r.id)
+      continue
+    }
     return { id: r.id, kind: r.kind === 'person' ? 'person' : 'company', value: r.value }
   }
 }
@@ -62,7 +67,9 @@ export function offeredToday(nowMs: number, tz: string): number {
 
 export function suggestionText(value: string, buttons: boolean): string {
   const ask = `Keep ${value} private? It came up in your messages.`
-  return buttons ? `${ask} Add puts it on your privacy list, so it stays on this machine.` : `${ask} To keep it private, reply /private add ${value}`
+  return buttons
+    ? `${ask} Add means the AI service never sees that name: I swap it for a stand-in before sending and put the real name back in my replies.`
+    : `${ask} I can make sure the AI service never sees that name: I swap it for a stand-in before sending and put the real name back in my replies. To do that, reply /private add ${value}`
 }
 
 /** A tap on a suggestion card. Null when the card is something else, so the click never reaches the model. */

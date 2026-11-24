@@ -37,6 +37,13 @@ describe('recordFinds', () => {
     expect(s.nextSuggestion()).toEqual({ id: expect.any(Number), kind: 'company', value: 'Bright Path Dental' })
   })
 
+  it('drops an address noticed before addresses were filtered, and never offers it', () => {
+    db.getDb().prepare("INSERT INTO privacy_suggestions (kind, value, lower, first_seen) VALUES ('company', 'reuters.com', 'reuters.com', 0)").run()
+    s.recordFinds([bpd])
+    expect(s.nextSuggestion()).toEqual({ id: expect.any(Number), kind: 'company', value: 'Bright Path Dental' })
+    expect((db.getDb().prepare("SELECT status FROM privacy_suggestions WHERE lower = 'reuters.com'").get() as { status: string }).status).toBe('declined')
+  })
+
   it('skips a name already on the list, in any case or as an alias', () => {
     store.addEntry('company', 'Bright Path Dental Inc', ['Bright Path Dental'])
     expect(s.recordFinds([{ ...bpd, value: 'BRIGHT PATH DENTAL' }])).toBe(0)
@@ -89,8 +96,8 @@ describe('the card', () => {
   })
 
   it('reads plainly, with and without buttons', () => {
-    expect(s.suggestionText('Acme', true)).toBe('Keep Acme private? It came up in your messages. Add puts it on your privacy list, so it stays on this machine.')
-    expect(s.suggestionText('Acme', false)).toBe('Keep Acme private? It came up in your messages. To keep it private, reply /private add Acme')
+    expect(s.suggestionText('Acme', true)).toBe('Keep Acme private? It came up in your messages. Add means the AI service never sees that name: I swap it for a stand-in before sending and put the real name back in my replies.')
+    expect(s.suggestionText('Acme', false)).toBe('Keep Acme private? It came up in your messages. I can make sure the AI service never sees that name: I swap it for a stand-in before sending and put the real name back in my replies. To do that, reply /private add Acme')
     expect(s.SUGGESTION_BUTTONS).toEqual(['Add', 'Not private'])
   })
 })
