@@ -443,4 +443,9 @@ describe('per-provider confirmation copy', () => {
   it('the Gmail closing page is unchanged', async () => {
     expect(await finishedPageText('gmail')).toContain('You can close this tab and go back to your chat.')
   })
+  it.each(['gmail', 'drive'])('a $ in the box label is shown as typed on the %s page', async (provider) => {
+    const body = await (await confirmPage(setup({ label: 'A$&B$$C' }), `provider=${provider}&box=box-1&nonce=${NONCE}`)).text()
+    expect(body).toContain('<strong>A$&#38;B$$C</strong>')
+    expect(body).not.toContain('{who}')
+  })
 })

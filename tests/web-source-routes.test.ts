@@ -13,7 +13,7 @@ const h = vi.hoisted(() => {
   const { tmpdir } = require('node:os') as typeof import('node:os')
   const { join } = require('node:path') as typeof import('node:path')
   process.env['AGENT_STORE_DIR'] = mkdtempSync(join(tmpdir(), 'web-src-store-'))
-  return { root: mkdtempSync(join(tmpdir(), 'web-src-root-')), flow: { current: null as null | { startLink(chat: string, p: string): string } }, streams: [] as import('node:fs').ReadStream[] }
+  return { resetDrive: { calls: 0 }, root: mkdtempSync(join(tmpdir(), 'web-src-root-')), flow: { current: null as null | { startLink(chat: string, p: string): string } }, streams: [] as import('node:fs').ReadStream[] }
 })
 
 vi.mock('../src/config.js', async (orig) => ({
@@ -32,6 +32,10 @@ vi.mock('node:fs', async (orig) => {
     }) as typeof actual.createReadStream,
   }
 })
+vi.mock('../src/web/drive.js', async (orig) => ({
+  ...(await orig<typeof import('../src/web/drive.js')>()),
+  resetDriveAccounts: () => void h.resetDrive.calls++,
+}))
 vi.mock('../src/connect/instance.js', async (orig) => ({
   ...(await orig<typeof import('../src/connect/instance.js')>()),
   getConnectFlow: () => h.flow.current,
@@ -66,7 +70,7 @@ function makeDeps(over: Partial<DriveDeps> = {}): DriveDeps {
     keeper: null,
     relayConfigured: false,
     gogInstalled: () => true,
-    gogAccounts: async () => [{ account: 'm@x.com', services: ['gmail', 'drive'] }],
+    gogAuthList: async () => 'EMAIL\tCLIENT\tSERVICES\nm@x.com\tdefault\tgmail,drive',
     tmpDir: TMP,
     now: () => Date.now(),
     ...over,
@@ -271,9 +275,11 @@ describe('connect', () => {
     expect(await r.json()).toEqual({ error: 'unavailable' })
   })
 
-  it('returns the command to run on a gog box', async () => {
+  it('returns the command to run on a gog box, and forgets the cached gog accounts', async () => {
+    h.resetDrive.calls = 0
     const r = await post('/api/web/sources/drive/connect', '4242')
     expect(r.status).toBe(200)
+    expect(h.resetDrive.calls).toBe(1)
     expect(await r.json()).toEqual({
       command:
         'gog auth add <your Gmail address> --services gmail,calendar,drive --drive-scope readonly --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify',
@@ -302,6 +308,8 @@ describe('logging', () => {
     await get('/api/web/sources/drive/raw?account=m@x.com&id=abc', '4242')
     const text = JSON.stringify(spies.flatMap((s) => s.mock.calls))
     expect(text).toContain('drive')
+    // The failure is logged too, with the exit code only.
+    expect(text).toContain('{"event":"drive get","ok":false,"exit":1}')
     for (const secret of ['abc', 'Doc', 'm@x.com']) expect(text).not.toContain(secret)
   })
 

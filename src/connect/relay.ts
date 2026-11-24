@@ -206,7 +206,9 @@ function html(status: number, body: string, formAction = "'none'", referrer = 'n
 
 const page = (status: number, msg: string) => html(status, `<p>${esc(msg)}</p>`)
 
-const fillCopy = (text: string, label: string, who: string) => text.replaceAll('{label}', esc(label)).replaceAll('{who}', esc(who))
+// Function replacers, so a `$` in a label is shown as typed, not read as a replacement pattern.
+const fillCopy = (text: string, label: string, who: string) =>
+  text.replaceAll('{label}', () => esc(label)).replaceAll('{who}', () => esc(who))
 
 const BIND_COOKIE = (provider: string) => `__Host-havn-connect-${provider}`
 

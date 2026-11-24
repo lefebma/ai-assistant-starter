@@ -12,7 +12,7 @@ import { registerWebRoutes, type WebRoute } from './http.js'
 import { sendJson, sendError } from './respond.js'
 import { isMainChat } from './file-access.js'
 import { kindFromMime, rawHeaders, type FileKind } from './file-kind.js'
-import { DriveFailure, driveAccounts, driveConnectMode, fetchFile, listFolder, type DriveDeps, type DriveError } from './drive.js'
+import { DriveFailure, driveAccounts, driveConnectMode, fetchFile, listFolder, resetDriveAccounts, type DriveDeps, type DriveError } from './drive.js'
 import { getConnectFlow } from '../connect/instance.js'
 
 const STATUS: Record<DriveError, number> = { not_connected: 409, reconnect: 409, not_found: 404, too_large: 413, unavailable: 503 }
@@ -130,7 +130,11 @@ registerWebRoutes([
     handler(ctx) {
       const mode = OWNER_ONLY(ctx) ? driveConnectMode(testDeps) : null
       if (!mode) return sendError(ctx.res, 404, 'not_found')
-      if (mode === 'gog') return sendJson(ctx.res, 200, { command: GOG_CONNECT_COMMAND })
+      if (mode === 'gog') {
+        // The next sources check asks gog again, so Refresh after the sign-in shows Drive.
+        resetDriveAccounts()
+        return sendJson(ctx.res, 200, { command: GOG_CONNECT_COMMAND })
+      }
       const flow = getConnectFlow()
       if (!flow) return sendError(ctx.res, 503, 'unavailable')
       sendJson(ctx.res, 200, { url: flow.startLink(ctx.chatId, 'drive') })

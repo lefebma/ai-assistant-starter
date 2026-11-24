@@ -8,10 +8,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   listFolder, getFile, fetchFile, driveAccounts, driveConnectMode, DriveFailure,
-  MAX_DRIVE_BYTES, AUTH_LIST_ARGS, DRIVE_ID, PAGE_SIZE, GOOGLE_EXPORT_PDF, type DriveDeps,
+  MAX_DRIVE_BYTES, AUTH_LIST_ARGS, DRIVE_ID, PAGE_SIZE, GOOGLE_EXPORT_PDF, driveAuthListCache, type DriveDeps,
 } from '../src/web/drive.js'
+import { logger } from '../src/logger.js'
 
 vi.mock('../src/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }))
+
+// The shape of `gog auth list --plain`, as in the parseGogAccounts tests.
+const AUTH_LIST = [
+  'EMAIL\tCLIENT\tSERVICES\tCREATED\tAUTH',
+  'me@gmail.com\tdefault\tgmail,calendar\t2026-01-01T00:00:00Z\toauth',
+  'cal@only.com\tdefault\tcalendar,drive\t2026-01-01T00:00:00Z\toauth',
+].join('\n')
 
 type Call = { args: string[]; env: Record<string, string> }
 let tmpDir: string
@@ -30,7 +38,7 @@ function mkDeps(over: Partial<DriveDeps> = {}): DriveDeps {
     keeper: keeper as unknown as DriveDeps['keeper'],
     relayConfigured: true,
     gogInstalled: () => true,
-    gogAccounts: async () => [],
+    gogAuthList: async () => '',
     tmpDir,
     now: () => Date.now(),
     ...over,
@@ -76,7 +84,7 @@ describe('listFolder', () => {
   })
 
   it('a gog-signed account is named with --account and gets no token', async () => {
-    const deps = mkDeps({ relayConfigured: false, gogAccounts: async () => [{ account: 'm@x.com', services: ['drive', 'gmail'] }] })
+    const deps = mkDeps({ relayConfigured: false, gogAuthList: async () => 'm@x.com\tdefault\tdrive,gmail' })
     await listFolder('m@x.com', 'root', undefined, deps)
     expect(last().args).toEqual(expect.arrayContaining(['--account', 'm@x.com']))
     expect(last().env.GOG_ACCESS_TOKEN).toBeUndefined()
@@ -128,7 +136,7 @@ describe('listFolder', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  it.each(['--all', 'a b', '', 'x'.repeat(2049), '-x', 'a;b'])('refuses page token %j before gog runs', async (tok) => {
+  it.each(['--all', 'a b', 'a\tb', 'a\nb', 'a\u0000b', '', 'x'.repeat(2049), '-x'])('refuses page token %j before gog runs', async (tok) => {
     await expect(listFolder('m@x.com', 'root', tok, mkDeps())).rejects.toMatchObject({ code: 'not_found' })
     expect(run).not.toHaveBeenCalled()
   })
@@ -136,6 +144,21 @@ describe('listFolder', () => {
   it('accepts a realistic page token', async () => {
     await listFolder('m@x.com', 'root', 'ABC_d-e=f.g~h+i/j', mkDeps())
     expect(last().args).toContain('--page=ABC_d-e=f.g~h+i/j')
+  })
+
+  it.each(['~!!~AI9FV7abc==', 'a;b', 'x'.repeat(2048)])('accepts Drive page token %j as it is', async (tok) => {
+    await listFolder('m@x.com', 'root', tok, mkDeps())
+    expect(last().args).toContain(`--page=${tok}`)
+  })
+
+  it('gog exit code 3 (documented: empty results) on ls is an empty folder', async () => {
+    run.mockImplementationOnce(async () => ({ code: 3, stdout: '' }))
+    expect(await listFolder('m@x.com', 'root', undefined, mkDeps())).toEqual({ entries: [], nextPage: null })
+  })
+
+  it('exit code 3 on get keeps today\'s mapping', async () => {
+    run.mockImplementationOnce(async () => ({ code: 3, stdout: '' }))
+    await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toMatchObject({ code: 'unavailable' })
   })
 
   it('gog exit code 4 (documented: auth) answers reconnect for every call', async () => {
@@ -153,12 +176,34 @@ describe('listFolder', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('a revoked or missing token answers reconnect', async () => {
+  it('a revoked account answers reconnect', async () => {
     keeper = { accounts: () => [{ account: 'm@x.com', state: 'reconnect' }], token: async () => null }
     await expect(listFolder('m@x.com', 'root', undefined, mkDeps())).rejects.toMatchObject({ code: 'reconnect' })
-    keeper = { accounts: () => [{ account: 'm@x.com', state: 'ok' }], token: async () => null }
-    await expect(listFolder('m@x.com', 'root', undefined, mkDeps())).rejects.toMatchObject({ code: 'reconnect' })
     expect(run).not.toHaveBeenCalled()
+  })
+
+  it('no token for an account that is not revoked (renewal failed, relay down) answers unavailable', async () => {
+    keeper = { accounts: () => [{ account: 'm@x.com', state: 'ok' }], token: async () => null }
+    await expect(listFolder('m@x.com', 'root', undefined, mkDeps())).rejects.toMatchObject({ code: 'unavailable' })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('logs failures with the exit only, never stderr, ids, names or accounts', async () => {
+    const warn = vi.mocked(logger.warn)
+    warn.mockClear()
+    run.mockImplementationOnce(async () => ({ code: 7, stdout: 'secret-stdout m@x.com' }))
+    await expect(listFolder('m@x.com', 'root', undefined, mkDeps())).rejects.toBeTruthy()
+    run.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('timed out m@x.com'), { killed: true })))
+    await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toBeTruthy()
+    run.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('spawn gog ENOENT'), { code: 'ENOENT' })))
+    await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toBeTruthy()
+    expect(warn.mock.calls.map((c) => c[0])).toEqual([
+      { event: 'drive ls', ok: false, exit: 7 },
+      { event: 'drive get', ok: false, exit: 'timeout' },
+      { event: 'drive get', ok: false, exit: 'missing' },
+    ])
+    const text = JSON.stringify(warn.mock.calls)
+    for (const secret of ['abc', 'm@x.com', 'secret-stdout', 'root']) expect(text).not.toContain(secret)
   })
 
   it('a timeout, a missing gog and a non-zero exit all answer unavailable', async () => {
@@ -318,23 +363,17 @@ describe('concurrency', () => {
 
 describe('accounts and mode', () => {
   it('on a relay box only relay-connected accounts are listed, gog sign-ins are ignored', async () => {
-    expect(await driveAccounts(mkDeps({ relayConfigured: true, gogAccounts: async () => [{ account: 'other@x.com', services: ['drive'] }] })))
+    expect(await driveAccounts(mkDeps({ relayConfigured: true, gogAuthList: async () => AUTH_LIST })))
       .toEqual([{ account: 'm@x.com', state: 'ok' }])
   })
 
-  it('without the relay, gog accounts whose services include drive are listed', async () => {
-    const deps = mkDeps({
-      relayConfigured: false,
-      gogAccounts: async () => [
-        { account: 'a@x.com', services: ['gmail', 'calendar'] },
-        { account: 'b@x.com', services: ['Drive'] },
-      ],
-    })
-    expect(await driveAccounts(deps)).toEqual([{ account: 'b@x.com', state: 'ok' }])
+  it('without the relay, gog accounts whose services include drive are listed (real auth list shape)', async () => {
+    const deps = mkDeps({ relayConfigured: false, gogAuthList: async () => AUTH_LIST })
+    expect(await driveAccounts(deps)).toEqual([{ account: 'cal@only.com', state: 'ok' }])
   })
 
   it('a gog listing failure means no accounts', async () => {
-    expect(await driveAccounts(mkDeps({ relayConfigured: false, gogAccounts: async () => { throw new Error('x') } }))).toEqual([])
+    expect(await driveAccounts(mkDeps({ relayConfigured: false, gogAuthList: async () => { throw new Error('x') } }))).toEqual([])
   })
 
   it('names the connect mode', () => {
@@ -345,8 +384,42 @@ describe('accounts and mode', () => {
   })
 
   it('with neither a relay nor gog there are no accounts and gog is never asked', async () => {
-    const gogAccounts = vi.fn(async () => [{ account: 'a@x.com', services: ['drive'] }])
-    expect(await driveAccounts(mkDeps({ relayConfigured: false, gogInstalled: () => false, gogAccounts }))).toEqual([])
-    expect(gogAccounts).not.toHaveBeenCalled()
+    const gogAuthList = vi.fn(async () => AUTH_LIST)
+    expect(await driveAccounts(mkDeps({ relayConfigured: false, gogInstalled: () => false, gogAuthList }))).toEqual([])
+    expect(gogAuthList).not.toHaveBeenCalled()
+  })
+})
+
+describe('gog account cache', () => {
+  const noDrive = 'EMAIL\tCLIENT\tSERVICES\nme@gmail.com\tdefault\tgmail,calendar'
+  it('keeps an answer that has a Drive account for five minutes', async () => {
+    let t = 0
+    const read = vi.fn(async () => AUTH_LIST)
+    const cache = driveAuthListCache(read, 5 * 60_000, () => t)
+    await cache.get()
+    t = 4 * 60_000
+    await cache.get()
+    expect(read).toHaveBeenCalledTimes(1)
+    t = 6 * 60_000
+    await cache.get()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not keep an answer with no Drive account, so a fresh sign-in shows at once', async () => {
+    const answers = [noDrive, AUTH_LIST]
+    const read = vi.fn(async () => answers.shift()!)
+    const cache = driveAuthListCache(read, 5 * 60_000, () => 0)
+    expect(await cache.get()).toBe(noDrive)
+    expect(await cache.get()).toBe(AUTH_LIST)
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('reset makes the next check ask gog again', async () => {
+    const read = vi.fn(async () => AUTH_LIST)
+    const cache = driveAuthListCache(read, 5 * 60_000, () => 0)
+    await cache.get()
+    cache.reset()
+    await cache.get()
+    expect(read).toHaveBeenCalledTimes(2)
   })
 })

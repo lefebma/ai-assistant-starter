@@ -21,6 +21,7 @@ import { realGogBin, resolveGogBin } from '../infra/gog-bin.js'
 import { connectSettings, getDriveKeeper } from '../connect/instance.js'
 import type { DriveTokenKeeper } from '../connect/drive-token.js'
 import { cachedCheck } from './connections.js'
+import { parseGogAccounts } from '../email-alerts/sources.js'
 import { dispositionName, GOOGLE_EXPORT_PDF } from './file-kind.js'
 
 export { GOOGLE_EXPORT_PDF }
@@ -50,7 +51,8 @@ export interface DriveDeps {
   relayConfigured: boolean
   /** True when the real gog binary resolves to an existing file. */
   gogInstalled(): boolean
-  gogAccounts(): Promise<{ account: string; services: string[] }[]>
+  /** The stdout of `gog auth list --plain` (AUTH_LIST_ARGS). */
+  gogAuthList(): Promise<string>
   tmpDir: string
   now(): number
 }
@@ -58,7 +60,13 @@ export interface DriveDeps {
 export const MAX_DRIVE_BYTES = 25 * 1024 * 1024
 /** Never starts with '-', so an id can not be read as a gog flag. */
 export const DRIVE_ID = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$/
-const PAGE_TOKEN = /^[A-Za-z0-9_=.~+/][A-Za-z0-9_\-=.~+/]{0,2047}$/
+/**
+ * Drive page tokens are opaque and may hold any punctuation (some begin `~!!~`).
+ * The token goes to gog as one `--page=<token>` argument through execFile, so
+ * no shell reads it: only the length, whitespace, control characters and a
+ * leading dash are checked.
+ */
+const PAGE_TOKEN = /^(?!-)[^\s\p{Cc}]{1,2048}$/u
 export const PAGE_SIZE = 100
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const GOOGLE_NATIVE = 'application/vnd.google-apps.'
@@ -94,25 +102,37 @@ function defaultRun(args: string[], extra: Record<string, string>, timeoutMs: nu
 
 export const AUTH_LIST_ARGS = ['auth', 'list', '--plain', '--readonly', '--enable-commands-exact', 'auth.list']
 
-const gogAccountsCheck = cachedCheck(async () => {
+/**
+ * `gog auth list` kept for a while, but only while it names an account with
+ * Drive: an answer without one is asked again next time, so a sign-in just
+ * finished shows at once.
+ */
+export function driveAuthListCache(
+  read: () => Promise<string>,
+  ttlMs: number = ACCOUNTS_CACHE_MS,
+  now: () => number = Date.now,
+): { get(): Promise<string>; reset(): void } {
+  const check = cachedCheck(read, ttlMs, now)
+  return {
+    async get() {
+      const out = await check.get()
+      if (parseGogAccounts(out, 'drive').length === 0) check.reset()
+      return out
+    },
+    reset: () => check.reset(),
+  }
+}
+
+const gogAuthListCheck = driveAuthListCache(() => {
   const bin = realGogBin() ?? resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) })
-  const out = await new Promise<string>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     execFile(bin, AUTH_LIST_ARGS, { timeout: 5_000, maxBuffer: 1024 * 1024, env: cleanEnv({}) }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))))
   })
-  return parseGogAccountServices(out)
-}, ACCOUNTS_CACHE_MS)
+})
 
-/** `gog auth list --plain` is TSV: the account first, services somewhere after it. */
-export function parseGogAccountServices(stdout: string): { account: string; services: string[] }[] {
-  const out: { account: string; services: string[] }[] = []
-  for (const line of stdout.split('\n')) {
-    const cols = line.split('\t')
-    const account = (cols[0] ?? '').trim()
-    if (!/^[^\s@]+@[^\s@]+$/.test(account)) continue
-    const services = cols.slice(1).flatMap((c) => c.split(/[,\s]+/)).map((s) => s.trim().toLowerCase()).filter(Boolean)
-    out.push({ account, services })
-  }
-  return out
+/** Forget the cached gog account list (the connect route calls this on a gog box). */
+export function resetDriveAccounts(): void {
+  gogAuthListCheck.reset()
 }
 
 function defaultGogInstalled(): boolean {
@@ -127,7 +147,7 @@ function defaultDeps(): DriveDeps {
     keeper: getDriveKeeper(),
     relayConfigured: connectSettings() !== null,
     gogInstalled: defaultGogInstalled,
-    gogAccounts: () => gogAccountsCheck.get(),
+    gogAuthList: () => gogAuthListCheck.get(),
     tmpDir: join(STORE_DIR, 'drive-tmp'),
     now: () => Date.now(),
   }
@@ -154,7 +174,7 @@ export async function driveAccounts(deps: DriveDeps = defaultDeps()): Promise<{ 
   if (deps.relayConfigured) return deps.keeper ? deps.keeper.accounts() : []
   if (!deps.gogInstalled()) return []
   try {
-    return (await deps.gogAccounts()).filter((a) => a.services.some((s) => s.toLowerCase() === 'drive')).map((a) => ({ account: a.account, state: 'ok' as const }))
+    return parseGogAccounts(await deps.gogAuthList(), 'drive').map((account) => ({ account, state: 'ok' as const }))
   } catch {
     return []
   }
@@ -173,28 +193,36 @@ async function authFor(account: string, deps: DriveDeps): Promise<{ env: Record<
   if (known.state === 'reconnect') throw new DriveFailure('reconnect')
   if (!deps.relayConfigured) return { env: {}, args: ['--account', known.account] }
   const token = deps.keeper ? await deps.keeper.token(known.account) : null
-  if (!token) throw new DriveFailure('reconnect')
+  // Not revoked but no token (renewal failed, relay down): a passing problem, not a new sign-in.
+  if (!token) throw new DriveFailure('unavailable')
   return { env: { GOG_ACCESS_TOKEN: token }, args: [] }
 }
 
 // ---------- Calls ----------
 
-async function gog(command: 'ls' | 'get' | 'download', flags: string[], positional: string | null, account: string, deps: DriveDeps): Promise<string> {
+/** Stdout for a good run, or null for exit 3 (gog: empty results) on `ls`, which is an empty folder. */
+async function gog(command: 'ls' | 'get' | 'download', flags: string[], positional: string | null, account: string, deps: DriveDeps): Promise<string | null> {
   const auth = await authFor(account, deps)
   // Flags first, then `--` and the id, so an id can never be taken for a flag.
   const full = ['drive', command, '--json', ...flags, '--readonly', '--enable-commands-exact', `drive.${command}`, ...auth.args, ...(positional ? ['--', positional] : [])]
+  // Count only: the exit, never stderr, ids, names or accounts.
+  const failed = (exit: number | string) => logger.warn({ event: `drive ${command}`, ok: false, exit }, 'drive call failed')
+  let r: { code: number; stdout: string }
   try {
-    const r = await limited(() => deps.run(full, auth.env, CALL_TIMEOUT_MS))
-    // gog documents exit code 5 as "not found"; every other failure is unavailable.
-    if (r.code === 5) throw new DriveFailure('not_found')
-    // Exit 4 is "auth": the sign-in has expired or been withdrawn.
-    if (r.code === 4) throw new DriveFailure('reconnect')
-    if (r.code !== 0) throw new DriveFailure('unavailable')
-    return r.stdout
+    r = await limited(() => deps.run(full, auth.env, CALL_TIMEOUT_MS))
   } catch (err) {
-    if (err instanceof DriveFailure) throw err
+    const e = err as { killed?: boolean; code?: unknown }
+    failed(e.code === 'ENOENT' ? 'missing' : e.killed ? 'timeout' : 'error')
     throw new DriveFailure('unavailable')
   }
+  if (r.code === 0) return r.stdout
+  if (r.code === 3 && command === 'ls') return null
+  failed(r.code)
+  // gog documents exit code 5 as "not found" and 4 as "auth" (the sign-in has
+  // expired or been withdrawn); every other failure is unavailable.
+  if (r.code === 5) throw new DriveFailure('not_found')
+  if (r.code === 4) throw new DriveFailure('reconnect')
+  throw new DriveFailure('unavailable')
 }
 
 function parseJson(text: string): unknown {
@@ -237,7 +265,12 @@ export async function listFolder(
     '--fields', `files(${FIELDS}),nextPageToken`,
     ...(pageToken !== undefined ? [`--page=${pageToken}`] : []),
   ]
-  const data = parseJson(await gog('ls', args, null, account, deps))
+  const out = await gog('ls', args, null, account, deps)
+  if (out === null) {
+    logger.info({ event: 'drive list', entries: 0, ok: true })
+    return { entries: [], nextPage: null }
+  }
+  const data = parseJson(out)
   const rows = Array.isArray(data) ? data : isObj(data) && Array.isArray(data['files']) ? data['files'] : []
   const entries = rows.map(toEntry).filter((e): e is DriveEntry => e !== null).sort(byFoldersThenName)
   const next = isObj(data) && typeof data['nextPageToken'] === 'string' && data['nextPageToken'] ? data['nextPageToken'] : null
@@ -247,7 +280,7 @@ export async function listFolder(
 
 export async function getFile(account: string, fileId: string, deps: DriveDeps = defaultDeps()): Promise<DriveEntry> {
   if (!DRIVE_ID.test(fileId)) throw new DriveFailure('not_found')
-  const data = parseJson(await gog('get', ['--fields', FIELDS], fileId, account, deps))
+  const data = parseJson((await gog('get', ['--fields', FIELDS], fileId, account, deps)) ?? '')
   const entry = toEntry(isObj(data) && isObj(data['file']) ? data['file'] : data)
   if (!entry) throw new DriveFailure('not_found')
   return entry
