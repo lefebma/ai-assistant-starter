@@ -279,13 +279,15 @@ async function answer(
     // access) when nothing else holds the buttons; any other is a typed hint.
     const sites = result.sites ?? []
     const approver = sites.length ? liveEgressSettings().approver : 'operator'
+    // A site that cannot ride and has nothing to type (Ask for access needs a
+    // button) is not offered, and stays unoffered for next time.
     const ride = !card && !replyLabels.length ? sites[0] : undefined
-    const siteLines = sites.map((h) => offerText(h, approver, h === ride))
+    const shown = sites.map((h) => ({ h, line: offerText(h, approver, h === ride) })).filter((o): o is { h: string; line: string } => !!o.line)
     const labels = card ? PIN_BUTTONS : ride ? buttonsFor(approver) : replyLabels
-    const content = [cleanText, ...notes, ...offers, ...siteLines].filter(Boolean).join('\n\n')
+    const content = [cleanText, ...notes, ...offers, ...shown.map((o) => o.line)].filter(Boolean).join('\n\n')
     const mid = addMessage(id, 'assistant', content, files, labels)
     if (card) setProposalCard(proposeDecision(chatId, card.topic, card.text, scope), `${id}:${mid}`)
-    for (const h of sites) markOffered(h, h === ride ? `web:${chatId}:${mid}` : null)
+    for (const { h } of shown) markOffered(h, h === ride ? `web:${chatId}:${mid}` : null)
     return { kind: 'reply', mid }
   }
 

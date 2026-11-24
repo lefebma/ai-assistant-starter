@@ -98,18 +98,27 @@ describe('refused sites in a chat app', () => {
   it('offers Ask for access when only whoever runs the box approves', async () => {
     h.approver = 'operator'
     const { sent, send } = fakeAdapter(true)
-    await send({ text: 'open it', messageId: '1' })
+    await send({ text: 'open blocked.example.net', messageId: '1' })
     expect(sent.find((m) => /blocked\.example\.net/.test(m.text))!.buttons).toEqual(['Ask for access', 'Not needed'])
   })
 
   it('never asks in another chat, and never twice about one site', async () => {
     const other = fakeAdapter(true, 'someone-else')
-    await other.send({ text: 'open it', messageId: '1' })
+    await other.send({ text: 'open blocked.example.net', messageId: '1' })
     expect(other.sent.some((m) => /Allow blocked/.test(m.text))).toBe(false)
     const { sent, send } = fakeAdapter(true)
-    await send({ text: 'open it', messageId: '2' })
-    await send({ text: 'and again', messageId: '3' })
+    await send({ text: 'open blocked.example.net', messageId: '2' })
+    await send({ text: 'open blocked.example.net again', messageId: '3' })
     expect(sent.filter((m) => /Allow blocked\.example\.net\?/.test(m.text))).toHaveLength(1)
+  })
+
+  it('never offers the browser\'s own traffic or a site nobody named, and tells the model to say it plainly', async () => {
+    h.sites = ['android.clients.google.com', 'cdn.tracker.example', 'blocked.example.net']
+    const { sent, send } = fakeAdapter(true)
+    await send({ text: 'open blocked.example.net', messageId: '1' })
+    const cards = sent.filter((m) => /isn't on my list of sites/.test(m.text))
+    expect(cards.map((m) => m.text)).toEqual([expect.stringMatching(/^Allow blocked\.example\.net\?/)])
+    expect(String(h.runAgent.mock.calls[0]![0])).toContain('say so in one plain sentence that names the site by its address')
   })
 
   it('/egress remove goes to the helper', async () => {

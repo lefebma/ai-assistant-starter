@@ -39,7 +39,7 @@ import { noteForFinder } from './privacy/finder/service.js'
 import { resolveSuggestionClick } from './privacy/finder/suggestions.js'
 import { tipContext } from './tips/context.js'
 import { collectRefusedSites } from './egress/index.js'
-import { buttonsFor, egressCommand, markOffered, offerText, resolveSiteClick, sitesToOffer, type ApprovalDeps } from './egress/approvals.js'
+import { SITE_REFUSAL_INSTRUCTION, buttonsFor, egressCommand, markOffered, offerText, resolveSiteClick, sitesToOffer, type ApprovalDeps } from './egress/approvals.js'
 import { DECISION_INSTRUCTION, PIN_BUTTONS, decisionCommand, ledgerBlock, outcomeText, proposalCard, proposalHint, proposeDecision, resolveProposal, setProposalCard } from './memory/decisions.js'
 import { isManagedAi, ownerPauseReply, readAiLimit, repeatReply, VOICE_OFF_REPLY, writeAiLimit } from './ai-limit.js'
 import { markUsageWarned, usageWarningDue } from './ai-usage.js'
@@ -380,7 +380,7 @@ async function runTurn(
 
   // Pinned decisions ride every turn, outside the history that trimming and
   // compaction drop, with how to propose a new one (card #235).
-  const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, REMEMBER_INSTRUCTION, onboardingNudge, rawText]
+  const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, REMEMBER_INSTRUCTION, EGRESS === 'enforce' ? SITE_REFUSAL_INSTRUCTION : '', onboardingNudge, rawText]
     .filter(Boolean)
     .join('\n\n')
 
@@ -627,7 +627,7 @@ async function runTurn(
     if (proposals.length) await sendDecisionCards(adapter, chatId, proposals, scope)
 
     // A site this turn was refused: ask the owner about it (card #306).
-    await sendSiteCards(adapter, chatId, refusedSites)
+    await sendSiteCards(adapter, chatId, refusedSites, `${rawText}\n${response ?? ''}`)
 
     // Managed box at 80% of its monthly cap (card #159): one heads-up a month,
     // to the owner only, after the reply. Marked only once it is delivered,
@@ -733,14 +733,16 @@ export const siteApprovalDeps: ApprovalDeps = {
     )).text,
 }
 
-/** One card per refused site, in the main chat, after the reply. */
-async function sendSiteCards(adapter: PlatformAdapter, chatId: string, sites: string[], cardPrefix = ''): Promise<void> {
+/** A card for the site this turn was refused, in the main chat, after the reply. */
+async function sendSiteCards(adapter: PlatformAdapter, chatId: string, sites: string[], context: string, cardPrefix = ''): Promise<void> {
   if (EGRESS !== 'enforce' || !isPrimaryChat(chatId) || !sites.length) return
   const approver = liveEgressSettings().approver
-  for (const host of sitesToOffer(sites)) {
+  for (const host of sitesToOffer(sites, context)) {
     try {
       const buttons = adapter.supportsButtons
-      const id = await adapter.sendMessage(chatId, offerText(host, approver, buttons), buttons ? { buttons: buttonsFor(approver) } : undefined)
+      const text = offerText(host, approver, buttons)
+      if (!text) continue
+      const id = await adapter.sendMessage(chatId, text, buttons ? { buttons: buttonsFor(approver) } : undefined)
       markOffered(host, buttons && id ? `${cardPrefix}${chatId}:${id}` : null)
     } catch (err) {
       logger.warn({ err: String(err), chatId }, 'Could not offer a refused site')
@@ -952,7 +954,7 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
   try {
     const skillIndex = buildSkillIndex()
     const memoryContext = await contextEngine.buildContext(scope, text)
-    const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, REMEMBER_INSTRUCTION, framing, text].filter(Boolean).join('\n\n')
+    const fullMessage = [skillIndex, memoryContext, projectBlock(scope), ledgerBlock(scope), DECISION_INSTRUCTION, REMEMBER_INSTRUCTION, EGRESS === 'enforce' ? SITE_REFUSAL_INSTRUCTION : '', framing, text].filter(Boolean).join('\n\n')
     logger.info({ chatId, key, messageLength: text.length }, 'Processing web message')
     const { value: turn, sites } = await collectRefusedSites(() => withActor(`web:${chatId}`, () =>
       runAgent(fullMessage, sessionId, undefined, input.onPartial, input.onToolProgress, 'chat', signal, undefined, {
@@ -976,7 +978,7 @@ async function webTurn(input: WebTurnInput, key: string, signal: AbortSignal): P
       await saveConversationTurn(scope, text, cleanText, { reads, remembers })
     }
     // Only the main chat is ever asked about a site (card #306).
-    const offer = EGRESS === 'enforce' && isPrimaryChat(chatId) ? sitesToOffer(sites) : []
+    const offer = EGRESS === 'enforce' && isPrimaryChat(chatId) ? sitesToOffer(sites, `${text}\n${reply ?? ''}`) : []
     return { text: reply, newSessionId, cancelled: false, ...(offer.length ? { sites: offer } : {}) }
   } finally {
     clearLane(key)

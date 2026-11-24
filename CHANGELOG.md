@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.88.0 - 2026-11-23
+
+- **Fixed: a blocked site is now explained in plain words.** When a site isn't on the assistant's list, it says so in one sentence, such as "I can't open bbc.com because it isn't on my list of sites yet", instead of reporting browser errors, proxies and setup advice, and it stops trying other ways in (card #305).
+- **Fixed: the card after a blocked site asks only about a site you named.** The browser's own check-ins with Google (android.clients.google.com and the like) and sites nobody mentioned no longer get a card, so a repeat request no longer looks like the same question asked twice. One card per turn, always with buttons, worded plainly: "I couldn't open bbc.com because it isn't on my list of sites yet. Want me to ask whoever looks after your assistant for access?" (card #306).
+
 ## 1.87.0 - 2026-11-23
 
 - **New: approve a blocked site from the chat.** On a hosted assistant with the site list on, when your assistant is refused a site only because it is not on the list, you get a card in your main chat after the reply. By default it offers Ask for access, which sends a request to whoever looks after your assistant; where they have turned on owner approval, it asks "Allow example.com?" with Allow and Deny, and Allow adds the site for good. Deny is remembered, so the same site is never asked about twice. `/egress` lists the sites, `/egress remove <site>` takes one off, and a newly added site works without a restart. Only a tap or a typed command adds a site, never the assistant itself or anything it reads, and every answer is written to the audit log. Works in Telegram, Teams and the web chat (card #306).

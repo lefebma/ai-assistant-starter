@@ -365,6 +365,16 @@ it offers depends on `EGRESS_APPROVER` in the same root-owned file:
 | unset or `operator` (default) | Ask for access, Not needed | Emails a site access request to `REQUEST_EMAIL` (the `/request` path, same daily limit). You add the site from your machine. |
 | `owner` | Allow, Deny | Allow puts the site on `EGRESS_READ` at once, for good. |
 
+One card per turn, and only for a site the turn named: in the owner's message
+or the reply, by address (`bbc.com`) or by name (Wikipedia). A site nobody
+named, such as the browser checking in with Google or a page's extra requests,
+never gets a card. In the web app the card rides the reply's buttons; when the
+reply already has buttons, the site waits for the next time it is refused.
+
+The assistant is told to say a blocked site plainly, in one sentence naming it
+("I can't open bbc.com because it isn't on my list of sites yet"), never with
+tool names, error codes or setup advice (card #305).
+
 Deny and Not needed are remembered: the same site is never offered twice. Every
 answer goes to the audit log (`egress-approval`). Only one plain public name can
 be approved: never an address, a wildcard, a port, a group or an internal name

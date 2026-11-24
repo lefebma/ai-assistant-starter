@@ -33,8 +33,51 @@ export const ASK = 'Ask for access'
 export const NOT_NEEDED = 'Not needed'
 export const buttonsFor = (a: EgressApprover): string[] => (a === 'owner' ? [ALLOW, DENY] : [ASK, NOT_NEEDED])
 
-/** At most this many cards after one turn. */
-export const MAX_OFFERS = 2
+/** At most this many cards after one turn: one site, always one you can act on. */
+export const MAX_OFFERS = 1
+
+/**
+ * What the model is told on a box with egress on (card #305). A refusal
+ * surfaces to it as a browser error, a 403 or "egress denied", and left alone
+ * it reports exactly that: tool names, error codes, proxies, allowlists.
+ */
+export const SITE_REFUSAL_INSTRUCTION =
+  'This assistant can open only the sites on its list. When a page, download or command fails because a site is ' +
+  'blocked (for example net::ERR_TUNNEL_CONNECTION_FAILED, a 403 with X-Havn-Egress: denied, or "egress denied"), ' +
+  'say so in one plain sentence that names the site by its address, such as "I can\'t open bbc.com because it ' +
+  'isn\'t on my list of sites yet." Never mention tools, browsers, error codes, proxies, allowlists or settings, ' +
+  'never suggest changing anything on the machine, and do not try to reach the site another way. A note after your ' +
+  'reply offers to ask for access, so do not explain how. Then help with what you can without it.'
+
+/**
+ * Sites a browser reaches on its own (update and sign-in check-ins), never
+ * because of what was asked. Never offered, whatever the turn mentions.
+ */
+const BACKGROUND = [
+  /(^|\.)clients\d*\.google\.com$/,
+  /(^|\.)gvt[12]\.com$/,
+  /^(update|safebrowsing|optimizationguide-pa|content-autofill|clientservices|android)\.googleapis\.com$/,
+]
+const bare = (h: string) => h.replace(/^www\./, '')
+
+/**
+ * Whether the turn named this site: in the owner's message or the reply, by
+ * address (bbc.com, www.bbc.com) or by name (Wikipedia for en.wikipedia.org).
+ * A site the conversation never named is the browser's own traffic or a page's
+ * extra requests, not something the owner wanted.
+ */
+export function mentionedIn(host: string, context: string): boolean {
+  const h = bare(host)
+  const text = context.toLowerCase()
+  for (const m of text.matchAll(/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+/g)) {
+    const t = bare(m[0])
+    if (!t.includes('.') ) continue
+    if (t === h || h.endsWith(`.${t}`) || t.endsWith(`.${h}`)) return true
+  }
+  const labels = h.split('.')
+  const name = labels.length >= 2 ? labels[labels.length - 2]! : ''
+  return name.length >= 3 && new RegExp(`(^|[^a-z0-9-])${name.replace(/-/g, '\\-')}([^a-z0-9-]|$)`).test(text)
+}
 
 type Status = 'offered' | 'allowed' | 'declined' | 'asked' | 'removed'
 type Row = { host: string; status: Status; card: string | null }
@@ -58,12 +101,16 @@ function listed(host: string): boolean {
   })
 }
 
-/** The refused sites worth a card: approvable, not listed, never answered or offered before. */
-export function sitesToOffer(sites: string[]): string[] {
+/**
+ * The refused sites worth a card: approvable, named in the turn (context is
+ * the owner's message and the reply), not the browser's own traffic, not
+ * listed, never answered or offered before.
+ */
+export function sitesToOffer(sites: string[], context: string): string[] {
   const out: string[] = []
   for (const s of sites) {
     const h = approvableHost(s)
-    if (!h || out.includes(h) || listed(h)) continue
+    if (!h || out.includes(h) || BACKGROUND.some((r) => r.test(h)) || !mentionedIn(h, context) || listed(h)) continue
     const r = row(h)
     // Offered once and left unanswered is still not offered again: one card per site.
     if (r && r.status !== 'removed') continue
@@ -73,16 +120,15 @@ export function sitesToOffer(sites: string[]): string[] {
   return out
 }
 
-export function offerText(host: string, approver: EgressApprover, buttons: boolean): string {
-  const why = `Your assistant tried to open ${host} and it is not on this assistant's list of sites, so it could not.`
+/** The card's text, or null when it would offer nothing to act on (asking needs a button). */
+export function offerText(host: string, approver: EgressApprover, buttons: boolean): string | null {
+  const why = `I couldn't open ${host} because it isn't on my list of sites yet.`
   if (approver === 'owner') {
     return buttons
-      ? `${why} Allow ${host}? Allow adds it for good (take it off with /egress remove ${host}).`
+      ? `Allow ${host}? ${why} Allow adds it from now on (/egress remove ${host} takes it off).`
       : `${why} To allow it, reply /egress allow ${host}`
   }
-  return buttons
-    ? `${why} Ask for access sends a request to whoever looks after your assistant.`
-    : `${why} Whoever looks after your assistant can add it.`
+  return buttons ? `${why} Want me to ask whoever looks after your assistant for access?` : null
 }
 
 export function markOffered(host: string, card: string | null): void {
