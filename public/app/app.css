@@ -218,6 +218,11 @@ code { font-family: var(--mono); font-size: 0.9em; }
   transition: grid-template-columns 0.2s ease;
 }
 .shell.files-open { grid-template-columns: var(--left-w) minmax(0, 1fr) var(--right-w); }
+.shell.left-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
+.shell.left-collapsed.files-open { grid-template-columns: 0 minmax(0, 1fr) var(--right-w); }
+.shell.left-collapsed .panel-left { visibility: hidden; border-right: 0; }
+.only-wide { display: none; }
+@media (min-width: 900px) { .only-wide { display: inline-grid; } .only-wide[hidden] { display: none; } }
 
 .panel {
   background: var(--panel);

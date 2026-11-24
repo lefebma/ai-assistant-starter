@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.89.1 - 2026-11-24
+
+- **The side panel can be hidden.** On a wide screen, a panel icon at the top of the left side panel hides it so the chat gets the full width, and a matching icon at the left of the chat header brings it back. Your choice is remembered in that browser. On a narrow screen nothing changes.
+
 ## 1.89.0 - 2026-11-23
 
 - **Fixed: the privacy filter no longer asks to keep a web address private.** Its name finder took reuters.com for a company and offered a card for it. Web and email addresses are never offered now, and any already waiting are dropped: they are not private, and masking one would hide the very site a message is about.
