@@ -5,6 +5,7 @@
  */
 import { ConnectFlow } from './box.js'
 import { GmailTokenKeeper, relayRevoker } from './gmail-token.js'
+import { DriveTokenKeeper } from './drive-token.js'
 import { getSecret, defaultVault } from '../vault/index.js'
 import { saveTokens, loadTokens, clearTokens, listAuthedAccounts } from '../ms/store.js'
 import { installGogShim, resolveReal } from './gog-shim.js'
@@ -16,11 +17,24 @@ import { delimiter, join } from 'node:path'
 
 let flow: ConnectFlow | null | undefined
 let keeper: GmailTokenKeeper | null = null
+let driveKeeper: DriveTokenKeeper | null = null
+let onDriveRevoked: ((account: string) => void | Promise<void>) | undefined
 let onRevoked: ((account: string) => void | Promise<void>) | undefined
 
 /** The route module sets this, so the owner hears about a revoked Gmail grant without this module importing notify. */
 export function setGmailRevokedHandler(fn: (account: string) => void | Promise<void>): void {
   onRevoked = fn
+}
+
+/** Same for Drive: the owner hears about a withdrawn Drive grant. */
+export function setDriveRevokedHandler(fn: (account: string) => void | Promise<void>): void {
+  onDriveRevoked = fn
+}
+
+/** The box's Drive token keeper, once /connect is configured. */
+export function getDriveKeeper(): DriveTokenKeeper | null {
+  getConnectFlow()
+  return driveKeeper
 }
 
 /** The box's Gmail token keeper, once /connect is configured. */
@@ -47,6 +61,8 @@ export function getConnectFlow(): ConnectFlow | null {
   const vault = { get: (n: string) => defaultVault().get(n), set: (n: string, v: string) => defaultVault().set(n, v), delete: (n: string) => defaultVault().delete(n) }
   const k = new GmailTokenKeeper({ relayUrl, boxId, handoffKey, vault, shim, onRevoked: (a) => onRevoked?.(a) })
   keeper = k
+  const dk = new DriveTokenKeeper({ relayUrl, boxId, handoffKey, vault, onRevoked: (a) => onDriveRevoked?.(a) })
+  driveKeeper = dk
   flow = new ConnectFlow({
     relayUrl, boxId, handoffKey,
     vault,
@@ -54,6 +70,7 @@ export function getConnectFlow(): ConnectFlow | null {
     revokers: { gmail: relayRevoker({ relayUrl, boxId, handoffKey }) },
     onChange: async (p) => {
       if (p === 'gmail') await k.tick()
+      if (p === 'drive') await dk.tick()
     },
   })
   return flow
@@ -87,5 +104,6 @@ export function resetConnectFlowForTests(): void {
   setGogShim(undefined)
   flow = undefined
   keeper = null
+  driveKeeper = null
 }
 

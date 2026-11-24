@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { ConnectFlow, type ConnectTokenVault, type MsTokenStore, type Revoker } from '../src/connect/box.js'
 import { signHandoff } from '../src/connect/relay.js'
+import { readDriveEntries } from '../src/connect/drive-token.js'
+import { readGmailEntries } from '../src/connect/gmail-token.js'
 
 const HKEY = 'box-handoff-key-for-tests-0123456789abcdef'
 
@@ -269,3 +271,96 @@ describe('several Gmail accounts (card #271)', () => {
     expect(s.flow.handleCommand('c', '/connect list').reply).toBe('gmail: a@gmail.com (needs /connect gmail again)')
   })
 })
+
+describe('/connect drive (card #284)', () => {
+  const linkIn = (reply: string) => reply.match(/https:\/\/\S+/)![0]
+  async function connectDrive(s: ReturnType<typeof setup>, account = 'm@x.com') {
+    const nonce = s.nonceOf(s.flow.handleCommand('c1', '/connect drive').reply)
+    return s.send(s.body(nonce, { provider: 'drive', account, accessToken: 'DRIVE-AT', refreshToken: 'DRIVE-RT' }))
+  }
+  it('/connect drive gives a one-time link for provider drive', () => {
+    const s = setup()
+    expect(new URL(linkIn(s.flow.handleCommand('c1', '/connect drive').reply)).searchParams.get('provider')).toBe('drive')
+  })
+  it('usage lists drive', () => {
+    const reply = setup().flow.handleCommand('c', '/connect nope').reply
+    expect(reply).toContain('/connect drive - see your Google Drive in the files panel (read only)')
+    expect(reply).toContain('/connect remove drive <account> - forget Drive on this box')
+  })
+  it('a drive hand-off is stored apart from Gmail and leaves IMAP alone', async () => {
+    const s = setup()
+    saveGmail(s, 'm@x.com')
+    s.vault.set('IMAP_ACCOUNT_M_X_COM', JSON.stringify({ address: 'm@x.com' }))
+    const r = await connectDrive(s)
+    expect(r).toMatchObject({ status: 200, chatId: 'c1', message: 'Connected m@x.com. Google Drive is now in the files panel, read only.' })
+    expect(readDriveEntries(s.vault).has('m@x.com')).toBe(true)
+    expect(readGmailEntries(s.vault).get('m@x.com')!.accessToken).toBe('GMAIL-AT')
+    expect(s.vault.get('IMAP_ACCOUNT_M_X_COM')).toBeDefined()
+    expect(s.changes).toEqual(['drive'])
+  })
+  it('/connect list shows drive accounts', async () => {
+    const s = setup()
+    await connectDrive(s)
+    expect(s.flow.handleCommand('c1', '/connect list').reply).toContain('drive: m@x.com')
+  })
+  it('flags a drive account whose grant was withdrawn', () => {
+    const s = setup()
+    s.vault.set('CONNECT_DRIVE', JSON.stringify({ accounts: { 'm@x.com': { account: 'm@x.com', accessToken: 'a', refreshToken: 'r', expiresAt: 1, revoked: true } } }))
+    expect(s.flow.handleCommand('c1', '/connect list').reply).toContain('drive: m@x.com (needs /connect drive again)')
+  })
+  it('removing Drive is local only and never calls the relay', async () => {
+    const s = setup()
+    await connectDrive(s)
+    const out = await s.flow.handleCommandAsync('c1', '/connect remove drive m@x.com')
+    expect(s.revoked).toEqual([])
+    expect(readDriveEntries(s.vault).size).toBe(0)
+    expect(out.reply).toBe('Removed Google Drive for m@x.com from this box. To withdraw the permission at Google, remove Havn under myaccount.google.com/connections; that also disconnects its Gmail.')
+    expect(s.changes).toEqual(['drive', 'drive'])
+  })
+  it('asks which account when several are connected, and handles unknown or none', async () => {
+    const s = setup()
+    expect((await s.flow.handleCommandAsync('c1', '/connect remove drive')).reply).toBe('Nothing connected for drive.')
+    await connectDrive(s, 'a@x.com')
+    await connectDrive(s, 'b@x.com')
+    expect((await s.flow.handleCommandAsync('c1', '/connect remove drive')).reply).toContain('Which account? /connect remove drive <a@x.com|b@x.com>')
+    expect((await s.flow.handleCommandAsync('c1', '/connect remove drive nope@x.com')).reply).toContain('Nothing connected for drive nope@x.com')
+    expect(readDriveEntries(s.vault).size).toBe(2)
+  })
+  it("removing Gmail also drops that address's Drive and says so", async () => {
+    const s = setup()
+    saveGmail(s, 'm@x.com')
+    await connectDrive(s)
+    const out = await s.flow.handleCommandAsync('c1', '/connect remove gmail m@x.com')
+    expect(s.revoked).toEqual(['GMAIL-RT'])
+    expect(readDriveEntries(s.vault).has('m@x.com')).toBe(false)
+    expect(out.reply).toContain('This also disconnected Google Drive for that account.')
+    expect(s.changes).toEqual(['drive', 'drive', 'gmail'])
+  })
+  it('removing Gmail for an address without Drive says nothing about Drive', async () => {
+    const s = setup()
+    saveGmail(s, 'm@x.com')
+    await connectDrive(s, 'other@x.com')
+    const out = await s.flow.handleCommandAsync('c1', '/connect remove gmail m@x.com')
+    expect(out.reply).not.toContain('Google Drive')
+    expect(readDriveEntries(s.vault).has('other@x.com')).toBe(true)
+  })
+  it('a local-only Gmail removal revokes nothing, so Drive stays', async () => {
+    const s = setup()
+    saveGmail(s, 'm@x.com')
+    await connectDrive(s)
+    const out = await s.flow.handleCommandAsync('c1', '/connect remove gmail m@x.com --local-only')
+    expect(readDriveEntries(s.vault).has('m@x.com')).toBe(true)
+    expect(out.reply).not.toContain('Google Drive')
+  })
+  it('a failed Gmail revocation keeps Drive too', async () => {
+    const s = setup(async () => { throw new Error('network') })
+    saveGmail(s, 'm@x.com')
+    await connectDrive(s)
+    await s.flow.handleCommandAsync('c1', '/connect remove gmail m@x.com')
+    expect(readDriveEntries(s.vault).has('m@x.com')).toBe(true)
+  })
+})
+
+function saveGmail(s: ReturnType<typeof setup>, account: string) {
+  s.vault.set('CONNECT_GMAIL', JSON.stringify({ accounts: { [account]: { account, accessToken: 'GMAIL-AT', refreshToken: 'GMAIL-RT', expiresAt: 1 } } }))
+}

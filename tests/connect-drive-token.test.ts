@@ -9,6 +9,7 @@ import { readGmailEntries } from '../src/connect/gmail-token.js'
 import { createRelay, seal, type RelayProvider } from '../src/connect/relay.js'
 import { MemoryUsedStore } from '../src/connect/state.js'
 import type { ConnectTokenVault } from '../src/connect/box.js'
+import { createScrubber, clearRotatingSecrets, REDACTED } from '../src/log-redact.js'
 
 const HKEY = 'box-handoff-key-for-tests-0123456789abcdef'
 const SECRET = 'relay-signing-secret-for-tests-0123456789'
@@ -130,6 +131,16 @@ describe('DriveTokenKeeper', () => {
     expect(readGmailEntries(s.vault).size).toBe(0)
     expect(s.vault.data.has('CONNECT_GMAIL')).toBe(false)
     expect(s.vault.data.has(DRIVE_ENTRY)).toBe(true)
+  })
+
+  it('token() registers what it returns with the log redactor, even before any tick', async () => {
+    clearRotatingSecrets()
+    const s = setup()
+    saveDriveEntry(s.vault, { account: 'm@x.com', accessToken: 'drive-access-7f3a91', refreshToken: 'drive-refresh-2b8c44', expiresAt: 10 * HOUR + 2 * HOUR })
+    expect(await s.keeper.token('m@x.com')).toBe('drive-access-7f3a91')
+    const scrub = createScrubber()
+    expect(scrub.string('call failed with drive-access-7f3a91 and drive-refresh-2b8c44')).toBe(`call failed with ${REDACTED} and ${REDACTED}`)
+    clearRotatingSecrets()
   })
 
   it('dropDriveEntry honours the refresh token guard', () => {

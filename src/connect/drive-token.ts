@@ -77,6 +77,10 @@ export class DriveTokenKeeper {
       e = readDriveEntries(this.o.vault).get(k)
       if (!e || e.revoked || e.expiresAt - this.now() < MIN_LEFT_MS) return null
     }
+    // The log redactor only knows tokens a tick has seen. After a boot this one
+    // may have come straight from the vault, so register it before it leaves.
+    registerRotatingSecret(`drive:${e.account}:access`, e.accessToken)
+    registerRotatingSecret(`drive:${e.account}:refresh`, e.refreshToken)
     return e.accessToken
   }
 
