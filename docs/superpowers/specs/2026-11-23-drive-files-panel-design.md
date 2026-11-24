@@ -305,6 +305,16 @@ Where the build differs from the design above, or settles something it left open
   connect line, `/help` and one tip) describe the `gog auth add ... --services
   gmail,calendar,drive --drive-scope readonly` line for self-installed
   assistants. The skill gains no Drive instructions.
+- Folders come before files within each page only: `gog` has no ordering
+  flag, so a later page can hold folders again.
+- Page tokens are checked for length (up to 2048), whitespace and control
+  characters, and a leading `-` only. Real Drive tokens can hold any
+  punctuation, and the token reaches `gog` as one argument with no shell.
+- `gog` exit code 3 on `drive ls` (empty results) is an empty folder.
+- Drive previews for images and PDFs are fetched by the page first, so a
+  failure (too large, no longer there, needs connecting again) is explained in
+  words; the page then shows the bytes from an object URL. The page's
+  `frame-src` allows `blob:` for this.
 
 Not yet verified against real Google (for the live check):
 
@@ -314,3 +324,10 @@ Not yet verified against real Google (for the live check):
 - That `--readonly` still lets a gog-signed account renew its token.
 - What a Google revoke of one token does to the other grant (Gmail and Drive),
   in both directions.
+- A real page token, and a folder with more than 100 items.
+- The exit code `gog drive ls` gives for an empty folder.
+- That `download --out <path> --format pdf` writes exactly that path.
+- That connecting Drive leaves the same account's Gmail working, and the
+  reverse.
+- A pass on a self-installed (gog) box: list, preview, and list again an hour
+  later.

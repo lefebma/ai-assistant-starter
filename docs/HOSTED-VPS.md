@@ -617,7 +617,9 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   It adds read-only Drive for the files panel. On a self-installed assistant,
   this sign-in also lets the assistant's own Google tool read Drive. A hosted
   assistant normally connects Drive with `/connect drive` through the relay
-  once the provider has updated it.
+  once the provider has updated it. On a hosted assistant that uses the
+  sign-in relay, the files panel only shows Drive connected with
+  `/connect drive`; a gog sign-in that includes Drive is ignored there.
 
 - **OAuth without a browser.** Use gog's built-in remote flow: no listener,
   no open port needed, which fits these boxes better than SSH port-forwarding
