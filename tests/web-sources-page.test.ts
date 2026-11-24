@@ -128,6 +128,24 @@ describe('Drive preview plan', () => {
   })
 })
 
+describe('preview blob type', () => {
+  it('a PDF is always framed as a PDF, whatever the answer said', () => {
+    expect(s.previewBlobType('pdf', 'text/html')).toBe('application/pdf')
+    expect(s.previewBlobType('pdf', 'application/pdf')).toBe('application/pdf')
+    expect(s.previewBlobType('pdf', '')).toBe('application/pdf')
+  })
+  it('an image is shown only with an allowed image type, parameters stripped', () => {
+    expect(s.previewBlobType('image', 'image/png; charset=binary')).toBe('image/png')
+    expect(s.previewBlobType('image', 'IMAGE/SVG+XML')).toBe('image/svg+xml')
+    for (const t of ['image/jpeg', 'image/gif', 'image/webp']) expect(s.previewBlobType('image', t)).toBe(t)
+    for (const t of ['text/html', 'image/x-icon', '', null, undefined]) expect(s.previewBlobType('image', t)).toBeNull()
+  })
+  it('other kinds get no blob', () => {
+    expect(s.previewBlobType('text', 'text/plain')).toBeNull()
+    expect(s.previewBlobType('other', 'application/pdf')).toBeNull()
+  })
+})
+
 describe('sign-in link', () => {
   it('only an https link is used', () => {
     expect(s.safeSignInUrl('https://connect.gethavn.ai/start?x=1')).toBe('https://connect.gethavn.ai/start?x=1')
@@ -160,7 +178,9 @@ describe('the page', () => {
   it('Drive previews explain themselves and the page keeps its retries', () => {
     expect(js).toContain('This kind of Google file opens in Google Drive.')
     // Images and PDFs are fetched first and shown from an object URL that is revoked when replaced.
-    expect(js).toContain('URL.createObjectURL(blob)')
+    // The blob is rebuilt with a type the page chose, never framed as it came.
+    expect(js).toContain('previewBlobType(entry.kind')
+    expect(js).toContain('URL.createObjectURL(new Blob([blob], { type }))')
     expect(js).toContain('URL.revokeObjectURL(state.previewBlob)')
     // Only an https sign-in link is opened.
     expect(js).toContain('safeSignInUrl(r.url)')

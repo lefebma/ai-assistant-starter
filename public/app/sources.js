@@ -111,6 +111,21 @@ export function drivePreviewPlan(entry) {
   return { mode: 'other' }
 }
 
+const PREVIEW_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
+
+/**
+ * The type a fetched Drive preview is shown as, chosen by the page and never
+ * taken as it came: a PDF is always application/pdf (it is framed, and a blob
+ * frame runs as this page), an image only one of a few image types (shown in
+ * <img>, where scripts never run). Null means show nothing from the bytes.
+ */
+export function previewBlobType(kind, contentType) {
+  if (kind === 'pdf') return 'application/pdf'
+  if (kind !== 'image') return null
+  const type = String(contentType || '').split(';')[0].trim().toLowerCase()
+  return PREVIEW_IMAGE_TYPES.has(type) ? type : null
+}
+
 /** The sign-in link to open, only when it is https; null for anything else. */
 export function safeSignInUrl(url) {
   return typeof url === 'string' && /^https:\/\//.test(url) ? url : null

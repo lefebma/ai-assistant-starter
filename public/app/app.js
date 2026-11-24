@@ -7,7 +7,7 @@ import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
 import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
 import { kindFromName } from './filekind.js'
-import { STORAGE_KEY, pickerOptions, showPicker, resolveSource, viewFor, accountOf, needsMore, driveListUrl, driveRawUrl, driveOpenUrl, downloadName, errorText, drivePreviewPlan, safeSignInUrl } from './sources.js'
+import { STORAGE_KEY, pickerOptions, showPicker, resolveSource, viewFor, accountOf, needsMore, driveListUrl, driveRawUrl, driveOpenUrl, downloadName, errorText, drivePreviewPlan, safeSignInUrl, previewBlobType } from './sources.js'
 import { DEFAULT_WIDTH, STEP, clampWidth, widthFromPointer, loadWidth, saveWidth, clearWidth } from './panelwidth.js'
 import { voiceCallSupport, createVoiceCall, callProblem } from './voicecall.js'
 import { readChatGPTExport } from './chatgpt-export.js'
@@ -3103,10 +3103,13 @@ async function driveMediaPreview(entry, gen) {
     const res = await fetch(entry.url, { credentials: 'same-origin' })
     if (res.status === 401) return showSignedOut('')
     if (!res.ok) throw await httpProblem(res)
+    const type = previewBlobType(entry.kind, res.headers.get('content-type'))
     const blob = await res.blob()
     if (gen !== state.previewGen) return
     dropPreviewBlob()
-    state.previewBlob = URL.createObjectURL(blob)
+    if (!type) return bodyEl.replaceChildren(h('p', { class: 'preview-note', text: errorText('unavailable') }))
+    // Rebuilt with the type the page chose, so the bytes can never be read as HTML in the frame.
+    state.previewBlob = URL.createObjectURL(new Blob([blob], { type }))
     if (entry.kind === 'image') {
       const img = h('img', { src: state.previewBlob, alt: entry.name })
       img.addEventListener('error', () => {
