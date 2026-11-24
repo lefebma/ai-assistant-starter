@@ -38,10 +38,10 @@ describe('recordFinds', () => {
   })
 
   it('drops an address noticed before addresses were filtered, and never offers it', () => {
-    db.getDb().prepare("INSERT INTO privacy_suggestions (kind, value, lower, first_seen) VALUES ('company', 'reuters.com', 'reuters.com', 0)").run()
+    db.getDb().prepare("INSERT INTO privacy_suggestions (kind, value, lower, first_seen) VALUES ('company', 'reuters.com', 'reuters.com', 0), ('company', 'there', 'there', 0)").run()
     s.recordFinds([bpd])
     expect(s.nextSuggestion()).toEqual({ id: expect.any(Number), kind: 'company', value: 'Bright Path Dental' })
-    expect((db.getDb().prepare("SELECT status FROM privacy_suggestions WHERE lower = 'reuters.com'").get() as { status: string }).status).toBe('declined')
+    for (const v of ['reuters.com', 'there']) expect((db.getDb().prepare('SELECT status FROM privacy_suggestions WHERE lower = ?').get(v) as { status: string }).status).toBe('declined')
   })
 
   it('skips a name already on the list, in any case or as an alias', () => {

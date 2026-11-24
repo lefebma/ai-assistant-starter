@@ -47,9 +47,13 @@ export function mergeTags(text: string, tags: TokenTag[]): Found[] {
   const tagged = new Map<number, Word>()
   let cursor = 0
   for (const tag of [...tags].sort((a, b) => a.index - b.index)) {
+    const cont = tag.word.startsWith('##')
     const piece = tag.word.replace(/^##/, '')
     if (!piece || piece === '[UNK]') continue
-    const at = text.indexOf(piece, cursor)
+    // A piece that starts a word must be found where a word (or a part after
+    // punctuation) starts: "re" from reuters.com is not the "re" in "there".
+    let at = text.indexOf(piece, cursor)
+    while (!cont && at > 0 && /[\p{L}\p{N}]/u.test(text[at - 1]!) && /[\p{L}\p{N}]/u.test(piece[0]!)) at = text.indexOf(piece, at + 1)
     if (at < 0) continue
     cursor = at + piece.length
     const wi = words.findIndex((w) => at >= w.start && at < w.end)
@@ -109,6 +113,8 @@ export function filterFinds(finds: Found[], skip: Set<string>): Found[] {
     if (f.value.length < MIN_CHARS) return false
     const lower = f.value.toLowerCase()
     if (BRANDS.has(lower) || skip.has(lower) || isAddress(f.value)) return false
+    // A name has a capital somewhere; an all-lowercase find is an ordinary word.
+    if (!/\p{Lu}/u.test(f.value)) return false
     if (f.kind === 'person' && f.value.split(/\s+/).length < 2) return false
     return true
   })

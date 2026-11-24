@@ -62,6 +62,21 @@ describe('mergeTags with typed punctuation', () => {
   })
 })
 
+describe('word pieces land on the right word', () => {
+  it('never puts the start of a name inside an earlier word ("there" on havn-test)', () => {
+    // bert-base-NER splits reuters.com into re ##uters . com; "re" was found inside "there".
+    const text = 'Is there news on reuters.com today'
+    const out = mergeTags(text, [t('B-ORG', 're', 0.95, 5), t('I-ORG', '##uters', 0.95, 6)])
+    expect(out.map((f) => f.value)).toEqual(['reuters.com'])
+    expect(filterFinds(out, new Set())).toEqual([])
+  })
+
+  it('still finds a name after an ordinary word with the same letters', () => {
+    const out = mergeTags('Where is Ann Smith', [t('B-PER', 'Ann', 0.99, 3), t('I-PER', 'Smith', 0.99, 4)])
+    expect(out.map((f) => f.value)).toEqual(['Ann Smith'])
+  })
+})
+
 describe('filterFinds', () => {
   const f = (kind: 'person' | 'company', value: string, score = 0.99) => ({ kind, value, score })
 
@@ -81,5 +96,9 @@ describe('filterFinds', () => {
   it('never offers a web or email address (reuters.com was offered on havn-test)', () => {
     expect(filterFinds([f('company', 'reuters.com'), f('company', 'www.bbc.co.uk'), f('company', 'https://acme.io/x'), f('company', 'sam@acme.io'), f('company', 'Acme.io')], new Set())).toEqual([])
     for (const name of ['Bright Path Dental', 'J.P. Morgan', 'St. Jacobs Farms', 'Acme Inc.', 'Dr. Smith']) expect(isAddress(name)).toBe(false)
+  })
+
+  it('drops an all-lowercase find: a name has a capital', () => {
+    expect(filterFinds([f('company', 'there'), f('company', 'bright path dental'), f('company', 'Élan Café')], new Set())).toEqual([f('company', 'Élan Café')])
   })
 })
