@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createRelay, pkceChallenge, readCapped, seal, unseal, signHandoff, type RelayProvider } from '../src/connect/relay.js'
 import { MemoryUsedStore, signState } from '../src/connect/state.js'
+import { DRIVE_COPY } from '../src/connect/providers.js'
 
 const SECRET = 'relay-signing-secret-for-tests-0123456789'
 const HKEY = 'box-handoff-key-for-tests-0123456789abcdef'
@@ -44,7 +45,12 @@ function setup(opts: { now?: () => number; boxOrigin?: string; exchangeFails?: b
         id === 'box-1' ? { origin: opts.boxOrigin ?? 'https://box1.example.com', handoffKey: HKEY, label: opts.label ?? "Sam's assistant" }
         : id === 'box-2' ? { origin: 'https://box2.example.com', handoffKey: HKEY2 } : undefined,
     },
-    providers: { fake: provider, renewed },
+    providers: {
+      fake: provider,
+      renewed,
+      gmail: { ...provider, label: 'Google' },
+      drive: { ...provider, label: 'Google', copy: DRIVE_COPY },
+    },
     used: new MemoryUsedStore(),
     now: opts.now ?? (() => t),
     log: (e) => logs.push(e),
@@ -405,5 +411,41 @@ describe('retired sealing secret', () => {
     const res = await relay.handle(new Request('https://x/refresh', { method: 'POST', body: raw, headers: { 'x-connect-signature': signHandoff(HKEY, raw) } }))
     const out = (await res.json()) as { refreshToken: string }
     expect(await unseal(SEAL, 'box-1', 'g', out.refreshToken)).toBe('RT')
+  })
+})
+
+describe('per-provider confirmation copy', () => {
+  const startPage = (provider: string) => {
+    const r = setup()
+    return confirmPage(r, `provider=${provider}&box=box-1&nonce=${NONCE}`)
+  }
+  const finishedPageText = async (provider: string) => {
+    const r = setup()
+    const state = await stateFrom(await start(r, `provider=${provider}&box=box-1&nonce=${NONCE}`))
+    return (await cb(r, `code=C&state=${encodeURIComponent(state)}`)).text()
+  }
+  it('the Drive confirmation page says Drive, not mail', async () => {
+    const body = await (await startPage('drive')).text()
+    expect(body).toContain('Connect your Google Drive')
+    expect(body).toContain('see and download the files in your Google Drive. It cannot change them.')
+    expect(body).toContain('Continuing would give them your files.')
+    expect(body).not.toContain('mail')
+  })
+  it('the Gmail confirmation page is unchanged', async () => {
+    const body = await (await startPage('gmail')).text()
+    expect(body).toContain('Connect your Google mail and calendar')
+    expect(body).toContain('access to read and send your email and manage your calendar.')
+    expect(body).toContain('Continuing would give them your mail.')
+  })
+  it('the Drive closing page points back to the files panel', async () => {
+    expect(await finishedPageText('drive')).toContain('Go back to Havn. Your Drive files will appear in the files panel.')
+  })
+  it('the Gmail closing page is unchanged', async () => {
+    expect(await finishedPageText('gmail')).toContain('You can close this tab and go back to your chat.')
+  })
+  it.each(['gmail', 'drive'])('a $ in the box label is shown as typed on the %s page', async (provider) => {
+    const body = await (await confirmPage(setup({ label: 'A$&B$$C' }), `provider=${provider}&box=box-1&nonce=${NONCE}`)).text()
+    expect(body).toContain('<strong>A$&#38;B$$C</strong>')
+    expect(body).not.toContain('{who}')
   })
 })

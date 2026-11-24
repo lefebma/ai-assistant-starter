@@ -50,6 +50,18 @@ export interface RenewedTokens {
   refreshToken?: string
 }
 
+/**
+ * Wording for a provider's confirmation and closing pages. `{label}` is the
+ * provider label and `{who}` the box label; both are HTML-escaped when
+ * substituted, so the text itself is trusted markup written here.
+ */
+export interface ProviderCopy {
+  heading: string
+  grant: string
+  risk: string
+  done: string
+}
+
 export interface RelayProvider {
   /** Shown on the confirmation page: "Continue to Google". */
   label: string
@@ -61,6 +73,8 @@ export interface RelayProvider {
   /** Only providers whose renewal needs the relay's client secret have these. */
   refresh?(refreshToken: string): Promise<RenewedTokens>
   revoke?(refreshToken: string): Promise<void>
+  /** Confirmation and closing wording; absent means the mail and calendar text. */
+  copy?: ProviderCopy
 }
 
 /** The provider no longer honours this refresh token (revoked, expired, password changed). */
@@ -192,6 +206,10 @@ function html(status: number, body: string, formAction = "'none'", referrer = 'n
 
 const page = (status: number, msg: string) => html(status, `<p>${esc(msg)}</p>`)
 
+// Function replacers, so a `$` in a label is shown as typed, not read as a replacement pattern.
+const fillCopy = (text: string, label: string, who: string) =>
+  text.replaceAll('{label}', () => esc(label)).replaceAll('{who}', () => esc(who))
+
 const BIND_COOKIE = (provider: string) => `__Host-havn-connect-${provider}`
 
 function cookieValue(req: Request, name: string): string | null {
@@ -248,14 +266,16 @@ export function createRelay(opts: RelayOpts) {
     const nonce = url.searchParams.get('nonce') ?? ''
     const ok = await checkStart(provider, box, nonce)
     if (!ok) return notValid()
-    const who = esc(ok.rec.label || box)
+    const whoRaw = ok.rec.label || box
+    const c = ok.p.copy
+    const fill = (t: string) => fillCopy(t, ok.p.label, whoRaw)
     const hidden = (n: string, v: string) => `<input type="hidden" name="${n}" value="${esc(v)}">`
     return html(
       200,
-      `<h1 style="font-size:1.3rem">Connect your ${esc(ok.p.label)} mail and calendar</h1>` +
-        `<p>This gives <strong>${who}</strong> access to read and send your email and manage your calendar.</p>` +
+      `<h1 style="font-size:1.3rem">${c ? fill(c.heading) : fill('Connect your {label} mail and calendar')}</h1>` +
+        `<p>${c ? fill(c.grant) : fill('This gives <strong>{who}</strong> access to read and send your email and manage your calendar.')}</p>` +
         `<p><strong>Only continue if you asked your own assistant for this link just now.</strong> ` +
-        `If someone sent it to you, close this page. Continuing would give them your mail.</p>` +
+        `If someone sent it to you, close this page. ${c ? fill(c.risk) : 'Continuing would give them your mail.'}</p>` +
         `<form method="post" action="/start">${hidden('provider', provider)}${hidden('box', box)}${hidden('nonce', nonce)}` +
         `<button type="submit" style="font-size:1rem;padding:.6rem 1.2rem">Continue to ${esc(ok.p.label)}</button></form>`,
       "'self' https:",
@@ -346,7 +366,9 @@ export function createRelay(opts: RelayOpts) {
       })
       if (!res.ok) throw new Error(`box answered ${res.status}`)
       log({ event: 'handoff', box, provider, ok: true })
-      const done = page(200, `Connected to ${rec.label || box}. You can close this tab and go back to your chat.`)
+      const done = p.copy
+        ? html(200, `<p>${fillCopy(p.copy.done, p.label, rec.label || box)}</p>`)
+        : page(200, `Connected to ${rec.label || box}. You can close this tab and go back to your chat.`)
       done.headers.append('set-cookie', `${BIND_COOKIE(provider)}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`)
       return done
     } catch (err) {

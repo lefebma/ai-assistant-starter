@@ -20,7 +20,7 @@ import { getConversation } from './conversations.js'
 import { getProject } from '../projects/store.js'
 import { getFileRoots, listDir, resolveVisible, type DirEntry } from './files.js'
 
-const isMainChat = (chatId: string): boolean => PRIMARY_CHAT_ID !== '' && chatId === PRIMARY_CHAT_ID
+export const isMainChat = (chatId: string): boolean => PRIMARY_CHAT_ID !== '' && chatId === PRIMARY_CHAT_ID
 
 /** The folder name a chat's unsent uploads live under. */
 export function trayKey(chatId: string): string {

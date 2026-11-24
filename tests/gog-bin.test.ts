@@ -50,3 +50,18 @@ describe('resolveGogBin', () => {
     expect(resolveGogBin({ GOG_BIN: '   ' }, 'darwin', '/Users/sam', nothingExists)).toBe('gog')
   })
 })
+
+describe('realGogBin', () => {
+  it('is null until the shim is set up, then the real path, never the shim path', async () => {
+    const { realGogBin, setGogShim } = await import('../src/infra/gog-bin.js')
+    expect(realGogBin()).toBeNull()
+    setGogShim('/store/connect-bin/gog', '/opt/homebrew/bin/gog')
+    try {
+      expect(realGogBin()).toBe('/opt/homebrew/bin/gog')
+      expect(resolveGogBin({}, 'darwin', '/Users/sam', nothingExists)).toBe('/store/connect-bin/gog')
+    } finally {
+      setGogShim(undefined)
+    }
+    expect(realGogBin()).toBeNull()
+  })
+})

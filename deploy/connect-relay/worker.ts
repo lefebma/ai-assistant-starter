@@ -28,7 +28,7 @@
  * Deploy and setup: deploy/connect-relay/README.md.
  */
 import { createRelay, type BoxRecord, type RelayProvider } from '../../src/connect/relay.js'
-import { googleProvider, microsoftProvider } from '../../src/connect/providers.js'
+import { googleProvider, microsoftProvider, DRIVE_SCOPES, DRIVE_COPY } from '../../src/connect/providers.js'
 import type { UsedStore } from '../../src/connect/state.js'
 
 // --- the slice of the Workers runtime this uses -------------------------------
@@ -175,7 +175,11 @@ export function durableUsedStore(env: Env): UsedStore {
 /** Only the providers whose app is configured; the others answer /start with "not valid". */
 export function providersFrom(env: Env): Record<string, RelayProvider> {
   const out: Record<string, RelayProvider> = {}
-  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) out.gmail = googleProvider({ clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET })
+  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+    const app = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET }
+    out.gmail = googleProvider(app)
+    out.drive = googleProvider(app, undefined, undefined, { scopes: DRIVE_SCOPES, copy: DRIVE_COPY })
+  }
   if (env.MS_CLIENT_ID) out.outlook = microsoftProvider(env.MS_CLIENT_ID)
   return out
 }

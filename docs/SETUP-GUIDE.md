@@ -279,6 +279,16 @@ gog's default Gmail set also asks to manage mail settings and forwarding,
 which the assistant never touches and which makes the consent screen read
 worse than it needs to.
 
+Optional: to put Google Drive in the web app's files panel, sign in with this
+line instead of the one above (it adds read-only Drive):
+
+```
+gog auth add <your Gmail address> --services gmail,calendar,drive --drive-scope readonly --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify
+```
+
+It adds read-only Drive for the files panel. On a self-installed assistant,
+this sign-in also lets the assistant's own Google tool read Drive.
+
 **4. Grant permissions** in the browser when prompted
 
 **5. Test:** `gog gmail search "newer_than:1d" --account primary@gmail.com`

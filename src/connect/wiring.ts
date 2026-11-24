@@ -3,7 +3,7 @@
  * token keeper's timer, which runs only when /connect is configured.
  */
 import { SIGNATURE_HEADER, HANDOFF_PATH } from './relay.js'
-import { getConnectFlow, getGmailKeeper, setGmailRevokedHandler } from './instance.js'
+import { getConnectFlow, getGmailKeeper, getDriveKeeper, setGmailRevokedHandler, setDriveRevokedHandler } from './instance.js'
 import { KEEPER_TICK_MS } from './gmail-token.js'
 import { PRIMARY_CHAT_ID } from '../config.js'
 import { registerHttpRoute, readBodyCapped } from '../http-server.js'
@@ -37,8 +37,26 @@ function startGmailKeeper(): void {
   setInterval(tick, KEEPER_TICK_MS).unref()
 }
 
+function startDriveKeeper(): void {
+  const keeper = getDriveKeeper()
+  if (!keeper) return
+  setDriveRevokedHandler(async (account) => {
+    logger.warn('connect: Drive grant revoked at Google')
+    if (PRIMARY_CHAT_ID) await tell(PRIMARY_CHAT_ID, `Google Drive access for ${account} was withdrawn at Google. Open the files panel and connect again.`)
+  })
+  const tick = () => {
+    keeper.tick().then(
+      (r) => { if (r === 'failed') logger.warn('connect: Drive token renewal failed, will retry') },
+      (err) => logger.warn({ err: err instanceof Error ? err.message : 'error' }, 'connect: Drive keeper error'),
+    )
+  }
+  tick()
+  setInterval(tick, KEEPER_TICK_MS).unref()
+}
+
 export function registerConnectRoute(): void {
   startGmailKeeper()
+  startDriveKeeper()
   registerHttpRoute('POST', HANDOFF_PATH, async (req, res) => {
     const f = getConnectFlow()
     const reply = (code: number) => { res.writeHead(code); res.end() }

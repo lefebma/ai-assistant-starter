@@ -182,10 +182,15 @@
       </button>
     </div>
     <div class="files-body">
+      <div id="source-bar" class="source-bar" hidden>
+        <select id="source-picker" aria-label="Show files from"></select>
+      </div>
       <ul id="tree" class="tree" role="tree" aria-label="Project files"></ul>
+      <div id="source-connect" class="source-connect" hidden></div>
       <div id="preview" class="preview" hidden>
         <div class="preview-head">
           <span id="preview-name" class="preview-name"></span>
+          <a id="preview-open" class="small-btn ghost" target="_blank" rel="noopener" hidden>Open in Google Drive</a>
           <a id="preview-download" class="small-btn ghost" download>Download</a>
           <button type="button" id="preview-close" class="icon-btn" aria-label="Close preview">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>

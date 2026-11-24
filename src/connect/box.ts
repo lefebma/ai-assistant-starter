@@ -15,10 +15,13 @@
  * Outlook tools, ms-auth status and the web Connections page all see the new
  * mailbox, and the box refreshes it with the public client id alone. Gmail
  * tokens go to CONNECT_GMAIL, one entry per account (card #271), which the
- * relay renews and GmailTokenKeeper (gmail-token.ts) hands to gog.
+ * relay renews and GmailTokenKeeper (gmail-token.ts) hands to gog. Drive
+ * tokens (card #284) go to CONNECT_DRIVE, kept by DriveTokenKeeper, and never
+ * leave the vault except for one files-panel call.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { dropGmailEntry, readGmailEntries, saveGmailEntry } from './gmail-token.js'
+import { dropDriveEntry, readDriveEntries, saveDriveEntry } from './drive-token.js'
 import { registerRotatingSecret } from '../log-redact.js'
 import { accountSecretName as imapAccountName, passwordSecretName as imapPasswordName } from '../imap/store.js'
 
@@ -76,17 +79,19 @@ interface Pending {
   expiresAt: number
 }
 
-const PROVIDERS = ['gmail', 'outlook'] as const
+const PROVIDERS = ['gmail', 'outlook', 'drive'] as const
 const APP_PASSWORD = ['yahoo', 'icloud']
 
 const USAGE = [
   'Connect your mail and calendar:',
   '/connect gmail - sign in with Google (again for each Gmail account)',
   '/connect outlook - sign in with Microsoft',
+  '/connect drive - see your Google Drive in the files panel (read only)',
   '/connect yahoo - uses an app password via /secret',
   '/connect list - what is connected',
   '/connect remove gmail <account> - revoke at the provider and delete here',
   '/connect remove outlook <account> - delete one Outlook mailbox here',
+  '/connect remove drive <account> - forget Drive on this box',
 ].join('\n')
 
 export class ConnectFlow {
@@ -107,6 +112,7 @@ export class ConnectFlow {
     if (sub === 'list') {
       const on: string[] = []
       for (const e of readGmailEntries(this.o.vault).values()) on.push(`gmail: ${e.account}${e.revoked ? ' (needs /connect gmail again)' : ''}`)
+      for (const e of readDriveEntries(this.o.vault).values()) on.push(`drive: ${e.account}${e.revoked ? ' (needs /connect drive again)' : ''}`)
       for (const a of this.o.msTokens.list()) on.push(`outlook: ${a}`)
       return { reply: on.length ? on.join('\n') : 'Nothing connected yet.' }
     }
@@ -115,15 +121,21 @@ export class ConnectFlow {
     }
     if (!sub || !(PROVIDERS as readonly string[]).includes(sub)) return { reply: USAGE }
     void arg
+    const link = this.startLink(chatId, sub as (typeof PROVIDERS)[number])
+    return { reply: `Open this link on any device, sign in and allow access. It works once and expires in 10 minutes.\n${link}` }
+  }
+
+  /** A one-time relay URL for this chat and provider. Replaces any earlier link the chat had for it. */
+  startLink(chatId: string, provider: (typeof PROVIDERS)[number]): string {
     this.sweep()
-    for (const [n, p] of this.pending) if (p.chatId === chatId && p.provider === sub) this.pending.delete(n)
+    for (const [n, p] of this.pending) if (p.chatId === chatId && p.provider === provider) this.pending.delete(n)
     const nonce = randomBytes(24).toString('base64url')
-    this.pending.set(nonce, { provider: sub, chatId, expiresAt: this.now() + this.ttl })
+    this.pending.set(nonce, { provider, chatId, expiresAt: this.now() + this.ttl })
     const link = new URL('/start', this.o.relayUrl)
-    link.searchParams.set('provider', sub)
+    link.searchParams.set('provider', provider)
     link.searchParams.set('box', this.o.boxId)
     link.searchParams.set('nonce', nonce)
-    return { reply: `Open this link on any device, sign in and allow access. It works once and expires in 10 minutes.\n${link.toString()}` }
+    return link.toString()
   }
 
   async handleCommandAsync(chatId: string, text: string): Promise<{ reply: string }> {
@@ -142,8 +154,30 @@ export class ConnectFlow {
         return { reply: accounts.length ? `Which account? /connect remove gmail <${accounts.join('|')}>` : 'Nothing connected for gmail.' }
       }
       const out = await this.remove('gmail', `gmail ${e.account}`, e, localOnly, () => dropGmailEntry(this.o.vault, e.account, e.refreshToken))
+      // Gmail and Drive share one Google grant: a revocation that went through
+      // ended Drive for this address too, so forget it in the same step.
+      let reply = out.reply
+      if (out.revoked && dropDriveEntry(this.o.vault, e.account)) {
+        reply += ' This also disconnected Google Drive for that account.'
+        await this.o.onChange?.('drive')
+      }
       if (!readGmailEntries(this.o.vault).has(e.account.toLowerCase())) await this.o.onChange?.('gmail')
-      return out
+      return { reply }
+    }
+    if (provider === 'drive') {
+      const entries = readDriveEntries(this.o.vault)
+      const accounts = [...entries.values()].map((e) => e.account)
+      const asked = rest[0]
+      const e = asked ? entries.get(asked.trim().toLowerCase()) : entries.size === 1 ? [...entries.values()][0] : undefined
+      if (!e) {
+        if (asked && accounts.length) return { reply: `Nothing connected for drive ${asked}. Connected: ${accounts.join(', ')}` }
+        return { reply: accounts.length ? `Which account? /connect remove drive <${accounts.join('|')}>` : 'Nothing connected for drive.' }
+      }
+      // Local only, always: Google ends the whole grant on a revoke, which
+      // would take this account's Gmail with it.
+      dropDriveEntry(this.o.vault, e.account)
+      await this.o.onChange?.('drive')
+      return { reply: `Removed Google Drive for ${e.account} from this box. To withdraw the permission at Google, remove Havn under myaccount.google.com/connections; that also disconnects its Gmail.` }
     }
     if (provider === 'outlook') {
       const accounts = this.o.msTokens.list()
@@ -158,12 +192,12 @@ export class ConnectFlow {
       await this.o.onChange?.('outlook')
       return { reply: `Removed outlook ${account} from this box. ${OUTLOOK_WITHDRAW}` }
     }
-    return { reply: 'Usage: /connect remove gmail <account>, or /connect remove outlook <account>' }
+    return { reply: 'Usage: /connect remove gmail <account>, /connect remove outlook <account>, or /connect remove drive <account>' }
   }
 
   private async remove(
     provider: string, label: string, t: { refreshToken?: string; accessToken?: string }, localOnly: boolean, drop: () => boolean,
-  ): Promise<{ reply: string }> {
+  ): Promise<{ reply: string; revoked?: boolean }> {
     const refresh = t.refreshToken ?? ''
     if (localOnly || !refresh) {
       drop()
@@ -179,8 +213,8 @@ export class ConnectFlow {
     } catch {
       return { reply: `Could not revoke ${label} at the provider, so I kept it here. Try again, or run /connect remove ${label} --local-only to delete it locally only.` }
     }
-    if (!drop()) return { reply: `Revoked the earlier ${label} sign-in at the provider. A newer sign-in for it arrived meanwhile and stays connected.` }
-    return { reply: `Removed ${label}: revoked at the provider and deleted from this box.` }
+    if (!drop()) return { reply: `Revoked the earlier ${label} sign-in at the provider. A newer sign-in for it arrived meanwhile and stays connected.`, revoked: true }
+    return { reply: `Removed ${label}: revoked at the provider and deleted from this box.`, revoked: true }
   }
 
   async acceptHandoff(rawBody: string, signature: string): Promise<HandoffResult> {
@@ -203,7 +237,9 @@ export class ConnectFlow {
     if (!p || p.expiresAt < now || p.provider !== provider || Math.abs(now - ts) > this.ttl) return { status: 403 }
     registerRotatingSecret(`${provider}:${account}:access`, accessToken)
     registerRotatingSecret(`${provider}:${account}:refresh`, refreshToken)
-    if (provider === 'outlook') {
+    if (provider === 'drive') {
+      saveDriveEntry(this.o.vault, { account, accessToken, refreshToken, expiresAt })
+    } else if (provider === 'outlook') {
       // The relay stamps milliseconds; the Microsoft store keeps seconds.
       this.o.msTokens.save(account, { accessToken, refreshToken, expiresAt: Math.floor(expiresAt / 1000) })
     } else {
@@ -220,8 +256,10 @@ export class ConnectFlow {
       }
     }
     await this.o.onChange?.(provider)
-    const message = `Connected ${account}, mail and calendar working.` +
-      (replaced ? ` This replaces its app-password connection; you can delete that app password at myaccount.google.com/apppasswords.` : '')
+    const message = provider === 'drive'
+      ? `Connected ${account}. Google Drive is now in the files panel, read only.`
+      : `Connected ${account}, mail and calendar working.` +
+        (replaced ? ` This replaces its app-password connection; you can delete that app password at myaccount.google.com/apppasswords.` : '')
     return { status: 200, chatId: p.chatId, message }
   }
 

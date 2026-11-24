@@ -6,24 +6,10 @@ import type { IncomingMessage } from 'node:http'
 import { registerWebRoutes } from './http.js'
 import { sendJson, sendError } from './respond.js'
 import { MAX_UPLOAD_BYTES, getFileRoots, sanitizeUploadName } from './files.js'
+import { kindFromName, rawHeaders } from './file-kind.js'
 import { listDirForChat, resolveForChat, trayDir } from './file-access.js'
 
 export { MAX_UPLOAD_BYTES }
-const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
-
-const TEXT_EXT = new Set(['.md', '.txt', '.json', '.csv', '.html', '.htm'])
-const IMAGE_MIME: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-}
-
-function dispositionName(name: string): string {
-  return name.replace(/[^\w.\- ]/g, '_')
-}
 
 registerWebRoutes([
   {
@@ -49,26 +35,9 @@ registerWebRoutes([
       } catch {
         return sendError(ctx.res, 404, 'not_found')
       }
-      const ext = extname(found.abs).toLowerCase()
-      const name = dispositionName(found.rel.split('/').pop() ?? 'file')
-      const headers: Record<string, string | number> = { 'X-Content-Type-Options': 'nosniff', 'Content-Length': size }
-      if (TEXT_EXT.has(ext) && size <= MAX_TEXT_PREVIEW_BYTES) {
-        headers['Content-Type'] = 'text/plain; charset=utf-8'
-        headers['Content-Disposition'] = `inline; filename="${name}"`
-      } else if (ext in IMAGE_MIME) {
-        headers['Content-Type'] = IMAGE_MIME[ext]
-        headers['Content-Disposition'] = `inline; filename="${name}"`
-        if (ext === '.svg') headers['Content-Security-Policy'] = "default-src 'none'; style-src 'unsafe-inline'"
-      } else if (ext === '.pdf') {
-        headers['Content-Type'] = 'application/pdf'
-        headers['Content-Disposition'] = `inline; filename="${name}"`
-        // The page frames the PDF, so allow our own origin to do that and nothing else.
-        headers['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'self'"
-        headers['X-Frame-Options'] = 'SAMEORIGIN'
-      } else {
-        headers['Content-Type'] = 'application/octet-stream'
-        headers['Content-Disposition'] = `attachment; filename="${name}"`
-      }
+      const name = found.rel.split('/').pop() ?? 'file'
+      const { kind, mime } = kindFromName(found.abs)
+      const headers = rawHeaders(kind, mime, name, size)
       ctx.res.writeHead(200, headers)
       const stream = createReadStream(found.abs)
       stream.on('error', () => ctx.res.destroy())

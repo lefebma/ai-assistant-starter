@@ -42,6 +42,8 @@ export interface ConnectionDeps {
   aiUsage(): { usd: number; capUsd?: number } | null
   /** Mailboxes the live probe found broken. */
   brokenMailboxes(): Promise<{ id: string; why: string }[]>
+  /** Google Drive sign-ins on this box, with whether each still works. */
+  driveAccounts(): Promise<{ account: string; state: 'ok' | 'reconnect' }[]>
   chatId(): string
 }
 
@@ -143,6 +145,8 @@ export const defaultConnectionDeps: ConnectionDeps = {
     const { discoverMailboxes } = await import('../email-alerts/sources.js')
     return (await discoverMailboxes()).broken
   },
+  // Lazy: drive.ts imports this file for cachedCheck.
+  driveAccounts: async () => (await import('./drive.js')).driveAccounts(),
   chatId: () => PRIMARY_CHAT_ID,
 }
 
@@ -159,7 +163,7 @@ export function setConnectionDepsForTest(deps: ConnectionDeps | null): void {
 }
 
 /** Run one source; any throw becomes an attention entry rather than an error. */
-async function guard(id: string, name: string, fn: () => Promise<Connection> | Connection): Promise<Connection> {
+async function guard(id: string, name: string, fn: () => Promise<Connection | null> | Connection | null): Promise<Connection | null> {
   try {
     return await fn()
   } catch {
@@ -172,7 +176,7 @@ function accountList(list: string[]): string {
 }
 
 export async function getConnections(deps: ConnectionDeps = defaultConnectionDeps): Promise<Connection[]> {
-  const out = await Promise.all([
+  const rows = await Promise.all([
     guard('model', 'AI model', async () => {
       const m = await deps.model()
       return m.ok
@@ -202,6 +206,15 @@ export async function getConnections(deps: ConnectionDeps = defaultConnectionDep
         ? { id: 'imap', name: 'Other email (IMAP)', status: 'connected', detail: accountList(list) }
         : { id: 'imap', name: 'Other email (IMAP)', status: 'off', detail: 'No other mailbox connected', next: ASK_PROVIDER }
     }),
+    guard('drive', 'Google Drive', async () => {
+      const list = await deps.driveAccounts()
+      if (!list.length) return null
+      const bad = list.some((a) => a.state === 'reconnect')
+      const detail = accountList(list.map((a) => a.account))
+      return bad
+        ? { id: 'drive', name: 'Google Drive', status: 'attention', detail, next: 'Open the files panel and connect again.' }
+        : { id: 'drive', name: 'Google Drive', status: 'connected', detail }
+    }),
     guard('voice', 'Voice', () => {
       const v = deps.voice()
       if (v.stt && v.tts) return { id: 'voice', name: 'Voice', status: 'connected', detail: 'Hears and speaks' }
@@ -227,6 +240,7 @@ export async function getConnections(deps: ConnectionDeps = defaultConnectionDep
           }
     }),
   ])
+  const out = rows.filter((c): c is Connection => c !== null)
   const managed = await guard('managed-ai', 'Managed AI allowance', () => {
     if (!deps.managedAi()) return { id: 'managed-ai', name: 'Managed AI allowance', status: 'off', detail: 'Not used' }
     const u = deps.aiUsage()
@@ -239,7 +253,7 @@ export async function getConnections(deps: ConnectionDeps = defaultConnectionDep
     const near = !!u && !!u.capUsd && u.usd >= u.capUsd * 0.8
     return { id: 'managed-ai', name: 'Managed AI allowance', status: near ? 'attention' : 'connected', detail }
   })
-  return managed.status === 'off' && managed.detail === 'Not used' ? out : [...out, managed]
+  return !managed || (managed.status === 'off' && managed.detail === 'Not used') ? out : [...out, managed]
 }
 
 /** Like getConnections, plus a live mailbox probe. Only for the Check now button. */

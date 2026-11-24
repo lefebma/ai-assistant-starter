@@ -6,6 +6,8 @@ import { renderMarkdown } from './markdown.js'
 import { updateInfo, RESTART_TEXT } from './update.js'
 import { runsNow, newClientId, queueLabel } from './queue.js'
 import { dictationMode, createDictation, insertAtCursor, formatElapsed, micProblem } from './dictation.js'
+import { kindFromName } from './filekind.js'
+import { STORAGE_KEY, pickerOptions, showPicker, resolveSource, viewFor, accountOf, needsMore, driveListUrl, driveRawUrl, driveOpenUrl, downloadName, errorText, drivePreviewPlan, safeSignInUrl, previewBlobType } from './sources.js'
 import { DEFAULT_WIDTH, STEP, clampWidth, widthFromPointer, loadWidth, saveWidth, clearWidth } from './panelwidth.js'
 import { voiceCallSupport, createVoiceCall, callProblem } from './voicecall.js'
 import { readChatGPTExport } from './chatgpt-export.js'
@@ -56,7 +58,13 @@ const state = {
   defaults: { model: null, effort: null },
   pending: { model: '', effort: '' }, // picks made before the first message creates the chat
   treeLoaded: false,
-  previewPath: '',
+  treeGen: 0, // bumped by each tree load, so a slow answer never lands on a newer one
+  sources: null, // the last /api/web/sources answer (card #284)
+  source: 'local', // the files panel's source: 'local', 'drive:<account>' or 'drive:' (not connected)
+  connectPoll: null, // the check for a finished Google sign-in
+  previewUrl: '',
+  previewGen: 0, // bumped by each preview, so a slow Drive fetch never lands on a newer one
+  previewBlob: '', // the object URL a Drive image or PDF preview shows, revoked when replaced
   attachments: [], // the tray: files and pasted text waiting to go with the next message
 }
 
@@ -2526,7 +2534,7 @@ async function upload(item, raw, name, photo) {
     item.error = err.status === 413 ? 'over 25 MB' : 'did not upload'
   }
   if (state.attachments.includes(item)) renderTray()
-  if (state.treeLoaded) loadTree()
+  if (state.treeLoaded && state.source === 'local') loadTree()
 }
 
 function addPaste(text) {
@@ -2728,8 +2736,20 @@ $('goal-add').addEventListener('submit', async (e) => {
 
 // ---------- file tree and preview ----------
 
+// The panel shows one source at a time: Havn files, or a Google Drive account
+// (read only, card #284). Both go through one tree. A tree source has
+// load(folder, page) -> { entries, nextPage }, folderOf(e), dirAttrs(e) and
+// fileAttrs(e) (what marks a row), entry(e) (its preview entry) and
+// problem(err, fallback) (the words for a listing that failed).
+const LOCAL_ONLY = { sources: [{ id: 'local', name: 'Havn files' }], canConnectDrive: false, connect: null }
+const CONNECT_TEXT = 'See your Google Drive files here, read only. Havn asks Google for permission to view them.'
+const POLL_MS = 5000
+const POLL_LIMIT_MS = 10 * 60 * 1000
+
 function ensureTree() {
-  if (!state.treeLoaded) loadTree()
+  if (!state.treeLoaded) return loadFiles()
+  // A sign-in finished while the panel was closed: check again rather than keep showing Connect.
+  if (state.source !== 'local' && !state.connectPoll && viewFor(state.source, state.sources || LOCAL_ONLY) !== 'tree') loadFiles()
 }
 
 async function listDir(path) {
@@ -2737,26 +2757,93 @@ async function listDir(path) {
   return (r && r.entries) || []
 }
 
-function treeItems(entries) {
+const localTree = {
+  async load(path) {
+    return { entries: await listDir(path), nextPage: null }
+  },
+  folderOf: (e) => e.path,
+  dirAttrs: () => ({}),
+  fileAttrs: (e) => ({ 'data-path': e.path }),
+  entry: (e) => localEntry(e),
+  problem: (err, fallback) => friendly(err, fallback),
+}
+
+function driveTree(account) {
+  return {
+    async load(folder, page) {
+      const r = await api.get(driveListUrl(account, folder, page))
+      return { entries: (r && r.entries) || [], nextPage: (r && r.nextPage) || null }
+    },
+    folderOf: (e) => e.id,
+    dirAttrs: (e) => ({ 'data-id': e.id }),
+    fileAttrs: (e) => ({ 'data-id': e.id }),
+    entry: (e) => driveEntry(account, e),
+    problem(err, fallback) {
+      if (!err || err.status === 401) return ''
+      // Google took the permission back: the panel asks to connect again.
+      if (err.status === 409) {
+        markReconnect(account)
+        return errorText('reconnect')
+      }
+      return err.code ? errorText(err.code) : friendly(err, fallback)
+    },
+  }
+}
+
+function currentTree() {
+  return state.source === 'local' ? localTree : driveTree(accountOf(state.source))
+}
+
+function treeItems(entries, src = localTree) {
   const frag = document.createDocumentFragment()
   for (const e of entries) {
     if (e.isDir) {
       const li = h('li', { class: 'tree-dir', role: 'treeitem', 'aria-expanded': 'false' })
-      const btn = h('button', { type: 'button', class: 'tree-btn', icon: 'folder' }, h('span', { text: e.name }))
+      const btn = h('button', { type: 'button', class: 'tree-btn', icon: 'folder', ...src.dirAttrs(e) }, h('span', { text: e.name }))
       btn.insertAdjacentHTML('afterbegin', ICON.caret)
-      btn.addEventListener('click', () => toggleDir(li, e.path))
+      btn.addEventListener('click', () => toggleDir(li, src.folderOf(e), src))
       li.append(btn)
       frag.append(li)
     } else {
-      const btn = h('button', { type: 'button', class: 'tree-btn', icon: 'file', title: e.name, 'data-path': e.path }, h('span', { text: e.name }))
-      btn.addEventListener('click', () => preview(e))
+      const btn = h('button', { type: 'button', class: 'tree-btn', icon: 'file', title: e.name, ...src.fileAttrs(e) }, h('span', { text: e.name }))
+      btn.addEventListener('click', () => preview(src.entry(e)))
       frag.append(h('li', { role: 'treeitem' }, btn))
     }
   }
   return frag
 }
 
-async function toggleDir(li, path) {
+// One page of a folder, ending in a "Show more" row when there is another.
+function pageItems(resp, src, folder) {
+  const frag = treeItems(resp.entries, src)
+  if (needsMore(resp)) frag.append(moreRow(src, folder, resp.nextPage))
+  return frag
+}
+
+function listing(resp, src, folder, emptyText) {
+  return resp.entries.length || needsMore(resp) ? pageItems(resp, src, folder) : h('li', { class: 'tree-note', text: emptyText })
+}
+
+function moreRow(src, folder, page) {
+  const li = h('li', { class: 'tree-more' })
+  const btn = h('button', { type: 'button', class: 'tree-btn tree-more-btn' }, h('span', { text: 'Show more' }))
+  btn.addEventListener('click', async () => {
+    btn.disabled = true
+    btn.firstChild.textContent = 'Loading...'
+    const before = li.previousElementSibling
+    if (before && before.classList.contains('tree-more-error')) before.remove()
+    try {
+      li.replaceWith(pageItems(await src.load(folder, page), src, folder))
+    } catch (err) {
+      // The note, then Show more again, so the page can be retried.
+      li.replaceWith(h('li', { class: 'tree-note tree-more-error', text: src.problem(err, 'Could not load more files.') }), moreRow(src, folder, page))
+    }
+  })
+  li.append(btn)
+  return li
+}
+
+async function toggleDir(li, folder, src = localTree) {
   const open = li.classList.toggle('open')
   li.setAttribute('aria-expanded', String(open))
   let ul = li.querySelector(':scope > ul')
@@ -2768,58 +2855,327 @@ async function toggleDir(li, path) {
   ul = h('ul', { role: 'group' }, h('li', { class: 'tree-note', text: 'Loading...' }))
   li.append(ul)
   try {
-    const entries = await listDir(path)
-    ul.replaceChildren(entries.length ? treeItems(entries) : h('li', { class: 'tree-note', text: 'Empty' }))
+    ul.replaceChildren(listing(await src.load(folder), src, folder, 'Empty'))
   } catch (err) {
-    ul.replaceChildren(h('li', { class: 'tree-note', text: friendly(err, 'Could not open this folder.') }))
+    ul.replaceChildren(h('li', { class: 'tree-note', text: src.problem(err, 'Could not open this folder.') }))
   }
 }
 
 async function loadTree() {
   state.treeLoaded = true
+  const src = currentTree()
+  const gen = ++state.treeGen
   const tree = $('tree')
   tree.replaceChildren(h('li', { class: 'tree-note', text: 'Loading...' }))
   try {
-    const entries = await listDir('')
-    tree.replaceChildren(entries.length ? treeItems(entries) : h('li', { class: 'tree-note', text: 'No files to show.' }))
+    const resp = await src.load('')
+    if (gen !== state.treeGen) return
+    tree.replaceChildren(listing(resp, src, '', 'No files to show.'))
   } catch (err) {
+    if (gen !== state.treeGen) return
     state.treeLoaded = false
-    tree.replaceChildren(h('li', { class: 'tree-note', text: friendly(err, 'Could not load files.') }))
+    tree.replaceChildren(h('li', { class: 'tree-note', text: src.problem(err, 'Could not load files.') }))
   }
 }
 
-const TEXT_EXT = new Set(['txt', 'json', 'csv', 'log', 'html', 'htm'])
-const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+// ---------- file sources ----------
 
-async function preview(entry) {
-  const url = '/api/web/files/raw?path=' + encodeURIComponent(entry.path)
-  const ext = (entry.name.split('.').pop() || '').toLowerCase()
+function savedSource() {
+  try {
+    return localStorage.getItem(STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function rememberSource(id) {
+  try {
+    localStorage.setItem(STORAGE_KEY, id)
+  } catch {
+    // remembered for this visit only
+  }
+}
+
+async function fetchSources() {
+  try {
+    const r = await api.get('/api/web/sources')
+    return r && Array.isArray(r.sources) ? r : LOCAL_ONLY
+  } catch {
+    return LOCAL_ONLY
+  }
+}
+
+// The first connected Drive (for the unconnected entry) or this one, once it works.
+function readyDrive(resp, id) {
+  const d = resp.sources.find((src) => src.id.startsWith('drive:') && src.state === 'ok' && (id === 'drive:' || src.id === id))
+  return d ? d.id : ''
+}
+
+// Load the sources and show the chosen one. Havn files never wait for the Drive check.
+async function loadFiles() {
+  state.treeLoaded = true
+  const wanted = state.sources ? state.source : savedSource() || 'local'
+  const quick = wanted === 'local'
+  if (quick) useSource('local', false)
+  else $('tree').replaceChildren(h('li', { class: 'tree-note', text: 'Loading...' }))
+  const resp = await fetchSources()
+  state.sources = resp
+  renderPicker()
+  if (quick) return
+  let id = resolveSource(wanted, resp)
+  if (wanted === 'drive:' && id === 'local') id = readyDrive(resp, 'drive:') || 'local'
+  useSource(id, false)
+}
+
+function renderPicker() {
+  const resp = state.sources || LOCAL_ONLY
+  const sel = $('source-picker')
+  sel.replaceChildren(...pickerOptions(resp).map((o) => h('option', { value: o.id, text: o.label })))
+  sel.value = state.source
+  show($('source-bar'), showPicker(resp))
+}
+
+function useSource(id, remember) {
+  stopConnectPoll()
+  const changed = state.source !== id
+  state.source = id
+  if (remember) rememberSource(id)
+  if ($('source-picker').value !== id) $('source-picker').value = id
+  if (changed) closePreview()
+  const view = viewFor(id, state.sources || LOCAL_ONLY)
+  show($('tree'), view === 'tree')
+  show($('source-connect'), view !== 'tree')
+  if (view === 'tree') loadTree()
+  else renderConnect(view)
+}
+
+function markReconnect(account) {
+  const d = state.sources && state.sources.sources.find((src) => src.id === 'drive:' + account)
+  if (d) d.state = 'reconnect'
+  if (state.source === 'drive:' + account) useSource(state.source, false)
+}
+
+function renderConnect(view) {
+  const btn = h('button', { type: 'button', class: 'small-btn', text: 'Connect Google Drive' })
+  btn.addEventListener('click', () => startConnect(btn))
+  $('source-connect').replaceChildren(
+    h('p', { class: 'source-text', text: view === 'reconnect' ? errorText('reconnect') : CONNECT_TEXT }),
+    btn,
+    h('p', { class: 'source-note', hidden: true })
+  )
+}
+
+async function startConnect(btn) {
+  const box = $('source-connect')
+  const msg = box.querySelector('.source-note')
+  btn.disabled = true
+  note(msg, '')
+  // A tab opened after the wait is blocked as a popup, so open it now and send it on once the link is in.
+  const relay = state.sources && state.sources.connect === 'relay'
+  const tab = relay ? window.open('', '_blank') : null
+  let r
+  try {
+    r = await api.post('/api/web/sources/drive/connect')
+  } catch (err) {
+    if (tab) tab.close()
+    btn.disabled = false
+    note(msg, err.status === 401 ? '' : errorText(err.code || 'unavailable'))
+    return
+  }
+  const signIn = r && r.url ? safeSignInUrl(r.url) : null
+  if (signIn) {
+    if (tab) {
+      tab.opener = null
+      tab.location.href = signIn
+    }
+    box.replaceChildren(
+      h('p', { class: 'source-text', text: 'Finish signing in to Google in the new tab. Your Drive shows here once you are done.' }),
+      h('a', { class: 'small-btn', href: signIn, target: '_blank', rel: 'noopener', text: 'Open the Google sign-in again' })
+    )
+    pollForDrive()
+  } else if (r && r.url) {
+    // Anything but an https link is never opened.
+    if (tab) tab.close()
+    btn.disabled = false
+    note(msg, errorText('unavailable'))
+  } else if (r && r.command) {
+    if (tab) tab.close()
+    box.replaceChildren(
+      h('p', { class: 'source-text', text: 'Run this command on the computer Havn runs on, then press Refresh.' }),
+      h('pre', { class: 'source-command', text: r.command })
+    )
+  } else {
+    if (tab) tab.close()
+    btn.disabled = false
+    note(msg, errorText('unavailable'))
+  }
+}
+
+function filesShowing() {
+  return narrow.matches ? $('right').classList.contains('open') : $('app').classList.contains('files-open')
+}
+
+// After the sign-in link opens: check every five seconds for up to ten minutes.
+// Stops when the panel closes or another source is picked; the Connect view comes back as it was.
+function pollForDrive() {
+  stopConnectPoll()
+  const poll = { from: state.source, until: Date.now() + POLL_LIMIT_MS, timer: 0 }
+  state.connectPoll = poll
+  const giveUp = () => {
+    stopConnectPoll()
+    if (state.source === poll.from) renderConnect(viewFor(poll.from, state.sources || LOCAL_ONLY))
+  }
+  const tick = async () => {
+    if (state.connectPoll !== poll) return
+    if (state.source !== poll.from || !filesShowing() || Date.now() > poll.until) return giveUp()
+    const resp = await fetchSources()
+    if (state.connectPoll !== poll) return
+    const id = readyDrive(resp, poll.from)
+    if (!id) {
+      poll.timer = setTimeout(tick, POLL_MS)
+      return
+    }
+    stopConnectPoll()
+    state.sources = resp
+    renderPicker()
+    useSource(id, true)
+  }
+  poll.timer = setTimeout(tick, POLL_MS)
+}
+
+function stopConnectPoll() {
+  if (state.connectPoll) clearTimeout(state.connectPoll.timer)
+  state.connectPoll = null
+}
+
+$('source-picker').addEventListener('change', (e) => useSource(e.target.value, true))
+
+// ---------- preview ----------
+
+// A local file's preview entry; the kind comes from its name.
+function localEntry(e) {
+  return { name: e.name, path: e.path, url: '/api/web/files/raw?path=' + encodeURIComponent(e.path), kind: kindFromName(e.name) }
+}
+
+// A Drive file's preview entry; the server has already decided its kind from the mime type.
+// Size and type come along so the preview can tell a file too large or with nothing to fetch.
+function driveEntry(account, e) {
+  return {
+    name: e.name, id: e.id, account, download: downloadName(e), url: driveRawUrl(account, e.id), kind: e.kind,
+    openUrl: driveOpenUrl(e.id), size: e.size, mimeType: e.mimeType,
+  }
+}
+
+// Words for a preview that could not load: Drive says why, local files keep their wording.
+function previewProblem(entry, err, fallback) {
+  if (entry.openUrl && err && err.status !== 401) {
+    // Google took the permission back: the panel asks to connect again.
+    if (err.status === 409) {
+      if (entry.account) markReconnect(entry.account)
+      return errorText('reconnect')
+    }
+    if (err.status === 413) return errorText('too_large')
+    return errorText(err.code)
+  }
+  return friendly(err, fallback)
+}
+
+// An answer that is not OK, as an error carrying its status and the server's code.
+async function httpProblem(res) {
+  let code = ''
+  try {
+    code = ((await res.json()) || {}).error || ''
+  } catch {
+    // no body to read
+  }
+  return Object.assign(new Error('bad'), { status: res.status, code })
+}
+
+function dropPreviewBlob() {
+  if (state.previewBlob) URL.revokeObjectURL(state.previewBlob)
+  state.previewBlob = ''
+}
+
+// A Drive image or PDF: fetched first, so a failure is explained in words, then shown from memory.
+async function driveMediaPreview(entry, gen) {
   const bodyEl = $('preview-body')
-  state.previewPath = entry.path
+  try {
+    const res = await fetch(entry.url, { credentials: 'same-origin' })
+    if (res.status === 401) return showSignedOut('')
+    if (!res.ok) throw await httpProblem(res)
+    const type = previewBlobType(entry.kind, res.headers.get('content-type'))
+    const blob = await res.blob()
+    if (gen !== state.previewGen) return
+    dropPreviewBlob()
+    if (!type) return bodyEl.replaceChildren(h('p', { class: 'preview-note', text: errorText('unavailable') }))
+    // Rebuilt with the type the page chose, so the bytes can never be read as HTML in the frame.
+    state.previewBlob = URL.createObjectURL(new Blob([blob], { type }))
+    if (entry.kind === 'image') {
+      const img = h('img', { src: state.previewBlob, alt: entry.name })
+      img.addEventListener('error', () => {
+        if (gen === state.previewGen) bodyEl.replaceChildren(h('p', { class: 'preview-note', text: errorText('unavailable') }))
+      })
+      bodyEl.replaceChildren(img)
+    } else {
+      bodyEl.replaceChildren(h('iframe', { src: state.previewBlob, title: entry.name }))
+    }
+  } catch (err) {
+    if (gen !== state.previewGen) return
+    bodyEl.replaceChildren(h('p', { class: 'preview-note', text: previewProblem(entry, err, 'Could not open this file.') }))
+  }
+}
+
+// entry: { name, url, kind, openUrl?, download? } (local entries also carry path, Drive entries id).
+async function preview(entry) {
+  const url = entry.url
+  const bodyEl = $('preview-body')
+  state.previewUrl = url
+  const gen = ++state.previewGen
+  dropPreviewBlob()
   for (const b of $('tree').querySelectorAll('.tree-btn.current')) b.classList.remove('current')
-  const btn = [...$('tree').querySelectorAll('.tree-btn[data-path]')].find((b) => b.getAttribute('data-path') === entry.path)
+  const btn = [...$('tree').querySelectorAll('.tree-btn[data-path], .tree-btn[data-id]')].find((b) =>
+    entry.id ? b.getAttribute('data-id') === entry.id : b.getAttribute('data-path') === entry.path
+  )
   if (btn) btn.classList.add('current')
   $('preview-name').textContent = entry.name
   $('preview-download').href = url
-  $('preview-download').setAttribute('download', entry.name)
+  $('preview-download').setAttribute('download', entry.download || entry.name)
+  show($('preview-download'))
+  const open = $('preview-open')
+  if (entry.openUrl) open.href = entry.openUrl
+  else open.removeAttribute('href')
+  show(open, Boolean(entry.openUrl))
+  open.parentElement.classList.toggle('has-open', Boolean(entry.openUrl))
   show($('preview'))
   bodyEl.replaceChildren(h('p', { class: 'preview-note', text: 'Loading...' }))
 
-  if (IMAGE_EXT.has(ext)) return bodyEl.replaceChildren(h('img', { src: url, alt: entry.name }))
-  if (ext === 'pdf') return bodyEl.replaceChildren(h('iframe', { src: url, title: entry.name }))
-  if (ext !== 'md' && !TEXT_EXT.has(ext)) {
-    return bodyEl.replaceChildren(h('p', { class: 'preview-note', text: 'No preview for this kind of file. Use Download to open it.' }))
+  if (entry.openUrl) {
+    const plan = drivePreviewPlan(entry)
+    if (plan.mode === 'too_large' || plan.mode === 'no_file') {
+      // Nothing to download here either: Google Drive is the way to open it.
+      show($('preview-download'), false)
+      const text = plan.mode === 'too_large' ? errorText('too_large') : 'This kind of Google file opens in Google Drive.'
+      return bodyEl.replaceChildren(h('p', { class: 'preview-note', text }))
+    }
+    if (plan.mode === 'fetch' && (entry.kind === 'image' || entry.kind === 'pdf')) return driveMediaPreview(entry, gen)
+  }
+  if (entry.kind === 'image') return bodyEl.replaceChildren(h('img', { src: url, alt: entry.name }))
+  if (entry.kind === 'pdf') return bodyEl.replaceChildren(h('iframe', { src: url, title: entry.name }))
+  if (entry.kind !== 'markdown' && entry.kind !== 'text') {
+    const text = entry.openUrl ? 'No preview for this kind of file.' : 'No preview for this kind of file. Use Download to open it.'
+    return bodyEl.replaceChildren(h('p', { class: 'preview-note', text }))
   }
   try {
     const res = await fetch(url, { credentials: 'same-origin' })
     if (res.status === 401) return showSignedOut('')
-    if (!res.ok) throw Object.assign(new Error('bad'), { status: res.status })
+    if (!res.ok) throw await httpProblem(res)
     if (!(res.headers.get('content-type') || '').startsWith('text/plain')) {
-      return bodyEl.replaceChildren(h('p', { class: 'preview-note', text: 'This file is too large to preview. Use Download to open it.' }))
+      const text = entry.openUrl ? errorText('too_large') : 'This file is too large to preview. Use Download to open it.'
+      return bodyEl.replaceChildren(h('p', { class: 'preview-note', text }))
     }
     const text = await res.text()
-    if (state.previewPath !== entry.path) return
-    if (ext === 'md') {
+    if (state.previewUrl !== url) return
+    if (entry.kind === 'markdown') {
       const md = h('div', { class: 'msg-body' })
       md.innerHTML = renderMarkdown(text)
       bodyEl.replaceChildren(md)
@@ -2827,17 +3183,22 @@ async function preview(entry) {
       bodyEl.replaceChildren(h('pre', { text }))
     }
   } catch (err) {
-    bodyEl.replaceChildren(h('p', { class: 'preview-note', text: friendly(err, 'Could not open this file.') }))
+    if (state.previewUrl !== url) return
+    bodyEl.replaceChildren(h('p', { class: 'preview-note', text: previewProblem(entry, err, 'Could not open this file.') }))
   }
 }
 
-$('preview-close').addEventListener('click', () => {
+function closePreview() {
   show($('preview'), false)
   $('preview-body').replaceChildren()
-  state.previewPath = ''
+  state.previewUrl = ''
+  state.previewGen++
+  dropPreviewBlob()
   for (const b of $('tree').querySelectorAll('.tree-btn.current')) b.classList.remove('current')
-})
-$('tree-refresh').addEventListener('click', loadTree)
+}
+
+$('preview-close').addEventListener('click', closePreview)
+$('tree-refresh').addEventListener('click', loadFiles)
 
 // ---------- settings ----------
 

@@ -181,7 +181,7 @@ describe('browser hardening', () => {
       expect(r.status).toBe(200)
       expect(r.headers.get('content-type')).toContain('text/html')
       expect(r.headers.get('content-security-policy')).toBe(
-        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' blob:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
       )
       expect(r.headers.get('x-content-type-options')).toBe('nosniff')
       expect(r.headers.get('referrer-policy')).toBe('no-referrer')

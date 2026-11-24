@@ -2447,7 +2447,7 @@ export const COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: 'egress', description: 'Sites your assistant can open (list/allow/remove)' },
   { command: 'skill', description: 'Manage skills (list/enable/disable/reload)' },
   { command: 'secret', description: 'Manage API keys in the encrypted vault' },
-  { command: 'connect', description: 'Connect Gmail or Outlook (sign-in link)' },
+  { command: 'connect', description: 'Connect Gmail, Outlook or Google Drive (sign-in link)' },
   { command: 'authorize', description: 'Manage multi-chat access (primary only)' },
   { command: 'workspace', description: 'Shared workspaces (primary only)' },
   { command: 'audit', description: 'Review how you have been using the assistant' },
