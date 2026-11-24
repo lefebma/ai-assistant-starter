@@ -192,8 +192,8 @@ export const TIPS: Tip[] = [
   {
     id: 'drive-panel',
     since: '1.90.0',
-    text: 'Your Google Drive can sit in the files panel. Pick Google Drive at the top of the panel and connect once. It is read only.',
-    tryIt: 'Open the files panel in the web app and pick Google Drive.',
+    text: 'In the web app, your Google Drive can sit in the files panel. Pick Google Drive at the top of the panel and connect once. It is read only.',
+    tryIt: 'Open the web app, go to the files panel and pick Google Drive.',
     commands: ['/connect'],
   },
   {
