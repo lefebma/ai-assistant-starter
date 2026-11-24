@@ -3,7 +3,7 @@
  * model's output for these sentences, recorded on 2026-11-16.
  */
 import { describe, expect, it } from 'vitest'
-import { filterFinds, KNOWN_BRANDS, mergeTags, type TokenTag } from '../src/privacy/finder/detect.js'
+import { filterFinds, isAddress, KNOWN_BRANDS, mergeTags, type TokenTag } from '../src/privacy/finder/detect.js'
 
 const t = (entity: string, word: string, score: number, index: number): TokenTag => ({ entity, word, score, index })
 
@@ -76,5 +76,10 @@ describe('filterFinds', () => {
     )
     expect(out).toEqual([])
     expect(KNOWN_BRANDS).toContain('Telegram')
+  })
+
+  it('never offers a web or email address (reuters.com was offered on havn-test)', () => {
+    expect(filterFinds([f('company', 'reuters.com'), f('company', 'www.bbc.co.uk'), f('company', 'https://acme.io/x'), f('company', 'sam@acme.io'), f('company', 'Acme.io')], new Set())).toEqual([])
+    for (const name of ['Bright Path Dental', 'J.P. Morgan', 'St. Jacobs Farms', 'Acme Inc.', 'Dr. Smith']) expect(isAddress(name)).toBe(false)
   })
 })

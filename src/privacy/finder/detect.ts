@@ -90,13 +90,25 @@ export function mergeTags(text: string, tags: TokenTag[]): Found[] {
   return out
 }
 
+/**
+ * A web or email address, not a name: reuters.com, www.example.org,
+ * https://..., sam@example.com. The model sometimes tags one as a company,
+ * but an address is not private, and masking it would hide the very site a
+ * message is about.
+ */
+export function isAddress(value: string): boolean {
+  const v = value.trim()
+  if (!v || /\s/.test(v)) return false
+  return v.includes('@') || /^(https?:\/\/|www\.)/i.test(v) || /[a-z0-9-]\.[a-z]{2,}(\/.*)?$/i.test(v)
+}
+
 /** The finds worth asking the owner about. `skip` holds lowercased names never to offer. */
 export function filterFinds(finds: Found[], skip: Set<string>): Found[] {
   return finds.filter((f) => {
     if (f.score < MIN_SCORE) return false
     if (f.value.length < MIN_CHARS) return false
     const lower = f.value.toLowerCase()
-    if (BRANDS.has(lower) || skip.has(lower)) return false
+    if (BRANDS.has(lower) || skip.has(lower) || isAddress(f.value)) return false
     if (f.kind === 'person' && f.value.split(/\s+/).length < 2) return false
     return true
   })
