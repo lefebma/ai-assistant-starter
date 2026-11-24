@@ -234,3 +234,70 @@ export function latestAssistantMessageId(convId: string): number | undefined {
     .get(convId) as { id: number } | undefined
   return row?.id
 }
+
+export interface SearchHit {
+  conversationId: string
+  projectId: string
+  title: string
+  /** Null when only the chat title matched. */
+  messageId: number | null
+  role: 'user' | 'assistant' | null
+  snippet: string
+  at: number
+}
+
+const SNIPPET_BEFORE = 50
+const SNIPPET_AFTER = 90
+
+function snippetAround(text: string, needle: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const at = flat.toLowerCase().indexOf(needle.toLowerCase())
+  if (at < 0) return flat.slice(0, SNIPPET_BEFORE + SNIPPET_AFTER)
+  const from = Math.max(0, at - SNIPPET_BEFORE)
+  const to = Math.min(flat.length, at + needle.length + SNIPPET_AFTER)
+  return (from > 0 ? '\u2026' : '') + flat.slice(from, to) + (to < flat.length ? '\u2026' : '')
+}
+
+/**
+ * Search this chat's web conversations: titles first, then message text, newest
+ * first. A literal, case-insensitive match (LIKE wildcards in the query are
+ * escaped). Scoped to the chat, so another chat's words never come back.
+ */
+export function searchChat(chatId: string, query: string, limit = 40): SearchHit[] {
+  const q = query.trim().slice(0, 100)
+  if (!q) return []
+  const like = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%'
+  const db = getDb()
+  const titles = db
+    .prepare("SELECT id, project_id, title, updated_at FROM web_conversations WHERE chat_id = ? AND title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT ?")
+    .all(chatId, like, limit) as { id: string; project_id: string; title: string; updated_at: number }[]
+  const msgs = db
+    .prepare(
+      `SELECT m.id, m.role, m.content, m.created_at, c.id AS cid, c.project_id, c.title
+         FROM web_messages m JOIN web_conversations c ON c.id = m.conversation_id
+        WHERE c.chat_id = ? AND m.content LIKE ? ESCAPE '\\'
+        ORDER BY m.id DESC LIMIT ?`,
+    )
+    .all(chatId, like, limit) as { id: number; role: 'user' | 'assistant'; content: string; created_at: number; cid: string; project_id: string; title: string }[]
+  const hits: SearchHit[] = titles.map((t) => ({
+    conversationId: t.id,
+    projectId: t.project_id,
+    title: t.title,
+    messageId: null,
+    role: null,
+    snippet: t.title,
+    at: t.updated_at,
+  }))
+  for (const m of msgs) {
+    hits.push({
+      conversationId: m.cid,
+      projectId: m.project_id,
+      title: m.title,
+      messageId: m.id,
+      role: m.role,
+      snippet: snippetAround(m.content, q),
+      at: m.created_at,
+    })
+  }
+  return hits.slice(0, limit)
+}
