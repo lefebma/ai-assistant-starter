@@ -391,3 +391,27 @@ describe('web chat unread marker', () => {
     expect(list.find((c: any) => c.id === quiet).lastReplyAt).toBe(0)
   })
 })
+
+describe('web chat search', () => {
+  const Z = 'zebra' + Date.now().toString(36)
+  it('finds titles and message text, escapes wildcards, and stays inside the chat', async () => {
+    const id = await newConv()
+    conv.updateConversation('4242', id, { title: 'Quarterly plan' })
+    conv.addMessage(id, 'user', `Remember the ${Z}-crossing budget is ${Z}% fixed`)
+    conv.addMessage(id, 'assistant', `Noted: ${Z}-crossing budget locked`)
+    const other = conv.createConversation('9999', '')
+    conv.addMessage(other.id, 'user', `${Z}-crossing secret from another chat`)
+    const get = async (q: string) =>
+      ((await (await fetch(base() + '/api/web/search?q=' + encodeURIComponent(q), { headers: H() })).json()) as any).hits
+    const hits = await get(Z.toUpperCase())
+    expect(hits.map((x: any) => x.role).sort()).toEqual(['assistant', 'user'])
+    expect(hits.every((x: any) => x.conversationId === id)).toBe(true)
+    expect(hits[0].snippet).toContain(Z)
+    expect((await get('quarterly'))[0]).toMatchObject({ conversationId: id, messageId: null })
+    expect(await get(`${Z}%`)).toHaveLength(1)
+    expect((await get('%')).every((x: any) => x.snippet.includes('%'))).toBe(true)
+    expect(await get('   ')).toEqual([])
+    const unauth = await fetch(base() + '/api/web/search?q=' + Z)
+    expect(unauth.status).toBe(401)
+  })
+})

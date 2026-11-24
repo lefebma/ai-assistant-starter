@@ -39,6 +39,7 @@ import {
   type ConversationRow,
   type MessageRow,
   type StoredFile,
+  searchChat,
 } from './conversations.js'
 import {
   addItem,
@@ -498,6 +499,15 @@ registerWebRoutes([
       const rows = listConversations(ctx.chatId, project === null ? undefined : project)
       const replies = lastReplyTimes(ctx.chatId)
       sendJson(ctx.res, 200, { conversations: rows.map((c) => ({ ...convJson(c), lastReplyAt: replies.get(c.id) || 0 })) })
+    },
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/web\/search$/,
+    auth: true,
+    handler(ctx) {
+      const q = ctx.url.searchParams.get('q') || ''
+      sendJson(ctx.res, 200, { hits: searchChat(ctx.chatId, q) })
     },
   },
   {

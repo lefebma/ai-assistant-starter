@@ -1240,7 +1240,7 @@ function fileUrl(messageId, index) {
 const CLICK_PREFIX = '[button_click]: '
 
 function messageEl(m) {
-  const el = h('div', { class: 'msg ' + (m.role === 'user' ? 'user' : 'assistant') })
+  const el = h('div', { class: 'msg ' + (m.role === 'user' ? 'user' : 'assistant'), 'data-mid': m.id == null ? null : String(m.id) })
   const content = m.content || ''
   if (m.role === 'user' && content.startsWith(CLICK_PREFIX)) {
     // Show a click as the label it chose, styled like the button.
@@ -3029,6 +3029,79 @@ for (const b of document.querySelectorAll('[data-palette-choice]')) {
   b.addEventListener('click', () => applyPalette(b.dataset.paletteChoice))
 }
 applyPalette(document.documentElement.getAttribute('data-palette') || 'original')
+// Search chat history (titles and messages). Opens the chat, then scrolls to the message.
+let searchTimer = 0
+let searchSeq = 0
+
+function highlight(text, q) {
+  const frag = document.createDocumentFragment()
+  const at = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1
+  if (at < 0) return frag.append(text), frag
+  frag.append(text.slice(0, at), h('mark', { text: text.slice(at, at + q.length) }), text.slice(at + q.length))
+  return frag
+}
+
+function renderSearch(hits, q) {
+  const ul = $('search-results')
+  ul.replaceChildren()
+  note($('search-note'), q ? (hits.length ? '' : 'Nothing found.') : '')
+  for (const x of hits) {
+    const when = new Date(x.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    const who = x.role === 'user' ? 'You' : x.role === 'assistant' ? 'Reply' : 'Title'
+    const proj = projectName(x.projectId)
+    ul.append(
+      h(
+        'li',
+        {},
+        h(
+          'button',
+          { type: 'button', class: 'search-hit', click: () => openHit(x) },
+          h('span', { class: 'search-hit-title', text: x.title || 'New chat' }),
+          h('span', { class: 'search-hit-meta', text: [proj, who, when].filter(Boolean).join(' \u00b7 ') }),
+          h('span', { class: 'search-hit-snippet' }, highlight(x.snippet, q))
+        )
+      )
+    )
+  }
+}
+
+async function runSearch() {
+  const q = $('search-input').value.trim()
+  const seq = ++searchSeq
+  if (!q) return renderSearch([], '')
+  try {
+    const r = await api.get('/api/web/search?q=' + encodeURIComponent(q))
+    if (seq === searchSeq) renderSearch((r && r.hits) || [], q)
+  } catch (err) {
+    if (seq === searchSeq) note($('search-note'), friendly(err, 'Search failed. Try again.'))
+  }
+}
+
+async function openHit(x) {
+  $('search-dialog').close()
+  await openConversation(x.conversationId)
+  if (x.messageId == null) return
+  const el = $('messages').querySelector('[data-mid="' + x.messageId + '"]')
+  if (!el) return
+  el.scrollIntoView({ block: 'center' })
+  el.classList.add('found')
+  setTimeout(() => el.classList.remove('found'), 2200)
+}
+
+$('open-search').addEventListener('click', () => {
+  closeDrawers()
+  $('search-dialog').showModal()
+  $('search-input').select()
+  runSearch()
+})
+$('search-input').addEventListener('input', () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(runSearch, 200)
+})
+$('search-close').addEventListener('click', () => $('search-dialog').close())
+$('search-dialog').addEventListener('click', (e) => {
+  if (e.target === $('search-dialog')) $('search-dialog').close()
+})
 $('settings-close').addEventListener('click', () => $('settings').close())
 $('settings').addEventListener('click', (e) => {
   if (e.target === $('settings')) $('settings').close()
