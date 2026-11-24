@@ -57,6 +57,18 @@ const toConv = (r: RawConv): ConversationRow => ({
   updatedAt: r.updated_at,
 })
 
+/** When each conversation of the chat last got an assistant message (ms), for the unread dot. */
+export function lastReplyTimes(chatId: string): Map<string, number> {
+  const rows = getDb()
+    .prepare(
+      `SELECT m.conversation_id AS id, MAX(m.created_at) AS at FROM web_messages m
+       JOIN web_conversations c ON c.id = m.conversation_id
+       WHERE c.chat_id = ? AND m.role = 'assistant' GROUP BY m.conversation_id`
+    )
+    .all(chatId) as { id: string; at: number }[]
+  return new Map(rows.map((r) => [r.id, r.at]))
+}
+
 export function createConversation(chatId: string, projectId: string, now: number = Date.now()): ConversationRow {
   const id = randomUUID()
   getDb()

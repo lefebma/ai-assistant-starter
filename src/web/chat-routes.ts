@@ -24,6 +24,7 @@ import {
   createConversation,
   getConversation,
   listConversations,
+  lastReplyTimes,
   updateConversation,
   deleteConversation,
   purgeMessages,
@@ -495,7 +496,8 @@ registerWebRoutes([
     handler(ctx) {
       const project = ctx.url.searchParams.get('project')
       const rows = listConversations(ctx.chatId, project === null ? undefined : project)
-      sendJson(ctx.res, 200, { conversations: rows.map(convJson) })
+      const replies = lastReplyTimes(ctx.chatId)
+      sendJson(ctx.res, 200, { conversations: rows.map((c) => ({ ...convJson(c), lastReplyAt: replies.get(c.id) || 0 })) })
     },
   },
   {

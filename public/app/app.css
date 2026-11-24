@@ -922,3 +922,15 @@ code { font-family: var(--mono); font-size: 0.9em; }
 }
 .theme-seg { display: flex; gap: 6px; flex-wrap: wrap; }
 .theme-seg .small-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+
+/* Unread dot: a reply landed in this chat while it was not open. */
+.chat-item.unread .chat-open { font-weight: 600; }
+.chat-item.unread::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px 0 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
