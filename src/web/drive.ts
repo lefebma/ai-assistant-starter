@@ -13,7 +13,7 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { logger } from '../logger.js'
 import { readEnvFile } from '../env.js'
 import { STORE_DIR } from '../config.js'
@@ -45,6 +45,8 @@ export interface DriveDeps {
   run(args: string[], env: Record<string, string>, timeoutMs: number): Promise<{ code: number; stdout: string }>
   keeper: Pick<DriveTokenKeeper, 'accounts' | 'token'> | null
   relayConfigured: boolean
+  /** True when the real gog binary resolves to an existing file. */
+  gogInstalled(): boolean
   gogAccounts(): Promise<{ account: string; services: string[] }[]>
   tmpDir: string
   now(): number
@@ -111,11 +113,18 @@ export function parseGogAccountServices(stdout: string): { account: string; serv
   return out
 }
 
+function defaultGogInstalled(): boolean {
+  const bin = realGogBin() ?? resolveGogBin({ ...process.env, ...readEnvFile(['GOG_BIN']) })
+  // resolveGogBin falls back to the bare command name when nothing exists on disk.
+  return isAbsolute(bin) && existsSync(bin)
+}
+
 function defaultDeps(): DriveDeps {
   return {
     run: defaultRun,
     keeper: getDriveKeeper(),
     relayConfigured: connectSettings() !== null,
+    gogInstalled: defaultGogInstalled,
     gogAccounts: () => gogAccountsCheck.get(),
     tmpDir: join(STORE_DIR, 'drive-tmp'),
     now: () => Date.now(),
@@ -141,6 +150,7 @@ async function limited<T>(fn: () => Promise<T>): Promise<T> {
 
 export async function driveAccounts(deps: DriveDeps = defaultDeps()): Promise<{ account: string; state: 'ok' | 'reconnect' }[]> {
   if (deps.relayConfigured) return deps.keeper ? deps.keeper.accounts() : []
+  if (!deps.gogInstalled()) return []
   try {
     return (await deps.gogAccounts()).filter((a) => a.services.some((s) => s.toLowerCase() === 'drive')).map((a) => ({ account: a.account, state: 'ok' as const }))
   } catch {
@@ -150,7 +160,8 @@ export async function driveAccounts(deps: DriveDeps = defaultDeps()): Promise<{ 
 
 /** Where Drive sign-ins come from on this box: the relay, or gog's own stored accounts. */
 export function driveConnectMode(deps: DriveDeps = defaultDeps()): 'relay' | 'gog' | null {
-  return deps.relayConfigured ? 'relay' : 'gog'
+  if (deps.relayConfigured) return 'relay'
+  return deps.gogInstalled() ? 'gog' : null
 }
 
 /** Who may be read, and how gog is told: a token for a relay account, --account otherwise. */
@@ -171,6 +182,8 @@ async function gog(command: 'ls' | 'get' | 'download', args: string[], account: 
   const full = ['drive', command, ...args, '--readonly', '--enable-commands-exact', `drive.${command}`, ...auth.args]
   try {
     const r = await limited(() => deps.run(full, auth.env, CALL_TIMEOUT_MS))
+    // gog documents exit code 5 as "not found"; every other failure is unavailable.
+    if (r.code === 5) throw new DriveFailure('not_found')
     if (r.code !== 0) throw new DriveFailure('unavailable')
     return r.stdout
   } catch (err) {

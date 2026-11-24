@@ -29,6 +29,7 @@ function mkDeps(over: Partial<DriveDeps> = {}): DriveDeps {
     run: run as unknown as DriveDeps['run'],
     keeper: keeper as unknown as DriveDeps['keeper'],
     relayConfigured: true,
+    gogInstalled: () => true,
     gogAccounts: async () => [],
     tmpDir,
     now: () => Date.now(),
@@ -165,6 +166,15 @@ describe('getFile', () => {
     await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toMatchObject({ code: 'not_found' })
   })
 
+  it('gog exit code 5 (documented: not found) answers not_found, other failures stay unavailable', async () => {
+    run.mockImplementationOnce(async () => ({ code: 5, stdout: '' }))
+    await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toMatchObject({ code: 'not_found' })
+    for (const code of [1, 4, 7]) {
+      run.mockImplementationOnce(async () => ({ code, stdout: '' }))
+      await expect(getFile('m@x.com', 'abc', mkDeps())).rejects.toMatchObject({ code: 'unavailable' })
+    }
+  })
+
   it('refuses a bad id', async () => {
     await expect(getFile('m@x.com', 'a/b', mkDeps())).rejects.toMatchObject({ code: 'not_found' })
   })
@@ -298,6 +308,14 @@ describe('accounts and mode', () => {
 
   it('names the connect mode', () => {
     expect(driveConnectMode(mkDeps({ relayConfigured: true }))).toBe('relay')
-    expect(driveConnectMode(mkDeps({ relayConfigured: false }))).toBe('gog')
+    expect(driveConnectMode(mkDeps({ relayConfigured: true, gogInstalled: () => false }))).toBe('relay')
+    expect(driveConnectMode(mkDeps({ relayConfigured: false, gogInstalled: () => true }))).toBe('gog')
+    expect(driveConnectMode(mkDeps({ relayConfigured: false, gogInstalled: () => false }))).toBeNull()
+  })
+
+  it('with neither a relay nor gog there are no accounts and gog is never asked', async () => {
+    const gogAccounts = vi.fn(async () => [{ account: 'a@x.com', services: ['drive'] }])
+    expect(await driveAccounts(mkDeps({ relayConfigured: false, gogInstalled: () => false, gogAccounts }))).toEqual([])
+    expect(gogAccounts).not.toHaveBeenCalled()
   })
 })
