@@ -377,3 +377,17 @@ describe('web chat', () => {
     expect(conv.listMessages(id)).toEqual([])
   })
 })
+
+describe('web chat unread marker', () => {
+  it('reports the newest assistant message time per conversation', async () => {
+    const id = await newConv()
+    const quiet = await newConv()
+    conv.addMessage(id, 'user', 'hi', [], [], 1000)
+    conv.addMessage(id, 'assistant', 'first', [], [], 2000)
+    conv.addMessage(id, 'assistant', 'second', [], [], 3000)
+    conv.addMessage(id, 'user', 'thanks', [], [], 4000)
+    const list = ((await (await fetch(base() + '/api/web/conversations', { headers: H() })).json()) as any).conversations
+    expect(list.find((c: any) => c.id === id).lastReplyAt).toBe(3000)
+    expect(list.find((c: any) => c.id === quiet).lastReplyAt).toBe(0)
+  })
+})

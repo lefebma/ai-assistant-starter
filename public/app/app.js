@@ -279,6 +279,36 @@ async function loadProjects() {
   renderProjects()
 }
 
+// Unread dots: a chat is unread when its newest assistant message is later than
+// the last time this browser showed it. First sight of a chat counts as read.
+const SEEN_KEY = 'havn-chat-seen'
+function loadSeen() {
+  try {
+    return JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {}
+  } catch {
+    return {}
+  }
+}
+function syncSeen() {
+  const seen = loadSeen()
+  let changed = false
+  const ids = new Set()
+  for (const c of state.conversations) {
+    ids.add(c.id)
+    const at = c.lastReplyAt || 0
+    const viewing = state.current && state.current.id === c.id && document.visibilityState === 'visible'
+    if (seen[c.id] === undefined || (viewing && at > seen[c.id])) {
+      seen[c.id] = at
+      changed = true
+    }
+  }
+  for (const id of Object.keys(seen)) if (!ids.has(id)) { delete seen[id]; changed = true }
+  if (changed) {
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)) } catch { /* private mode */ }
+  }
+  return seen
+}
+
 async function refreshConversations() {
   try {
     const convs = await api.get('/api/web/conversations')
@@ -299,6 +329,7 @@ const CHAT_LIMIT = 10
 
 function renderProjects() {
   const list = $('projects')
+  const seen = syncSeen()
   list.replaceChildren()
   const known = new Set(state.projects.map((p) => p.id))
   for (const p of state.projects) {
@@ -342,15 +373,16 @@ function renderProjects() {
       }
       for (const c of shown) {
         const current = state.current && state.current.id === c.id
+        const unread = !current && (c.lastReplyAt || 0) > (seen[c.id] || 0)
         ul.append(
           h(
             'li',
-            { class: 'chat-item' + (current ? ' current' : '') },
+            { class: 'chat-item' + (current ? ' current' : '') + (unread ? ' unread' : '') },
             h('button', {
               type: 'button',
               class: 'chat-open',
               text: c.title || 'New chat',
-              title: c.title || 'New chat',
+              title: (c.title || 'New chat') + (unread ? ' (new reply)' : ''),
               'aria-current': current ? 'true' : null,
               click: () => openConversation(c.id),
             }),
@@ -1784,7 +1816,17 @@ function afterStream(convId, finished) {
   if (!followers.has(convId)) state.busy.delete(convId)
   if (dirty.delete(convId)) reloadIf(convId)
   updateRunning()
+  refreshConversations()
 }
+
+// Replies that end while this page is not looking (another chat open, or a
+// reply from another tab) show up as dots: poll the list while visible.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && state.me) refreshConversations()
+}, 20000)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.me) refreshConversations()
+})
 
 /** Show the box's own record of the chat: ids, buttons, and what another tab sent. */
 async function reloadIf(convId) {
