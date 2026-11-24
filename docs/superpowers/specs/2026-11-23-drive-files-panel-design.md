@@ -291,3 +291,26 @@ remove Gmail with Drive connected (both go, and the reply says so).
 - Exact `gog` JSON field names (read them from `gog drive ls --json` output).
 - Styling of the picker and the Connect view, within the panel's existing look.
 - Whether the two-in-flight limit is a tiny queue or a counter with a wait.
+
+## As built (2026-11-23)
+
+Where the build differs from the design above, or settles something it left open:
+
+- Removing Gmail drops that address's Drive entry only when the Google revoke
+  succeeded. It does not drop it for `--local-only`, when no revoker is
+  available, or when the revoke fails. In those cases Drive stays connected.
+- `gog` exit code 4 is answered as "reconnect" and exit code 5 as "not found".
+  Ids and page tokens that start with `-` are refused before `gog` runs.
+- The user-facing docs (changelog, setup guide, hosted guide, Gmail skill
+  connect line, `/help` and one tip) describe the `gog auth add ... --services
+  gmail,calendar,drive --drive-scope readonly` line for self-installed
+  assistants. The skill gains no Drive instructions.
+
+Not yet verified against real Google (for the live check):
+
+- That `gog` accepts `--` before a positional id.
+- The real JSON field names of `gog drive ls` and `gog drive get` with
+  `--json` and `--fields`.
+- That `--readonly` still lets a gog-signed account renew its token.
+- What a Google revoke of one token does to the other grant (Gmail and Drive),
+  in both directions.

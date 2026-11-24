@@ -190,6 +190,13 @@ export const TIPS: Tip[] = [
     commands: ['/effort'],
   },
   {
+    id: 'drive-panel',
+    since: '1.89.0',
+    text: 'Your Google Drive can sit in the files panel. Pick Google Drive at the top of the panel and connect once. It is read only.',
+    tryIt: 'Send /connect drive and follow the link.',
+    commands: ['/connect'],
+  },
+  {
     id: 'more-gmail',
     since: '1.66.0',
     text: 'You can connect more than one Gmail account and name the one you want each time.',

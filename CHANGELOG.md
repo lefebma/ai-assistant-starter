@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.90.0 - 2026-11-24
+
+- **New: your Google Drive in the files panel.** The files panel can now show your Google Drive beside the assistant's own files. Pick it from the list at the top of the panel and connect once. It asks Google for permission to view your files and nothing else, so it is read only: the assistant cannot change, move or delete anything in Drive. Only "My Drive" is shown, not shared drives or "Shared with me". Google Docs, Sheets and Slides open as PDFs, and files over 25 MB open in Google Drive instead. Only the owner's main chat sees Drive (card #284).
+- **Connect and disconnect.** Send `/connect drive` to connect and `/connect remove drive <account>` to disconnect. Removing Gmail for an account also disconnects that account's Drive. To withdraw the Drive permission at Google, remove Havn in your Google account, which also disconnects that account's Gmail.
+- **Setting it up.** A self-installed assistant connects with one extra `gog` line in the setup guide. A hosted assistant needs its provider to update the sign-in relay first.
+
 ## 1.89.1 - 2026-11-24
 
 - **The side panel can be hidden.** On a wide screen, a panel icon at the top of the left side panel hides it so the chat gets the full width, and a matching icon at the left of the chat header brings it back. Your choice is remembered in that browser. On a narrow screen nothing changes.

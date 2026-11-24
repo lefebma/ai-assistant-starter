@@ -606,6 +606,19 @@ havn-test (178.156.205.93) on 2026-08-23. Two headless wrinkles, both solved:
   cat /proc/$PID/environ | tr '\0' '\n' | grep GOG_KEYRING_PASSWORD   # same user, no sudo needed
   ```
 
+- **Optional: Google Drive for the files panel.** To add read-only Drive, use
+  this sign-in instead of the Gmail one below (add `--remote --step 1` and
+  `--step 2` as shown there):
+
+  ```bash
+  gog auth add <your Gmail address> --services gmail,calendar,drive --drive-scope readonly --gmail-scope send --extra-scopes https://www.googleapis.com/auth/gmail.modify
+  ```
+
+  It adds read-only Drive for the files panel. On a self-installed assistant,
+  this sign-in also lets the assistant's own Google tool read Drive. A hosted
+  assistant normally connects Drive with `/connect drive` through the relay
+  once the provider has updated it.
+
 - **OAuth without a browser.** Use gog's built-in remote flow: no listener,
   no open port needed, which fits these boxes better than SSH port-forwarding
   the callback (ufw denies all inbound, remember):

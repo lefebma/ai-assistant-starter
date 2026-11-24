@@ -40,7 +40,7 @@ export const HELP_GROUPS: Array<{ title: string; items: Array<[command: string, 
   {
     title: 'Connections and automation',
     items: [
-      ['/connect', 'Connect Gmail or Outlook with a sign-in link'],
+      ['/connect', 'Connect Gmail, Outlook or Google Drive with a sign-in link (drive: read only, in the files panel)'],
       ['/schedule', 'Manage scheduled tasks'],
       ['/skill', 'Manage skills (list/enable/disable/reload)'],
       ['/browser', 'Chrome CDP (start/stop/status)'],
