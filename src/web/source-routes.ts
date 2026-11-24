@@ -6,6 +6,8 @@
  */
 import { createReadStream, statSync } from 'node:fs'
 import type { ServerResponse } from 'node:http'
+import { pipeline } from 'node:stream'
+import { logger } from '../logger.js'
 import { registerWebRoutes, type WebRoute } from './http.js'
 import { sendJson, sendError } from './respond.js'
 import { isMainChat } from './file-access.js'
@@ -78,12 +80,8 @@ const drive: Source = {
     }
     const { kind, mime } = kindFromMime(file.mimeType)
     res.writeHead(200, rawHeaders(kind, mime, file.name, size))
-    const stream = createReadStream(file.path)
-    stream.on('error', () => {
-      cleanup()
-      res.destroy()
-    })
-    stream.pipe(res)
+    // pipeline destroys the file stream when the browser hangs up, so no descriptor outlives the download.
+    pipeline(createReadStream(file.path), res, () => cleanup())
   },
 }
 
@@ -103,7 +101,10 @@ registerWebRoutes([
       let accounts: Awaited<ReturnType<typeof driveAccounts>> = []
       try {
         accounts = await driveAccounts(testDeps)
-      } catch { /* a failing check shows no Drive rather than breaking the panel */ }
+      } catch {
+        // A failing check shows no Drive rather than breaking the panel. Count only: no account or error text.
+        logger.warn({ event: 'drive sources failed' }, 'drive accounts check failed')
+      }
       for (const a of accounts) sources.push({ id: `drive:${a.account}`, name: 'Google Drive', account: a.account, state: a.state })
       sendJson(ctx.res, 200, { sources, canConnectDrive: connect !== null, connect })
     },

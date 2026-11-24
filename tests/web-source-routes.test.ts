@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,7 +13,7 @@ const h = vi.hoisted(() => {
   const { tmpdir } = require('node:os') as typeof import('node:os')
   const { join } = require('node:path') as typeof import('node:path')
   process.env['AGENT_STORE_DIR'] = mkdtempSync(join(tmpdir(), 'web-src-store-'))
-  return { root: mkdtempSync(join(tmpdir(), 'web-src-root-')), flow: { current: null as null | { startLink(chat: string, p: string): string } } }
+  return { root: mkdtempSync(join(tmpdir(), 'web-src-root-')), flow: { current: null as null | { startLink(chat: string, p: string): string } }, streams: [] as import('node:fs').ReadStream[] }
 })
 
 vi.mock('../src/config.js', async (orig) => ({
@@ -20,6 +21,17 @@ vi.mock('../src/config.js', async (orig) => ({
   PRIMARY_CHAT_ID: '4242',
   PROJECT_ROOT: h.root,
 }))
+vi.mock('node:fs', async (orig) => {
+  const actual = await orig<typeof import('node:fs')>()
+  return {
+    ...actual,
+    createReadStream: ((...args: Parameters<typeof actual.createReadStream>) => {
+      const stream = actual.createReadStream(...args)
+      h.streams.push(stream)
+      return stream
+    }) as typeof actual.createReadStream,
+  }
+})
 vi.mock('../src/connect/instance.js', async (orig) => ({
   ...(await orig<typeof import('../src/connect/instance.js')>()),
   getConnectFlow: () => h.flow.current,
@@ -213,20 +225,31 @@ describe('raw', () => {
     expect((await get('/api/web/sources/drive/raw?account=m@x.com&id=abc', '4242')).status).toBe(404)
   })
 
-  it('deletes the temp file when the browser goes away mid-download', async () => {
-    behaviour.getRow = { id: 'abc', name: 'Big.bin', mimeType: 'application/octet-stream', size: String(8 * 1024 * 1024) }
-    behaviour.payload = Buffer.alloc(8 * 1024 * 1024, 1)
-    const ac = new AbortController()
-    const res = await fetch(base() + '/api/web/sources/drive/raw?account=m@x.com&id=abc', { headers: { Cookie: cookies['4242']! }, signal: ac.signal })
-    expect(res.status).toBe(200)
-    expect(readdirSync(TMP).length).toBe(1)
-    const reader = res.body!.getReader()
-    await reader.read()
-    ac.abort()
-    await reader.cancel().catch(() => {})
-    await settle(() => readdirSync(TMP).length === 0)
+  it('deletes the temp file and closes the read stream when the browser goes away mid-download', async () => {
+    const size = 24 * 1024 * 1024
+    behaviour.getRow = { id: 'abc', name: 'Big.bin', mimeType: 'application/octet-stream', size: String(size) }
+    behaviour.payload = Buffer.alloc(size, 1)
+    h.streams.length = 0
+    // A raw client that takes the first chunk and then hangs up, so the 24 MB can never all be written.
+    await new Promise<void>((resolve, reject) => {
+      const req = http.get(
+        base() + '/api/web/sources/drive/raw?account=m@x.com&id=abc',
+        { headers: { Cookie: cookies['4242']! } },
+        (res) => {
+          res.once('data', () => {
+            expect(readdirSync(TMP).length).toBe(1)
+            res.destroy()
+            resolve()
+          })
+        },
+      )
+      req.on('error', () => {})
+      setTimeout(() => reject(new Error('no data')), 5000)
+    })
+    await settle(() => readdirSync(TMP).length === 0 && h.streams.length === 1 && h.streams[0]!.destroyed)
     expect(readdirSync(TMP)).toEqual([])
-    expect(existsSync(TMP)).toBe(true)
+    expect(h.streams).toHaveLength(1)
+    expect(h.streams[0]!.destroyed).toBe(true)
   })
 })
 
@@ -280,5 +303,16 @@ describe('logging', () => {
     const text = JSON.stringify(spies.flatMap((s) => s.mock.calls))
     expect(text).toContain('drive')
     for (const secret of ['abc', 'Doc', 'm@x.com']) expect(text).not.toContain(secret)
+  })
+
+  it('warns with a count-only line when the account check fails, and still answers', async () => {
+    const warn = vi.spyOn(logger, 'warn')
+    routes.setDriveDepsForTests(makeDeps({ relayConfigured: true, keeper: { accounts: async () => { throw new Error('boom m@x.com') }, token: async () => null } }))
+    const r = await get('/api/web/sources', '4242')
+    expect(r.status).toBe(200)
+    const text = JSON.stringify(warn.mock.calls)
+    expect(text).toContain('drive sources failed')
+    expect(text).not.toContain('m@x.com')
+    expect(text).not.toContain('boom')
   })
 })
