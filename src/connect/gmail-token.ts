@@ -28,26 +28,21 @@
  * shows it, and the owner is told once to run /connect gmail again. The other
  * accounts carry on.
  */
-import { signHandoff, REFRESH_PATH, REVOKE_PATH, SIGNATURE_HEADER } from './relay.js'
+import { REVOKE_PATH } from './relay.js'
+import { RENEW_BEFORE_MS, readEntries, saveEntry, dropEntry, renewEntries, relayPost, relayKey, type KeeperResult, type RelayClient, type RelayEntry } from './relay-entries.js'
 import type { ConnectTokenVault, Revoker } from './box.js'
 import { registerRotatingSecret } from '../log-redact.js'
 
 export const GMAIL_ENTRY = 'CONNECT_GMAIL'
 /** The live access tokens, {account: token}, for the gog wrapper. */
 export const RELAY_TOKENS_ENV = 'GOG_RELAY_TOKENS'
-export const RENEW_BEFORE_MS = 30 * 60_000
+export { RENEW_BEFORE_MS, relayPost }
+export type { RelayClient }
 export const KEEPER_TICK_MS = 5 * 60_000
 
-export type KeeperResult = 'none' | 'fresh' | 'renewed' | 'expired' | 'failed'
+export type { KeeperResult }
 
-export interface GmailEntry {
-  account: string
-  accessToken: string
-  refreshToken: string
-  expiresAt: number
-  /** Set once the relay reported the grant revoked. */
-  revoked?: boolean
-}
+export type GmailEntry = RelayEntry
 
 export interface KeeperOpts {
   relayUrl: string
@@ -68,27 +63,6 @@ export interface KeeperOpts {
 
 let activeAccounts: string[] = []
 
-export interface RelayClient {
-  relayUrl: string
-  boxId: string
-  handoffKey: string
-  fetchImpl?: typeof fetch
-  now?: () => number
-}
-
-/** A POST to the relay, signed with this box's hand-off key. Throws only if the relay cannot be reached. */
-export async function relayPost(c: RelayClient, path: string, fields: Record<string, unknown>): Promise<{ status: number; json: Record<string, unknown> }> {
-  const body = JSON.stringify({ box: c.boxId, ...fields, ts: (c.now ?? Date.now)() })
-  const res = await (c.fetchImpl ?? fetch)(new URL(path, c.relayUrl).toString(), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', [SIGNATURE_HEADER]: signHandoff(c.handoffKey, body) },
-    body,
-    redirect: 'error',
-    signal: AbortSignal.timeout(30_000),
-  })
-  return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> }
-}
-
 /** Gmail revocation goes through the relay: only it can open the sealed refresh token. */
 export function relayRevoker(c: RelayClient, provider = 'gmail'): Revoker {
   return async ({ refreshToken }) => {
@@ -106,11 +80,7 @@ export function relayGmailAccounts(): string[] {
   return [...activeAccounts]
 }
 
-const key = (account: string) => account.trim().toLowerCase()
-
-function valid(e: Partial<GmailEntry> | null | undefined): e is GmailEntry {
-  return !!e && typeof e.account === 'string' && typeof e.accessToken === 'string' && typeof e.refreshToken === 'string' && typeof e.expiresAt === 'number'
-}
+const key = relayKey
 
 /**
  * Every relay-connected Gmail account, keyed by lower-cased address. Reads the
@@ -118,34 +88,12 @@ function valid(e: Partial<GmailEntry> | null | undefined): e is GmailEntry {
  * and is rewritten in the new shape on its next change.
  */
 export function readGmailEntries(vault: ConnectTokenVault): Map<string, GmailEntry> {
-  const out = new Map<string, GmailEntry>()
-  const raw = vault.get(GMAIL_ENTRY)
-  if (!raw) return out
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return out
-  }
-  const p = parsed as { accounts?: Record<string, Partial<GmailEntry>> } & Partial<GmailEntry>
-  const list = p.accounts && typeof p.accounts === 'object' ? Object.values(p.accounts) : [p]
-  for (const e of list) if (valid(e)) out.set(key(e.account), e)
-  return out
-}
-
-function writeGmailEntries(vault: ConnectTokenVault, entries: Map<string, GmailEntry>): void {
-  if (!entries.size) {
-    vault.delete(GMAIL_ENTRY)
-    return
-  }
-  vault.set(GMAIL_ENTRY, JSON.stringify({ accounts: Object.fromEntries(entries) }))
+  return readEntries(vault, GMAIL_ENTRY)
 }
 
 /** Add an account, or replace it when the same address signs in again. */
 export function saveGmailEntry(vault: ConnectTokenVault, e: GmailEntry): void {
-  const all = readGmailEntries(vault)
-  all.set(key(e.account), { account: e.account, accessToken: e.accessToken, refreshToken: e.refreshToken, expiresAt: e.expiresAt })
-  writeGmailEntries(vault, all)
+  saveEntry(vault, GMAIL_ENTRY, e)
 }
 
 /**
@@ -154,15 +102,8 @@ export function saveGmailEntry(vault: ConnectTokenVault, e: GmailEntry): void {
  * False if nothing was deleted.
  */
 export function dropGmailEntry(vault: ConnectTokenVault, account: string, refreshToken?: string): boolean {
-  const all = readGmailEntries(vault)
-  const e = all.get(key(account))
-  if (!e || (refreshToken !== undefined && e.refreshToken !== refreshToken)) return false
-  all.delete(key(account))
-  writeGmailEntries(vault, all)
-  return true
+  return dropEntry(vault, GMAIL_ENTRY, account, refreshToken)
 }
-
-const RANK: Record<KeeperResult, number> = { none: 0, fresh: 1, expired: 2, renewed: 3, failed: 4 }
 
 export class GmailTokenKeeper {
   private readonly env: Record<string, string | undefined>
@@ -203,51 +144,20 @@ export class GmailTokenKeeper {
   }
 
   private async run(): Promise<KeeperResult> {
-    let result: KeeperResult = 'none'
-    const withdrawn: string[] = []
-    for (const e of readGmailEntries(this.o.vault).values()) {
-      const r = await this.renew(e, withdrawn)
-      if (RANK[r] > RANK[result]) result = r
-    }
+    const { result, withdrawn } = await renewEntries({
+      vault: this.o.vault,
+      name: GMAIL_ENTRY,
+      provider: 'gmail',
+      client: { ...this.o, fetchImpl: this.doFetch, now: this.now },
+      now: this.now,
+      // A grant withdrawn mid-loop leaves the environment at once.
+      onWithdrawn: () => this.publish(),
+    })
     // Publish before telling anyone: a withdrawn token leaves the environment
     // now, not after a chat message that may be slow to send.
     this.publish()
     for (const a of withdrawn) await this.o.onRevoked?.(a)
     return result
-  }
-
-  private async renew(e: GmailEntry, withdrawn: string[]): Promise<KeeperResult> {
-    if (e.revoked) return 'expired'
-    if (e.expiresAt - this.now() > RENEW_BEFORE_MS) return 'fresh'
-    let res: { status: number; json: Record<string, unknown> }
-    try {
-      res = await relayPost({ ...this.o, fetchImpl: this.doFetch, now: this.now }, REFRESH_PATH, { provider: 'gmail', refreshToken: e.refreshToken })
-    } catch {
-      // Relay unreachable: keep using the current token while it lasts.
-      return 'failed'
-    }
-    // Re-read after the round trip: a /connect remove or a new sign-in for
-    // this account during it wins over this renewal.
-    const all = readGmailEntries(this.o.vault)
-    const current = all.get(key(e.account))
-    if (current?.refreshToken !== e.refreshToken) return current ? 'fresh' : 'none'
-    const j = res.json
-    if (res.status === 401 && j.error === 'invalid_grant') {
-      all.set(key(e.account), { ...current, revoked: true })
-      writeGmailEntries(this.o.vault, all)
-      this.publish()
-      withdrawn.push(e.account)
-      return 'expired'
-    }
-    if (res.status !== 200 || typeof j.accessToken !== 'string' || typeof j.expiresAt !== 'number') return 'failed'
-    all.set(key(e.account), {
-      account: e.account,
-      accessToken: j.accessToken,
-      refreshToken: typeof j.refreshToken === 'string' ? j.refreshToken : e.refreshToken,
-      expiresAt: j.expiresAt,
-    })
-    writeGmailEntries(this.o.vault, all)
-    return 'renewed'
   }
 }
 
