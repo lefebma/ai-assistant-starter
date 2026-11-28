@@ -42,9 +42,10 @@ users:
     shell: /bin/bash
     sudo:
       - "ALL=(root) NOPASSWD: /usr/bin/systemctl restart havn, /usr/bin/systemctl start havn, /usr/bin/systemctl stop havn, /usr/bin/systemctl enable --now havn"
+    # No ssh keys: see 11-havn-no-login.conf. It reads its own unit's log from
+    # its per-user journal, so it needs no journal group (which would show a
+    # tool the whole system log).
     lock_passwd: true
-    ssh_authorized_keys:
-      - "{{SSH_PUBLIC_KEY}}"
   - name: havn-admin
     gecos: Havn box administration
     shell: /bin/bash
@@ -80,6 +81,13 @@ write_files:
       PermitRootLogin no
       PasswordAuthentication no
       KbdInteractiveAuthentication no
+
+  # The assistant's own user never logs in. A tool running as havn can write
+  # ~/.ssh/authorized_keys, so a key it adds would be a shell outside the
+  # egress fence (card #308). Operators log in as havn-admin instead.
+  - path: /etc/ssh/sshd_config.d/11-havn-no-login.conf
+    content: |
+      DenyUsers havn
 
   # The service log only ever grows otherwise (11 MB on havn-marina after two
   # months). copytruncate, not a rename: systemd holds the file open in append
@@ -221,10 +229,6 @@ write_files:
       runuser -u havn -- git clone --branch {{GIT_REF}} "{{GIT_CLONE_URL}}" {{INSTALL_DIR}}
       runuser -u havn -- git -C {{INSTALL_DIR}} remote set-url origin "https://github.com/{{GIT_REPO}}.git"
       runuser -u havn -- mkdir -p {{INSTALL_DIR}}/logs
-      # Create the service log as havn. systemd opens it as root and would
-      # otherwise make it root-owned, which log rotation (running as havn)
-      # cannot truncate. An existing file keeps its owner when systemd appends.
-      runuser -u havn -- touch {{INSTALL_DIR}}/logs/service.log
       runuser -u havn -- bash -lc 'cd {{INSTALL_DIR}} && npm ci --no-audit --no-fund && npm run build'
 
       # --- Browser for the Playwright tools -------------------------------

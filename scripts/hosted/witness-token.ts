@@ -15,7 +15,7 @@
  * Box names are the witness's storage prefix: lowercase letters, digits and
  * dashes, e.g. havn-marina. Reusing a name continues that box's chain.
  */
-import { spawnSync } from 'node:child_process'
+import { runAsHavn } from './box-ssh.js'
 import { BOX_NAME } from '../../src/assurance/witness-protocol.js'
 
 /**
@@ -59,16 +59,12 @@ export async function main(argv: string[]): Promise<void> {
   }
   const { token } = (await res.json()) as { token: string }
   console.log(`== token issued for ${box}`)
-  const r = spawnSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `havn@${host}`, 'bash -s'], {
-    input: writeEnvScript(url, token),
-    encoding: 'utf-8',
-    stdio: ['pipe', 'inherit', 'inherit'],
-  })
+  const r = runAsHavn(host, writeEnvScript(url, token), { stdio: ['pipe', 'inherit', 'inherit'] })
   if (r.status !== 0) {
     console.error(`Writing .env on ${host} failed. The new token is live but unused; re-run to issue another.`)
     process.exit(1)
   }
-  console.log(`Done. ${host} ships to the witness as ${box} after its next restart (sudo systemctl restart havn, as havn).`)
+  console.log(`Done. ${host} ships to the witness as ${box} after its next restart (ssh havn-admin@<box> sudo systemctl restart havn).`)
 }
 
 if (process.argv[1]?.match(/witness-token\.(ts|js)$/)) void main(process.argv.slice(2))

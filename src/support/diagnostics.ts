@@ -11,6 +11,7 @@
  */
 
 import { existsSync, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { platform, release, arch } from 'node:os'
 import { PROJECT_ROOT } from '../env.js'
@@ -82,6 +83,27 @@ export function extractErrorLines(raw: string, max: number = ERROR_LOG_TAIL_LINE
   return lines.slice(-max)
 }
 
+/**
+ * A hosted box logs to the journal, not logs/service.log (card #308), and the
+ * assistant's user reads its own unit's lines from its per-user journal. Null
+ * anywhere else (no journalctl, no havn unit, nothing logged), and the file
+ * tail is used instead.
+ */
+export function readJournalTail(run: typeof execFileSync = execFileSync): string | null {
+  if (platform() !== 'linux') return null
+  try {
+    const out = run('journalctl', ['-u', 'havn.service', '-n', '3000', '-o', 'cat', '--no-pager', '-q'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }) as string
+    return out.trim() ? out.slice(-LOG_READ_BYTES) : null
+  } catch {
+    return null
+  }
+}
+
 export function defaultDiagnosticsIO(): DiagnosticsIO {
   return {
     appVersion: () => getCurrentVersion(),
@@ -92,7 +114,7 @@ export function defaultDiagnosticsIO(): DiagnosticsIO {
         .filter((s) => s.manifest.enabled)
         .map((s) => s.manifest.id)
         .sort(),
-    readLogTailRaw: () => readFileTail(LOG_FILE, LOG_READ_BYTES),
+    readLogTailRaw: () => readJournalTail() ?? readFileTail(LOG_FILE, LOG_READ_BYTES),
   }
 }
 

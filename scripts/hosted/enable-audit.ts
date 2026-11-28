@@ -74,7 +74,7 @@ export function main(argv: string[]): void {
   if (!s1.ok) fail('Setup failed. Is the box split (npm run split-admin) and on ext4?')
 
   console.log('== 2. prove it as havn')
-  const s2 = ssh('havn', host, 'bash -s', PROVE)
+  const s2 = ssh('havn-admin', host, 'cd / && sudo -n -u havn -H -- bash -c "cd ~ && exec bash -s"', PROVE)
   process.stdout.write(s2.out)
   if (!s2.ok) fail(`The store on ${host} is not append-only for havn. Check ${DIR} by hand.`)
 

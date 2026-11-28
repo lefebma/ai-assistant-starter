@@ -244,11 +244,22 @@ describe('renderCloudInit', () => {
     expect(rendered).toMatch(/^\s+rotate 4$/m)
   })
 
-  it('creates the service log as havn so rotation can truncate it', () => {
-    const touch = `runuser -u havn -- touch /home/havn/havn/logs/service.log`
-    expect(rendered).toContain(touch)
-    // Before anything could start the service and have systemd create it as root.
-    expect(rendered.indexOf(touch)).toBeLessThan(rendered.indexOf('systemctl daemon-reload'))
+  it('logs the service to the journal, never to a file root opens in havn-owned logs/ (card #308)', () => {
+    // systemd opens append: targets as root and follows symlinks.
+    expect(unitTemplate).not.toMatch(/Standard(Output|Error)=append:/)
+    expect(unitTemplate).toMatch(/^StandardOutput=journal$/m)
+    expect(unitTemplate).toMatch(/^StandardError=journal$/m)
+    expect(rendered).not.toMatch(/Standard(Output|Error)=append:/)
+  })
+
+  it('gives havn no ssh login, so a key a tool adds is useless (card #308)', () => {
+    const r = rendered.replace(/\r\n/g, '\n')
+    const users = r.slice(r.indexOf('\nusers:\n'), r.indexOf('package_update:'))
+    const havn = users.slice(users.indexOf('- name: havn\n'), users.indexOf('- name: havn-admin'))
+    expect(havn).not.toContain('ssh_authorized_keys')
+    expect(havn).not.toContain('systemd-journal')
+    expect(r).toContain('/etc/ssh/sshd_config.d/11-havn-no-login.conf')
+    expect(r).toMatch(/^\s+DenyUsers havn$/m)
   })
 
   it('keeps unattended-upgrades on', () => {

@@ -100,8 +100,11 @@ in [SETUP-GUIDE.md § Connect Email](SETUP-GUIDE.md#step-2-connect-email).
 ### Step B — 🧑‍💻 YOU: get the client onto the box, no client involvement yet
 
 ```bash
-scp <secrets-folder>/havn-google-oauth-client.json havn@<client-ip>:~/
-ssh havn@<client-ip>
+# havn has no ssh login (card #308): copy in as havn-admin, then work as havn.
+scp <secrets-folder>/havn-google-oauth-client.json havn-admin@<client-ip>:/tmp/
+ssh havn-admin@<client-ip>
+sudo install -o havn -g havn -m 0600 /tmp/havn-google-oauth-client.json /home/havn/ && rm /tmp/havn-google-oauth-client.json
+sudo -u havn -H bash && cd ~
 gog auth credentials set ~/havn-google-oauth-client.json
 rm ~/havn-google-oauth-client.json      # don't leave the raw secret on disk
 gog config set keyring_backend file     # headless Linux has no Secret Service

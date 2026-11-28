@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.91.0 - 2026-11-28
+
+- **Closed two ways past the egress fence on hosted boxes (card #308).** Both needed only a tool that could write a file as the assistant's user.
+  - **The service log.** It went to `logs/service.log`, which systemd opens as root. A tool could swap the log for a link to a system file and have root write there at the next start. The assistant and web setup now log to the journal: `journalctl -u havn`.
+  - **ssh as `havn`.** A tool could add a key to the assistant's own `authorized_keys` and get a shell outside the fence. The `havn` user no longer logs in over ssh. Operators log in as `havn-admin` and use `sudo -u havn -H bash`, and the operator scripts do the same.
+- **For boxes set up before this release,** run `npm run lock-box -- <box>` once from your machine (after `split-admin`). It makes both changes, checks them, and restarts the assistant once. New boxes get both from the start.
+
 ## 1.90.0 - 2026-11-24
 
 - **New: your Google Drive in the files panel.** The files panel can now show your Google Drive beside the assistant's own files. Pick it from the list at the top of the panel and connect once. It asks Google for permission to view your files and nothing else, so it is read only: the assistant cannot change, move or delete anything in Drive. Only "My Drive" is shown, not shared drives or "Shared with me". Google Docs, Sheets and Slides open as PDFs, and files over 25 MB open in Google Drive instead. Only the owner's main chat sees Drive (card #284).

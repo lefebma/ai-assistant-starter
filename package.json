@@ -14,6 +14,7 @@
     "teams-manifest": "tsx scripts/teams-manifest.ts",
     "teams-register": "tsx scripts/teams-register.ts",
     "split-admin": "tsx scripts/hosted/split-admin.ts",
+    "lock-box": "tsx scripts/hosted/lock-box.ts",
     "enable-audit": "tsx scripts/hosted/enable-audit.ts",
     "enable-egress": "tsx scripts/hosted/enable-egress.ts",
     "managed-ai": "tsx scripts/managed-ai.ts",
