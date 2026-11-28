@@ -23,7 +23,7 @@
  * reads the three secrets once, at start: restart it after registering
  * (`sudo systemctl restart havn` as havn-admin).
  */
-import { spawnSync } from 'node:child_process'
+import { runAsHavn } from './box-ssh.js'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { isValidHostname } from '../../src/deploy/teams-edge.js'
@@ -158,7 +158,7 @@ export async function connectRelayBox(
 ): Promise<ConnectedBox> {
   const check = await runOnBox(sshHost, checkScript())
   if (check.code !== 0) {
-    throw new Error(`Could not reach havn@${sshHost} or its install (exit ${check.code}). Nothing was registered, and any connection the box has today is untouched.`)
+    throw new Error(`Could not reach ${sshHost} as havn (through havn-admin) or its install (exit ${check.code}). Nothing was registered, and any connection the box has today is untouched.`)
   }
   const out = check.stdout ?? ''
   const edge: EdgeState = out.includes('EDGE_OK') ? 'ok' : out.includes('EDGE_MISSING') ? 'missing' : 'unknown'
@@ -181,11 +181,7 @@ export async function connectRelayBox(
 
 /** The script goes on stdin; stdout is captured (the scripts never print a secret), stderr shows. */
 export async function sshScript(host: string, script: string): Promise<{ code: number; stdout: string }> {
-  const r = spawnSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `havn@${host}`, 'bash -s'], {
-    input: script,
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'inherit'],
-  })
+  const r = runAsHavn(host, script, { stdio: ['pipe', 'pipe', 'inherit'] })
   return { code: r.status ?? 255, stdout: r.stdout ?? '' }
 }
 

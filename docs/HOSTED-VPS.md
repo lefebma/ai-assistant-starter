@@ -77,7 +77,7 @@ npm run provision -- --client leif --country us --ssh-key ~/.ssh/id_ed25519.pub 
   (`yto`) for Canadian data residency. The timezone defaults to New York or
   Toronto to match; override it with `--timezone`.
 - The box is `havn-<client>`, plan `vc2-1c-2gb` on Ubuntu 24.04, about $12 a
-  month with backups (daily, 07:00 UTC). SSH is `ssh havn@<client>.gethavn.ai`,
+  month with backups (daily, 07:00 UTC). SSH is `ssh havn-admin@<client>.gethavn.ai`,
   by key only; root login is off and Vultr's extra `linuxuser` login is locked.
 - `--dry-run` checks the name is free on Vultr and in DNS and that the
   user-data renders, and creates nothing. Names the site uses (`www`,
@@ -180,18 +180,31 @@ First boot takes 5–15 minutes (apt upgrade, Node 22 from NodeSource, gog from
 its GitHub release, ufw, optional Tailscale, clone, `npm ci`, build). Watch it:
 
 ```bash
-ssh havn@<ip>            # or: ssh havn@havn-marina over the tailnet
+ssh havn-admin@<ip>      # or: ssh havn-admin@havn-marina over the tailnet
 cloud-init status --wait
 tail -f /var/log/havn-provision.log
 ```
 
-The box has two logins, both taking your key (card #196):
+The box has two users (card #196), and only one of them logs in:
 
+- **`havn-admin`** takes your key and has full sudo: Caddy and `enable-teams`,
+  apt, swap, reboots. Its home is not writable by `havn`.
 - **`havn`** owns the install and runs the service. The assistant's shell runs
   as this user, so its sudo covers only `systemctl start|stop|restart havn`
-  and `systemctl enable --now havn`. Use it for everything routine.
-- **`havn-admin`** has full sudo, for root work: Caddy and `enable-teams`,
-  apt, swap, reboots. Its home is not writable by `havn`.
+  and `systemctl enable --now havn`. It has **no ssh login** (card #308): a
+  tool running as `havn` can write its `~/.ssh/authorized_keys`, so any key
+  there would be a way past the egress fence. sshd refuses it
+  (`/etc/ssh/sshd_config.d/11-havn-no-login.conf`). To work as the assistant,
+  log in as `havn-admin` and run `sudo -u havn -H bash`, then `cd ~/havn`.
+  The operator scripts (`relay-box`, `maps-token`, `witness-token`,
+  `audit-compare`, `enable-audit`) do the same.
+
+A box provisioned before 1.91.0 still logs to a file and lets `havn` in. Close
+both once, from your machine (needs `split-admin` done first):
+
+```bash
+npm run lock-box -- <ip-or-host>   # restarts the assistant once
+```
 
 The split exists because the assistant can write to `havn`'s own
 `~/.bashrc` and `~/.ssh/authorized_keys`. With full sudo on `havn`, either one
@@ -714,7 +727,7 @@ Full walk-through, including what to tell the client at each step:
 node dist/src/index.js --selftest --live   # one real model call; proves credentials
 sudo systemctl enable --now havn
 systemctl status havn
-journalctl -u havn -f                      # or: tail -f /home/havn/havn/logs/service.log
+journalctl -u havn -f
 ```
 
 Message the bot. Say hello.
@@ -722,7 +735,7 @@ Message the bot. Say hello.
 ## Tailscale mode, day two
 
 With Tailscale baked in, the box appears in your admin console under the
-client's hostname. `ssh havn@havn-marina` works from any of your devices on
+client's hostname. `ssh havn-admin@havn-marina` works from any of your devices on
 the tailnet (Tailscale SSH: no keys to manage per-box), and the public
 internet sees a machine with zero open ports. If you skipped Tailscale at
 provision time you can add it later: install per tailscale.com/download, then
@@ -902,21 +915,25 @@ Check it with `swapon --show` and `free -m`. Nothing needs restarting.
 
 ## Service log rotation
 
-The service writes everything to `/home/havn/havn/logs/service.log`, which
-otherwise only grows (about 5 MB a month on a busy box). Boxes provisioned
-from this release on rotate every `*.log` in that folder weekly, or as soon
-as one passes 20 MB, keeping four compressed copies
-(`/etc/logrotate.d/havn`).
+Since 1.91.0 (card #308) the service and web setup log to the journal:
+`journalctl -u havn` (and `-u havn-setup`). journald rotates it on its own.
+They used to append to `logs/service.log`, but systemd opens an `append:` file
+as root and follows symlinks. `havn` owns `logs/`, so a tool could replace the
+log with a link to, say, `/etc/sudoers.d/x` and have root write there at the
+next start. `npm run lock-box` moves an older box over.
+
+The app's own logs in that folder (workspace sync, daily sync) are still
+files, written by `havn` itself, and rotate every `*.log` weekly, or as soon as one
+passes 20 MB, keeping four compressed copies (`/etc/logrotate.d/havn`).
 
 Two details matter if you ever change it:
 
-- **It copies, then truncates.** systemd holds the log open in append mode.
-  Renaming it would leave the service writing to the renamed file while the
-  new `service.log` stays empty, which looks like a quiet, healthy box.
+- **It copies, then truncates.** A writer holding a log open would keep
+  writing to a renamed file while the new one stays empty, which looks like
+  a quiet, healthy box.
 - **It runs as havn** (`su havn havn`). havn owns the logs folder, and root
   rotating in a folder the assistant can write would let a planted symlink
-  truncate any file on the box. That is also why the log itself must be
-  owned by havn: systemd creates it as root unless it already exists.
+  truncate any file on the box.
 
 A box provisioned earlier needs it once, as `havn-admin`. The first command
 fixes the logs' owner (web setup's `setup.log` was root-owned too), the last

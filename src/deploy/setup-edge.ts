@@ -16,14 +16,6 @@ export const HANDOFF_SERVICE_UNIT = 'havn-setup-done.service'
 /** Relative to the install dir; written by setup-web when setup is complete. */
 export const SETUP_FINISHED_MARKER = 'store/setup-finished'
 
-/**
- * Logs systemd appends to on a set-up box: web setup's, then the assistant's.
- * systemd opens them as root and creates a missing one root-owned, which log
- * rotation (it runs as havn, see /etc/logrotate.d/havn) cannot empty. So
- * enable-setup creates both as havn before starting anything.
- */
-export const UNIT_LOGS = ['logs/setup.log', 'logs/service.log'] as const
-
 function checkDir(installDir: string): void {
   if (!/^\/[A-Za-z0-9._/-]+$/.test(installDir)) throw new Error(`Not a plain absolute path: ${installDir}`)
 }
@@ -51,8 +43,10 @@ export function buildSetupUnit(installDir: string): string {
     'Restart=on-failure',
     'RestartSec=5',
     'Environment=HOME=/home/havn',
-    `StandardOutput=append:${installDir}/${UNIT_LOGS[0]}`,
-    `StandardError=append:${installDir}/${UNIT_LOGS[0]}`,
+    // The journal, never a file in havn's logs/: systemd opens append:
+    // targets as root and follows symlinks (card #308).
+    'StandardOutput=journal',
+    'StandardError=journal',
     // It faces the internet and never needs to escalate: the handoff is root's.
     'NoNewPrivileges=true',
     'PrivateTmp=true',

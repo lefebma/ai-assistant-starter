@@ -37,9 +37,12 @@ Environment=HOME=/home/havn
 # additions, proxy vars) visible too. The dash means "fine if missing" so the
 # unit still starts on a box where setup has not written .env yet.
 EnvironmentFile=-{{INSTALL_DIR}}/.env
-# Same log target the in-app service manager uses on desktop Linux.
-StandardOutput=append:{{INSTALL_DIR}}/logs/service.log
-StandardError=append:{{INSTALL_DIR}}/logs/service.log
+# Output goes to the journal (journalctl -u havn), never to a file in logs/.
+# systemd opens an append: target as root and follows symlinks, and havn owns
+# logs/, so a tool could point the log at /etc/sudoers.d and have root write
+# there (card #308).
+StandardOutput=journal
+StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 

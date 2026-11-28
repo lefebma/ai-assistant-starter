@@ -185,7 +185,7 @@ async function main(): Promise<void> {
 
     const r = await provision(cli.spec, deps)
     console.log(`\nDone. ${r.hostName} (${r.ip}, ${r.region}), Vultr instance ${r.instanceId}.`)
-    console.log(`SSH: ssh havn@${r.address}   (root work: ssh havn-admin@${r.address})`)
+    console.log(`SSH: ssh havn-admin@${r.address}   (as the assistant: sudo -u havn -H bash)`)
     console.log('\nSend the client this email:\n')
     console.log(clientEmail({ clientName: cli.name, link: r.link }))
     console.log('Monitoring entry (config/hosted-instances.json):')

@@ -16,7 +16,7 @@
  * witness-token) and pass it with HAVN_WITNESS_URL and HAVN_WITNESS_BOX_TOKEN;
  * the comparison then runs against an empty local log.
  */
-import { spawnSync } from 'node:child_process'
+import { runAsHavn } from './box-ssh.js'
 import { writeFileSync } from 'node:fs'
 import { compareLogs, ranges } from '../../src/assurance/audit-compare.js'
 import type { ShippedEvent } from '../../src/assurance/witness-protocol.js'
@@ -24,7 +24,7 @@ import type { ShippedEvent } from '../../src/assurance/witness-protocol.js'
 const LOG = '/var/lib/havn-audit/audit.jsonl'
 
 function ssh(host: string, command: string): string {
-  const r = spawnSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `havn@${host}`, command], { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 1024 })
+  const r = runAsHavn(host, command, { maxBuffer: 1024 * 1024 * 1024 })
   if (r.status !== 0) throw new Error(`ssh ${host} failed: ${r.stderr.trim()}`)
   return r.stdout
 }

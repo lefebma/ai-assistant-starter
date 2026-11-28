@@ -14,7 +14,7 @@
  * does this for a new box when the same two variables are set. Maps calls
  * read both fresh, so no restart is needed.
  */
-import { spawnSync } from 'node:child_process'
+import { runAsHavn } from './box-ssh.js'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { BOX_NAME } from '../../src/assurance/witness-protocol.js'
@@ -86,11 +86,7 @@ export async function connectBox(
 }
 
 export async function sshScript(host: string, script: string): Promise<{ code: number; stderr?: string }> {
-  const r = spawnSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', `havn@${host}`, 'bash -s'], {
-    input: script,
-    encoding: 'utf-8',
-    stdio: ['pipe', 'inherit', 'inherit'],
-  })
+  const r = runAsHavn(host, script, { stdio: ['pipe', 'inherit', 'inherit'] })
   return { code: r.status ?? 255 }
 }
 
