@@ -257,7 +257,7 @@ describe('renderCloudInit', () => {
     const users = r.slice(r.indexOf('\nusers:\n'), r.indexOf('package_update:'))
     const havn = users.slice(users.indexOf('- name: havn\n'), users.indexOf('- name: havn-admin'))
     expect(havn).not.toContain('ssh_authorized_keys')
-    expect(havn).toContain('groups: [systemd-journal]')
+    expect(havn).not.toContain('systemd-journal')
     expect(r).toContain('/etc/ssh/sshd_config.d/11-havn-no-login.conf')
     expect(r).toMatch(/^\s+DenyUsers havn$/m)
   })

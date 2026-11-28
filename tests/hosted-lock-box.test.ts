@@ -13,7 +13,9 @@ describe('lock-box', () => {
     expect(LOCK).toContain('StandardOutput=journal')
     expect(LOCK).toContain('StandardError=journal')
     expect(LOCK).toContain('20-journal.conf')
-    expect(LOCK).toContain('usermod -aG systemd-journal havn')
+    // Never the whole system journal: havn reads its own per-user journal.
+    expect(LOCK).not.toContain('usermod -aG systemd-journal')
+    expect(LOCK).toContain('gpasswd -d havn systemd-journal')
     expect(LOCK.indexOf('sshd -t')).toBeLessThan(LOCK.indexOf('try-reload-or-restart ssh.service'))
     expect(LOCK).not.toMatch(/Standard(Output|Error)=append:/)
   })

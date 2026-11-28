@@ -30,7 +30,10 @@ for unit in havn havn-setup; do
   printf '[Service]\\n# Card #308: never an append: file in havn-owned logs/.\\nStandardOutput=journal\\nStandardError=journal\\n' > "/etc/systemd/system/$unit.service.d/20-journal.conf"
   chmod 0644 "/etc/systemd/system/$unit.service.d/20-journal.conf"
 done
-usermod -aG systemd-journal havn
+# No systemd-journal group for havn: that would show a tool the whole system
+# log. havn (uid 1000) already reads its own unit's lines from its per-user
+# journal (journald SplitMode=uid). An earlier run's grant is taken back.
+gpasswd -d havn systemd-journal >/dev/null 2>&1 || true
 
 printf 'DenyUsers havn\\n' > /etc/ssh/sshd_config.d/11-havn-no-login.conf
 chmod 0644 /etc/ssh/sshd_config.d/11-havn-no-login.conf
@@ -54,7 +57,7 @@ for unit in havn havn-setup; do
   done
 done
 sshd -T -C user=havn,host=localhost,addr=127.0.0.1 2>/dev/null | grep -qi '^denyusers .*havn' || { echo "FAIL sshd does not deny havn"; ok=0; }
-id -nG havn | tr ' ' '\\n' | grep -qx systemd-journal || { echo "FAIL havn not in systemd-journal"; ok=0; }
+id -nG havn | tr ' ' '\\n' | grep -qx systemd-journal && { echo "FAIL havn is in systemd-journal (it would see the whole system log)"; ok=0; }
 [ "$ok" = 1 ] && echo "CHECK_OK"
 `
 

@@ -42,9 +42,9 @@ users:
     shell: /bin/bash
     sudo:
       - "ALL=(root) NOPASSWD: /usr/bin/systemctl restart havn, /usr/bin/systemctl start havn, /usr/bin/systemctl stop havn, /usr/bin/systemctl enable --now havn"
-    # In the journal's group so the assistant can read its own unit's log.
-    # No ssh keys: see 11-havn-no-login.conf.
-    groups: [systemd-journal]
+    # No ssh keys: see 11-havn-no-login.conf. It reads its own unit's log from
+    # its per-user journal, so it needs no journal group (which would show a
+    # tool the whole system log).
     lock_passwd: true
   - name: havn-admin
     gecos: Havn box administration

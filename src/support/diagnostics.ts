@@ -85,7 +85,7 @@ export function extractErrorLines(raw: string, max: number = ERROR_LOG_TAIL_LINE
 
 /**
  * A hosted box logs to the journal, not logs/service.log (card #308), and the
- * assistant's user is in systemd-journal so it can read its own unit. Null
+ * assistant's user reads its own unit's lines from its per-user journal. Null
  * anywhere else (no journalctl, no havn unit, nothing logged), and the file
  * tail is used instead.
  */
