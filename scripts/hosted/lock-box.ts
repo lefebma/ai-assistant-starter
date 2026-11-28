@@ -35,7 +35,9 @@ usermod -aG systemd-journal havn
 printf 'DenyUsers havn\\n' > /etc/ssh/sshd_config.d/11-havn-no-login.conf
 chmod 0644 /etc/ssh/sshd_config.d/11-havn-no-login.conf
 sshd -t
-systemctl reload ssh 2>/dev/null || systemctl reload sshd
+# Ubuntu 24.04 may run sshd from ssh.socket, which reads the config per
+# connection; reload only a running service, and never fail on an idle one.
+systemctl try-reload-or-restart ssh.service 2>/dev/null || systemctl try-reload-or-restart sshd.service 2>/dev/null || true
 
 systemctl daemon-reload
 if systemctl is-active -q havn; then systemctl restart havn; fi

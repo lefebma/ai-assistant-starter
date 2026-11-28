@@ -14,7 +14,7 @@ describe('lock-box', () => {
     expect(LOCK).toContain('StandardError=journal')
     expect(LOCK).toContain('20-journal.conf')
     expect(LOCK).toContain('usermod -aG systemd-journal havn')
-    expect(LOCK.indexOf('sshd -t')).toBeLessThan(LOCK.indexOf('systemctl reload ssh'))
+    expect(LOCK.indexOf('sshd -t')).toBeLessThan(LOCK.indexOf('try-reload-or-restart ssh.service'))
     expect(LOCK).not.toMatch(/Standard(Output|Error)=append:/)
   })
 
